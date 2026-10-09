@@ -6,7 +6,8 @@ export function commaI18nVitePlugin() {
     project: fileURLToPath(new URL("../project.inlang", import.meta.url)),
     outdir: fileURLToPath(new URL("./paraglide", import.meta.url)),
     strategy: ["globalVariable", "baseLocale"],
-    outputStructure: "message-modules",
+    outputStructure:
+      process.env.NODE_ENV === "production" ? "message-modules" : "locale-modules",
     emitTsDeclarations: true,
   });
 }
