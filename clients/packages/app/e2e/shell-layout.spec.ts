@@ -6,6 +6,7 @@ import {
 } from "../../../e2e/helpers/browser-auth";
 import { startSessionProjectionStub } from "../../../e2e/helpers/session-fixture";
 import { parseCssColor, type CssRgbaColor } from "../../../e2e/helpers/css-color";
+import { englishWebStorageState } from "../../../e2e/helpers/english-locale";
 import { openTaskDetails, taskDoneButton } from "../../../e2e/helpers/task-panel";
 import {
   chatSmokeAssistantReply,
@@ -5175,6 +5176,7 @@ test("empty Home composers hide unavailable access without collapsing the prompt
 }) => {
   const startupContext = await browser.newContext({
     baseURL: webBaseURL,
+    storageState: englishWebStorageState(webBaseURL),
     viewport: { width: 500, height: 700 },
   });
   const startupPage = await startupContext.newPage();
@@ -5191,6 +5193,7 @@ test("empty Home composers hide unavailable access without collapsing the prompt
   try {
     const readyContext = await browser.newContext({
       baseURL: webBaseURL,
+      storageState: englishWebStorageState(webBaseURL),
       viewport: { width: 500, height: 700 },
     });
     const readyPage = await readyContext.newPage();

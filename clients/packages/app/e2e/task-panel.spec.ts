@@ -2,6 +2,7 @@ import { defaultCommaClientSettings } from "@comma/native-bridge";
 import { expect, test } from "@playwright/test";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { e2eLocale } from "../../../e2e/helpers/english-locale";
 import {
   createE2eSessionProjection,
   startSessionProjectionStub,
@@ -1130,6 +1131,7 @@ test("Task reports preserve structured replies and earlier attachments without w
         settings: {
           ...defaultCommaClientSettings,
           appearance: { ...defaultCommaClientSettings.appearance, theme: "light" },
+          localePreference: e2eLocale,
         },
       }
     );

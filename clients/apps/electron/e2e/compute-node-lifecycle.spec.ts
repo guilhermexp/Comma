@@ -6,7 +6,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { findElectronWindowByNativeRole } from "../src/test-support/electron-native-window";
 import { defaultAgentVMMHostLifecyclePath } from "../src/main/modules/compute-node";
-import { recordElectronOnboardingCompleted } from "../../../e2e/helpers/electron-profile";
+import {
+  recordElectronLocalePreference,
+  recordElectronOnboardingCompleted,
+} from "../../../e2e/helpers/electron-profile";
+import { e2eLocale } from "../../../e2e/helpers/english-locale";
 import { startSessionProjectionStub } from "../../../e2e/helpers/session-fixture";
 
 const electronAppDir = resolve(process.cwd(), "apps/electron");
@@ -412,12 +416,10 @@ esac
     { mode: 0o700 }
   );
   const { ELECTRON_RUN_AS_NODE: _electronRunAsNode, ...hostEnv } = process.env;
+  const userDataPath = join(directory, "user-data");
+  recordElectronLocalePreference(userDataPath, e2eLocale);
   const app = await electron.launch({
-    args: [
-      electronMain,
-      "--lang=en-US",
-      `--user-data-dir=${join(directory, "user-data")}`,
-    ],
+    args: [electronMain, "--lang=en-US", `--user-data-dir=${userDataPath}`],
     cwd: electronAppDir,
     env: {
       ...hostEnv,

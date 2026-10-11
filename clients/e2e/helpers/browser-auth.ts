@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import { defaultCommaClientSettings } from "@comma/native-bridge";
+import { legacyCommaLocaleStorageKey, supportedLocales } from "@comma/i18n";
 import {
   createE2eSessionProjection,
   reflectedCorsRequestHeaders,
@@ -139,17 +140,25 @@ export async function installBrowserTestSession(
 /**
  * Records first-launch onboarding as finished on this device for the given
  * user ids, as the app does when a user finishes it. Merged into whatever a
- * spec or an earlier load stored, so reloads keep later user changes.
+ * spec or an earlier load stored, so reloads keep later user changes. A device
+ * without client settings starts from the defaults with its legacy language
+ * choice carried over, as the app's own migration does, so the suite's
+ * English pin (see english-locale.ts) holds.
  */
 export async function recordOnboardingCompleted(
   page: Page,
   userIds: readonly string[]
 ) {
   await page.addInitScript(
-    ({ defaults, ids }) => {
+    ({ defaults, ids, legacyLocaleKey, locales }) => {
       const key = "comma.client-settings";
       const stored = localStorage.getItem(key);
-      const settings = stored ? JSON.parse(stored) : defaults;
+      const legacyLocale = localStorage.getItem(legacyLocaleKey);
+      const settings = stored
+        ? JSON.parse(stored)
+        : legacyLocale && locales.includes(legacyLocale)
+          ? { ...defaults, localePreference: legacyLocale }
+          : defaults;
       const completed: string[] = settings.onboardingCompletedUserIds ?? [];
       const missing = ids.filter((id) => !completed.includes(id));
       if (missing.length === 0) return;
@@ -161,7 +170,12 @@ export async function recordOnboardingCompleted(
         })
       );
     },
-    { defaults: defaultCommaClientSettings, ids: [...userIds] }
+    {
+      defaults: defaultCommaClientSettings,
+      ids: [...userIds],
+      legacyLocaleKey: legacyCommaLocaleStorageKey,
+      locales: [...supportedLocales] as string[],
+    }
   );
 }
 

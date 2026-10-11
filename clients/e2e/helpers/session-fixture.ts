@@ -5,6 +5,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
+import type { CommaLocale } from "@comma/i18n";
 
 export const e2eSessionExpiresAtEpochSeconds = 4_102_444_800;
 
@@ -19,7 +20,7 @@ export interface E2eSessionIdentity {
     avatarId?: string;
     avatarPngBase64?: string;
     /** The account's app language; absent until the first device reports one. */
-    locale?: "en" | "zh-CN";
+    locale?: CommaLocale;
     name?: string;
   };
   sessionId?: string;
@@ -122,7 +123,7 @@ export function startSessionProjectionStub(identity: E2eSessionIdentity) {
       });
       request.on("end", () => {
         const patch = JSON.parse(body || "{}") as {
-          locale?: "en" | "zh-CN";
+          locale?: CommaLocale;
           name?: string;
         };
         if (patch.locale) accountLocale = patch.locale;

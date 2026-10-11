@@ -1141,7 +1141,7 @@ test("electron moves an Open Comma shortcut left at the old default to Option-Co
       ])
     ).toEqual([true, false]);
     expect(JSON.parse(await readFile(preferencesPath, "utf8"))).toMatchObject({
-      defaultsRevision: 1,
+      defaultsRevision: 2,
     });
 
     // Option-Space chosen again afterwards is the user's: it stays.
@@ -2710,7 +2710,7 @@ test("electron opens the legacy Test surface as an isolated fullscreen window", 
       "side-chat-test"
     );
     await expect(
-      testWindow.getByRole("heading", { level: 1, name: "测试窗口" })
+      testWindow.getByRole("heading", { level: 1, name: "Test window" })
     ).toBeVisible();
     await expect(testWindow.getByText("Window", { exact: true })).toBeVisible();
     await expect(testWindow.getByText("DPR", { exact: true })).toBeVisible();

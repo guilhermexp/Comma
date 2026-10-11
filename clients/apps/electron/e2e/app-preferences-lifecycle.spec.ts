@@ -1,4 +1,12 @@
-import { _electron as electron, expect, test, type Locator } from "@playwright/test";
+import {
+  _electron as electron,
+  expect,
+  test,
+  type ElectronApplication,
+  type Locator,
+  type Page,
+} from "@playwright/test";
+import { messages, type CommaLocale } from "@comma/i18n";
 import type { AppPreferences, AppPreferencesPatch } from "@comma/native-bridge";
 import { spawn } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -10,6 +18,7 @@ import {
   findElectronWindowByNativeRole,
 } from "../src/test-support/electron-native-window";
 import { recordElectronOnboardingCompleted } from "../../../e2e/helpers/electron-profile";
+import { e2eLocale } from "../../../e2e/helpers/english-locale";
 import { startSessionProjectionStub } from "../../../e2e/helpers/session-fixture";
 
 const electronAppDir = resolve(process.cwd(), "apps/electron");
@@ -1085,7 +1094,146 @@ test.describe("app preferences lifecycle", () => {
       if (!appClosed) await app.close().catch(() => {});
     }
   });
+
+  // The app language is the product default, Brazilian Portuguese, until the
+  // user picks one in Settings; Main keeps that choice for the next launch,
+  // whatever the operating system's language (`--lang=en-US` here).
+  test("starts in Brazilian Portuguese and keeps the language chosen in Settings across a restart", async () => {
+    const userDataPath = join(testDirectory, "language-user-data");
+    // The language this device keeps as its own setting, in Main's file.
+    const storedLocalePreference = () =>
+      readFile(join(userDataPath, "app-preferences.json"), "utf8")
+        .then((text) => JSON.parse(text).clientSettings?.localePreference)
+        .catch(() => undefined);
+    // The app language is also an account setting, so this account is new:
+    // it has none until this device reports one.
+    const accountStub = await startSessionProjectionStub({
+      email: PREFERENCES_E2E_EMAIL,
+      profile: {},
+    });
+    const account = { COMMA_API_BASE_URL: accountStub.baseUrl };
+    try {
+      const firstRun = await electron.launch({
+        args: electronLaunchArgs(userDataPath),
+        cwd: electronAppDir,
+        env: persistedSessionElectronEnv(userDataPath, account),
+      });
+      try {
+        // A new install, signed out: nothing chosen yet.
+        const loginWindow = await findElectronWindowByNativeRole(
+          firstRun,
+          "main-window"
+        );
+        await expect(loginWindow.locator("html")).toHaveAttribute("lang", "pt-BR");
+        await expect(
+          loginWindow.getByRole("region", {
+            name: messages.auth_sign_in_region({}, { locale: "pt-BR" }),
+          })
+        ).toBeVisible();
+        await expectApplicationMenuIn(firstRun, "pt-BR");
+        // The device keeps the language it started in as its own setting.
+        await expect.poll(storedLocalePreference).toBe("pt-BR");
+      } finally {
+        await firstRun.close();
+      }
+
+      const signedIn = await electron.launch({
+        args: electronLaunchArgs(userDataPath),
+        cwd: electronAppDir,
+        env: signedInElectronEnv(userDataPath, account),
+      });
+      try {
+        const mainWindow = await openAppSettings(signedIn, "pt-BR");
+        await expect(mainWindow.locator("html")).toHaveAttribute("lang", "pt-BR");
+        await expect(
+          mainWindow.getByRole("link", {
+            exact: true,
+            name: messages.nav_home({}, { locale: "pt-BR" }),
+          })
+        ).toBeVisible();
+        await expectApplicationMenuIn(signedIn, "pt-BR");
+
+        await languageControl(mainWindow).click();
+        await mainWindow
+          .getByRole("option", {
+            exact: true,
+            name: messages.settings_language_english({}, { locale: "pt-BR" }),
+          })
+          .click();
+        await expect(mainWindow.locator("html")).toHaveAttribute("lang", "en");
+        await expect(
+          mainWindow.getByRole("heading", { level: 1, name: "General" })
+        ).toBeVisible();
+        await expect(
+          mainWindow.getByRole("button", { exact: true, name: "Settings" })
+        ).toHaveAttribute("aria-current", "page");
+        await expectApplicationMenuIn(signedIn, "en");
+        await expect.poll(storedLocalePreference).toBe("en");
+      } finally {
+        await signedIn.close();
+      }
+
+      const restarted = await electron.launch({
+        args: electronLaunchArgs(userDataPath),
+        cwd: electronAppDir,
+        env: signedInElectronEnv(userDataPath, account),
+      });
+      try {
+        const mainWindow = await openAppSettings(restarted, "en");
+        await expect(mainWindow.locator("html")).toHaveAttribute("lang", "en");
+        await expect(languageControl(mainWindow)).toContainText("English");
+        await expectApplicationMenuIn(restarted, "en");
+
+        // English → Simplified Chinese → Brazilian Portuguese, each one
+        // relabeling the window and the native menu together.
+        for (const [from, to, option] of [
+          ["en", "zh-CN", messages.settings_language_simplified_chinese],
+          ["zh-CN", "pt-BR", messages.settings_language_portuguese_brazil],
+        ] as const) {
+          await languageControl(mainWindow).click();
+          await mainWindow
+            .getByRole("option", { exact: true, name: option({}, { locale: from }) })
+            .click();
+          await expect(mainWindow.locator("html")).toHaveAttribute("lang", to);
+          await expect(
+            mainWindow.getByRole("heading", {
+              level: 1,
+              name: messages.settings_general({}, { locale: to }),
+            })
+          ).toBeVisible();
+          await expectApplicationMenuIn(restarted, to);
+          await expect.poll(storedLocalePreference).toBe(to);
+        }
+      } finally {
+        await restarted.close();
+      }
+
+      const backInPortuguese = await electron.launch({
+        args: electronLaunchArgs(userDataPath),
+        cwd: electronAppDir,
+        env: signedInElectronEnv(userDataPath, account),
+      });
+      try {
+        const mainWindow = await openAppSettings(backInPortuguese, "pt-BR");
+        await expect(mainWindow.locator("html")).toHaveAttribute("lang", "pt-BR");
+        await expect(languageControl(mainWindow)).toContainText(
+          messages.settings_language_portuguese_brazil({}, { locale: "pt-BR" })
+        );
+        await expectApplicationMenuIn(backInPortuguese, "pt-BR");
+      } finally {
+        await backInPortuguese.close();
+      }
+    } finally {
+      await accountStub.close();
+    }
+  });
 });
+
+function languageControl(page: Page) {
+  return page.locator(
+    '[data-setting-id="app.language"] [data-slot="settings-control"] button'
+  );
+}
 
 function signedInElectronEnv(
   userDataPath: string,
@@ -1128,7 +1276,8 @@ function electronLaunchArgs(userDataPath: string) {
 }
 
 async function openAppSettings(
-  app: Parameters<typeof findElectronWindowByNativeRole>[0]
+  app: Parameters<typeof findElectronWindowByNativeRole>[0],
+  locale: CommaLocale = e2eLocale
 ) {
   const mainWindow = await findElectronWindowByNativeRole(app, "main-window");
   await mainWindow.waitForLoadState("domcontentloaded");
@@ -1136,9 +1285,38 @@ async function openAppSettings(
     window.location.hash = "#/settings";
   });
   await expect(
-    mainWindow.getByRole("heading", { level: 1, name: "General" })
+    mainWindow.getByRole("heading", {
+      level: 1,
+      name: messages.settings_general({}, { locale }),
+    })
   ).toBeVisible();
   return mainWindow;
+}
+
+/** The native app menu's top-level labels and its Window menu, in `locale`. */
+async function expectApplicationMenuIn(app: ElectronApplication, locale: CommaLocale) {
+  const options = { locale };
+  await expect
+    .poll(() =>
+      app.evaluate(({ Menu }) => {
+        // The app menu, then File, Edit, View, Window and Help.
+        const [, ...menus] = Menu.getApplicationMenu()?.items ?? [];
+        return {
+          menus: menus.map((item) => item.label),
+          window: menus[3]?.submenu?.items[0]?.label,
+        };
+      })
+    )
+    .toEqual({
+      menus: [
+        messages.app_menu_file({}, options),
+        messages.app_menu_edit({}, options),
+        messages.app_menu_view({}, options),
+        messages.app_menu_window({}, options),
+        messages.app_menu_help({}, options),
+      ],
+      window: messages.app_menu_show_comma({}, options),
+    });
 }
 
 function readRendererPreferences(page: Awaited<ReturnType<typeof openAppSettings>>) {

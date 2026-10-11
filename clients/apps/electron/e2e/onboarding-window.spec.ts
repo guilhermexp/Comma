@@ -11,6 +11,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { findElectronWindowByNativeRole } from "../src/test-support/electron-native-window";
+import { recordElectronLocalePreference } from "../../../e2e/helpers/electron-profile";
+import { e2eLocale } from "../../../e2e/helpers/english-locale";
 import { startSessionProjectionStub } from "../../../e2e/helpers/session-fixture";
 import { closeElectronTestApp } from "./close-electron-test-app";
 
@@ -69,8 +71,10 @@ test.describe("onboarding window", () => {
   });
 
   test("opens on first launch before the main window, holds the product under it, and closes as completed", async () => {
-    // A fresh profile: this account has not finished the onboarding here.
+    // A fresh profile: this account has not finished the onboarding here. It
+    // has English chosen, the language these steps are read in.
     const userDataPath = join(testDirectory, "user-data");
+    recordElectronLocalePreference(userDataPath, e2eLocale);
     const app = await electron.launch({
       args: [electronMain, "--lang=en-US", `--user-data-dir=${userDataPath}`],
       cwd: electronAppDir,
@@ -270,6 +274,7 @@ test.describe("onboarding window", () => {
       "The onboarding's shortcuts are macOS-only."
     );
     const userDataPath = join(testDirectory, "user-data");
+    recordElectronLocalePreference(userDataPath, e2eLocale);
     const app = await electron.launch({
       args: [electronMain, "--lang=en-US", `--user-data-dir=${userDataPath}`],
       cwd: electronAppDir,

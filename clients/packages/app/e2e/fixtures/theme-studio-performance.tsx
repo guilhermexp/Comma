@@ -1,24 +1,29 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { initializeCommaI18n } from "@comma/i18n";
 import {
   CommaWebClientSettingsProvider,
   CommaClientSettingsI18nProvider,
+  readWebCommaClientSettings,
 } from "../../src/components/commaClientSettings";
 import { CommaAppearanceProvider } from "../../src/components/commaAppearance";
 import {
   CustomThemeStudio,
   ThemePicker,
 } from "../../src/components/commaCustomThemeStudio";
+import { e2eLocale } from "../../../../e2e/helpers/english-locale";
 import "../../src/styles.css";
 
-initializeCommaI18n(["en"]);
+// The studio's own settings, in the suite's language rather than the default.
+const initialSettings = {
+  ...readWebCommaClientSettings(),
+  localePreference: e2eLocale,
+};
 
 function Fixture() {
   const [open, setOpen] = useState(true);
   const picker = new URLSearchParams(location.search).has("picker");
   return (
-    <CommaWebClientSettingsProvider>
+    <CommaWebClientSettingsProvider initialSettings={initialSettings}>
       <CommaClientSettingsI18nProvider>
         <CommaAppearanceProvider>
           {!picker && (

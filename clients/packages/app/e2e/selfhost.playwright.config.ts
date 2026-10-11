@@ -1,4 +1,7 @@
 import { defineConfig } from "@playwright/test";
+import { englishWebStorageState } from "../../../e2e/helpers/english-locale";
+
+const selfhostURL = process.env.COMMA_SELFHOST_URL || "http://localhost:8080";
 
 export default defineConfig({
   testDir: ".",
@@ -10,7 +13,8 @@ export default defineConfig({
   workers: 1,
   timeout: 120_000,
   use: {
-    baseURL: process.env.COMMA_SELFHOST_URL || "http://localhost:8080",
+    baseURL: selfhostURL,
+    storageState: englishWebStorageState(selfhostURL),
     headless: true,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",

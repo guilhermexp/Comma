@@ -1,5 +1,6 @@
 import { defineConfig, devices, type ReporterDescription } from "@playwright/test";
 import { fileURLToPath } from "node:url";
+import { englishWebStorageState } from "./e2e/helpers/english-locale";
 import { webBaseURL } from "./e2e/p0/smoke-env";
 
 // Electron has no Playwright headless launch option. The app consumes this
@@ -87,6 +88,8 @@ export default defineConfig({
   outputDir,
   use: {
     baseURL: webBaseURL,
+    // English is every web scenario's language (see e2e/helpers/english-locale).
+    storageState: englishWebStorageState(webBaseURL),
     // Real provider content and its OTP must not be persisted in test artifacts.
     trace: recordingMode,
     screenshot: realChatSmoke ? "off" : recordAll ? "on" : "only-on-failure",

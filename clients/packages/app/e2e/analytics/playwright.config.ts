@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import { resolve } from "node:path";
+import { englishWebStorageState } from "../../../../e2e/helpers/english-locale";
 
 export default defineConfig({
   testDir: ".",
@@ -27,6 +28,7 @@ export default defineConfig({
   use: {
     ...devices["Desktop Chrome"],
     baseURL: "http://127.0.0.1:4187",
+    storageState: englishWebStorageState("http://127.0.0.1:4187"),
     viewport: { width: 1280, height: 800 },
   },
   webServer: {
