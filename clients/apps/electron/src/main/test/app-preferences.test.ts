@@ -8,7 +8,7 @@ import {
   type KeepAwakeWhenLidClosedStatus,
   type SystemNotificationsStatus,
 } from "@comma/native-bridge";
-import { AppPreferencesService } from "../app-preferences";
+import { AppPreferencesService, readStoredLocalePreference } from "../app-preferences";
 import type { LaunchAtLoginReadback } from "../launch-at-login";
 
 const temporaryDirectories: string[] = [];
@@ -105,6 +105,81 @@ describe("AppPreferencesService", () => {
       expect(kept.state().clientSettings?.openCommaShortcut).toEqual(chosen);
       await kept.close();
     }
+  });
+
+  it("moves a language still at the old System default to Brazilian Portuguese, once, keeping explicit choices", async () => {
+    // Written by a release before pt-BR: every client setting saved, so a
+    // language still at "system" is one the user never chose.
+    const { revision: _revision, ...legacyPreferences } = defaultAppPreferences;
+    const legacyFile = async (localePreference: string, defaultsRevision?: number) => {
+      const filePath = await temporaryPreferencesPath();
+      await writeFile(
+        filePath,
+        JSON.stringify({
+          ...legacyPreferences,
+          clientSettings: { ...defaultCommaClientSettings, localePreference },
+          ...(defaultsRevision === undefined ? {} : { defaultsRevision }),
+        })
+      );
+      return filePath;
+    };
+    const platform = createPlatform();
+
+    for (const defaultsRevision of [undefined, 1]) {
+      const untouched = await legacyFile("system", defaultsRevision);
+      // Main reads the language before it opens the service for its first surfaces.
+      await expect(readStoredLocalePreference(untouched)).resolves.toBe("pt-BR");
+      const service = await AppPreferencesService.open({
+        filePath: untouched,
+        platform,
+      });
+      expect(service.state().clientSettings?.localePreference).toBe("pt-BR");
+      expect(
+        JSON.parse(await readFile(untouched, "utf8")).clientSettings
+      ).toMatchObject({
+        localePreference: "pt-BR",
+      });
+      // System chosen afterwards stays System across launches.
+      await service.update({ clientSettings: { localePreference: "system" } });
+      await service.close();
+      await expect(readStoredLocalePreference(untouched)).resolves.toBe("system");
+      const reopened = await AppPreferencesService.open({
+        filePath: untouched,
+        platform,
+      });
+      expect(reopened.state().clientSettings?.localePreference).toBe("system");
+      await reopened.close();
+    }
+
+    // A language the user chose before the change stays.
+    for (const chosen of ["en", "zh-CN"]) {
+      const filePath = await legacyFile(chosen, 1);
+      await expect(readStoredLocalePreference(filePath)).resolves.toBe(chosen);
+      const kept = await AppPreferencesService.open({ filePath, platform });
+      expect(kept.state().clientSettings?.localePreference).toBe(chosen);
+      await kept.close();
+    }
+  });
+
+  it("gives a new install Brazilian Portuguese and persists each language switch", async () => {
+    const filePath = await temporaryPreferencesPath();
+    const platform = createPlatform();
+    const service = await AppPreferencesService.open({ filePath, platform });
+    await service.update({ clientSettings: { sessionHistoryEnabled: true } });
+    expect(service.state().clientSettings?.localePreference).toBe("pt-BR");
+    for (const localePreference of ["en", "zh-CN", "pt-BR"] as const) {
+      await service.update({ clientSettings: { localePreference } });
+      await expect(readStoredLocalePreference(filePath)).resolves.toBe(
+        localePreference
+      );
+    }
+    await service.close();
+    const reopened = await AppPreferencesService.open({ filePath, platform });
+    expect(reopened.state().clientSettings).toMatchObject({
+      localePreference: "pt-BR",
+      sessionHistoryEnabled: true,
+    });
+    await reopened.close();
   });
 
   it("registers Open Comma by default, persists clearing, and restores after a failed edit", async () => {

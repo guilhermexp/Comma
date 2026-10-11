@@ -44,18 +44,38 @@ describe("resolveLocale", () => {
     expect(resolveLocale([language])).toBe("zh-CN");
   });
 
-  it.each(["zh-TW", "zh-HK", "zh-Hant", "fr-FR", "ja-JP"])(
-    "falls back to English for %s",
+  it.each(["pt-BR", "pt", "pt_BR", "pt-PT", "pt-BR-u-nu-latn"])(
+    "maps %s to Brazilian Portuguese",
     (language) => {
-      expect(resolveLocale([language])).toBe("en");
+      expect(resolveLocale([language])).toBe("pt-BR");
     }
   );
 
+  it.each(["zh-TW", "zh-HK", "zh-Hant", "fr-FR", "ja-JP"])(
+    "falls back to the product default, Brazilian Portuguese, for %s",
+    (language) => {
+      expect(resolveLocale([language])).toBe("pt-BR");
+    }
+  );
+
+  it("uses the product default without any language", () => {
+    expect(resolveLocale([])).toBe("pt-BR");
+  });
+
   it.each([
-    ["uses the first supported browser preference", ["fr-FR", "zh-SG", "en-US"]],
-    ["continues after an unsupported Chinese preference", ["zh-TW", "zh-CN", "en-US"]],
-  ])("%s", (_name, languages) => {
-    expect(resolveLocale(languages)).toBe("zh-CN");
+    [
+      "uses the first supported browser preference",
+      ["fr-FR", "zh-SG", "en-US"],
+      "zh-CN",
+    ],
+    [
+      "continues after an unsupported Chinese preference",
+      ["zh-TW", "zh-CN", "en-US"],
+      "zh-CN",
+    ],
+    ["keeps English ahead of a later Portuguese preference", ["en-GB", "pt-BR"], "en"],
+  ] as const)("%s", (_name, languages, expected) => {
+    expect(resolveLocale(languages)).toBe(expected);
   });
 });
 
@@ -69,8 +89,20 @@ describe("initializeCommaI18n", () => {
         inbox: "收件箱",
       },
       {
-        name: "uses English for an unsupported browser language",
+        name: "renders Brazilian Portuguese messages",
+        language: "pt-BR",
+        expected: "pt-BR",
+        inbox: "Caixa de entrada",
+      },
+      {
+        name: "uses Brazilian Portuguese for an unsupported browser language",
         language: "fr-FR",
+        expected: "pt-BR",
+        inbox: "Caixa de entrada",
+      },
+      {
+        name: "keeps English available",
+        language: "en-US",
         expected: "en",
         inbox: "Inbox",
       },
@@ -106,7 +138,7 @@ describe("initializeCommaI18n", () => {
     expect(document.documentElement.lang).toBe("ja");
   });
 
-  it("formats count-sensitive messages in both locales", () => {
+  it("formats count-sensitive messages in every locale", () => {
     initializeCommaI18n(["en"]);
     expect(messages.side_chat_task_count({ count: 1, formattedCount: "1" })).toBe(
       "1 task"
@@ -146,6 +178,26 @@ describe("initializeCommaI18n", () => {
         formattedCount: formatNumber(10_000, "zh-CN"),
       })
     ).toBe("10,000 个任务");
+
+    initializeCommaI18n(["pt-BR"]);
+    expect(messages.side_chat_task_count({ count: 1, formattedCount: "1" })).toBe(
+      "1 tarefa"
+    );
+    expect(messages.side_chat_task_count({ count: 2, formattedCount: "2" })).toBe(
+      "2 tarefas"
+    );
+    expect(messages.chat_new_messages({ count: 1, formattedCount: "1" })).toBe(
+      "1 nova mensagem"
+    );
+    expect(messages.chat_new_messages({ count: 2, formattedCount: "2" })).toBe(
+      "2 novas mensagens"
+    );
+    expect(
+      messages.side_chat_task_count({
+        count: 10_000,
+        formattedCount: formatNumber(10_000, "pt-BR"),
+      })
+    ).toBe("10.000 tarefas");
   });
 
   it("localizes known task activity phases without exposing raw enums", () => {
@@ -154,21 +206,32 @@ describe("initializeCommaI18n", () => {
     expect(taskActivityLabel("completed", "zh-CN")).toBe("已完成");
     expect(taskActivityLabel("future_phase", "zh-CN")).toBe("状态未知");
     expect(taskActivityLabel("idle", "zh-CN")).toBeUndefined();
+    expect(taskActivityLabel("future_phase", "pt-BR")).toBe(
+      messages.tasks_activity_unknown({}, { locale: "pt-BR" })
+    );
+    expect(taskActivityLabel("future_phase", "pt-BR")).not.toBe(
+      taskActivityLabel("future_phase", "en")
+    );
   });
 });
 
 describe("locale preferences", () => {
-  it("reads an explicit locale from the legacy migration key", () => {
-    expect(readLegacyCommaLocalePreference()).toBe("system");
-
-    localStorage.setItem(legacyCommaLocaleStorageKey, "zh-CN");
-    expect(readLegacyCommaLocalePreference()).toBe("zh-CN");
-    expect(resolveLocalePreference("zh-CN")).toBe("zh-CN");
+  it("starts without a stored choice in Brazilian Portuguese", () => {
+    expect(readLegacyCommaLocalePreference()).toBe("pt-BR");
   });
 
-  it("ignores an unsupported stored locale", () => {
+  it.each(["en", "zh-CN", "pt-BR"] as const)(
+    "keeps an explicit %s from the legacy migration key",
+    (stored) => {
+      localStorage.setItem(legacyCommaLocaleStorageKey, stored);
+      expect(readLegacyCommaLocalePreference()).toBe(stored);
+      expect(resolveLocalePreference(stored)).toBe(stored);
+    }
+  );
+
+  it("uses the product default for an unsupported stored locale", () => {
     localStorage.setItem(legacyCommaLocaleStorageKey, "fr");
-    expect(readLegacyCommaLocalePreference()).toBe("system");
+    expect(readLegacyCommaLocalePreference()).toBe("pt-BR");
   });
 });
 
@@ -193,6 +256,14 @@ describe("CommaI18nProvider", () => {
     expect(screen.getByText("en:en:Settings")).toBeTruthy();
 
     view.rerender(
+      <CommaI18nProvider locale="pt-BR">
+        <LocaleProbe />
+      </CommaI18nProvider>
+    );
+    expect(screen.getByText("pt-BR:pt-BR:Configurações")).toBeTruthy();
+    expect(document.documentElement.lang).toBe("pt-BR");
+
+    view.rerender(
       <CommaI18nProvider locale="zh-CN">
         <LocaleProbe />
       </CommaI18nProvider>
@@ -202,14 +273,15 @@ describe("CommaI18nProvider", () => {
     expect(document.documentElement.lang).toBe("zh-CN");
   });
 
-  it("updates an uncontrolled renderer locale in memory", async () => {
+  it("starts an uncontrolled renderer in Brazilian Portuguese and switches in memory", async () => {
     render(
       <CommaI18nProvider>
         <LocaleProbe />
       </CommaI18nProvider>
     );
 
-    expect(screen.getByText("en:system:Settings")).toBeTruthy();
+    expect(screen.getByText("pt-BR:pt-BR:Configurações")).toBeTruthy();
+    expect(document.documentElement.lang).toBe("pt-BR");
     screen.getByRole("button", { name: "中文" }).click();
 
     expect(await screen.findByText("zh-CN:zh-CN:设置")).toBeTruthy();

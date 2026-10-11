@@ -9,6 +9,22 @@ afterEach(() => {
 describe("initializeElectronMainI18n", () => {
   it.each(
     [
+      { appLocale: "en-US", preferredSystemLanguages: ["en-US"] },
+      { appLocale: "zh-CN", preferredSystemLanguages: ["zh-CN"] },
+      { appLocale: "fr-FR", preferredSystemLanguages: [] },
+    ].map((row) => [row.appLocale, row] as [string, typeof row])
+  )(
+    "starts a device without a stored language in Brazilian Portuguese on a %s system",
+    (_name, { appLocale, preferredSystemLanguages }) => {
+      expect(initializeElectronMainI18n({ appLocale, preferredSystemLanguages })).toBe(
+        "pt-BR"
+      );
+      expect(messages.nav_inbox()).toBe("Caixa de entrada");
+    }
+  );
+
+  it.each(
+    [
       {
         name: "prefers the Electron app locale selected by --lang over OS preferences",
         appLocale: "zh-CN",
@@ -30,31 +46,47 @@ describe("initializeElectronMainI18n", () => {
         expected: "zh-CN",
         inbox: "收件箱",
       },
-    ].map((row) => [row.name, row] as [string, typeof row])
-  )("%s", (_name, { appLocale, preferredSystemLanguages, expected, inbox }) => {
-    expect(initializeElectronMainI18n({ appLocale, preferredSystemLanguages })).toBe(
-      expected
-    );
-    expect(messages.nav_inbox()).toBe(inbox);
-  });
-
-  it("follows the stored app language before the operating system", () => {
-    expect(
-      initializeElectronMainI18n({
-        appLocale: "en-US",
-        localePreference: "zh-CN",
+      {
+        name: "follows a Brazilian Portuguese system",
+        appLocale: "pt-BR",
         preferredSystemLanguages: ["en-US"],
-      })
-    ).toBe("zh-CN");
-    // A device that has not stored one yet follows the operating system.
-    expect(
-      initializeElectronMainI18n({
-        appLocale: "zh-CN",
-        localePreference: "system",
-        preferredSystemLanguages: [],
-      })
-    ).toBe("zh-CN");
-  });
+        expected: "pt-BR",
+        inbox: "Caixa de entrada",
+      },
+      {
+        name: "uses the product default for an unsupported system language",
+        appLocale: "ja-JP",
+        preferredSystemLanguages: ["fr-FR"],
+        expected: "pt-BR",
+        inbox: "Caixa de entrada",
+      },
+    ].map((row) => [row.name, row] as [string, typeof row])
+  )(
+    "with the System preference %s",
+    (_name, { appLocale, preferredSystemLanguages, expected, inbox }) => {
+      expect(
+        initializeElectronMainI18n({
+          appLocale,
+          localePreference: "system",
+          preferredSystemLanguages,
+        })
+      ).toBe(expected);
+      expect(messages.nav_inbox()).toBe(inbox);
+    }
+  );
+
+  it.each(["en", "zh-CN", "pt-BR"] as const)(
+    "follows a stored %s before the operating system",
+    (localePreference) => {
+      expect(
+        initializeElectronMainI18n({
+          appLocale: localePreference === "zh-CN" ? "en-US" : "zh-CN",
+          localePreference,
+          preferredSystemLanguages: ["fr-FR"],
+        })
+      ).toBe(localePreference);
+    }
+  );
 
   it("localizes the shutdown-safety dialog in Electron Main", () => {
     expect(
