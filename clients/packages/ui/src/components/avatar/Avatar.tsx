@@ -1,3 +1,4 @@
+import { useCommaMessages } from "@comma/i18n/react";
 import { useState, type ImgHTMLAttributes } from "react";
 import { PlaceholderIcon } from "../icons";
 import { cx } from "../utils";
@@ -36,6 +37,7 @@ export const Avatar = ({
   className,
   ...rest
 }: AvatarProps) => {
+  const messages = useCommaMessages();
   const [hasImageError, setHasImageError] = useState(false);
   const showImage = Boolean(src) && !hasImageError;
 
@@ -44,7 +46,7 @@ export const Avatar = ({
       {showImage ? (
         <img
           src={src}
-          alt={alt ?? name ?? "Avatar"}
+          alt={alt ?? name ?? messages.settings_profile_avatar()}
           className={cx(
             "rounded-full object-cover ring-1 ring-avatar-profile-photo-border",
             sizeClasses[size]

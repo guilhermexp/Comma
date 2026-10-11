@@ -13,6 +13,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { useCommaMessages } from "@comma/i18n/react";
 import { Button as AriaButton } from "react-aria-components";
 import {
   isReducedMotionEnabled,
@@ -128,8 +129,8 @@ export const resolveMediaFullWindowShortcut = (
   platform: AppKeybindingPlatform = detectAppKeybindingPlatform()
 ) =>
   platform === "macos"
-    ? ({ eventModifier: "metaKey", keys: ["⌘", "Click"] } as const)
-    : ({ eventModifier: "ctrlKey", keys: ["Ctrl", "Click"] } as const);
+    ? ({ eventModifier: "metaKey", modifierKey: "⌘" } as const)
+    : ({ eventModifier: "ctrlKey", modifierKey: "Ctrl" } as const);
 
 const stepPlaybackRateValue = (current: number, direction: -1 | 1) => {
   const currentIndex = playbackRates.findIndex((rate) => rate === current);
@@ -744,6 +745,7 @@ export const ChatPanelMediaPlayer = ({
   onExpand,
   tone = "light",
 }: ChatPanelMediaPlayerProps) => {
+  const messages = useCommaMessages();
   const { instant, run } = useInstantInteractionMotion();
   const { beginScrubbing, endScrubbing } = controller;
   const keyboardFocusMotion = useKeyboardFocusMotion();
@@ -769,11 +771,16 @@ export const ChatPanelMediaPlayer = ({
   const progressStyle = {
     "--chat-panel-media-progress": `${progress}%`,
   } as CSSProperties;
-  const fullWindowShortcut = resolveMediaFullWindowShortcut();
-  const mediaLabel = kind === "audio" ? "Audio" : "Video";
-  const progressLabel = `${formatMediaTime(
-    controller.currentTime
-  )} of ${formatMediaTime(controller.duration)}`;
+  const fullWindowShortcut = [
+    resolveMediaFullWindowShortcut().modifierKey,
+    messages.ui_media_shortcut_click(),
+  ];
+  const kindLabel =
+    kind === "audio" ? messages.ui_media_kind_audio() : messages.ui_media_kind_video();
+  const progressLabel = messages.ui_media_time_progress({
+    current: formatMediaTime(controller.currentTime),
+    total: formatMediaTime(controller.duration),
+  });
 
   useEffect(
     () => () => {
@@ -956,7 +963,11 @@ export const ChatPanelMediaPlayer = ({
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Shortcut keys bubble from focusable controls inside this playback group.
     <fieldset
-      aria-label={`${mediaLabel} playback controls`}
+      aria-label={
+        kind === "audio"
+          ? messages.ui_media_audio_playback_controls()
+          : messages.ui_media_video_playback_controls()
+      }
       className="chat-panel-media-player @container"
       data-controls-pinned={controlsPinned ? "true" : "false"}
       data-instant-motion={instant ? "true" : "false"}
@@ -969,12 +980,20 @@ export const ChatPanelMediaPlayer = ({
     >
       <div className="chat-panel-media-controls @max-xs:gap-xs @max-xs:px-md">
         <MediaControlTooltip
-          content={controller.isPlaying ? "Pause" : "Play"}
-          shortcut={mediaControlShortcuts.play}
+          content={
+            controller.isPlaying
+              ? messages.ui_media_pause()
+              : messages.settings_media_play()
+          }
+          shortcut={messages.onboarding_shortcut_space()}
         >
           <button
             aria-keyshortcuts="Space"
-            aria-label={controller.isPlaying ? `Pause ${kind}` : `Play ${kind}`}
+            aria-label={
+              controller.isPlaying
+                ? messages.ui_media_pause_kind({ kind: kindLabel })
+                : messages.ui_media_play_kind({ kind: kindLabel })
+            }
             className={mediaControlClassName}
             {...buttonPressFeedback}
             onClick={(event) =>
@@ -988,12 +1007,19 @@ export const ChatPanelMediaPlayer = ({
         <MediaVolumeControl
           buttonClassName={mediaControlClassName}
           labels={{
-            muted: "Muted. Change volume",
-            mute: "Mute",
-            popover: `${mediaLabel} volume controls`,
-            slider: `${mediaLabel} volume`,
-            unmute: "Unmute",
-            volume: (percent) => `Volume ${percent}%`,
+            muted: messages.ui_media_muted_change_volume(),
+            mute: messages.onboarding_sound_mute(),
+            popover:
+              kind === "audio"
+                ? messages.ui_media_audio_volume_controls()
+                : messages.ui_media_video_volume_controls(),
+            slider:
+              kind === "audio"
+                ? messages.ui_media_audio_volume()
+                : messages.ui_media_video_volume(),
+            unmute: messages.onboarding_sound_unmute(),
+            volume: (percent) =>
+              messages.onboarding_sound_volume({ percent: String(percent) }),
           }}
           onOpenChange={setVolumePopoverOpen}
           onToggleMuted={controller.toggleMuted}
@@ -1023,7 +1049,11 @@ export const ChatPanelMediaPlayer = ({
             <span className="chat-panel-media-progress-thumb" />
           </span>
           <input
-            aria-label={`${mediaLabel} playback position`}
+            aria-label={
+              kind === "audio"
+                ? messages.ui_media_audio_playback_position()
+                : messages.ui_media_video_playback_position()
+            }
             aria-valuetext={progressLabel}
             className="chat-panel-media-progress"
             data-no-press-feedback
@@ -1049,13 +1079,15 @@ export const ChatPanelMediaPlayer = ({
         </time>
         <MediaControlTooltip
           composite
-          content="Playback speed"
+          content={messages.settings_media_playback_speed()}
           shortcut={mediaControlShortcuts.playbackSpeed}
         >
           <MenuTrigger isOpen={rateMenuOpen} onOpenChange={handleRateMenuOpenChange}>
             <AriaButton
               aria-keyshortcuts="Comma Period"
-              aria-label={`Playback speed ${formatPlaybackRate(controller.playbackRate)}`}
+              aria-label={messages.ui_media_playback_speed_value({
+                rate: formatPlaybackRate(controller.playbackRate),
+              })}
               className={cx(
                 controlBaseClassName,
                 "chat-panel-media-speed-control w-6xl min-w-6xl",
@@ -1111,7 +1143,7 @@ export const ChatPanelMediaPlayer = ({
                 ref={ratePopoverPresenceRef}
               >
                 <Menu
-                  aria-label="Playback speed"
+                  aria-label={messages.settings_media_playback_speed()}
                   className="chat-panel-media-rate-menu text-xs"
                   disallowEmptySelection
                   onAction={(key) => {
@@ -1153,9 +1185,12 @@ export const ChatPanelMediaPlayer = ({
           />
         ) : null}
         {onExpand ? (
-          <MediaControlTooltip content="Full window" shortcut={fullWindowShortcut.keys}>
+          <MediaControlTooltip
+            content={messages.ui_video_picture_in_picture_full_window()}
+            shortcut={fullWindowShortcut}
+          >
             <button
-              aria-label="Full window"
+              aria-label={messages.ui_video_picture_in_picture_full_window()}
               className={mediaControlClassName}
               data-slot="chat-panel-video-expand"
               {...buttonPressFeedback}

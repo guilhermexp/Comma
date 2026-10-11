@@ -1,8 +1,9 @@
+import type { CommaLocale } from "@comma/i18n";
 import type { ApplicationMenuItems } from "@comma/native-bridge";
 
 export type ApplicationMenuPresentation = {
   items: ApplicationMenuItems;
-  locale: "en" | "zh-CN";
+  locale: CommaLocale;
 };
 /** Holds the renderer's latest menu presentation for every Main menu. */
 export class ApplicationMenuProvider {

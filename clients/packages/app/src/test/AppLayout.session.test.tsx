@@ -66,7 +66,7 @@ let listedDevices: {
 function renderSessionApp(
   controller: ReturnType<typeof createTestSessionHostController>,
   router: ReturnType<typeof createSessionRouter>,
-  locale?: CommaLocale
+  locale: CommaLocale = "en"
 ) {
   return render(
     <CommaWebClientSettingsProvider>
@@ -74,7 +74,7 @@ function renderSessionApp(
         <CommaAppearanceProvider>
           <CommaSideChatShortcutProvider>
             <CommaAppShortcutsProvider>
-              <CommaI18nProvider {...(locale ? { locale } : {})}>
+              <CommaI18nProvider locale={locale}>
                 <RouterProvider router={router} />
               </CommaI18nProvider>
             </CommaAppShortcutsProvider>

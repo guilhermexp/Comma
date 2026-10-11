@@ -1,35 +1,29 @@
 import type { SitePermissionMenuWindow } from "../../site-permission-menu-window";
+import { defaultLocale, messages } from "@comma/i18n";
 import { BaseWindow, dialog, systemPreferences } from "electron";
-import type {
-  SitePermissionPlatform,
-  SiteMediaPermission,
-  SitePermissionChoice,
-} from "./site-permissions";
+import { readMainLocale, type MainLocaleSource } from "../../main-locale";
+import type { SitePermissionPlatform } from "./site-permissions";
 
 const windowFor = (owner: unknown) =>
   owner instanceof BaseWindow && !owner.isDestroyed() ? owner : undefined;
 
 /** OS consent stays native; website settings use the trusted Comma menu window. */
 export function createSitePermissionPlatform(
-  locale?: string,
+  locale: MainLocaleSource = defaultLocale,
   menu?: SitePermissionMenuWindow
 ): SitePermissionPlatform {
-  const zh = locale === "zh-CN";
-  const title = zh ? "网站权限" : "Site permissions";
-  const mediaName = (media: SiteMediaPermission) =>
-    media === "microphone" ? (zh ? "麦克风" : "Microphone") : zh ? "摄像头" : "Camera";
-  const choiceName = (choice: SitePermissionChoice) =>
-    ({
-      ask: zh ? "每次询问" : "Ask",
-      allow: zh ? "允许" : "Allow",
-      block: zh ? "阻止" : "Block",
-    })[choice];
+  // Read at each dialog so the text follows the app language Main holds now.
+  const options = () => ({ locale: readMainLocale(locale) });
 
-  const error = (owner: unknown, message: string) => {
+  const show = (owner: unknown, message: string) => {
     const window = windowFor(owner);
     if (window)
       void dialog
-        .showMessageBox(window, { type: "error", title, message })
+        .showMessageBox(window, {
+          type: "error",
+          title: messages.site_permissions_title({}, options()),
+          message,
+        })
         .catch(() => undefined);
   };
   return {
@@ -38,17 +32,18 @@ export function createSitePermissionPlatform(
       if (!window || signal.aborted) return "ask";
       const result = await dialog.showMessageBox(window, {
         type: "question",
-        title,
-        message: zh
-          ? `${origin} 请求使用${media.map(mediaName).join("和")}`
-          : `${origin} wants to use your ${media.map(mediaName).join(" and ").toLowerCase()}`,
-        detail: zh
-          ? "选择将仅为此网站保存。可通过地址栏的网站权限修改。"
-          : "Your choice is saved for this website. Change it from Site permissions in the address bar.",
+        title: messages.site_permissions_title({}, options()),
+        message:
+          media.includes("microphone") && media.includes("camera")
+            ? messages.site_permissions_prompt_microphone_camera({ origin }, options())
+            : media.includes("camera")
+              ? messages.site_permissions_prompt_camera({ origin }, options())
+              : messages.site_permissions_prompt_microphone({ origin }, options()),
+        detail: messages.site_permissions_prompt_detail({}, options()),
         buttons: [
-          choiceName("allow"),
-          choiceName("block"),
-          zh ? "暂不允许" : "Not now",
+          messages.site_permissions_allow({}, options()),
+          messages.site_permissions_block({}, options()),
+          messages.site_permissions_not_now({}, options()),
         ],
         defaultId: 2,
         cancelId: 2,
@@ -81,17 +76,31 @@ export function createSitePermissionPlatform(
           if (await systemPreferences.askForMediaAccess(type)) status = "granted";
         }
         if (status !== "granted") {
-          error(
+          show(
             owner,
-            zh
-              ? `请在系统设置 → 隐私与安全性 → ${mediaName(type)}中允许 Comma（开发版为 Electron），然后重新加载页面。`
-              : `Allow Comma (Electron in development) under System Settings → Privacy & Security → ${mediaName(type)}, then reload the page.`
+            messages.site_permissions_system_access_denied(
+              {
+                media:
+                  type === "microphone"
+                    ? messages.site_permissions_microphone({}, options())
+                    : messages.site_permissions_camera({}, options()),
+              },
+              options()
+            )
           );
           return false;
         }
       }
       return true;
     },
-    reportError: error,
+    reportError: (owner, kind) =>
+      show(
+        owner,
+        {
+          "storage-unreadable": messages.site_permissions_storage_unreadable,
+          "storage-full": messages.site_permissions_storage_full,
+          failed: messages.site_permissions_failed,
+        }[kind]({}, options())
+      ),
   };
 }

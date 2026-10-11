@@ -1,4 +1,9 @@
-import { baseLocale, messages, taskStatusBucket, type CommaLocale } from "@comma/i18n";
+import {
+  defaultLocale,
+  messages,
+  taskStatusBucket,
+  type CommaLocale,
+} from "@comma/i18n";
 import {
   defaultCommaClientSettings,
   type AppPreferences,
@@ -10,6 +15,7 @@ import {
   type SessionProductLease,
 } from "@comma/session-contract";
 import type { StatusMenuRow } from "@comma/chat-contract";
+import { readMainLocale, type MainLocaleSource } from "./main-locale";
 import type { ProductInboxStateEnvelope } from "./modules/product-inbox";
 import type { StatusMenu } from "./native-side-chat";
 import { shortcutAccelerator } from "./open-comma-shortcut";
@@ -219,7 +225,7 @@ export function statusTrayTaskRoute(task: StatusTrayTask) {
 export function createCommaStatusTray({
   content,
   createHost,
-  locale = baseLocale,
+  locale = defaultLocale,
   onOpenMainApp,
   onOpenSettings,
   onOpenSideChat,
@@ -382,12 +388,15 @@ export function fallbackStatusTrayHost({
 export function helperStatusTrayHost({
   helper,
   iconPath,
+  locale = defaultLocale,
   onLost,
   onQuit,
   toolTip,
 }: {
   helper: StatusMenuHelper;
   iconPath: string;
+  /** Main's app language for key names in the shortcut column. */
+  locale?: MainLocaleSource | undefined;
   /** The helper is gone and with it the menu-bar item. */
   onLost(): void;
   onQuit(): void;
@@ -417,7 +426,9 @@ export function helperStatusTrayHost({
           id,
           kind: "item",
           title,
-          ...(accelerator ? { shortcut: menuShortcutText(accelerator) } : {}),
+          ...(accelerator
+            ? { shortcut: menuShortcutText(accelerator, readMainLocale(locale)) }
+            : {}),
         };
       });
       helper.showStatusMenu(
@@ -520,13 +531,12 @@ const shortcutKeys: Readonly<Record<string, string>> = {
   right: "→",
   semicolon: ";",
   slash: "/",
-  space: "Space",
   tab: "⇥",
   up: "↑",
 };
 
 /** An Electron accelerator ("Control+Alt+Space") as the menu shows it ("⌃⌥ Space"). */
-export function menuShortcutText(accelerator: string) {
+export function menuShortcutText(accelerator: string, locale: CommaLocale) {
   const parts = accelerator.split("+");
   const key = parts.pop() ?? "";
   const modifiers = new Set(parts.map((part) => part.toLowerCase()));
@@ -534,7 +544,10 @@ export function menuShortcutText(accelerator: string) {
     .filter(([, names]) => names.some((name) => modifiers.has(name)))
     .map(([glyph]) => glyph)
     .join("");
-  const keyText = shortcutKeys[key.toLowerCase()] ?? key.toUpperCase();
+  const keyText =
+    key.toLowerCase() === "space"
+      ? messages.onboarding_shortcut_space({}, { locale })
+      : (shortcutKeys[key.toLowerCase()] ?? key.toUpperCase());
   return glyphs ? `${glyphs} ${keyText}` : keyText;
 }
 

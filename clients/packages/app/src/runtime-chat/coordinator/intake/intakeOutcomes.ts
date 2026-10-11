@@ -1,4 +1,5 @@
 import type { ConversationProjection } from "@comma/chat-contract";
+import { messages, type CommaLocale } from "@comma/i18n";
 import type { ChatAttachmentIntakeOutcome } from "../hostContract";
 
 /** A claimed native intake whose outcome a send may still have to wait for. */
@@ -25,10 +26,11 @@ const INTAKE_FAILURE_ATTACHMENT_PREFIX = "chat-intake-failure:";
 
 /** The failure rows not yet removed or retried. */
 export function unresolvedIntakeFailureRows(
-  failures: ReadonlyMap<string, ChatAttachmentIntakeFailure>
+  failures: ReadonlyMap<string, ChatAttachmentIntakeFailure>,
+  locale: CommaLocale
 ) {
   return [...failures.entries()].flatMap(([intakeId, failure]) =>
-    attachmentIntakeFailureRows(intakeId, failure).filter(
+    attachmentIntakeFailureRows(intakeId, failure, locale).filter(
       (_, errorIndex) => !failure.resolvedErrorIndexes.has(errorIndex)
     )
   );
@@ -75,16 +77,17 @@ function parseIntakeFailureAttachmentId(id: string) {
 
 function attachmentIntakeFailureRows(
   intakeId: string,
-  failure: ChatAttachmentIntakeFailure
+  failure: ChatAttachmentIntakeFailure,
+  locale: CommaLocale
 ): ConversationProjection["draftAttachments"] {
   const count = failedItemCount(failure);
   return Array.from({ length: count }, (_, errorIndex) => {
     const error = failure.outcome.errors?.[errorIndex];
     return {
-      error: error?.message ?? "The selected file could not be attached.",
+      error: error?.message ?? messages.chat_attachment_intake_failed({}, { locale }),
       id: intakeFailureAttachmentId(intakeId, errorIndex),
       isImage: error?.isImage ?? false,
-      name: error?.name ?? "Selected file",
+      name: error?.name ?? messages.chat_attachment_selected_file({}, { locale }),
       size: 0,
       status: "failed" as const,
     };

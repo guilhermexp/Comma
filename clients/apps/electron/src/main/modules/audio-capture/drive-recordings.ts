@@ -6,6 +6,8 @@ import {
   type AudioCaptureOpenSavedResult,
   type AudioCaptureRecording,
 } from "@comma/native-bridge";
+import { defaultLocale, messages } from "@comma/i18n";
+import { readMainLocale, type MainLocaleSource } from "../../main-locale";
 import type { SynchronicityProvider } from "../synchronicity";
 import { resolveLocalDriveTarget } from "../synchronicity/local-path";
 
@@ -31,7 +33,8 @@ export class DriveRecordingStore implements AudioCaptureDriveStore {
       SynchronicityProvider,
       "state" | "importFile" | "write"
     >,
-    private readonly openPath: (path: string) => Promise<string>
+    private readonly openPath: (path: string) => Promise<string>,
+    private readonly locale: MainLocaleSource = defaultLocale
   ) {}
 
   async target(): Promise<RecordingDriveTarget> {
@@ -82,13 +85,14 @@ export class DriveRecordingStore implements AudioCaptureDriveStore {
   }
 
   async open(input: AudioCaptureDriveFile): Promise<AudioCaptureOpenSavedResult> {
+    const options = { locale: readMainLocale(this.locale) };
     try {
       const driveFile = audioCaptureDriveFileSchema.parse(input);
       const target = await this.target();
       if (driveFile.space !== target.space) {
         return {
           status: "unavailable",
-          reason: "The recording's Drive is no longer available on this device.",
+          reason: messages.recording_open_drive_unavailable({}, options),
         };
       }
       // The configured source is Main's authority. A renderer path, including
@@ -104,22 +108,20 @@ export class DriveRecordingStore implements AudioCaptureDriveStore {
       ) {
         return {
           status: "unavailable",
-          reason: "The recording is no longer in its Drive folder.",
+          reason: messages.recording_open_missing({}, options),
         };
       }
       const failure = await this.openPath(path);
       return failure
         ? {
             status: "unavailable",
-            reason:
-              "The system could not open this recording. Check the default app for audio files.",
+            reason: messages.recording_open_system_failed({}, options),
           }
         : { status: "opened" };
     } catch {
       return {
         status: "unavailable",
-        reason:
-          "The recording is not available on this device yet, or was moved or deleted. Try again after Drive finishes syncing.",
+        reason: messages.recording_open_not_synced({}, options),
       };
     }
   }

@@ -1,5 +1,5 @@
 import type { BaseWindow, BrowserWindowConstructorOptions } from "electron";
-import { baseLocale, messages, type CommaLocale } from "@comma/i18n";
+import { defaultLocale, messages, type CommaLocale } from "@comma/i18n";
 import { opaqueWindowBackgroundColor } from "./window-background";
 
 export interface RendererWindowIdentityOptions {
@@ -112,7 +112,7 @@ export function createRuntimeWorkbenchWindowOptions({
 }
 
 export function createSideChatWindowOptions({
-  locale = baseLocale,
+  locale = defaultLocale,
   platform = process.platform,
   preloadPath,
   productName,
@@ -219,7 +219,7 @@ export function createSideChatTestWindowOptions({
  */
 export function createOnboardingWindowOptions({
   bounds,
-  locale = baseLocale,
+  locale = defaultLocale,
   preloadPath,
   productName,
   windowId,

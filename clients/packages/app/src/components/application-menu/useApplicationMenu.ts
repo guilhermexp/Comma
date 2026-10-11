@@ -1,3 +1,4 @@
+import { defaultLocale, messages, type CommaLocale } from "@comma/i18n";
 import { useCommaLocale } from "@comma/i18n/react";
 import {
   getNativeBridge,
@@ -13,7 +14,7 @@ import {
 
 type MenuAction = ApplicationMenuItems[number] & { run: () => unknown };
 const owners = new Map<symbol, readonly MenuAction[]>();
-let locale: "en" | "zh-CN" = "en";
+let locale: CommaLocale = defaultLocale;
 let unsubscribe: (() => void) | undefined;
 let publishQueued = false;
 function publish() {
@@ -73,7 +74,9 @@ export function useApplicationMenu(actions: readonly MenuAction[]) {
             .then(action.run)
             .catch((error: unknown) => {
               toast.error(
-                error instanceof Error ? error.message : "Menu action failed"
+                error instanceof Error
+                  ? error.message
+                  : messages.app_menu_action_failed({}, { locale })
               );
             });
       });

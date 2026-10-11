@@ -4,7 +4,8 @@ import {
   type ComputePanelDetail,
 } from "./useLocalComputeCategory";
 import { useEffect, useRef, useState } from "react";
-import { useCommaMessages } from "@comma/i18n/react";
+import { formatDate } from "@comma/i18n";
+import { useCommaLocale, useCommaMessages } from "@comma/i18n/react";
 import {
   Dialog,
   type SettingsCategoryDefinition,
@@ -24,6 +25,7 @@ export function useComputeNodeCategory(
   visible: boolean
 ): SettingsCategoryDefinition {
   const m = useCommaMessages();
+  const locale = useCommaLocale();
   const node = useComputeNode();
   const [workspaceId, setWorkspaceId] = useState(readActiveWorkspaceId);
   const [detail, setDetail] = useState<ComputePanelDetail>();
@@ -348,7 +350,7 @@ export function useComputeNodeCategory(
     id: "compute-node.status",
     title: status,
     description: state?.observedAt
-      ? `${reason} ${m.compute_confirmed_at({ time: new Date(state.observedAt).toLocaleString() })}`
+      ? `${reason} ${m.compute_confirmed_at({ time: formatDate(new Date(state.observedAt), locale, { dateStyle: "medium", timeStyle: "short" }) })}`
       : reason,
     ...(workspaceUnconfirmed
       ? {

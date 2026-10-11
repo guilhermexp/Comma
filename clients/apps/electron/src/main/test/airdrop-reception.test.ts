@@ -48,6 +48,7 @@ function harness() {
     reveal: vi.fn(),
   };
   const reception = new AirDropReception({
+    locale: "en",
     notch,
     platform,
     publish: (state) => published.push(state),

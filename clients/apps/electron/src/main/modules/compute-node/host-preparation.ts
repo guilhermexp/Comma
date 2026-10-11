@@ -1,4 +1,6 @@
+import { messages } from "@comma/i18n";
 import { assertMaintenanceCapable } from "./host-maintenance-protocol";
+import { ComputeProblemError, computeProblem } from "./problem";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, createReadStream, realpathSync } from "node:fs";
 import { access, lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
@@ -143,7 +145,7 @@ export class AgentVMMHostPreparation implements HostPreparation {
     artifactSize?: number;
   }> {
     if (!/^[a-f0-9-]{36}$/.test(requestId))
-      throw new Error("Invalid maintenance request.");
+      throw computeProblem(messages.electron_compute_maintenance_request_invalid, {});
     const phase = (value: HostPreparationState["phase"]) => {
       this.phase = value;
       report(this.state());
@@ -157,7 +159,10 @@ export class AgentVMMHostPreparation implements HostPreparation {
         (await pathExists(sourceDirectory)) &&
         (await lstat(sourceDirectory)).isSymbolicLink()
       )
-        throw new Error("Maintenance bundle directory cannot be a symbolic link.");
+        throw computeProblem(
+          messages.electron_compute_maintenance_bundle_directory_link,
+          {}
+        );
       const sourceApp = join(sourceDirectory, APP_NAME);
       const prepared = join(this.config.directory, ".prepared");
       if (await pathExists(sourceApp)) {
@@ -194,7 +199,10 @@ export class AgentVMMHostPreparation implements HostPreparation {
         ? (this.buildReleaseId ?? version.release_id)
         : artifact.release_id;
       if (version.release_id !== targetReleaseId)
-        throw new Error("Host bundle release does not match the selected artifact.");
+        throw computeProblem(
+          messages.electron_compute_host_bundle_release_mismatch,
+          {}
+        );
       const digest = this.config.sourcePath
         ? {}
         : { artifactSha256: artifact.sha256, artifactSize: artifact.size };
@@ -214,7 +222,7 @@ export class AgentVMMHostPreparation implements HostPreparation {
 
   private async verifyBundle(appPath: string) {
     if ((await lstat(appPath)).isSymbolicLink())
-      throw new Error("Host bundle cannot be a symbolic link.");
+      throw computeProblem(messages.electron_compute_host_bundle_link, {});
     await this.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", appPath]);
     for (const executable of [
       "Helpers/agent-vmm-lifecycle",
@@ -243,9 +251,7 @@ export class AgentVMMHostPreparation implements HostPreparation {
     } catch {
       lock.close();
       phase("failed");
-      throw new Error(
-        "Another Comma process is preparing this Host. Retry after it finishes."
-      );
+      throw computeProblem(messages.electron_compute_host_preparation_busy, {});
     }
     try {
       await this.assertSetupAllowed();
@@ -260,7 +266,7 @@ export class AgentVMMHostPreparation implements HostPreparation {
       const installed = await pathExists(this.config.appPath);
       if (installed) {
         if ((await lstat(this.config.appPath)).isSymbolicLink())
-          throw new Error("Host installation cannot be a symbolic link.");
+          throw computeProblem(messages.electron_compute_host_installation_link, {});
         await access(this.config.lifecyclePath, constants.X_OK);
         if (!rebuild) {
           await this.activateSource();
@@ -318,10 +324,15 @@ export class AgentVMMHostPreparation implements HostPreparation {
     } catch (error) {
       const failedPhase = this.phase;
       phase("failed");
-      throw new Error(
-        `${failedPhase}: ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error }
-      );
+      throw error instanceof ComputeProblemError
+        ? new ComputeProblemError(
+            (locale) => `${failedPhase}: ${error.localize(locale)}`,
+            { cause: error }
+          )
+        : new Error(
+            `${failedPhase}: ${error instanceof Error ? error.message : String(error)}`,
+            { cause: error }
+          );
     } finally {
       lock.close();
     }
@@ -336,9 +347,12 @@ export class AgentVMMHostPreparation implements HostPreparation {
       );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-      throw new Error(
-        "Local Host maintenance policy is unreadable; automatic setup is paused.",
-        { cause: error }
+      throw computeProblem(
+        messages.electron_compute_maintenance_policy_unreadable,
+        {},
+        {
+          cause: error,
+        }
       );
     }
     if (
@@ -351,9 +365,7 @@ export class AgentVMMHostPreparation implements HostPreparation {
       ("activeRequest" in policy && policy.activeRequest) ||
       policy.uninstalled
     )
-      throw new Error(
-        "Continue local Host maintenance or explicitly reinstall Agent VMM before automatic setup."
-      );
+      throw computeProblem(messages.electron_compute_setup_maintenance_pending, {});
   }
 
   private async activateSource() {
@@ -385,7 +397,7 @@ export class AgentVMMHostPreparation implements HostPreparation {
       typeof pending.requestId !== "string" ||
       !pending.requestId
     ) {
-      throw new Error("The pending Host update record is invalid.");
+      throw computeProblem(messages.electron_compute_host_update_record_invalid, {});
     }
     await assertMaintenanceCapable(
       this.config.lifecyclePath,
@@ -444,9 +456,14 @@ export class AgentVMMHostPreparation implements HostPreparation {
       const partial = `${archive}.part`;
       const response = await this.fetchArchive(url);
       if (!response.ok || !response.body)
-        throw new Error(`Host download failed (HTTP ${response.status}).`);
+        throw computeProblem(messages.electron_compute_host_download_failed, {
+          status: response.status,
+        });
       if (new URL(response.url || url).protocol !== "https:")
-        throw new Error("Host download redirected outside HTTPS.");
+        throw computeProblem(
+          messages.electron_compute_host_download_insecure_redirect,
+          {}
+        );
       const digest = createHash("sha256");
       let bytes = 0;
       const file = await open(partial, "w", 0o600);
@@ -457,7 +474,9 @@ export class AgentVMMHostPreparation implements HostPreparation {
             transform(chunk: Buffer, _encoding, callback) {
               bytes += chunk.length;
               if (bytes > MAX_ARCHIVE_BYTES) {
-                callback(new Error("Host archive exceeds 2 GiB."));
+                callback(
+                  computeProblem(messages.electron_compute_host_archive_too_large, {})
+                );
                 return;
               }
               digest.update(chunk);
@@ -473,9 +492,7 @@ export class AgentVMMHostPreparation implements HostPreparation {
         url.href === getPublishedAssetUrl(selected.path) &&
         (bytes !== selected.size || digest.digest("hex") !== selected.sha256)
       ) {
-        throw new Error(
-          "Host download does not match the selected published artifact. Retry the download."
-        );
+        throw computeProblem(messages.electron_compute_host_download_mismatch, {});
       }
       await rename(partial, archive);
       const record = await open(metadata, "w", 0o600);
@@ -504,8 +521,9 @@ export class AgentVMMHostPreparation implements HostPreparation {
             expanded > MAX_EXTRACTED_BYTES ||
             mode === 0o120000
           ) {
-            throw new Error(
-              "Host archive contains an unsupported link or exceeds 8 GiB."
+            throw computeProblem(
+              messages.electron_compute_host_archive_unsupported,
+              {}
             );
           }
         },
@@ -522,18 +540,26 @@ export class AgentVMMHostPreparation implements HostPreparation {
     const signal = AbortSignal.timeout(15 * 60_000);
     for (let redirects = 0; redirects <= 5; redirects += 1) {
       if (url.protocol !== "https:" || url.username || url.password) {
-        throw new Error(
-          "Host download requires HTTPS without URL credentials, including redirects."
+        throw computeProblem(
+          messages.electron_compute_host_download_requires_https,
+          {}
         );
       }
       const response = await this.fetcher(url, { signal, redirect: "manual" });
       if (response.status < 300 || response.status >= 400) return response;
       const location = response.headers.get("location");
       await response.body?.cancel();
-      if (!location) throw new Error("Host download redirect has no location.");
+      if (!location)
+        throw computeProblem(
+          messages.electron_compute_host_download_redirect_missing,
+          {}
+        );
       url = new URL(location, url);
     }
-    throw new Error("Host download exceeded five redirects.");
+    throw computeProblem(
+      messages.electron_compute_host_download_too_many_redirects,
+      {}
+    );
   }
 
   private async build(

@@ -21,7 +21,7 @@ class BridgeConversationChannel extends SessionBoundBridgeConversationChannel {
       "session"
     >
   ) {
-    super({ ...options, session: testProductLease });
+    super({ locale: "en", ...options, session: testProductLease });
   }
 }
 

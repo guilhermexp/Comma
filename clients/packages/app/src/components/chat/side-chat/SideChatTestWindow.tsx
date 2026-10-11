@@ -13,6 +13,7 @@ import {
   useChatSidebarWidth,
   useRegisterChatSidebarHost,
 } from "../../chat-sidebar/ChatSidebarContext";
+import { useCommaMessages } from "@comma/i18n/react";
 import { motionDuration, SideChatDiagnostics } from "@comma/ui";
 import {
   createContext,
@@ -253,6 +254,7 @@ function SideChatTaskWindowSurface({
   theme: "Dark mode" | "Light mode";
   transitionPhase: SideChatWindowTransitionPhase;
 }) {
+  const messages = useCommaMessages();
   const { isOpen } = useChatSidebar();
   const { width } = useChatSidebarWidth();
   const shellRef = useRef<HTMLDialogElement>(null);
@@ -331,7 +333,7 @@ function SideChatTaskWindowSurface({
   } as CSSProperties;
   return (
     <main
-      aria-label="Task chat window"
+      aria-label={messages.side_chat_task_window_label()}
       className="comma-side-chat-test-window"
       data-content-visible={contentVisible}
       data-expanded={expanded}
@@ -352,7 +354,7 @@ function SideChatTaskWindowSurface({
         inert={!isOpen}
       />
       <dialog
-        aria-label="Task chat"
+        aria-label={messages.task_chat_label()}
         aria-modal="true"
         className="comma-side-chat-test-shell"
         ref={shellRef}
@@ -363,7 +365,7 @@ function SideChatTaskWindowSurface({
             <CommaAuthGate
               signedOutFallback={
                 <div className="comma-side-chat-task-window-state">
-                  Sign in from the Comma main window to open this task chat.
+                  {messages.side_chat_task_window_signed_out()}
                 </div>
               }
             >
@@ -407,6 +409,7 @@ function SideChatTaskWindowConversation({
   onDismiss: () => void;
   target: SideChatTaskWindowTarget;
 }) {
+  const messages = useCommaMessages();
   const [target, setTarget] = useState(initialTarget);
   const portal = useContext(TaskSidebarPortalContext);
   const sidebar = useChatSidebar();
@@ -437,9 +440,15 @@ function SideChatTaskWindowConversation({
     <div className="comma-side-chat-task-window-layout">
       <section className="comma-side-chat-task-window-chat">
         <header className="comma-side-chat-task-window-header">
-          <h1>{conversation.state.conversation?.title || "Task chat"}</h1>
+          <h1>
+            {conversation.state.conversation?.title || messages.task_chat_label()}
+          </h1>
           <ChatSidebarToggle />
-          <button aria-label="Close task chat" onClick={onDismiss} type="button">
+          <button
+            aria-label={messages.task_close_chat()}
+            onClick={onDismiss}
+            type="button"
+          >
             ×
           </button>
         </header>

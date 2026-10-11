@@ -1127,7 +1127,7 @@ export function AppSettingsRoute({
                     description: labelProposalPolicy.error
                       ? m.settings_label_changes_failed()
                       : m.settings_label_changes_description(),
-                    keywords: ["label", "标签"],
+                    keywords: ["label", "标签", "etiqueta", "rótulo"],
                     control: {
                       type: "dropdown",
                       value: labelProposalPolicy.value,
@@ -1153,12 +1153,16 @@ export function AppSettingsRoute({
                     id: "app.language",
                     title: m.settings_language(),
                     description: m.settings_language_description(),
-                    keywords: ["locale", "语言"],
+                    keywords: ["locale", "语言", "idioma", "língua", "português"],
                     control: {
                       type: "dropdown",
                       value: locale,
                       placeholder: m.settings_language_select(),
                       items: [
+                        {
+                          id: "pt-BR",
+                          label: m.settings_language_portuguese_brazil(),
+                        },
                         { id: "en", label: m.settings_language_english() },
                         {
                           id: "zh-CN",
@@ -1177,7 +1181,14 @@ export function AppSettingsRoute({
                       appPreferences?.launchAtLoginStatus === "requires-approval"
                         ? m.settings_launch_at_login_requires_approval_description()
                         : m.settings_launch_at_login_description(),
-                    keywords: ["startup", "boot", "开机"],
+                    keywords: [
+                      "startup",
+                      "boot",
+                      "开机",
+                      "inicialização",
+                      "iniciar",
+                      "início de sessão",
+                    ],
                     control: {
                       type: "toggle",
                       checked: appPreferences?.launchAtLogin ?? false,
@@ -1245,7 +1256,7 @@ export function AppSettingsRoute({
                           id: "app.side-chat",
                           title: m.settings_side_chat(),
                           description: m.settings_side_chat_description(),
-                          keywords: ["side chat", "侧边聊天"],
+                          keywords: ["side chat", "侧边聊天", "chat lateral"],
                           control: {
                             type: "toggle" as const,
                             checked: appPreferences?.sideChatEnabled ?? false,
@@ -1263,7 +1274,16 @@ export function AppSettingsRoute({
                     id: "app.keep-awake-lid-closed",
                     title: m.settings_keep_awake_lid_closed(),
                     description: keepAwakeDescription,
-                    keywords: ["sleep", "caffeinate", "休眠", "合盖"],
+                    keywords: [
+                      "sleep",
+                      "caffeinate",
+                      "休眠",
+                      "合盖",
+                      "repouso",
+                      "suspensão",
+                      "tampa",
+                      "manter ativo",
+                    ],
                     control: {
                       type: "toggle",
                       checked: keepAwakeApprovalDialogOpen || keepAwakeOn,
@@ -1292,7 +1312,7 @@ export function AppSettingsRoute({
                           id: "app.airdrop",
                           title: m.settings_show_in_airdrop(),
                           description: m.settings_show_in_airdrop_description(),
-                          keywords: ["airdrop", "隔空投送"],
+                          keywords: ["airdrop", "隔空投送", "compartilhar"],
                           control: {
                             type: "toggle" as const,
                             checked: appPreferences?.showInAirDrop ?? false,
@@ -1321,7 +1341,14 @@ export function AppSettingsRoute({
                           id: "app.notch",
                           title: m.settings_show_in_notch(),
                           description: m.settings_show_in_notch_description(),
-                          keywords: ["notch", "dynamic island", "刘海", "灵动岛"],
+                          keywords: [
+                            "notch",
+                            "dynamic island",
+                            "刘海",
+                            "灵动岛",
+                            "entalhe",
+                            "ilha dinâmica",
+                          ],
                           control: {
                             type: "toggle" as const,
                             checked: appPreferences?.showInNotch ?? false,
@@ -1484,7 +1511,7 @@ export function AppSettingsRoute({
                           id: "appearance.font-family",
                           title: m.settings_font_family(),
                           description: m.settings_font_family_description(),
-                          keywords: ["font", "typeface", "字体"],
+                          keywords: ["font", "typeface", "字体", "fonte", "tipografia"],
                           control: {
                             type: "dropdown" as const,
                             width: "fixed" as const,
@@ -1550,7 +1577,15 @@ export function AppSettingsRoute({
                     id: "appearance.reduce-motion",
                     title: m.settings_reduce_motion(),
                     description: m.settings_reduce_motion_description(),
-                    keywords: ["animation", "motion", "accessibility", "动画"],
+                    keywords: [
+                      "animation",
+                      "motion",
+                      "accessibility",
+                      "动画",
+                      "animação",
+                      "movimento",
+                      "acessibilidade",
+                    ],
                     control: {
                       type: "toggle",
                       checked: reducedMotion,
@@ -1567,7 +1602,7 @@ export function AppSettingsRoute({
             id: "notifications",
             icon: "notifications",
             label: m.settings_notifications(),
-            keywords: ["notification", "通知"],
+            keywords: ["notification", "通知", "notificação", "notificações"],
             sections: [
               {
                 id: "notifications.delivery",
@@ -1578,7 +1613,16 @@ export function AppSettingsRoute({
                     id: "notifications.system",
                     title: m.settings_system_notifications(),
                     description: systemNotificationsDescription,
-                    keywords: ["notification", "system", "banner", "通知", "系统"],
+                    keywords: [
+                      "notification",
+                      "system",
+                      "banner",
+                      "通知",
+                      "系统",
+                      "notificação",
+                      "sistema",
+                      "alerta",
+                    ],
                     control: {
                       type: "toggle",
                       checked: systemNotificationsChecked,
@@ -1597,7 +1641,15 @@ export function AppSettingsRoute({
                     id: "notifications.router-messages",
                     title: m.settings_router_notifications(),
                     description: m.settings_router_notifications_description(),
-                    keywords: ["notification", "router", "message", "通知", "消息"],
+                    keywords: [
+                      "notification",
+                      "router",
+                      "message",
+                      "通知",
+                      "消息",
+                      "notificação",
+                      "mensagem",
+                    ],
                     control: {
                       type: "toggle",
                       checked: appPreferences?.notifyRouterMessages ?? false,
@@ -1617,7 +1669,15 @@ export function AppSettingsRoute({
                     id: "notifications.sound",
                     title: m.settings_notification_sound(),
                     description: m.settings_notification_sound_description(),
-                    keywords: ["notification", "sound", "通知", "铃声"],
+                    keywords: [
+                      "notification",
+                      "sound",
+                      "通知",
+                      "铃声",
+                      "notificação",
+                      "som",
+                      "toque",
+                    ],
                     // Auditioning stays available while the toggle is off, so
                     // the sound can be heard before deciding to turn it on.
                     controlLeading: (
@@ -1696,7 +1756,14 @@ export function AppSettingsRoute({
                     id: definition.settingsItemId,
                     title: copy.title,
                     description: copy.description,
-                    keywords: ["hotkey", "shortcut", "快捷键", copy.title],
+                    keywords: [
+                      "hotkey",
+                      "shortcut",
+                      "快捷键",
+                      "atalho",
+                      "teclado",
+                      copy.title,
+                    ],
                     control: {
                       type: "keybinding" as const,
                       value: appShortcutBindings[definition.id],
@@ -1746,7 +1813,7 @@ export function AppSettingsRoute({
                     id: "keyboard.open-comma",
                     title: m.settings_open_comma(),
                     description: m.settings_open_comma_description(),
-                    keywords: ["hotkey", "shortcut", "快捷键"],
+                    keywords: ["hotkey", "shortcut", "快捷键", "atalho", "teclado"],
                     ...(electronRuntime
                       ? {
                           control: {
@@ -1775,7 +1842,15 @@ export function AppSettingsRoute({
                           id: "keyboard.open-side-chat",
                           title: m.settings_open_side_chat(),
                           description: m.settings_open_side_chat_description(),
-                          keywords: ["side chat", "hotkey", "shortcut", "侧边聊天"],
+                          keywords: [
+                            "side chat",
+                            "hotkey",
+                            "shortcut",
+                            "侧边聊天",
+                            "chat lateral",
+                            "atalho",
+                            "teclado",
+                          ],
                           control: {
                             type: "shortcut" as const,
                             value: sideChatShortcut,
@@ -2093,7 +2168,17 @@ export function AppSettingsRoute({
             id: "channels",
             icon: "channels",
             label: m.settings_channels(),
-            keywords: ["telegram", "tg", "wechat", "微信", "ClawBot", "signal", "消息"],
+            keywords: [
+              "telegram",
+              "tg",
+              "wechat",
+              "微信",
+              "ClawBot",
+              "signal",
+              "消息",
+              "canais",
+              "mensagens",
+            ],
             ...(signalChannel.overlay ? { overlay: signalChannel.overlay } : {}),
             sections: [
               {

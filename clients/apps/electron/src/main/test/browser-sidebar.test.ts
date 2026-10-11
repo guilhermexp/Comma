@@ -1897,6 +1897,7 @@ async function createHarness({
     createView,
     createComposerView,
     composerUrl: "assets://./#/browser-inspection-composer",
+    locale: "en",
     getCallerWindowId: () => "win_main",
     onClientOpenTabRequested,
     onStateChanged: async (_windowId, state) => {

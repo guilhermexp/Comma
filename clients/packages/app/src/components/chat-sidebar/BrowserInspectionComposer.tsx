@@ -85,7 +85,7 @@ export function BrowserInspectionComposer() {
             setDraft("");
             emit({ message, type: "submit" });
           }}
-          placeholder="Ask about this element…"
+          placeholder={messages.chat_browser_inspect_placeholder()}
           submitDisabled={false}
           toolbarLeading={
             <AriaButton

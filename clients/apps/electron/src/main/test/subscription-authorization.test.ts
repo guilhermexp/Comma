@@ -11,10 +11,32 @@ import {
 import { createServer } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SubscriptionAuthorizationService } from "../subscription-authorization";
+import { subscriptionAuthorizationPage } from "../subscription-authorization-page";
 import type { MainSessionBoundApi } from "../modules/session/main-session-transport";
 
 const services: SubscriptionAuthorizationService[] = [];
 afterEach(() => services.splice(0).forEach((service) => service.dispose()));
+describe("subscription authorization page", () => {
+  it("renders in the app language and declares it on the document", () => {
+    const portuguese = subscriptionAuthorizationPage(
+      "received",
+      "subscription",
+      "comma-dev://authorization/return",
+      "pt-BR"
+    );
+    expect(portuguese).toContain('<html lang="pt-BR">');
+    expect(portuguese).toContain("Autorização recebida");
+    expect(portuguese).toContain("Voltar ao Comma");
+    const chinese = subscriptionAuthorizationPage(
+      "invalid",
+      "byok",
+      undefined,
+      "zh-CN"
+    );
+    expect(chinese).toContain('<html lang="zh-CN">');
+    expect(chinese).toContain("链接不可用");
+  });
+});
 function setup(timeoutMs?: number, provider: "codex" | "claude" = "codex") {
   const complete = vi.fn().mockResolvedValue({ id: "account" });
   const begin = vi.fn().mockResolvedValue({
@@ -41,7 +63,8 @@ function setup(timeoutMs?: number, provider: "codex" | "claude" = "codex") {
     {
       url: "comma-dev://authorization/return",
       open: returnToApp,
-    }
+    },
+    "en"
   );
   services.push(service);
   return { service, open, begin, complete, current, returnToApp };

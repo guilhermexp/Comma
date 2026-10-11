@@ -19,7 +19,7 @@ describe("initializeElectronMainI18n", () => {
       expect(initializeElectronMainI18n({ appLocale, preferredSystemLanguages })).toBe(
         "pt-BR"
       );
-      expect(messages.nav_inbox()).toBe("Caixa de entrada");
+      expect(messages.nav_inbox()).toBe("Entrada");
     }
   );
 
@@ -51,14 +51,14 @@ describe("initializeElectronMainI18n", () => {
         appLocale: "pt-BR",
         preferredSystemLanguages: ["en-US"],
         expected: "pt-BR",
-        inbox: "Caixa de entrada",
+        inbox: "Entrada",
       },
       {
         name: "uses the product default for an unsupported system language",
         appLocale: "ja-JP",
         preferredSystemLanguages: ["fr-FR"],
         expected: "pt-BR",
-        inbox: "Caixa de entrada",
+        inbox: "Entrada",
       },
     ].map((row) => [row.name, row] as [string, typeof row])
   )(

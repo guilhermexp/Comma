@@ -1,5 +1,7 @@
+import { messages } from "@comma/i18n";
 import { z } from "zod";
 import type { HostCommand } from "./host-preparation";
+import { computeProblem } from "./problem";
 
 export const nativeReceiptSchema = z.object({
   version: z.literal(1),
@@ -41,9 +43,12 @@ export async function assertMaintenanceCapable(
     );
     if (value !== null) nativeReceiptSchema.parse(value);
   } catch (error) {
-    throw new Error(
-      "Update Agent VMM Host in Local maintenance before changing this connection.",
-      { cause: error }
+    throw computeProblem(
+      messages.electron_compute_host_update_required,
+      {},
+      {
+        cause: error,
+      }
     );
   }
 }

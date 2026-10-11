@@ -1,4 +1,5 @@
-import { useCommaMessages } from "@comma/i18n/react";
+import { formatNumber } from "@comma/i18n";
+import { useCommaLocale, useCommaMessages } from "@comma/i18n/react";
 import {
   Button,
   ChainLinkIcon,
@@ -108,6 +109,7 @@ function TaskShareDialog({
   workspaceId,
 }: TaskShareButtonProps & { onClose: () => void }) {
   const messages = useCommaMessages();
+  const locale = useCommaLocale();
   const [state, setState] = useState<ShareState>({ kind: "loading" });
   const [pending, setPending] = useState(false);
   // The link a successful copy put on the clipboard. A reset issues another
@@ -346,7 +348,7 @@ function TaskShareDialog({
               <p className="text-xs text-tertiary">
                 {messages.task_share_file_count({
                   count: share.artifact_count,
-                  formattedCount: share.artifact_count.toLocaleString(),
+                  formattedCount: formatNumber(share.artifact_count, locale),
                 })}
               </p>
             ) : null}

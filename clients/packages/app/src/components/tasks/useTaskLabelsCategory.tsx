@@ -143,7 +143,7 @@ export function useTaskLabelsCategory(
   const category: SettingsCategoryDefinition = {
     id: "labels",
     icon: "labels",
-    keywords: ["label", "tag", "标签"],
+    keywords: ["label", "tag", "标签", "etiqueta", "rótulo", "marcador"],
     label: messages.settings_labels(),
     title: messages.settings_labels_title(),
     // Search still needs one indexable entry for the page; the page itself

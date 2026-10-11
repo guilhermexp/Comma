@@ -1,3 +1,4 @@
+import { defaultLocale, messages } from "@comma/i18n";
 import { describe, expect, it } from "vitest";
 import {
   SessionOperationDisplayError,
@@ -8,6 +9,9 @@ describe("sessionOperationDisplayError", () => {
   it("localizes authentication failures", () => {
     expect(
       sessionOperationDisplayError("invalid_challenge", "Unsupported").message
+    ).toBe(messages.auth_verification_code_invalid({}, { locale: defaultLocale }));
+    expect(
+      sessionOperationDisplayError("invalid_challenge", "Unsupported", "en").message
     ).toBe("That verification code is invalid. Please try again.");
     expect(
       sessionOperationDisplayError("invalid_challenge", "不支持此操作", "zh-CN").message

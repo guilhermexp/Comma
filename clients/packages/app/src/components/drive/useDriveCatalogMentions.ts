@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { messages } from "@comma/i18n";
 import {
   getNativeBridge,
   type DriveCatalogQueryInput,
@@ -141,7 +142,10 @@ export function useDriveCatalogMentions(
           update((previous) => ({
             ...previous,
             status: "ready",
-            error: error instanceof Error ? error.message : "Drive is unavailable.",
+            error:
+              error instanceof Error && error.message
+                ? error.message
+                : messages.drive_error_unavailable(),
           }));
         }
       } finally {

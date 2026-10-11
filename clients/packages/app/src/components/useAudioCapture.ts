@@ -6,6 +6,7 @@ import {
   type AudioCaptureState,
 } from "@comma/native-bridge";
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useCommaMessages } from "@comma/i18n/react";
 import { CommaAuthContext } from "./auth-context";
 
 const SYSTEM_AUDIO: AudioCaptureSource = { kind: "system" };
@@ -19,6 +20,7 @@ const SYSTEM_AUDIO: AudioCaptureSource = { kind: "system" };
  */
 export function useAudioCapture({ enabled = true }: { enabled?: boolean } = {}) {
   const bridge = getNativeBridge();
+  const messages = useCommaMessages();
   // Composer also renders in signed-out shells (Side Chat) and in tests without
   // CommaAuthGate. A product lease is required to begin and claim a recording.
   const productLease = useContext(CommaAuthContext)?.productLease;
@@ -94,7 +96,7 @@ export function useAudioCapture({ enabled = true }: { enabled?: boolean } = {}) 
       options: { microphone?: boolean } = {}
     ) =>
       run(async () => {
-        if (!productLease) throw new Error("Sign in before starting a recording.");
+        if (!productLease) throw new Error(messages.audio_capture_sign_in_to_record());
         const next = await bridge.audioCapture.start({
           session: productLease,
           source,
@@ -105,24 +107,26 @@ export function useAudioCapture({ enabled = true }: { enabled?: boolean } = {}) 
         accept(next);
         return next;
       }).then((next) => next ?? undefined),
-    [accept, bridge, productLease, run]
+    [accept, bridge, messages, productLease, run]
   );
 
   const selectMicrophone = useCallback(
     (deviceId: string | null) =>
       run(async () => {
         if (!productLease)
-          throw new Error("Sign in to change the recording microphone.");
+          throw new Error(messages.audio_capture_sign_in_to_change_microphone());
         const next = await bridge.audioCapture.selectMicrophone({
           session: productLease,
           deviceId,
         });
         accept(next);
         if (deviceId !== null && next.microphone === "unavailable")
-          throw new Error(next.reason ?? "Microphone unavailable.");
+          throw new Error(
+            next.reason ?? messages.audio_capture_microphone_unavailable()
+          );
         return next;
       }),
-    [accept, bridge, productLease, run]
+    [accept, bridge, messages, productLease, run]
   );
 
   const openPermissionSettings = useCallback(

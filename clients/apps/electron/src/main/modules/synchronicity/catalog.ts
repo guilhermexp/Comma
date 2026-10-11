@@ -5,6 +5,8 @@ import type {
   DriveCatalogQueryResult,
   DriveCatalogState,
 } from "@comma/native-bridge";
+import { defaultLocale, messages } from "@comma/i18n";
+import { readMainLocale, type MainLocaleSource } from "../../main-locale";
 import type { SynchronicityProvider } from "./index";
 
 const REFRESH_MS = 20_000;
@@ -49,7 +51,8 @@ export class DriveCatalogService {
       SynchronicityProvider,
       "state" | "list" | "subscribeChanges"
     >,
-    private readonly publish: (state: DriveCatalogState) => void = () => {}
+    private readonly publish: (state: DriveCatalogState) => void = () => {},
+    private readonly locale: MainLocaleSource = defaultLocale
   ) {
     this.#unsubscribe = node.subscribeChanges?.(() => this.invalidate());
   }
@@ -147,7 +150,10 @@ export class DriveCatalogService {
           reason:
             error instanceof Error
               ? error.message
-              : "Drive could not load files. Try again.",
+              : messages.drive_catalog_load_failed(
+                  {},
+                  { locale: readMainLocale(this.locale) }
+                ),
         });
       })
       .finally(() => {
@@ -160,9 +166,11 @@ export class DriveCatalogService {
 
   async #build(): Promise<Index> {
     const deadline = Date.now() + BUILD_BUDGET_MS;
+    // Thrown messages become the published reason the composer shows.
+    const options = { locale: readMainLocale(this.locale) };
     const budget = () => {
       if (this.#closed || Date.now() >= deadline)
-        throw new Error("Drive file loading timed out. Try again.");
+        throw new Error(messages.drive_catalog_timed_out({}, options));
     };
     const read = async <T>(request: () => Promise<T> | T): Promise<T> => {
       budget();
@@ -178,7 +186,7 @@ export class DriveCatalogService {
           operation,
           new Promise<never>((_, reject) => {
             timer = setTimeout(
-              () => reject(new Error("Drive file loading timed out. Try again.")),
+              () => reject(new Error(messages.drive_catalog_timed_out({}, options))),
               deadline - Date.now()
             );
             timer.unref();
@@ -195,7 +203,7 @@ export class DriveCatalogService {
       state = await read(() => this.node.state());
     }
     if (state.status !== "ready")
-      throw new Error(state.reason || "Drive is unavailable. Try again.");
+      throw new Error(state.reason || messages.drive_catalog_unavailable({}, options));
     const rows = new Map<string, DriveCatalogItem>();
     for (const space of state.spaces) {
       let cursor = "";
@@ -219,7 +227,7 @@ export class DriveCatalogService {
             });
         }
         if (page.nextCursor && page.nextCursor === cursor)
-          throw new Error("Drive listing did not advance. Try again.");
+          throw new Error(messages.drive_catalog_listing_stalled({}, options));
         cursor = page.nextCursor;
         await yieldTurn();
       } while (cursor);

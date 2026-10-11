@@ -1534,6 +1534,7 @@ describe("ComputeNodeService", () => {
       platform: "darwin",
       filePath,
       installAuthorization: authorization,
+      locale: "en",
     });
     await service.configure({ desiredEnabled: true, workspaceId: "old" });
     await expect(
@@ -1751,6 +1752,29 @@ describe("ComputeNodeService", () => {
       problem: "bundle verification failed",
       status: "action_required",
     });
+  });
+
+  it("publishes problems in Main's current language while keeping thrown text for logs", async () => {
+    let locale: "en" | "pt-BR" = "pt-BR";
+    const unsupported = await ComputeNodeService.open({
+      installAuthorization: testInstallAuthorization,
+      adapter: new FakeRuntime(),
+      arch: "x64",
+      filePath: join(tmpdir(), `.unsupported-locale-${crypto.randomUUID()}.json`),
+      locale: () => locale,
+      platform: "darwin",
+    });
+    await expect(unsupported.repair()).rejects.toThrow(
+      "Compute node requires Apple silicon macOS."
+    );
+    expect(unsupported.state().problem).toBe(
+      "O nó de computação exige macOS em um Mac com Apple silicon."
+    );
+    locale = "en";
+    await expect(unsupported.repair()).rejects.toThrow("Apple silicon");
+    expect(unsupported.state().problem).toBe(
+      "Compute node requires Apple silicon macOS."
+    );
   });
 
   it("does not present repair-only state as an enrolled compute node", async () => {

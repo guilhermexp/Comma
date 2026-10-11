@@ -1,3 +1,4 @@
+import { useCommaMessages } from "@comma/i18n/react";
 import { useId } from "react";
 import { cx, definedProps } from "../utils";
 import { rangeFillLeft, rangeFillWidth, singleFillWidth } from "./slider-geometry";
@@ -49,6 +50,7 @@ const SingleSlider = ({
   id,
   onValueChange,
 }: SingleSliderProps) => {
+  const messages = useCommaMessages();
   const generatedId = useId();
   const sliderId = id ?? generatedId;
 
@@ -105,7 +107,7 @@ const SingleSlider = ({
           max={max}
           label={formatValue(currentValue)}
           labelPosition="none"
-          ariaLabel="Slider value"
+          ariaLabel={messages.ui_slider_value()}
           disabled={disabled}
           onKeyDown={handleThumbKeyDown}
           onPointerDown={handleThumbPointerDown}
@@ -128,6 +130,7 @@ const RangeSlider = ({
   id,
   onValueChange,
 }: RangeSliderProps) => {
+  const messages = useCommaMessages();
   const generatedId = useId();
   const sliderId = id ?? generatedId;
 
@@ -191,7 +194,7 @@ const RangeSlider = ({
           max={max}
           label={formatValue(startValue)}
           labelPosition={labelPosition}
-          ariaLabel="Minimum value"
+          ariaLabel={messages.ui_slider_minimum_value()}
           disabled={disabled}
           onKeyDown={handleThumbKeyDown("start")}
           onPointerDown={handleThumbPointerDown("start")}
@@ -203,7 +206,7 @@ const RangeSlider = ({
           max={max}
           label={formatValue(endValue)}
           labelPosition={labelPosition}
-          ariaLabel="Maximum value"
+          ariaLabel={messages.ui_slider_maximum_value()}
           disabled={disabled}
           onKeyDown={handleThumbKeyDown("end")}
           onPointerDown={handleThumbPointerDown("end")}

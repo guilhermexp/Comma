@@ -177,7 +177,7 @@ export function AutomaticUpdates() {
       enabled: !checking,
       run: async () => {
         setChecking(true);
-        toast.info(locale === "zh-CN" ? "正在检查更新…" : "Checking for updates…", {
+        toast.info(messages.update_checking(undefined, { locale }), {
           id: manualUpdateProgressToastId,
           duration: Number.POSITIVE_INFINITY,
         });
@@ -185,32 +185,24 @@ export function AutomaticUpdates() {
           const bridge = getNativeBridge();
           const status = await bridge.updates.status();
           if (!status.configured) {
-            toast.info(
-              locale === "zh-CN"
-                ? "当前版本未配置更新源"
-                : "Updates are not configured for this build"
-            );
+            toast.info(messages.update_not_configured(undefined, { locale }));
             return;
           }
           const next = await checkForAutomaticUpdate(bridge.updates, () => {
-            toast.info(locale === "zh-CN" ? "正在下载更新…" : "Downloading update…", {
+            toast.info(messages.update_downloading(undefined, { locale }), {
               id: manualUpdateProgressToastId,
               duration: Number.POSITIVE_INFINITY,
             });
           });
           if (next) setReady(next);
-          else toast.info(locale === "zh-CN" ? "已是最新版本" : "You’re up to date");
+          else toast.info(messages.update_up_to_date(undefined, { locale }));
         } catch (error: unknown) {
           reportUpdateFailure("manual check", error);
-          toast.error(
-            locale === "zh-CN" ? "检查更新失败" : "Could not check for updates",
-            {
-              description:
-                locale === "zh-CN"
-                  ? "请检查网络连接后重试。"
-                  : "Check your connection and try again.",
-            }
-          );
+          toast.error(messages.update_check_failed_title(undefined, { locale }), {
+            description: messages.update_check_failed_description(undefined, {
+              locale,
+            }),
+          });
         } finally {
           toast.dismiss(manualUpdateProgressToastId);
           setChecking(false);

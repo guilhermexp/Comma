@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import * as oidc from "openid-client";
 import * as oauth from "oauth4webapi";
-import { baseLocale, messages, type CommaLocale } from "@comma/i18n";
+import { defaultLocale, messages, type CommaLocale } from "@comma/i18n";
 import { readMainLocale, type MainLocaleSource } from "./main-locale";
 
 const googleIssuer = new URL("https://accounts.google.com");
@@ -88,7 +88,7 @@ export class SystemBrowserGoogleAuth implements DesktopGoogleAuthProvider {
   readonly #timeoutMs: number;
 
   constructor({
-    locale = baseLocale,
+    locale = defaultLocale,
     oidcAdapter = openIdClientAdapter,
     openExternal,
     timeoutMs = defaultTimeoutMs,

@@ -1,3 +1,5 @@
+import { messages as commaMessages } from "@comma/i18n";
+import { useCommaMessages } from "@comma/i18n/react";
 import { keycapSymbol } from "./SettingsShortcutKeycaps";
 import {
   useEffect,
@@ -90,7 +92,7 @@ const shortcutParts = ({ key, modifiers }: SettingsShortcutValue) => [
   ...(modifiers.alt ? ["Alt"] : []),
   ...(modifiers.shift ? ["Shift"] : []),
   ...(modifiers.meta ? ["Cmd"] : []),
-  keyText(key),
+  key === "space" ? commaMessages.onboarding_shortcut_space() : keyText(key),
 ];
 
 interface ShortcutKeycap {
@@ -152,15 +154,19 @@ export const formatSettingsShortcut = (shortcut: SettingsShortcutValue) =>
 export const SettingsShortcut = ({
   ariaLabel,
   className,
-  clearLabel = "Clear shortcut",
+  clearLabel: suppliedClearLabel,
   disabled = false,
-  emptyLabel = "Not set",
+  emptyLabel: suppliedEmptyLabel,
   errorMessage,
   onChange,
   onClear,
-  recordingLabel = "Press shortcut",
+  recordingLabel: suppliedRecordingLabel,
   value,
 }: SettingsShortcutProps) => {
+  const messages = useCommaMessages();
+  const clearLabel = suppliedClearLabel ?? messages.ui_shortcut_clear();
+  const emptyLabel = suppliedEmptyLabel ?? messages.ui_shortcut_not_set();
+  const recordingLabel = suppliedRecordingLabel ?? messages.settings_press_shortcut();
   const [capture, setCapture] = useState<ShortcutCaptureState>({ kind: "idle" });
   const [optimisticValue, setOptimisticValue] = useState<
     { value: SettingsShortcutValue | null } | undefined

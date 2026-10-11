@@ -1,3 +1,4 @@
+import { useCommaMessages } from "@comma/i18n/react";
 import { useContext } from "react";
 import { Button } from "../Button";
 import { OverlayTriggerStateContext } from "react-aria-components";
@@ -62,18 +63,21 @@ const DialogActionButton = ({ action }: { action: DialogAction }) => {
   );
 };
 
-export const DialogCloseButton = ({ onPress }: { onPress?: () => void }) => (
-  <Button
-    {...definedProps({ onPress })}
-    aria-label="Close dialog"
-    className={dialogCloseButton}
-    hierarchy="tertiary-gray"
-    iconLeading={<XIcon />}
-    iconOnly
-    size="md"
-    style={dialogCloseButtonStyle}
-  />
-);
+export const DialogCloseButton = ({ onPress }: { onPress?: () => void }) => {
+  const messages = useCommaMessages();
+  return (
+    <Button
+      {...definedProps({ onPress })}
+      aria-label={messages.ui_dialog_close()}
+      className={dialogCloseButton}
+      hierarchy="tertiary-gray"
+      iconLeading={<XIcon />}
+      iconOnly
+      size="md"
+      style={dialogCloseButtonStyle}
+    />
+  );
+};
 
 export const DialogActions = ({ actions }: { actions?: DialogAction[] }) => {
   if (!actions?.length) return null;

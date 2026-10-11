@@ -1,3 +1,4 @@
+import { useCommaMessages } from "@comma/i18n/react";
 import type { ReactNode } from "react";
 
 export type TooltipShortcutKey = string | ReactNode;
@@ -44,6 +45,7 @@ const TooltipShortcutKeys = ({
   shortcut?: TooltipShortcutKey | readonly TooltipShortcutKey[];
   shortcutLabel?: string;
 }) => {
+  const messages = useCommaMessages();
   const keys = toShortcutKeys(shortcut);
   if (!keys?.length) return null;
 
@@ -54,7 +56,11 @@ const TooltipShortcutKeys = ({
       className="inline-flex shrink-0 items-center gap-xxs"
       data-slot="tooltip-shortcut"
       {...(accessibleName
-        ? { "aria-label": `Keyboard shortcut: ${accessibleName}` }
+        ? {
+            "aria-label": messages.ui_tooltip_keyboard_shortcut({
+              shortcut: accessibleName,
+            }),
+          }
         : {})}
     >
       {keys.map((key, index) => (

@@ -590,6 +590,7 @@ describe("LocalFilePickerService", () => {
     const snapshot = vi.spyOn(store, "snapshot");
     const registrar = { register: vi.fn(async () => undefined) };
     const picker = new LocalFilePickerService({
+      locale: "en",
       openDialog: async () => ({ canceled: false, filePaths: [text, png] }),
       registrar,
       store,
@@ -636,6 +637,7 @@ describe("LocalFilePickerService", () => {
     const snapshot = vi.spyOn(store, "snapshot");
     const registrar = { register: vi.fn(async () => undefined) };
     const picker = new LocalFilePickerService({
+      locale: "en",
       openDialog: async () => ({ canceled: false, filePaths: [image] }),
       registrar,
       store,
@@ -946,6 +948,7 @@ describe("LocalFilePickerService", () => {
     await writeFile(text, "local index bytes");
     const store = await LocalFileSnapshotStore.open({ rootDir: join(root, "index") });
     const registrar = new LocalFileRouteRegistrationService({
+      locale: "en",
       resolveTarget: async () => null,
       store,
     });
@@ -1148,6 +1151,7 @@ describe("LocalFilePickerService", () => {
     }) as typeof fetch;
     const registrar = new LocalFileRouteRegistrationService({
       fetch: fetchImplementation,
+      locale: "en",
       resolveTarget: v2RegistrationTarget("dev_ownerless"),
       store,
     });
@@ -1235,6 +1239,7 @@ describe("LocalFilePickerService", () => {
       }) as typeof fetch;
       const registrar = new LocalFileRouteRegistrationService({
         fetch: fetchImplementation,
+        locale: "en",
         resolveTarget: v2RegistrationTarget("dev_ownerless"),
         store,
       });

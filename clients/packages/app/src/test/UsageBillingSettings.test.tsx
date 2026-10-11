@@ -30,7 +30,7 @@ function UsageBilling({ api }: { api: CommaApiClient }) {
 
 function renderUsageBilling(api: CommaApiClient, strict = false) {
   const tree = (
-    <CommaI18nProvider>
+    <CommaI18nProvider locale="en">
       <UsageBilling api={api} />
     </CommaI18nProvider>
   );

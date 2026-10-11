@@ -47,7 +47,7 @@ export function useBrowserSettingsCategory(api: CommaApiClient) {
     id: "browser",
     icon: "browser",
     label: m.settings_browser(),
-    keywords: ["cookie", "login", "登录"],
+    keywords: ["cookie", "login", "登录", "navegador", "sessão", "entrar"],
     sections: [
       {
         id: "browser.logins",

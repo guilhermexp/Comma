@@ -4,6 +4,8 @@ import {
   type MeetingSubmissionStage,
 } from "./submission-error";
 import { MeetingOutputArchive, meetingOutputExtensions } from "./outputs";
+import { defaultLocale, messages } from "@comma/i18n";
+import { readMainLocale, type MainLocaleSource } from "../../main-locale";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -60,6 +62,8 @@ export type MeetingTaskState = {
 };
 interface Dependencies {
   filePath: string;
+  /** Main's language for sync errors published to the recorder. */
+  locale?: MainLocaleSource;
   reportFailure?(details: {
     occurrenceId: string;
     version: number;
@@ -98,9 +102,11 @@ export class MeetingTaskService {
   #retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   #retryCounts = new Map<string, number>();
   #closed = false;
-  #loadError: string | undefined;
+  #journalUnreadable = false;
   #outputs: MeetingOutputArchive | undefined;
+  readonly #locale: MainLocaleSource;
   private constructor(private readonly deps: Dependencies) {
+    this.#locale = deps.locale ?? defaultLocale;
     if (deps.writeOutput)
       this.#outputs = new MeetingOutputArchive({
         account: deps.account,
@@ -153,8 +159,7 @@ export class MeetingTaskService {
       service.#entries = z.array(entrySchema).max(32).parse(JSON.parse(text));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-        service.#loadError =
-          "Saved meeting sync data could not be read. Audio recording remains available; restore the meeting journal before syncing Tasks.";
+        service.#journalUnreadable = true;
     }
     return service;
   }
@@ -164,10 +169,21 @@ export class MeetingTaskService {
   }
 
   #enterOnce(meeting: MeetingPresenceMeeting, replaced?: Entry): Promise<void> {
-    if (this.#loadError) return Promise.reject(new Error(this.#loadError));
-    if (this.#closed) return Promise.reject(new Error("Meeting sync is closed."));
+    if (this.#journalUnreadable)
+      return Promise.reject(
+        new Error(
+          messages.electron_meeting_sync_journal_unreadable({}, this.#options())
+        )
+      );
+    if (this.#closed)
+      return Promise.reject(
+        new Error(messages.electron_meeting_sync_closed({}, this.#options()))
+      );
     const account = this.deps.account();
-    if (!account) return Promise.reject(new Error("Sign in to sync this meeting."));
+    if (!account)
+      return Promise.reject(
+        new Error(messages.electron_meeting_sync_sign_in({}, this.#options()))
+      );
     const key = `${account}:${meeting.key}`;
     if (!replaced && this.#current.has(key)) return Promise.resolve();
     const pending = this.#entering.get(key);
@@ -213,7 +229,9 @@ export class MeetingTaskService {
       }
     }
     if (this.deps.account() !== account || this.#closed)
-      throw new Error("The meeting account changed.");
+      throw new Error(
+        messages.electron_meeting_sync_account_changed({}, this.#options())
+      );
     if (!entry) {
       // The replaced occurrence keeps the key until its replacement is saved.
       this.#entries = this.#entries.filter(
@@ -234,7 +252,7 @@ export class MeetingTaskService {
         if (!retained.has(id)) this.#current.delete(currentKey);
       if (this.#entries.length >= 32)
         throw new Error(
-          "32 meetings are waiting to sync. Resolve them before creating another meeting Task."
+          messages.electron_meeting_sync_queue_full({ count: 32 }, this.#options())
         );
       const now = new Date();
       entry = {
@@ -303,7 +321,11 @@ export class MeetingTaskService {
       try {
         await this.#persist();
       } catch (error) {
-        const message = meetingSubmissionError("journal", error);
+        const message = meetingSubmissionError(
+          "journal",
+          error,
+          this.#options().locale
+        );
         this.#publish(entry, "error", message);
         this.deps.reportFailure?.({
           occurrenceId: entry.entry.occurrence_id,
@@ -323,7 +345,7 @@ export class MeetingTaskService {
   }
 
   async retryPending() {
-    if (this.#loadError || this.#closed) return;
+    if (this.#journalUnreadable || this.#closed) return;
     this.#outputs?.reconcileAccount();
     for (const entry of this.#entries)
       if (entry.account === this.deps.account()) this.#watchOutputs(entry);
@@ -350,8 +372,12 @@ export class MeetingTaskService {
   #get(key: string) {
     const id = this.#current.get(`${this.deps.account()}:${key}`);
     const entry = this.#entries.find((e) => e.entry.occurrence_id === id);
-    if (!entry) throw new Error("This meeting has no saved Task association.");
+    if (!entry)
+      throw new Error(messages.electron_meeting_sync_missing_task({}, this.#options()));
     return entry;
+  }
+  #options() {
+    return { locale: readMainLocale(this.#locale) };
   }
   #persist() {
     const data = JSON.stringify(this.#entries);
@@ -487,7 +513,7 @@ export class MeetingTaskService {
         })
       )
       .catch((error: unknown) => {
-        const message = meetingSubmissionError(stage, error);
+        const message = meetingSubmissionError(stage, error, this.#options().locale);
         this.#publish(entry, "error", message);
         this.deps.reportFailure?.({
           occurrenceId: id,

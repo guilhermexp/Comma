@@ -94,7 +94,8 @@ async function fixture(
       journalDirectory,
       run,
       confirm,
-      localDisposals
+      localDisposals,
+      "en"
     );
   return {
     operator,

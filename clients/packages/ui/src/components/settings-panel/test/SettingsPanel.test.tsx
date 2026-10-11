@@ -28,6 +28,7 @@ describe("SettingsPanel", () => {
                   type: "dropdown",
                   items: [{ id: "core", label: "Core" }],
                   onChange,
+                  placeholder: "Select team member",
                 },
               },
               {

@@ -923,6 +923,7 @@ function createService({
   };
   const service = new AudioCaptureService({
     encoder,
+    locale: "en",
     ...(onSaved ? { onSaved } : {}),
     loadNative: async () => (nativeAvailable ? native : undefined),
     ...(microphone ? { microphone } : {}),

@@ -1,3 +1,5 @@
+import type { messages as commaMessages } from "@comma/i18n";
+import { useCommaMessages } from "@comma/i18n/react";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Focusable } from "react-aria-components";
 import { motionDuration } from "../../tokens";
@@ -49,12 +51,7 @@ const unexpectedDownloadFailure: ChatPanelMediaDownloadResult = {
   status: "error",
 };
 
-const mediaNoun: Record<ChatPanelMediaDownloadKind, string> = {
-  audio: "Audio",
-  file: "File",
-  image: "Image",
-  video: "Video",
-};
+type CommaMessages = typeof commaMessages;
 
 const canExecuteDownload = (state: ChatPanelMediaDownloadState) =>
   state.status === "idle" ||
@@ -62,34 +59,46 @@ const canExecuteDownload = (state: ChatPanelMediaDownloadState) =>
   (state.status === "error" && state.retryable);
 
 const getDownloadCopy = (
+  m: CommaMessages,
   kind: ChatPanelMediaDownloadKind,
   state: ChatPanelMediaDownloadState
 ) => {
+  const label = {
+    audio: m.ui_media_kind_audio,
+    file: m.ui_media_kind_file,
+    image: m.ui_media_kind_image,
+    video: m.ui_media_kind_video,
+  }[kind]();
   switch (state.status) {
     case "pending":
       return {
-        feedback: `Downloading ${kind}…`,
-        label: `Downloading ${kind}`,
+        feedback: m.ui_media_downloading_feedback({ kind: label }),
+        label: m.ui_media_downloading_label({ kind: label }),
       };
     case "success":
       return {
-        feedback: `${mediaNoun[kind]} downloaded.`,
-        label: `Downloaded ${kind}`,
+        feedback: {
+          audio: m.ui_media_downloaded_audio,
+          file: m.ui_file_downloaded_feedback,
+          image: m.ui_media_downloaded_image,
+          video: m.ui_media_downloaded_video,
+        }[kind](),
+        label: m.ui_media_downloaded_label({ kind: label }),
       };
     case "error":
       return state.retryable
         ? {
-            feedback: `Could not download ${kind}. Try again.`,
-            label: `Download ${kind} failed. Try again`,
+            feedback: m.ui_media_download_failed_retry({ kind: label }),
+            label: m.ui_media_download_failed_retry_label({ kind: label }),
           }
         : {
-            feedback: `Could not download ${kind}.`,
-            label: `Download ${kind} failed`,
+            feedback: m.ui_media_download_failed({ kind: label }),
+            label: m.ui_media_download_failed_label({ kind: label }),
           };
     case "idle":
       return {
         feedback: "",
-        label: `Download ${kind}`,
+        label: m.ui_media_download_label({ kind: label }),
       };
   }
 };
@@ -212,9 +221,10 @@ export const ChatPanelMediaDownloadControl = ({
   icon,
   kind,
 }: ChatPanelMediaDownloadControlProps) => {
+  const messages = useCommaMessages();
   const feedbackId = useId();
   const buttonPressFeedback = usePointerPressFeedback<HTMLButtonElement>();
-  const copy = getDownloadCopy(kind, controller.state);
+  const copy = getDownloadCopy(messages, kind, controller.state);
   const hasFeedback = copy.feedback.length > 0;
   const isPending = controller.state.status === "pending";
   const isIdle = controller.state.status === "idle";
@@ -230,7 +240,7 @@ export const ChatPanelMediaDownloadControl = ({
       data-state={controller.state.status}
     >
       <Tooltip
-        content={isIdle ? "Download" : copy.label}
+        content={isIdle ? messages.ui_file_download() : copy.label}
         isOpen={tooltip.isOpen}
         onOpenChange={tooltip.onOpenChange}
         placement="top"

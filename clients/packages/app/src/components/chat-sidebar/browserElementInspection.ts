@@ -1,3 +1,4 @@
+import { messages } from "@comma/i18n";
 import type { BrowserSidebarInspectResult } from "@comma/native-bridge";
 
 type SelectedInspection = Extract<BrowserSidebarInspectResult, { status: "selected" }>;
@@ -21,7 +22,7 @@ export type BrowserElementInspectionContext = {
 export function buildBrowserElementInspectionMessage(inspection: SelectedInspection) {
   const userMessage = clipped(inspection.userMessage.trim(), maxUserMessageLength);
   const lines = [
-    userMessage || "Inspect this selected page element.",
+    userMessage || messages.chat_browser_inspect_default_message(),
     "",
     "<user-reminder>",
     `<browser-element-inspection id="${escapedAttribute(inspection.inspectionId)}" />`,

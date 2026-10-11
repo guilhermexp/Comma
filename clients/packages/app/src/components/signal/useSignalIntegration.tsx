@@ -382,6 +382,7 @@ export function useSignalIntegration(
       keywords: [
         "Signal",
         "信号",
+        "sinal",
         m.settings_signal_new_code(),
         m.settings_signal_disconnect(),
       ],

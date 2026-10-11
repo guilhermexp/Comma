@@ -1,4 +1,4 @@
-import { baseLocale, type CommaLocale } from "@comma/i18n";
+import { defaultLocale, type CommaLocale } from "@comma/i18n";
 import { getNativeBridge } from "@comma/native-bridge";
 import type { SessionProductLease } from "@comma/session-contract";
 import type {
@@ -35,7 +35,7 @@ export class BridgeConversationChannel implements ChatChannel {
     conversationId,
     groupId,
     initialState,
-    locale = baseLocale,
+    locale = defaultLocale,
     presentInSideChat = false,
     session,
     workspaceId,

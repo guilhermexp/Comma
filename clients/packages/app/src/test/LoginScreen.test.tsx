@@ -36,11 +36,11 @@ function createStagedAuthenticator(
 
 function renderLoginScreen(
   authenticator: SessionAuthenticatorController,
-  locale?: "en" | "zh-CN",
+  locale: "en" | "zh-CN" = "en",
   guest?: SessionGuestController
 ) {
   return render(
-    <CommaI18nProvider {...(locale ? { locale } : {})}>
+    <CommaI18nProvider locale={locale}>
       <LoginScreen authenticator={authenticator} {...(guest ? { guest } : {})} />
     </CommaI18nProvider>
   );
@@ -172,7 +172,7 @@ describe("LoginScreen on hosts with direct Google sign-in (Electron)", () => {
     const verifyEmailLogin = vi
       .fn(async () => undefined)
       .mockRejectedValueOnce(
-        sessionOperationDisplayError("invalid_challenge", "Unsupported")
+        sessionOperationDisplayError("invalid_challenge", "Unsupported", "en")
       );
     const authenticator = createStagedAuthenticator({ verifyEmailLogin });
     const user = userEvent.setup();
@@ -368,7 +368,7 @@ describe("LoginScreen on hosts with direct Google sign-in (Electron)", () => {
     expect(google).toHaveAttribute("aria-disabled", "true");
     await act(async () => {
       attempts[1]!.input.onError(
-        sessionOperationDisplayError("provider_unavailable", "unsupported")
+        sessionOperationDisplayError("provider_unavailable", "unsupported", "en")
       );
       attempts[1]!.resolve();
     });

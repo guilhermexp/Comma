@@ -1,3 +1,4 @@
+import { useCommaMessages } from "@comma/i18n/react";
 import { Toaster as SonnerToaster, type ToasterProps } from "sonner";
 import { useLayoutEffect, useRef, type CSSProperties } from "react";
 import { cx } from "../utils";
@@ -62,6 +63,7 @@ export const Toaster = ({
   toastOptions,
   ...props
 }: CommaToasterProps) => {
+  const messages = useCommaMessages();
   // The obstruction width lands on this host as an inline custom property and
   // reaches sonner's stack by inheritance; see `toastObstruction`.
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -75,6 +77,7 @@ export const Toaster = ({
     <div data-react-aria-top-layer="true" data-slot="toast-host" ref={hostRef}>
       <SonnerToaster
         className={cx("comma-sonner-toaster [-webkit-app-region:no-drag]", className)}
+        containerAriaLabel={messages.settings_notifications()}
         position={position}
         gap={gap}
         visibleToasts={visibleToasts}

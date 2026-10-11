@@ -1,3 +1,4 @@
+import { useCommaMessages } from "@comma/i18n/react";
 import { cx } from "../utils";
 
 export const keycapSymbol = (key: string) => (key === "Space" ? "␣" : key);
@@ -11,9 +12,14 @@ export const SettingsShortcutKeycaps = ({
   className,
   keys,
 }: SettingsShortcutKeycapsProps) => {
+  const messages = useCommaMessages();
   if (keys.length === 0) return null;
 
-  const accessibleName = `Keyboard shortcut: ${keys.join(" ")}`;
+  const accessibleName = messages.ui_tooltip_keyboard_shortcut({
+    shortcut: keys
+      .map((key) => (key === "Space" ? messages.onboarding_shortcut_space() : key))
+      .join(" "),
+  });
 
   return (
     <span

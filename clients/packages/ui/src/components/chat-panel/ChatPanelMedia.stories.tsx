@@ -113,13 +113,7 @@ export const ControlShortcuts: Story = {
   render: () => (
     <div className="flex min-h-[520px] flex-col items-center gap-5xl bg-main-panel-bg p-5xl">
       <div className="flex flex-wrap items-start justify-center gap-5xl">
-        <Tooltip
-          defaultOpen
-          delay={0}
-          content="Play"
-          placement="top"
-          shortcut={mediaControlShortcuts.play}
-        >
+        <Tooltip defaultOpen delay={0} content="Play" placement="top" shortcut="Space">
           <Button hierarchy="tertiary-gray">Play</Button>
         </Tooltip>
         <Tooltip
@@ -154,7 +148,7 @@ export const ControlShortcuts: Story = {
           delay={0}
           content="Full window"
           placement="top"
-          shortcut={resolveMediaFullWindowShortcut().keys}
+          shortcut={[resolveMediaFullWindowShortcut().modifierKey, "Click"]}
         >
           <Button hierarchy="tertiary-gray">Video</Button>
         </Tooltip>

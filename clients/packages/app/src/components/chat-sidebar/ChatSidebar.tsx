@@ -18,6 +18,7 @@ import {
   useNativeSurfaceSuppressed,
   type RightSidebarTab,
 } from "@comma/ui";
+import { messages as commaMessages } from "@comma/i18n";
 import { useCommaMessages } from "@comma/i18n/react";
 import {
   getNativeBridge,
@@ -74,8 +75,7 @@ import { useRouterDisplayName } from "../router-identity/RouterIdentityProvider"
 import { useCommaClientSettings } from "../commaClientSettings";
 import { needsDesktopApp, requestDesktopApp } from "../DesktopAppPrompt";
 
-const nativeBrowserUnavailable =
-  "The embedded browser is unavailable here. Open the link in your browser instead.";
+const nativeBrowserUnavailable = () => commaMessages.chat_sidebar_browser_unavailable();
 const chatTabPrefix = "task:";
 const chatTabId = (chat: ChatSidebarConversationTarget) =>
   `${chatTabPrefix}${chatSidebarHostKey(chat)}`;
@@ -241,14 +241,14 @@ export function ChatSidebarSurface({
   const handleBrowserInspection = useCallback(
     (inspection: Extract<BrowserSidebarInspectResult, { status: "selected" }>) => {
       if (!inspectionChannel) {
-        toast.error("The chat is not ready to receive browser context yet.");
+        toast.error(messages.chat_sidebar_browser_not_ready());
         return;
       }
       sendInspection(buildBrowserElementInspectionMessage(inspection), {
         consumeDraft: false,
       });
     },
-    [inspectionChannel, sendInspection]
+    [inspectionChannel, messages, sendInspection]
   );
 
   const attachPreviewImage = useCallback(
@@ -438,7 +438,7 @@ export function ChatSidebarSurface({
   return (
     <RightSidebar
       activeTab={activeTab}
-      ariaLabel="Chat sidebar"
+      ariaLabel={messages.chat_sidebar_label()}
       data-testid="chat-sidebar"
       headerActions={
         activeSurface === "chat" && activeChat ? (
@@ -582,6 +582,7 @@ export function ChatSidebarSurface({
 
 /** Window bar control for the Chat Sidebar; the bar owns its placement. */
 export function ChatSidebarToggle() {
+  const messages = useCommaMessages();
   const { isOpen, toggleActive } = useChatSidebar();
   const rightSidebarShortcut = useOptionalAppShortcutBinding("toggle-right-sidebar");
 
@@ -590,7 +591,7 @@ export function ChatSidebarToggle() {
       className="comma-chat-sidebar-toggle"
       expanded={isOpen}
       icon="layout-right"
-      label="Toggle chat sidebar"
+      label={messages.chat_sidebar_toggle()}
       onClick={toggleActive}
       {...(rightSidebarShortcut
         ? { shortcut: appKeybindingKeycaps(rightSidebarShortcut) }
@@ -648,6 +649,7 @@ function ChatSidebarConversation({
   surfaceActive: boolean;
   target: ChatSidebarConversationTarget;
 }) {
+  const messages = useCommaMessages();
   const conversation = useConversation(
     target.workspaceId,
     target.groupId,
@@ -702,7 +704,11 @@ function ChatSidebarConversation({
 
   return (
     <div
-      aria-label={target.title ? `Chat: ${target.title}` : "Child chat"}
+      aria-label={
+        target.title
+          ? messages.chat_sidebar_conversation_named({ title: target.title })
+          : messages.chat_sidebar_child_conversation()
+      }
       className="comma-chat-sidebar-chat"
       data-testid={`chat-sidebar-conversation-${target.conversationId}`}
       id="chat-sidebar-chat-panel"
@@ -769,6 +775,7 @@ function BrowserNewTabPanel({
   onSubmitUrl: (url: string) => void;
   page: ChatSidebarBrowserPage;
 }) {
+  const messages = useCommaMessages();
   const [address, setAddress] = useState(page.url);
   const [addressError, setAddressError] = useState<string | undefined>();
   useBrowserErrorToast(addressError);
@@ -776,7 +783,7 @@ function BrowserNewTabPanel({
   const submitAddress = () => {
     const url = normalizeBrowserAddress(address);
     if (!url) {
-      setAddressError("Enter a valid http or https address.");
+      setAddressError(messages.chat_sidebar_browser_invalid_address());
       return;
     }
     setAddressError(undefined);
@@ -786,7 +793,7 @@ function BrowserNewTabPanel({
 
   return (
     <section
-      aria-label="Browser"
+      aria-label={messages.chat_browser_open()}
       className="comma-chat-sidebar-browser"
       id={`chat-sidebar-browser-panel-${page.id}`}
       role="tabpanel"
@@ -805,7 +812,7 @@ function BrowserNewTabPanel({
         onReload={() => undefined}
       />
       <div className="comma-chat-sidebar-browser-unavailable">
-        <p>Search or enter a URL to open a page.</p>
+        <p>{messages.chat_sidebar_browser_new_tab_hint()}</p>
       </div>
     </section>
   );
@@ -848,7 +855,7 @@ function BrowserSidebarPanel({
   const bridge = getNativeBridge();
   const messages = useCommaMessages();
   const [unavailableReason, setUnavailableReason] = useState<string | undefined>(
-    bridge.platform === "electron" ? undefined : nativeBrowserUnavailable
+    bridge.platform === "electron" ? undefined : nativeBrowserUnavailable()
   );
   const [browserState, setBrowserState] = useState<BrowserSidebarState>({
     ...(nativeState?.sessionId === sessionId
@@ -903,7 +910,7 @@ function BrowserSidebarPanel({
       setBrowserState(state);
       onNativeStateChanged(state, capacityAttemptEpoch);
       if (!state.available) {
-        setUnavailableReason(state.reason ?? nativeBrowserUnavailable);
+        setUnavailableReason(state.reason ?? nativeBrowserUnavailable());
       } else {
         setUnavailableReason(undefined);
       }
@@ -914,7 +921,7 @@ function BrowserSidebarPanel({
     if (nativeState?.sessionId !== sessionId) return;
     setBrowserState(nativeState);
     if (!nativeState.available) {
-      setUnavailableReason(nativeState.reason ?? nativeBrowserUnavailable);
+      setUnavailableReason(nativeState.reason ?? nativeBrowserUnavailable());
     } else {
       setUnavailableReason(undefined);
     }
@@ -941,22 +948,20 @@ function BrowserSidebarPanel({
         return;
       }
       publishBrowserState(state);
-    } catch (error: unknown) {
+    } catch {
       if (
         !isCurrentPanelGeneration(panelGeneration) ||
         panelRequestGenerationRef.current !== requestGeneration
       ) {
         return;
       }
-      setUnavailableReason(
-        error instanceof Error ? error.message : nativeBrowserUnavailable
-      );
+      setUnavailableReason(nativeBrowserUnavailable());
     }
   };
   const submitAddress = async () => {
     const url = normalizeBrowserAddress(address);
     if (!url) {
-      setAddressError("Enter a valid http or https address.");
+      setAddressError(messages.chat_sidebar_browser_invalid_address());
       return;
     }
     const panelGeneration = panelGenerationRef.current;
@@ -974,16 +979,14 @@ function BrowserSidebarPanel({
         return;
       }
       publishBrowserState(state);
-    } catch (error: unknown) {
+    } catch {
       if (
         !isCurrentPanelGeneration(panelGeneration) ||
         panelRequestGenerationRef.current !== requestGeneration
       ) {
         return;
       }
-      setAddressError(
-        error instanceof Error ? error.message : "This page could not be loaded."
-      );
+      setAddressError(messages.chat_sidebar_browser_load_failed());
     }
   };
   const toggleInspection = async () => {
@@ -1009,13 +1012,9 @@ function BrowserSidebarPanel({
       } else if (result.status === "unavailable") {
         toast.error(result.reason);
       }
-    } catch (error: unknown) {
+    } catch {
       if (inspectionGenerationRef.current !== generation) return;
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Element selection could not be started."
-      );
+      toast.error(messages.chat_sidebar_browser_inspect_failed());
     } finally {
       if (inspectionGenerationRef.current === generation) setInspecting(false);
     }
@@ -1033,7 +1032,7 @@ function BrowserSidebarPanel({
 
   return (
     <section
-      aria-label="Browser"
+      aria-label={messages.chat_browser_open()}
       className="comma-chat-sidebar-browser"
       data-visible={visible ? "true" : "false"}
       hidden={!visible}
@@ -1080,15 +1079,12 @@ function BrowserSidebarPanel({
                   .then((result) => {
                     if (result.status === "unavailable")
                       toast.error(
-                        result.reason ?? "Website permissions are unavailable."
+                        result.reason ??
+                          messages.chat_sidebar_browser_permissions_unavailable()
                       );
                   })
-                  .catch((error) =>
-                    toast.error(
-                      error instanceof Error
-                        ? error.message
-                        : "Website permissions are unavailable."
-                    )
+                  .catch(() =>
+                    toast.error(messages.chat_sidebar_browser_permissions_unavailable())
                   );
               }
             : undefined
@@ -1119,7 +1115,7 @@ function BrowserSidebarPanel({
       ) : (
         <BrowserUnavailable
           canOpenExternal={bridge.platform !== "electron"}
-          reason={unavailableReason ?? nativeBrowserUnavailable}
+          reason={unavailableReason ?? nativeBrowserUnavailable()}
           url={page.url}
         />
       )}
@@ -1162,6 +1158,7 @@ function NativeBrowserViewport({
   url: string;
   visible: boolean;
 }) {
+  const messages = useCommaMessages();
   const elementRef = useRef<HTMLDivElement | null>(null);
   const mountedRef = useRef(false);
   const mountedSessionIdRef = useRef(sessionId);
@@ -1257,7 +1254,7 @@ function NativeBrowserViewport({
         recoveryAttemptedRef.current = false;
         onUnavailable(undefined);
       } else if (!state.available) {
-        onUnavailable(state.reason ?? nativeBrowserUnavailable);
+        onUnavailable(state.reason ?? nativeBrowserUnavailable());
       } else if (state.reasonCode === "capacity") {
         capacityBlockedAttemptEpochRef.current ??=
           nativeCapacityBlockedAtEpochRef.current ?? nativeCapacityEpochRef.current;
@@ -1382,11 +1379,9 @@ function NativeBrowserViewport({
     void getNativeBridge()
       .browserSidebar.update({ bounds, sessionId })
       .then((state) => settleState(state, viewportGeneration, undefined, requestIntent))
-      .catch((error: unknown) => {
+      .catch(() => {
         if (!isCurrentViewportIntent(viewportGeneration, requestIntent)) return;
-        onUnavailable(
-          error instanceof Error ? error.message : nativeBrowserUnavailable
-        );
+        onUnavailable(nativeBrowserUnavailable());
       });
   }, [
     isCurrentViewportIntent,
@@ -1508,7 +1503,7 @@ function NativeBrowserViewport({
                 syncBounds();
               }
             })
-            .catch((error: unknown) => {
+            .catch(() => {
               if (
                 !isCurrentViewportGeneration(latestViewportGeneration) ||
                 openRequestGenerationRef.current !== latestRequestGeneration ||
@@ -1518,13 +1513,11 @@ function NativeBrowserViewport({
               ) {
                 return;
               }
-              onUnavailable(
-                error instanceof Error ? error.message : nativeBrowserUnavailable
-              );
+              onUnavailable(nativeBrowserUnavailable());
             });
         }
       })
-      .catch((error: unknown) => {
+      .catch(() => {
         if (
           !isCurrentViewportGeneration(openingViewportGeneration) ||
           openRequestGenerationRef.current !== openingRequestGeneration ||
@@ -1535,9 +1528,7 @@ function NativeBrowserViewport({
           return;
         }
         openingRef.current = false;
-        onUnavailable(
-          error instanceof Error ? error.message : nativeBrowserUnavailable
-        );
+        onUnavailable(nativeBrowserUnavailable());
       });
     return true;
   }, [
@@ -1630,13 +1621,11 @@ function NativeBrowserViewport({
             .then((state) =>
               settleState(state, viewportGeneration, undefined, requestIntent)
             )
-            .catch((error: unknown) => {
+            .catch(() => {
               if (!isCurrentViewportIntent(viewportGeneration, requestIntent)) {
                 return;
               }
-              onUnavailable(
-                error instanceof Error ? error.message : nativeBrowserUnavailable
-              );
+              onUnavailable(nativeBrowserUnavailable());
             });
         if (suppressed && visible) {
           // Hiding for a DOM overlay, with the panel still displayed: the
@@ -1711,11 +1700,9 @@ function NativeBrowserViewport({
           // The live view composites above the DOM again; the stand-in can go.
           if (currentEpoch()) clearSuppressionSnapshot();
         })
-        .catch((error: unknown) => {
+        .catch(() => {
           if (!isCurrentViewportIntent(viewportGeneration, requestIntent)) return;
-          onUnavailable(
-            error instanceof Error ? error.message : nativeBrowserUnavailable
-          );
+          onUnavailable(nativeBrowserUnavailable());
         });
     } else {
       clearSuppressionSnapshot();
@@ -1767,7 +1754,7 @@ function NativeBrowserViewport({
           openingCapacityEpoch
         )
       )
-      .catch((error: unknown) => {
+      .catch(() => {
         if (
           !isCurrentViewportGeneration(viewportGeneration) ||
           openRequestGenerationRef.current !== requestGeneration ||
@@ -1776,9 +1763,7 @@ function NativeBrowserViewport({
         ) {
           return;
         }
-        onUnavailable(
-          error instanceof Error ? error.message : nativeBrowserUnavailable
-        );
+        onUnavailable(nativeBrowserUnavailable());
       });
   }, [
     closeBeforeOpenSessionIds,
@@ -1876,7 +1861,7 @@ function NativeBrowserViewport({
 
   return (
     <div
-      aria-label="Browser content"
+      aria-label={messages.chat_sidebar_browser_content()}
       className="comma-chat-sidebar-browser-viewport"
       ref={elementRef}
     >
@@ -1920,7 +1905,7 @@ function BrowserUnavailable({
       ) : null}
       {canOpenExternal ? (
         <a href={url} rel="noopener noreferrer" target="_blank">
-          Open in browser
+          {messages.chat_sidebar_browser_open_external()}
         </a>
       ) : (
         <p className="break-all text-xs">{url}</p>

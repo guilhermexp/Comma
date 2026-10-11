@@ -65,7 +65,12 @@ import {
   type CommaOperatingSystem,
 } from "@comma/native-bridge";
 import { dirname, join } from "node:path";
-import { baseLocale, type CommaLocale } from "@comma/i18n";
+import {
+  defaultLocale,
+  messages,
+  type CommaLocale,
+  type CommaLocalePreference,
+} from "@comma/i18n";
 import {
   snapshotMatchesSessionProductLease,
   sessionProductLease,
@@ -289,8 +294,11 @@ export interface ElectronMainRuntimeDeps {
   logger?: NativeIpcLogger;
   /** Main's language at startup; it then follows the stored app language. */
   locale?: CommaLocale;
-  /** The stored app language changed; Main surfaces outside this module follow it. */
-  onLocaleChanged?: (locale: CommaLocale) => void;
+  /**
+   * The stored app language changed; Main surfaces outside this module follow
+   * it. Returns the language Main resolved, System included.
+   */
+  onLocaleChanged?: (preference: CommaLocalePreference) => CommaLocale;
   /**
    * Absent (tests, unbuilt dev) no Router message notification is raised.
    */
@@ -601,15 +609,18 @@ export async function createElectronMainContext(
   }
   // The app language is an account setting the renderer stores in client
   // settings; long-lived Main services read it at each use.
-  let mainLocale: CommaLocale = deps.locale ?? baseLocale;
+  let mainLocale: CommaLocale = deps.locale ?? defaultLocale;
+  let mainLocalePreference: CommaLocalePreference | undefined;
   const currentMainLocale = () => mainLocale;
   const appPreferencesService = await AppPreferencesService.open({
     filePath: deps.appPreferencesFilePath,
     onStateChanged: (preferences) => {
       const preference = preferences.clientSettings?.localePreference;
-      if (preference && preference !== "system" && preference !== mainLocale) {
-        mainLocale = preference;
-        deps.onLocaleChanged?.(preference);
+      if (preference && preference !== mainLocalePreference) {
+        mainLocalePreference = preference;
+        mainLocale =
+          deps.onLocaleChanged?.(preference) ??
+          (preference === "system" ? mainLocale : preference);
       }
       nativeEventBus.emit(appPreferencesChangedEvent, preferences);
       applyNotchPreferences(preferences);
@@ -862,10 +873,12 @@ export async function createElectronMainContext(
   }
   const driveCatalog = new DriveCatalogService(
     deps.synchronicityProvider ?? synchronicity,
-    (state) => nativeEventBus.emit(driveCatalogChangedEvent, state)
+    (state) => nativeEventBus.emit(driveCatalogChangedEvent, state),
+    currentMainLocale
   );
   const localFileRegistrar = new LocalFileRouteRegistrationService({
     ...(deps.fetch ? { fetch: deps.fetch } : {}),
+    locale: currentMainLocale,
     onConnectorReconfigurationRequired: (workspaceId) =>
       connectorRuntime.recycle(workspaceId),
     prewarmTarget: (workspaceId) => connectorRuntime.prewarm(workspaceId),
@@ -875,6 +888,7 @@ export async function createElectronMainContext(
   });
   const transcodeAttachment = createDarwinImageTranscoder();
   const localFilePicker = new LocalFilePickerService({
+    locale: currentMainLocale,
     registrar: localFileRegistrar,
     store: localFiles,
     uploadImageExtensions: [
@@ -967,7 +981,8 @@ export async function createElectronMainContext(
     }),
     deps.openExternalUrl,
     undefined,
-    deps.authorizationReturn
+    deps.authorizationReturn,
+    currentMainLocale
   );
   const tokenDanceAuthorization = new TokenDanceAuthorizationService(
     () => ({
@@ -977,7 +992,9 @@ export async function createElectronMainContext(
     deps.openExternalUrl,
     undefined,
     undefined,
-    deps.authorizationReturn
+    deps.authorizationReturn,
+    undefined,
+    currentMainLocale
   );
   const transport = new TransportDiagnosticsService({
     messagePortRegistered: Boolean(deps.createPeerMessageChannel),
@@ -987,12 +1004,16 @@ export async function createElectronMainContext(
   const sessionAdmissionGuard = new MainNativeSessionAdmissionGuard(session.authority);
   const recorderSession = () => {
     const lease = sessionProductLease(session.state());
-    if (!lease) throw new Error("Sign in before recording a meeting.");
+    if (!lease)
+      throw new Error(
+        messages.audio_capture_sign_in_to_record({}, { locale: currentMainLocale() })
+      );
     return lease;
   };
   const recordingDrive = new DriveRecordingStore(
     deps.synchronicityProvider ?? synchronicity,
-    deps.openDownloadedFilePath
+    deps.openDownloadedFilePath,
+    currentMainLocale
   );
   const recordingTranscription = new RecordingTranscriptionService(
     recordingDrive,
@@ -1010,6 +1031,7 @@ export async function createElectronMainContext(
     }
   );
   const meetingTasks = await MeetingTaskService.open({
+    locale: currentMainLocale,
     reportFailure: (details) => deps.logger?.warn("Meeting submission failed", details),
     writeOutput: (input) => (deps.synchronicityProvider ?? synchronicity).write(input),
     filePath: join(dirname(deps.secureSessionFilePath), "meeting-tasks.json"),
@@ -1023,7 +1045,12 @@ export async function createElectronMainContext(
     publish: (key, state) => meetingRecorder?.acceptTask(key, state),
     resolveRecovery: async (name) => {
       if (!deps.resolveMeetingRecovery)
-        throw new Error("Open Comma to resolve the previous meeting Task.");
+        throw new Error(
+          messages.electron_meeting_recovery_unavailable(
+            {},
+            { locale: currentMainLocale() }
+          )
+        );
       return deps.resolveMeetingRecovery(name);
     },
     bindSession: () => createCurrentMainSessionApiBinding({ session }),
@@ -1033,6 +1060,7 @@ export async function createElectronMainContext(
   });
   const audioCapture = new AudioCaptureService({
     encoder: new HelperRecordingEncoder(deps.microphoneHostPath),
+    locale: currentMainLocale,
     onSaved: (recording, target, sourcePath) =>
       recordingTranscription.process(recording, target, sourcePath),
     onStateChanged: (state) => {
@@ -1048,6 +1076,7 @@ export async function createElectronMainContext(
     drive: recordingDrive,
   });
   meetingRecorder = new MeetingRecorderService({
+    locale: currentMainLocale,
     preferences: () =>
       appPreferencesService.state().clientSettings ?? defaultCommaClientSettings,
     account: () => {
@@ -1191,6 +1220,7 @@ export async function createElectronMainContext(
   });
   const computeNode = new AccountComputeNodeService(
     {
+      locale: currentMainLocale,
       adapter:
         deps.computeNodeAdapter ??
         new AgentVMMCommandAdapter(
@@ -1215,7 +1245,8 @@ export async function createElectronMainContext(
       join(homedir(), "Library", "Application Support", "Agent VMM Maintenance"),
       runCommand,
       deps.confirmHostMaintenance,
-      localCompute
+      localCompute,
+      currentMainLocale
     )
   );
   computeNodeSession = computeNode;
@@ -1235,13 +1266,15 @@ export async function createElectronMainContext(
               ? 20
               : 0
           ),
+        locale: currentMainLocale,
         sitePermissions: deps.browserSitePermissionPlatform
           ? new BrowserSitePermissions(
               deps.browserSitePermissionPlatform,
               join(
                 dirname(deps.appPreferencesFilePath),
                 "browser-site-permissions.json"
-              )
+              ),
+              currentMainLocale
             )
           : undefined,
         createComposerView: deps.createBrowserInspectionComposerView,

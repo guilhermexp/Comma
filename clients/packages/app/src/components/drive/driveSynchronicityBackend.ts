@@ -1,3 +1,4 @@
+import { messages } from "@comma/i18n";
 import { fileDownloadMaxBytes, getNativeBridge } from "@comma/native-bridge";
 import type {
   FilesSaveDownloadResult,
@@ -14,6 +15,7 @@ import type {
   DriveSpace,
   DriveVersionPolicy,
 } from "./driveStore";
+import { DriveBackendError } from "./driveErrors";
 
 /**
  * Drive over the bundled synchronicity node. Main owns the daemon; the
@@ -139,7 +141,7 @@ export function driveDeviceLabel(
   current: boolean,
   deviceName = ""
 ): string {
-  if (current) return deviceName || "This Mac";
+  if (current) return deviceName || messages.drive_device_this_mac();
   if (origin.startsWith("key:")) return origin.slice(4, 14);
   return origin.split("@")[0] ?? origin;
 }
@@ -313,12 +315,16 @@ function driveWritePath(input: { folderPath?: string | undefined; name: string }
         segment.includes("\0")
     )
   ) {
-    throw new Error("Drive upload path contains an unsafe segment.");
+    throw new DriveBackendError(
+      "unsafe_path",
+      "Drive upload path contains an unsafe segment."
+    );
   }
   return segments.join("/");
 }
 
-const rejected = () => new Error("The local node is not available.");
+const rejected = () =>
+  new DriveBackendError("node_unavailable", "The local node is not available.");
 
 /** Only in the Electron client: the bundled node is what the bridge exposes. */
 export function driveSynchronicityAvailable() {
@@ -336,9 +342,14 @@ export class DriveSynchronicityBackend implements DriveBackend {
   /** One explicit reveal reads at most one entry, never reloads other spaces. */
   async lookupFile(target: { space: string; path: string }) {
     const state = await this.state();
-    if (state.status !== "ready") throw new Error("Drive is unavailable.");
+    if (state.status !== "ready")
+      throw new DriveBackendError("drive_unavailable", "Drive is unavailable.");
     const space = state.spaces.find((entry) => entry.id === target.space);
-    if (!space) throw new Error("The recording's Drive space is unavailable.");
+    if (!space)
+      throw new DriveBackendError(
+        "space_unavailable",
+        "The recording's Drive space is unavailable."
+      );
     const result = await getNativeBridge().synchronicity.list({
       limit: 1,
       policy: "newest",
@@ -347,7 +358,10 @@ export class DriveSynchronicityBackend implements DriveBackend {
     });
     const entry = result.entries[0];
     if (!entry || entry.path !== target.path || entry.kind !== "file") {
-      throw new Error("The recording no longer exists at this Drive location.");
+      throw new DriveBackendError(
+        "recording_missing",
+        "The recording no longer exists at this Drive location."
+      );
     }
     return {
       device: {
@@ -446,7 +460,10 @@ export class DriveSynchronicityBackend implements DriveBackend {
 
   async readFile(file: DriveFile): Promise<Blob> {
     if (file.sizeBytes > driveInlineReadMaxBytes) {
-      throw new Error("This file is too large to preview; download it instead.");
+      throw new DriveBackendError(
+        "preview_too_large",
+        "This file is too large to preview; download it instead."
+      );
     }
     const result = await getNativeBridge().synchronicity.read({
       length: Math.max(1, file.sizeBytes),
@@ -463,7 +480,10 @@ export class DriveSynchronicityBackend implements DriveBackend {
       !result.eof ||
       result.length !== result.size
     ) {
-      throw new Error("The node returned an incomplete Drive file.");
+      throw new DriveBackendError(
+        "incomplete_file",
+        "The node returned an incomplete Drive file."
+      );
     }
     return new Blob([bytes], { type: mimeFor(file.name) });
   }
@@ -509,12 +529,16 @@ export class DriveSynchronicityBackend implements DriveBackend {
       return;
     }
     if (!input.blob) {
-      throw new Error(
+      throw new DriveBackendError(
+        "import_unsupported",
         "This runtime cannot import Drive files from local file handles."
       );
     }
     if (input.blob.size > fileDownloadMaxBytes) {
-      throw new Error("This file is too large for an in-app Drive upload.");
+      throw new DriveBackendError(
+        "upload_too_large",
+        "This file is too large for an in-app Drive upload."
+      );
     }
     const result = await bridge.synchronicity.write({
       content: await blobToBase64(input.blob),
@@ -656,7 +680,10 @@ export class DriveSynchronicityBackend implements DriveBackend {
     const defaultSource =
       spaceId === state.defaultSpace && state.localRoot !== "" && !space;
     if (!space?.writable && !defaultSource) {
-      throw new Error("This Drive space is read-only on this device.");
+      throw new DriveBackendError(
+        "read_only",
+        "This Drive space is read-only on this device."
+      );
     }
   }
 
@@ -741,7 +768,10 @@ export class DriveSynchronicityBackend implements DriveBackend {
       // still have more behind it, so only the cursor says when to stop.
       if (!page.nextCursor) break;
       if (page.nextCursor === cursor) {
-        throw new Error("The node returned a repeated Drive listing cursor.");
+        throw new DriveBackendError(
+          "invalid_listing",
+          "The node returned a repeated Drive listing cursor."
+        );
       }
       cursor = page.nextCursor;
     }

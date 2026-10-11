@@ -43,7 +43,7 @@ async function fixture() {
     ),
   };
   const openPath = vi.fn(async (_path: string) => "");
-  const store = new DriveRecordingStore(drive, openPath);
+  const store = new DriveRecordingStore(drive, openPath, "en");
   return { directory, drive, imported, localRoot, openPath, state, store };
 }
 

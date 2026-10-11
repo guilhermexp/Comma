@@ -1,5 +1,5 @@
 import type { ChatLeasedTarget, ChatTarget } from "@comma/chat-contract";
-import { baseLocale } from "@comma/i18n";
+import { defaultLocale } from "@comma/i18n";
 import { isDraftOnlyChange } from "../../../chat-runtime";
 import type { ChatCoordinatorOptions } from "../hostContract";
 import { withSessionDraft } from "../projection/draftProjection";
@@ -57,7 +57,7 @@ export class ChatEntries {
       // Read when an entry opens: a host whose language can change (Electron
       // Main follows the account language) exposes it as a getter.
       get locale() {
-        return options.locale ?? baseLocale;
+        return options.locale ?? defaultLocale;
       },
       onCanonicalMessagesAppended,
       onLocalFilesCommitted,

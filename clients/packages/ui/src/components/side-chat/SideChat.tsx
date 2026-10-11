@@ -712,6 +712,7 @@ export function SideChatDiagnostics({
   sourceFrame: SideChatSourceFrame;
   theme?: SideChatTheme;
 }) {
+  const messages = useCommaMessages();
   const style = {
     "--source-height": `${sourceFrame.height}px`,
     "--source-width": `${sourceFrame.width}px`,
@@ -744,7 +745,7 @@ export function SideChatDiagnostics({
         <div className="comma-side-chat-test-content">
           <header className="comma-side-chat-test-header">
             <PanelRightIcon aria-hidden className="comma-side-chat-test-title-icon" />
-            <h1>测试窗口</h1>
+            <h1>{messages.side_chat_test_window()}</h1>
             <button
               aria-label="Close test window"
               className="comma-side-chat-test-close"

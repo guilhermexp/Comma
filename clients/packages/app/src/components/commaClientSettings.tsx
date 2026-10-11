@@ -7,6 +7,7 @@ import {
   type CommaClientSettings,
   type CommaClientSettingsPatch,
 } from "@comma/native-bridge";
+import { withCurrentDefaultLocalePreference } from "@comma/i18n";
 import { CommaI18nProvider } from "@comma/i18n/react";
 import {
   createContext,
@@ -21,6 +22,14 @@ import {
 import { readLegacyCommaClientSettings } from "./readLegacyCommaClientSettings";
 
 export const commaClientSettingsStorageKey = "comma.client-settings";
+/**
+ * The shipped defaults the browser store has been carried onto, as Main keeps
+ * `defaultsRevision` in its preferences file.
+ * - 1: The app language moved from System to Brazilian Portuguese.
+ */
+const commaClientSettingsDefaultsRevisionStorageKey =
+  "comma.client-settings.defaults-revision";
+const currentWebDefaultsRevision = 1;
 
 interface CommaClientSettingsContextValue {
   settings: CommaClientSettings;
@@ -56,7 +65,23 @@ export function readWebCommaClientSettings(): CommaClientSettings {
     const stored = globalThis.localStorage?.getItem(commaClientSettingsStorageKey);
     if (stored) {
       const parsed = commaClientSettingsSchema.safeParse(JSON.parse(stored));
-      if (parsed.success) return parsed.data;
+      if (parsed.success) {
+        const defaultsRevision = Number(
+          globalThis.localStorage?.getItem(
+            commaClientSettingsDefaultsRevisionStorageKey
+          ) ?? 0
+        );
+        // Older builds saved every setting, defaults included, so a language
+        // still at the old System default is one the user never chose.
+        return defaultsRevision >= currentWebDefaultsRevision
+          ? parsed.data
+          : {
+              ...parsed.data,
+              localePreference: withCurrentDefaultLocalePreference(
+                parsed.data.localePreference
+              ),
+            };
+      }
     }
   } catch {
     // Fall through to the read-only legacy migration snapshot.
@@ -69,6 +94,10 @@ function storeWebCommaClientSettings(settings: CommaClientSettings) {
     globalThis.localStorage?.setItem(
       commaClientSettingsStorageKey,
       JSON.stringify(commaClientSettingsSchema.parse(settings))
+    );
+    globalThis.localStorage?.setItem(
+      commaClientSettingsDefaultsRevisionStorageKey,
+      String(currentWebDefaultsRevision)
     );
   } catch {
     // Browser storage is best effort; the current tab keeps its in-memory state.

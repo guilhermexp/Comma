@@ -1,4 +1,4 @@
-import { baseLocale, messages, type CommaLocale } from "@comma/i18n";
+import { defaultLocale, messages, type CommaLocale } from "@comma/i18n";
 import { getNativeBridge, type SessionBridge } from "@comma/native-bridge";
 import {
   createSessionProblem,
@@ -29,7 +29,7 @@ export function createElectronSessionHostController(input?: {
 }): SessionHostController {
   return new ElectronSessionHostController(
     input?.bridge ?? getNativeBridge().session,
-    input?.locale ?? baseLocale
+    input?.locale ?? defaultLocale
   );
 }
 

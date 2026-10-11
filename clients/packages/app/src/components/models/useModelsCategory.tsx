@@ -1218,7 +1218,19 @@ export function useModelsCategory(
     id: "models",
     icon: "models-api-keys",
     label: m.settings_models_title(),
-    keywords: ["BYOK", "API Key", "Codex", "Claude", "OAuth", "Provider", "Profile"],
+    keywords: [
+      "BYOK",
+      "API Key",
+      "Codex",
+      "Claude",
+      "OAuth",
+      "Provider",
+      "Profile",
+      "chave de API",
+      "provedor",
+      "perfil",
+      "modelo",
+    ],
     sections: [
       {
         id: "models.profiles",

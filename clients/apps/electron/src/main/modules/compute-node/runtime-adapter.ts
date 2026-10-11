@@ -1,3 +1,5 @@
+import { messages } from "@comma/i18n";
+import { computeProblem } from "./problem";
 import { assertMaintenanceCapable } from "./host-maintenance-protocol";
 import type { ComputeNodeState } from "@comma/native-bridge";
 import { runCommand } from "./command";
@@ -124,7 +126,10 @@ export class AgentVMMCommandAdapter implements ComputeNodeRuntimeAdapter {
 
   async enable(requestId?: string, registrationId?: string) {
     if (!registrationId) {
-      throw new Error("Compute node registration identity is unavailable.");
+      throw computeProblem(
+        messages.electron_compute_registration_identity_unavailable,
+        {}
+      );
     }
     await this.mutate(registrationStateArgs("enabled", registrationId, requestId));
   }
@@ -148,14 +153,20 @@ export class AgentVMMCommandAdapter implements ComputeNodeRuntimeAdapter {
   }
   async drain(requestId?: string, registrationId?: string) {
     if (!registrationId) {
-      throw new Error("Compute node registration identity is unavailable.");
+      throw computeProblem(
+        messages.electron_compute_registration_identity_unavailable,
+        {}
+      );
     }
     await this.mutate(registrationStateArgs("draining", registrationId, requestId));
   }
 
   async remove(requestId?: string, registrationId?: string) {
     if (!registrationId)
-      throw new Error("Compute node registration identity is unavailable.");
+      throw computeProblem(
+        messages.electron_compute_registration_identity_unavailable,
+        {}
+      );
     await this.mutate(
       [
         "registration-revoke",

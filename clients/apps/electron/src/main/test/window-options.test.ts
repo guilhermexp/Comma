@@ -110,6 +110,7 @@ describe("createRuntimeWorkbenchWindowOptions", () => {
 describe("createSideChatWindowOptions", () => {
   it("creates an isolated transparent panel that stays hidden until presentation progress arrives", () => {
     const options = createSideChatWindowOptions({
+      locale: "en",
       platform: "darwin",
       windowId: "win_side_chat",
       windowRole: "side-chat-window",
@@ -219,6 +220,7 @@ describe("createOnboardingWindowOptions", () => {
   it("lays an isolated transparent sheet over the display at the normal window level", () => {
     const options = createOnboardingWindowOptions({
       bounds: { height: 1117, width: 1728, x: -1728, y: 0 },
+      locale: "en",
       preloadPath: "/tmp/comma-preload.js",
       productName: "Comma Test",
       windowId: "win_onboarding",

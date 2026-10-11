@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { LoadingIndicator } from "@comma/ui";
-import { formatDate } from "@comma/i18n";
+import { formatDate, formatList, formatNumber, messages } from "@comma/i18n";
 import { useCommaI18n, useCommaMessages } from "@comma/i18n/react";
 import { Badge, Dialog } from "@comma/ui";
 import type { SettingsCategoryDefinition, SettingsPanelItem } from "@comma/ui";
@@ -46,7 +46,6 @@ export function useUsageBillingCategory(
 ): SettingsCategoryDefinition {
   const m = useCommaMessages();
   const { locale } = useCommaI18n();
-  const zh = locale === "zh-CN";
   const [workspace, setWorkspace] = useState<CommaWorkspace>();
   const [plans, setPlans] = useState<CommaBillingPlan[]>([]);
   const [summary, setSummary] = useState<CommaBillingSummary>();
@@ -62,7 +61,6 @@ export function useUsageBillingCategory(
   }>();
   const [billingPeriod, setBillingPeriod] = useState<BillingPeriod>("month");
 
-  const number = useMemo(() => new Intl.NumberFormat(locale), [locale]);
   const activeSubscription = summary?.active_subscription;
   const isActivePlan = (plan: CommaBillingPlan) =>
     activeSubscription?.package_code === plan.package_code &&
@@ -86,7 +84,7 @@ export function useUsageBillingCategory(
   const creditPacks = plans.filter((plan) => plan.mode === "payment");
   const allowance = useMemo(() => creditAllowance(summary, plans), [summary, plans]);
   const loading = pending === "load";
-  const opening = zh ? "正在打开…" : "Opening…";
+  const opening = m.settings_billing_opening();
 
   const reload = useCallback(
     async (signal?: AbortSignal) => {
@@ -137,9 +135,7 @@ export function useUsageBillingCategory(
         if (!controller.signal.aborted) {
           setError({
             key: "load",
-            message: zh
-              ? "账单信息暂时无法加载，请稍后重试。"
-              : "Billing is temporarily unavailable. Try again shortly.",
+            message: messages.settings_billing_load_failed(undefined, { locale }),
           });
         }
       })
@@ -147,7 +143,7 @@ export function useUsageBillingCategory(
         if (!controller.signal.aborted) setPending(undefined);
       });
     return () => controller.abort();
-  }, [api, enabled, reload, zh]);
+  }, [api, enabled, locale, reload]);
 
   const run = async (key: string, action: () => Promise<void>) => {
     setPending(key);
@@ -156,7 +152,7 @@ export function useUsageBillingCategory(
     try {
       await action();
     } catch (reason) {
-      setError({ key, message: billingErrorMessage(reason, zh) });
+      setError({ key, message: billingErrorMessage(reason) });
     } finally {
       setPending(undefined);
     }
@@ -224,9 +220,7 @@ export function useUsageBillingCategory(
       const next = await api.getBillingSummary(workspace.id);
       setSummary(next);
       setCode("");
-      setNotice(
-        zh ? "兑换成功，credits 已到账。" : "Code redeemed. Your credits are ready."
-      );
+      setNotice(m.settings_billing_redeemed());
     });
   };
 
@@ -243,9 +237,9 @@ export function useUsageBillingCategory(
     .filter((date) => Number.isFinite(date.getTime()))
     .toSorted((left, right) => left.getTime() - right.getTime())[0];
   const creditExpiry = subscriptionCreditExpiry
-    ? zh
-      ? `订阅 credits 到期日：${formatDate(subscriptionCreditExpiry, locale, { dateStyle: "medium" })}`
-      : `Subscription credits expire ${formatDate(subscriptionCreditExpiry, locale, { dateStyle: "medium" })}`
+    ? m.settings_billing_subscription_credits_expire({
+        date: formatDate(subscriptionCreditExpiry, locale, { dateStyle: "medium" }),
+      })
     : undefined;
 
   // Your plan: one row — what you are on, and the way to Stripe for its
@@ -257,18 +251,29 @@ export function useUsageBillingCategory(
         ? "—"
         : (activePlan?.name ??
           activeSubscription?.package_code ??
-          (zh ? "未订阅" : "No subscription")),
+          m.settings_billing_no_subscription()),
       description: activeSubscription
         ? [
-            activePlan ? subscriptionPrice(activePlan, locale, zh) : undefined,
-            subscriptionStatusLabel(activeSubscription.status, zh),
+            activePlan ? subscriptionPrice(activePlan, locale) : undefined,
+            subscriptionStatusLabel(activeSubscription.status, locale),
           ]
             .filter(Boolean)
             .join(" · ")
-        : zh
-          ? "订阅后每月到账 credits。"
-          : "Subscribe for a monthly credit allowance.",
-      keywords: ["subscription", "invoice", "stripe", "cancel", "订阅", "发票", "取消"],
+        : m.settings_billing_subscribe_description(),
+      keywords: [
+        "subscription",
+        "invoice",
+        "stripe",
+        "cancel",
+        "订阅",
+        "发票",
+        "取消",
+        "assinatura",
+        "plano",
+        "fatura",
+        "cancelar",
+        "pagamento",
+      ],
       ...(activeSubscription
         ? {
             control: {
@@ -290,26 +295,24 @@ export function useUsageBillingCategory(
   const balanceRows: SettingsPanelItem[] = [
     {
       id: "billing.credits.balance",
-      title: loading ? "—" : number.format(summary?.current_credits ?? 0),
+      title: loading ? "—" : formatNumber(summary?.current_credits ?? 0, locale),
       description: [
         workspace?.name,
         allowance
-          ? zh
-            ? `有效额度初始共 ${number.format(allowance.total)} credits`
-            : `${number.format(allowance.total)} original credits across active grants`
-          : zh
-            ? "当前余额"
-            : "Current balance",
+          ? m.settings_billing_original_credits({
+              credits: formatNumber(allowance.total, locale),
+            })
+          : m.settings_billing_current_balance(),
         creditExpiry,
       ]
         .filter(Boolean)
         .join(" · "),
-      keywords: ["credits", "balance", "余额"],
+      keywords: ["credits", "balance", "余额", "créditos", "saldo"],
       ...(allowance
         ? {
             control: {
               type: "custom" as const,
-              content: <BillingAllowanceMeter allowance={allowance} zh={zh} />,
+              content: <BillingAllowanceMeter allowance={allowance} />,
             },
           }
         : {}),
@@ -323,7 +326,7 @@ export function useUsageBillingCategory(
       ? [
           {
             id: "billing.plans.period",
-            title: zh ? "计费周期" : "Billing period",
+            title: m.settings_billing_period(),
             layout: "stack" as const,
             control: {
               type: "custom" as const,
@@ -332,7 +335,6 @@ export function useUsageBillingCategory(
                   available={availablePeriods}
                   onChange={setBillingPeriod}
                   period={period}
-                  zh={zh}
                 />
               ),
             },
@@ -341,14 +343,22 @@ export function useUsageBillingCategory(
             (plan): SettingsPanelItem => ({
               id: `billing.plans.${plan.plan_key}`,
               title: plan.name,
-              description: subscriptionPlanDetail(plan, locale, number, zh),
-              keywords: ["subscription", "upgrade", "订阅", "升级"],
+              description: subscriptionPlanDetail(plan, locale),
+              keywords: [
+                "subscription",
+                "upgrade",
+                "订阅",
+                "升级",
+                "assinatura",
+                "plano",
+                "mudar plano",
+              ],
               control: isActivePlan(plan)
                 ? {
                     type: "custom",
                     content: (
                       <Badge color="success" size="sm">
-                        {zh ? "当前套餐" : "Current plan"}
+                        {m.settings_billing_current_plan()}
                       </Badge>
                     ),
                   }
@@ -357,7 +367,7 @@ export function useUsageBillingCategory(
                     label:
                       pending === plan.plan_key
                         ? opening
-                        : subscriptionActionLabel(plan, activePlan, zh),
+                        : subscriptionActionLabel(plan, activePlan, locale),
                     disabled: loading || pending === plan.plan_key,
                     onPress: () =>
                       activeSubscription
@@ -370,13 +380,11 @@ export function useUsageBillingCategory(
       : [
           emptyRow(
             "billing.plans.empty",
-            zh ? "订阅套餐" : "Subscription plans",
+            m.settings_billing_subscription_plans(),
             loading ? (
-              <LoadingIndicator label={zh ? "正在加载套餐…" : "Loading plans…"} />
-            ) : zh ? (
-              "暂无可用订阅套餐。"
+              <LoadingIndicator label={m.settings_billing_loading_plans()} />
             ) : (
-              "No subscription plans available."
+              m.settings_billing_no_plans()
             )
           ),
         ]),
@@ -388,25 +396,19 @@ export function useUsageBillingCategory(
 
   if (changeQuote) {
     const preview = changeQuote.preview;
-    const due = new Intl.NumberFormat(locale, {
+    const due = formatNumber(preview.amount_minor / 100, locale, {
       style: "currency",
       currency: preview.currency,
-    }).format(preview.amount_minor / 100);
+    });
     const nextBill = formatDate(new Date(preview.period_end * 1000), locale, {
       dateStyle: "medium",
     });
     const description =
       preview.effect === "upgrade"
-        ? zh
-          ? `立即收取差价 ${due}。付款成功后升档。原定降档将被取消，付款失败不自动恢复。`
-          : `Pay ${due} now. The upgrade applies after payment. This cancels any scheduled downgrade, which is not restored if payment fails.`
+        ? m.settings_billing_upgrade_confirm({ due })
         : preview.effect === "downgrade"
-          ? zh
-            ? `${nextBill} 下次续费时降档。当前已付期间的套餐和额度保留。`
-            : `The downgrade applies at your next renewal on ${nextBill}. Your current paid plan and credits remain available.`
-          : zh
-            ? "取消待降档，保持当前套餐。"
-            : "Cancel the scheduled downgrade and keep your current plan.";
+          ? m.settings_billing_downgrade_confirm({ date: nextBill })
+          : m.settings_billing_keep_plan_confirm();
     planListRows.push({
       id: "billing.plans.confirm",
       title: changeQuote.plan.name,
@@ -415,7 +417,7 @@ export function useUsageBillingCategory(
         content: (
           <Dialog
             isOpen
-            title={zh ? "确认套餐变更" : "Confirm plan change"}
+            title={m.settings_billing_confirm_change_title()}
             description={description}
             isDismissable={!pending}
             onOpenChange={(open) => {
@@ -423,13 +425,13 @@ export function useUsageBillingCategory(
             }}
             actions={[
               {
-                label: zh ? "取消" : "Cancel",
+                label: m.settings_billing_cancel(),
                 hierarchy: "secondary-gray",
                 disabled: !!pending,
                 onPress: () => setChangeQuote(undefined),
               },
               {
-                label: zh ? "确认" : "Confirm",
+                label: m.settings_billing_confirm(),
                 hierarchy: "primary",
                 disabled: !!pending,
                 onPress: confirmSubscriptionChange,
@@ -449,11 +451,11 @@ export function useUsageBillingCategory(
     );
     planRows.push({
       id: "billing.plan.scheduled",
-      title: zh ? "待降档" : "Scheduled downgrade",
+      title: m.settings_billing_scheduled_downgrade(),
       description: `${target?.name ?? scheduled.package_code} · ${formatDate(new Date(scheduled.effective_at * 1000), locale, { dateStyle: "medium" })}`,
       control: {
         type: "button",
-        label: zh ? "保持当前套餐" : "Keep current plan",
+        label: m.settings_billing_keep_current_plan(),
         disabled: !!pending || !activePlan,
         onPress: () => {
           if (activePlan) startSubscriptionChange(activePlan);
@@ -467,11 +469,11 @@ export function useUsageBillingCategory(
     const ends = activeSubscription.source_metadata?.current_period_end;
     planRows.push({
       id: "billing.plan.cancel",
-      title: zh ? "取消续费" : "Cancel renewal",
+      title: m.settings_billing_cancel_renewal(),
       ...(cancellation
         ? {
             description:
-              (zh ? "已取消续费" : "Renewal cancelled") +
+              m.settings_billing_renewal_cancelled() +
               (ends
                 ? ` · ${formatDate(new Date(ends * 1000), locale, { dateStyle: "medium" })}`
                 : ""),
@@ -480,12 +482,8 @@ export function useUsageBillingCategory(
       control: {
         type: "button",
         label: cancellation
-          ? zh
-            ? "已取消"
-            : "Cancelled"
-          : zh
-            ? "取消续费"
-            : "Cancel renewal",
+          ? m.settings_billing_cancelled()
+          : m.settings_billing_cancel_renewal(),
         disabled: !!pending || !!cancellation,
         onPress: () => {
           if (workspace)
@@ -499,18 +497,29 @@ export function useUsageBillingCategory(
   }
 
   const nowUtc = new Date();
-  const estimatedPackEnd = new Date(
-    Date.UTC(nowUtc.getUTCFullYear(), nowUtc.getUTCMonth() + 1, 0)
-  )
-    .toISOString()
-    .slice(0, 10);
+  const estimatedPackEnd = formatDate(
+    Date.UTC(nowUtc.getUTCFullYear(), nowUtc.getUTCMonth() + 1, 0),
+    locale,
+    { dateStyle: "medium", timeZone: "UTC" }
+  );
+  // A pack expires at 00:00 UTC on its expiry date; one entry per date.
   const paidPackExpiries = [
     ...new Set(
       (summary?.active_grants ?? [])
         .filter((grant) => grant.source_type === "stripe_checkout" && grant.expires_at)
-        .map((grant) => `${grant.expires_at!.slice(0, 10)} 00:00 UTC`)
+        .map((grant) => grant.expires_at!.slice(0, 10))
     ),
-  ];
+  ].map((day) =>
+    formatDate(Date.parse(`${day}T00:00:00Z`), locale, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: "UTC",
+      timeZoneName: "short",
+    })
+  );
 
   // Credit packs: one row per pack.
   const packRows: SettingsPanelItem[] = [
@@ -518,8 +527,8 @@ export function useUsageBillingCategory(
       ? [
           {
             id: "billing.packs.paid-expiry",
-            title: zh ? "已购充值包有效至" : "Purchased credits expire",
-            description: paidPackExpiries.join(", "),
+            title: m.settings_billing_purchased_expire(),
+            description: formatList(paidPackExpiries, locale),
           },
         ]
       : []),
@@ -528,10 +537,11 @@ export function useUsageBillingCategory(
           (plan): SettingsPanelItem => ({
             id: `billing.packs.${plan.plan_key}`,
             title: plan.name,
-            description: zh
-              ? `一次性 · 到账 ${number.format(plan.grant_credits)} credits · 预计 ${estimatedPackEnd} UTC 月底到期，以实际付款月份为准`
-              : `One-time · ${number.format(plan.grant_credits)} credits · Estimated expiry: end of ${estimatedPackEnd} UTC, based on the payment month`,
-            keywords: ["buy", "credits", "充值"],
+            description: m.settings_billing_pack_description({
+              credits: formatNumber(plan.grant_credits, locale),
+              date: estimatedPackEnd,
+            }),
+            keywords: ["buy", "credits", "充值", "comprar", "créditos", "pacote"],
             control: {
               type: "button",
               label: pending === plan.plan_key ? opening : formatPrice(plan, locale),
@@ -545,13 +555,9 @@ export function useUsageBillingCategory(
             "billing.packs.empty",
             m.settings_add_credits(),
             loading ? (
-              <LoadingIndicator
-                label={zh ? "正在加载充值包…" : "Loading credit packs…"}
-              />
-            ) : zh ? (
-              "暂无可用充值包。"
+              <LoadingIndicator label={m.settings_billing_loading_packs()} />
             ) : (
-              "No credit packs available."
+              m.settings_billing_no_packs()
             )
           ),
         ]),
@@ -574,7 +580,7 @@ export function useUsageBillingCategory(
       },
       {
         id: "billing.plans",
-        title: zh ? "订阅套餐" : "Subscription plans",
+        title: m.settings_billing_subscription_plans(),
         items: planListRows,
       },
       { id: "billing.packs", title: m.settings_add_credits(), items: packRows },
@@ -586,7 +592,7 @@ export function useUsageBillingCategory(
             id: "billing.redeem.code",
             title: m.settings_redeem_code(),
             description: m.settings_redeem_credits_description(),
-            keywords: ["code", "coupon", "兑换码"],
+            keywords: ["code", "coupon", "兑换码", "código", "cupom", "resgatar"],
             layout: "field",
             control: {
               type: "custom",
@@ -599,7 +605,6 @@ export function useUsageBillingCategory(
                   onCodeChange={setCode}
                   onSubmit={redeem}
                   pending={pending === "redeem"}
-                  zh={zh}
                 />
               ),
             },
@@ -704,38 +709,24 @@ function abortableDelay(delayMs: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-function billingErrorMessage(reason: unknown, zh: boolean) {
+function billingErrorMessage(reason: unknown) {
   const code = reason instanceof CommaApiError ? reason.body?.error : undefined;
-  const messages: Record<string, readonly [string, string]> = {
-    redeem_code_not_found: [
-      "兑换码不存在，请检查后重试。",
-      "That redeem code wasn’t found.",
-    ],
-    redeem_code_expired: ["这个兑换码已过期。", "That redeem code has expired."],
-    redeem_code_disabled: [
-      "这个兑换码已停用。",
-      "That redeem code is no longer active.",
-    ],
-    redeem_code_max_redemptions_reached: [
-      "这个兑换码已被领完。",
-      "That redeem code has reached its redemption limit.",
-    ],
-    redeem_code_account_limit_reached: [
-      "当前账户已经兑换过这个兑换码。",
-      "This account has already redeemed that code.",
-    ],
-    active_subscription_not_found: [
-      "当前订阅状态尚未同步，请稍后再试。",
-      "Your current subscription is still syncing. Try again shortly.",
-    ],
-    subscription_change_unavailable: [
-      "套餐变更暂时不可用，请稍后重试。",
-      "Plan changes are temporarily unavailable. Try again shortly.",
-    ],
-  };
-  const message = code ? messages[code] : undefined;
-  if (message) return message[zh ? 0 : 1];
-  return zh
-    ? "操作失败，请检查后重试。"
-    : "That didn’t work. Check the details and try again.";
+  switch (code) {
+    case "redeem_code_not_found":
+      return messages.settings_billing_error_code_not_found();
+    case "redeem_code_expired":
+      return messages.settings_billing_error_code_expired();
+    case "redeem_code_disabled":
+      return messages.settings_billing_error_code_disabled();
+    case "redeem_code_max_redemptions_reached":
+      return messages.settings_billing_error_code_max_redemptions();
+    case "redeem_code_account_limit_reached":
+      return messages.settings_billing_error_code_account_limit();
+    case "active_subscription_not_found":
+      return messages.settings_billing_error_subscription_syncing();
+    case "subscription_change_unavailable":
+      return messages.settings_billing_error_change_unavailable();
+    default:
+      return messages.settings_billing_error_generic();
+  }
 }

@@ -1,7 +1,9 @@
+import { messages } from "@comma/i18n";
 import type { ComputeNodeState } from "@comma/native-bridge";
 import { sessionProductLease } from "@comma/session-contract";
 import { z } from "zod";
 import type { ElectronMainSessionService } from "../session";
+import { ComputeProblemError, computeProblem } from "./problem";
 
 const INSTALL_AUTHORIZATION_TIMEOUT_MS = 10_000;
 
@@ -39,11 +41,22 @@ const operationResponseSchema = z.strictObject({
     .passthrough(),
 });
 
-export class ComputeNodeAuthorizationNotFoundError extends Error {
+export class ComputeNodeAuthorizationNotFoundError extends ComputeProblemError {
   constructor() {
-    super("This compute node registration is unavailable in the current session.");
+    super((locale) =>
+      messages.electron_compute_registration_unavailable({}, { locale })
+    );
   }
 }
+
+const operationFailedMessages = {
+  enable: messages.electron_compute_enable_failed,
+  disable: messages.electron_compute_disable_failed,
+  revoke: messages.electron_compute_revoke_failed,
+  "initialize-workload": messages.electron_compute_initialize_workload_failed,
+  status: messages.electron_compute_status_failed,
+  retry: messages.electron_compute_retry_failed,
+};
 
 export type ComputeNodeInstallAuthorizationPhase = z.infer<
   typeof operationResponseSchema
@@ -176,7 +189,9 @@ export class ComputeNodeInstallAuthorization implements ComputeNodeInstallAuthor
     requestId: string;
     workspaceId: string;
   }): Promise<{ descriptor: string; operationId: string; registrationId: string }> {
-    const { credential, lease } = this.credential("enabling this compute node");
+    const { credential, lease } = this.credential(
+      messages.electron_compute_sign_in_to_enable
+    );
     const response = await this.fetcher(
       new URL(
         `/v1/comma/workspaces/${encodeURIComponent(input.workspaceId)}/compute-nodes/agent-vmm/install-operations`,
@@ -201,14 +216,19 @@ export class ComputeNodeInstallAuthorization implements ComputeNodeInstallAuthor
     );
     if (response.status === 401) {
       await this.session.reportUnauthorized(credential);
-      throw new Error("Compute node authorization expired.");
+      throw computeProblem(messages.electron_compute_authorization_expired, {});
     }
     if (!response.ok) {
-      throw new Error(`Compute node authorization failed (${response.status}).`);
+      throw computeProblem(messages.electron_compute_authorization_failed, {
+        status: response.status,
+      });
     }
     const result = installAuthorizationResponseSchema.parse(await response.json());
     if (result.operation.id !== result.descriptor.operation_id) {
-      throw new Error("Compute node authorization identity mismatch.");
+      throw computeProblem(
+        messages.electron_compute_authorization_identity_mismatch,
+        {}
+      );
     }
     return {
       descriptor: JSON.stringify(result.descriptor),
@@ -236,7 +256,7 @@ export class ComputeNodeInstallAuthorization implements ComputeNodeInstallAuthor
   async retry(input: { operationId: string; workspaceId: string }) {
     const result = await this.authorizationRequest(input, "retry");
     if (result.operation.id !== input.operationId) {
-      throw new Error("Compute node retry identity mismatch.");
+      throw computeProblem(messages.electron_compute_retry_identity_mismatch, {});
     }
     return {
       descriptor: JSON.stringify(result.descriptor),
@@ -273,7 +293,9 @@ export class ComputeNodeInstallAuthorization implements ComputeNodeInstallAuthor
     method: "GET" | "POST",
     action?: "enable" | "disable" | "revoke" | "initialize-workload"
   ) {
-    const { credential, lease } = this.credential("reading compute node status");
+    const { credential, lease } = this.credential(
+      messages.electron_compute_sign_in_to_read_status
+    );
     const suffix = action ? `/${action}` : "";
     const response = await this.fetcher(
       new URL(
@@ -295,14 +317,17 @@ export class ComputeNodeInstallAuthorization implements ComputeNodeInstallAuthor
       }
     );
     if (response.status === 401) await this.session.reportUnauthorized(credential);
-    if (method === "GET") this.requireCurrent(credential, "status");
+    if (method === "GET")
+      this.requireCurrent(credential, messages.electron_compute_status_session_changed);
     if (response.status === 404) throw new ComputeNodeAuthorizationNotFoundError();
     if (!response.ok) {
-      const operation = action ?? "status";
-      throw new Error(`Compute node ${operation} failed (${response.status}).`);
+      throw computeProblem(operationFailedMessages[action ?? "status"], {
+        status: response.status,
+      });
     }
     const result = operationResponseSchema.parse(await response.json());
-    if (method === "GET") this.requireCurrent(credential, "status");
+    if (method === "GET")
+      this.requireCurrent(credential, messages.electron_compute_status_session_changed);
     return result.operation;
   }
 
@@ -310,7 +335,9 @@ export class ComputeNodeInstallAuthorization implements ComputeNodeInstallAuthor
     input: { operationId: string; workspaceId: string },
     action: "retry"
   ) {
-    const { credential, lease } = this.credential("retrying compute node installation");
+    const { credential, lease } = this.credential(
+      messages.electron_compute_sign_in_to_retry
+    );
     const response = await this.fetcher(
       new URL(
         `/v1/comma/workspaces/${encodeURIComponent(input.workspaceId)}/compute-nodes/agent-vmm/install-operations/${encodeURIComponent(input.operationId)}/${action}`,
@@ -332,10 +359,15 @@ export class ComputeNodeInstallAuthorization implements ComputeNodeInstallAuthor
     );
     if (response.status === 401) await this.session.reportUnauthorized(credential);
     if (!response.ok)
-      throw new Error(`Compute node ${action} failed (${response.status}).`);
+      throw computeProblem(operationFailedMessages[action], {
+        status: response.status,
+      });
     const result = installAuthorizationResponseSchema.parse(await response.json());
     if (result.operation.id !== result.descriptor.operation_id) {
-      throw new Error("Compute node authorization identity mismatch.");
+      throw computeProblem(
+        messages.electron_compute_authorization_identity_mismatch,
+        {}
+      );
     }
     return result;
   }
@@ -360,7 +392,7 @@ export class ComputeNodeInstallAuthorization implements ComputeNodeInstallAuthor
         )
       );
     if (response.operation.id !== input.operationId)
-      throw new Error("Compute request identity changed.");
+      throw computeProblem(messages.electron_compute_request_identity_changed, {});
   }
 
   async localMappings(workspaceId: string, targets: LocalWorkloadTarget[]) {
@@ -443,7 +475,7 @@ export class ComputeNodeInstallAuthorization implements ComputeNodeInstallAuthor
       .object({ operation: recoveryOperationSchema })
       .parse(response).operation;
     if (operation.id !== operationId || operation.scope_key !== workspaceId)
-      throw new Error("Recovery binding changed.");
+      throw computeProblem(messages.electron_compute_recovery_binding_changed, {});
     return operation;
   }
 
@@ -454,7 +486,9 @@ export class ComputeNodeInstallAuthorization implements ComputeNodeInstallAuthor
     acceptedResult = false,
     method: "GET" | "POST" = "POST"
   ) {
-    const { credential, lease } = this.credential("recovering this compute node");
+    const { credential, lease } = this.credential(
+      messages.electron_compute_sign_in_to_recover
+    );
     const response = await this.fetcher(
       new URL(
         `/v1/comma/workspaces/${encodeURIComponent(workspaceId)}/compute-nodes/agent-vmm/${path}`,
@@ -478,34 +512,46 @@ export class ComputeNodeInstallAuthorization implements ComputeNodeInstallAuthor
     );
     if (response.status === 401) await this.session.reportUnauthorized(credential);
     if (!response.ok) {
-      this.requireCurrent(credential, "recovery");
-      throw new Error(`Compute node recovery failed (${response.status}).`);
+      this.requireCurrent(
+        credential,
+        messages.electron_compute_recovery_session_changed
+      );
+      throw computeProblem(messages.electron_compute_recovery_failed, {
+        status: response.status,
+      });
     }
     const result: unknown = await response.json();
     // An already accepted transfer belongs to the original account record even after logout.
-    if (!acceptedResult) this.requireCurrent(credential, "recovery");
+    if (!acceptedResult)
+      this.requireCurrent(
+        credential,
+        messages.electron_compute_recovery_session_changed
+      );
     return result;
   }
 
-  private credential(purpose: string) {
+  private credential(
+    signInRequired: typeof messages.electron_compute_sign_in_to_enable
+  ) {
     const lease = sessionProductLease(this.session.state());
-    if (!lease) throw new Error(`Sign in before ${purpose}.`);
+    if (!lease) throw computeProblem(signInRequired, {});
     const credential = this.session.acquireProductCredential({
       authorityInstanceId: lease.authorityInstanceId,
       expectedAudience: lease.audience,
       expectedSessionId: lease.sessionId,
       generation: lease.generation,
     });
-    if (!credential) throw new Error("Compute node session is unavailable.");
+    if (!credential)
+      throw computeProblem(messages.electron_compute_session_unavailable, {});
     return { credential, lease };
   }
 
   private requireCurrent(
     credential: ReturnType<ElectronMainSessionService["acquireProductCredential"]> & {},
-    purpose: string
+    sessionChanged: typeof messages.electron_compute_status_session_changed
   ) {
     if (!this.session.isCurrentProductCredential(credential)) {
-      throw new Error(`Compute node ${purpose} session changed.`);
+      throw computeProblem(sessionChanged, {});
     }
   }
 }

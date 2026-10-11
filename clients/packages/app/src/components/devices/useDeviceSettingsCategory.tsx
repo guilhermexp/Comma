@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
+import { formatDate } from "@comma/i18n";
 import { useCommaLocale, useCommaMessages } from "@comma/i18n/react";
 import { getNativeBridge } from "@comma/native-bridge";
 import {
@@ -316,7 +317,7 @@ export function useDeviceSettingsCategory(
             device.system_info?.os_version,
             `${m.settings_devices_device_id()}: ${device.device_id}`,
             !connected && device.disconnected_at
-              ? `${m.settings_devices_disconnected_at()}: ${new Date(device.disconnected_at * 1000).toLocaleString()}`
+              ? `${m.settings_devices_disconnected_at()}: ${formatDate(device.disconnected_at * 1000, locale, { dateStyle: "medium", timeStyle: "short" })}`
               : undefined,
           ].filter((value): value is string => Boolean(value))
         : undefined,
@@ -325,7 +326,7 @@ export function useDeviceSettingsCategory(
           comma_dev: "Comma Dev",
           comma_staging: "Comma Staging",
           comma: "Comma",
-          connector: "Connector",
+          connector: m.settings_devices_source_connector(),
         } as Record<string, string>
       )[device?.system_info?.client_source ?? ""],
       local: isLocal,
@@ -446,8 +447,8 @@ export function useDeviceSettingsCategory(
             description: runtimeDescription(),
             details: [
               `${m.settings_devices_version()}: ${runtime.version || m.settings_devices_not_reported()}`,
-              `${m.settings_devices_authentication()}: ${({ chatgpt: "ChatGPT", api_key: "API key", amazon_bedrock: "Amazon Bedrock" } as Record<string, string>)[runtime.auth?.mode ?? ""] || runtime.auth?.backend || m.settings_devices_not_reported()}`,
-              `${m.settings_devices_checked()}: ${runtime.readiness_checked_at ? new Date(runtime.readiness_checked_at * 1000).toLocaleString() : m.settings_devices_not_reported()}`,
+              `${m.settings_devices_authentication()}: ${({ chatgpt: "ChatGPT", api_key: m.settings_providers_key(), amazon_bedrock: "Amazon Bedrock" } as Record<string, string>)[runtime.auth?.mode ?? ""] || runtime.auth?.backend || m.settings_devices_not_reported()}`,
+              `${m.settings_devices_checked()}: ${runtime.readiness_checked_at ? formatDate(runtime.readiness_checked_at * 1000, locale, { dateStyle: "medium", timeStyle: "short" }) : m.settings_devices_not_reported()}`,
             ],
           };
         }),

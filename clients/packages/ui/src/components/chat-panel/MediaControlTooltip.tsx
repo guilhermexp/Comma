@@ -4,7 +4,6 @@ import { Tooltip } from "../tooltip";
 import { useHoverOnlyTooltip } from "./useHoverOnlyTooltip";
 
 export const mediaControlShortcuts = {
-  play: "Space",
   mute: "M",
   playbackSpeed: ["<", ">"] as const,
 } as const;

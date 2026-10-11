@@ -1,5 +1,5 @@
 import userEvent from "@testing-library/user-event";
-import { initializeCommaI18n } from "@comma/i18n";
+import { initializeCommaI18n, legacyCommaLocaleStorageKey } from "@comma/i18n";
 import {
   appPreferencesSchema,
   defaultCommaClientSettings,
@@ -71,6 +71,11 @@ const defaultAuth = (): CommaAuthContextValue => {
   };
 };
 
+const englishClientSettings = {
+  ...defaultCommaClientSettings,
+  localePreference: "en",
+} as const;
+
 const renderSettings = (
   auth = defaultAuth(),
   appShortcutPlatform?: AppShortcutPlatform
@@ -99,9 +104,12 @@ const renderProfileSettings = (auth: CommaAuthContextValue) => renderSettings(au
 
 // Only the Electron owner reports a client-settings write as pending; the web
 // provider stores locally and is never in flight.
-const renderElectronSettings = (auth = defaultAuth()) =>
+const renderElectronSettings = (
+  auth = defaultAuth(),
+  initialPreferences?: AppPreferences
+) =>
   render(
-    <CommaElectronClientSettingsProvider>
+    <CommaElectronClientSettingsProvider initialPreferences={initialPreferences}>
       <CommaClientSettingsI18nProvider>
         <CommaAuthContext.Provider value={auth}>
           <RouterIdentityProvider>
@@ -146,6 +154,7 @@ function installWorkspaceList(workspaceIds: readonly string[]) {
 describe("AppSettingsRoute", () => {
   beforeEach(() => {
     installWorkspaceList(["wsp_default"]);
+    localStorage.setItem(legacyCommaLocaleStorageKey, "en");
     installNativeBridgeMock({
       platform: "electron",
       sideChat: {
@@ -181,7 +190,7 @@ describe("AppSettingsRoute", () => {
   });
   it("gates every Meeting control while a client-settings write is in flight", async () => {
     let preferences = appPreferencesSchema.parse({
-      clientSettings: defaultCommaClientSettings,
+      clientSettings: englishClientSettings,
       launchAtLogin: false,
       notificationSound: true,
       notifyRouterMessages: true,
@@ -215,7 +224,7 @@ describe("AppSettingsRoute", () => {
       platform: "electron",
       sideChat: { updateShortcut: vi.fn(async (shortcut) => shortcut) },
     });
-    renderElectronSettings();
+    renderElectronSettings(defaultAuth(), preferences);
     await userEvent.click(screen.getByRole("button", { name: "Meeting" }));
 
     const start = screen.getByRole("button", { name: /^Reminder/ });
@@ -1118,7 +1127,7 @@ describe("AppSettingsRoute", () => {
     localStorage.setItem(
       commaClientSettingsStorageKey,
       JSON.stringify({
-        ...structuredClone(defaultCommaClientSettings),
+        ...structuredClone(englishClientSettings),
         appearance: {
           ...defaultCommaAppearancePreferences,
           theme: "custom",
@@ -1195,7 +1204,7 @@ describe("AppSettingsRoute", () => {
     localStorage.setItem(
       commaClientSettingsStorageKey,
       JSON.stringify({
-        ...structuredClone(defaultCommaClientSettings),
+        ...structuredClone(englishClientSettings),
         onboardingCompletedUserIds: ["usr_other", "usr_ada"],
       })
     );
@@ -1530,7 +1539,7 @@ describe("AppSettingsRoute", () => {
     expect(openPermissionFlow).toHaveBeenCalledOnce();
     getPermissions.mockResolvedValue({ ok: false, error: "Helper unavailable" });
     await userEvent.click(screen.getByRole("button", { name: "Refresh status" }));
-    await screen.findByText("Helper unavailable");
+    await screen.findByText("Could not read permissions.");
     expect(screen.getAllByText("Not checked")).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Refresh status" })).toBeEnabled();
   });

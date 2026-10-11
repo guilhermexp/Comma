@@ -30,7 +30,16 @@ export function useOnboardingReplaySection(): SettingsSection {
         id: "app.onboarding.replay",
         title: m.settings_onboarding_replay(),
         description: m.settings_onboarding_replay_description(),
-        keywords: ["onboarding", "first launch", "introduction", "新手引导", "引导"],
+        keywords: [
+          "onboarding",
+          "first launch",
+          "introduction",
+          "新手引导",
+          "引导",
+          "introdução",
+          "boas-vindas",
+          "primeiro uso",
+        ],
         control: {
           type: "button",
           disabled: pending || !userId || !completedUserIds.includes(userId),

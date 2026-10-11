@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { basename, extname } from "node:path";
-import { baseLocale, formatNumber, messages } from "@comma/i18n";
+import { defaultLocale, formatNumber, messages } from "@comma/i18n";
 import type {
   AirDropFileKind,
   AirDropPreview,
@@ -107,7 +107,7 @@ export class AirDropReception implements AirDropReceptionProvider {
     platform: AirDropPresentationPlatform;
     publish: (state: AirDropState) => void;
   }) {
-    this.#locale = options.locale ?? baseLocale;
+    this.#locale = options.locale ?? defaultLocale;
     this.#log = options.log;
     this.#notch = options.notch;
     this.#platform = options.platform;

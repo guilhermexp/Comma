@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useCommaMessages } from "@comma/i18n/react";
 import { Dialog as AriaDialog, Modal, ModalOverlay } from "react-aria-components";
 import { CrossLargeIcon } from "../icons";
 import { NativeSurfaceSuppressor } from "../native-surface/NativeSurfaceSuppressor";
@@ -33,6 +34,7 @@ export const ChatPanelMediaPreview = ({
   title,
   variant = "default",
 }: ChatPanelMediaPreviewProps) => {
+  const messages = useCommaMessages();
   const [keyboardClosing, setKeyboardClosing] = useState(false);
   const dialogRef = useRef<HTMLElement | null>(null);
   const wasOpenRef = useRef(false);
@@ -129,7 +131,7 @@ export const ChatPanelMediaPreview = ({
               <div className="chat-panel-media-preview-actions">
                 {actions}
                 <button
-                  aria-label="Close preview"
+                  aria-label={messages.drive_preview_close_sidebar()}
                   className="chat-panel-media-preview-close"
                   {...closePressFeedback}
                   onClick={(event) => {
@@ -139,7 +141,7 @@ export const ChatPanelMediaPreview = ({
                     }
                     close();
                   }}
-                  title="Close preview"
+                  title={messages.drive_preview_close_sidebar()}
                   type="button"
                 >
                   <CrossLargeIcon className="size-2xl" />

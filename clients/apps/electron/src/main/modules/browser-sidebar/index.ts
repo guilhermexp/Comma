@@ -28,6 +28,8 @@ import {
   type SurfaceBounds,
 } from "@comma/native-bridge";
 import type { Session } from "electron";
+import { defaultLocale, messages } from "@comma/i18n";
+import { readMainLocale, type MainLocaleSource } from "../../main-locale";
 import type { BrowserSitePermissions } from "./site-permissions";
 import { BrowserMeetingProbe } from "./meeting-presence";
 import { randomUUID } from "node:crypto";
@@ -348,16 +350,22 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
   ) => BrowserSidebarOwnerWindowLike | undefined;
   readonly #surfaces: BrowserSidebarSurfaces;
   readonly #sitePermissions: BrowserSitePermissions | undefined;
+  readonly #locale: MainLocaleSource;
   #disposed = false;
   readonly #meetingProbe = new BrowserMeetingProbe();
 
-  async showPermissions(input: BrowserSitePermissionsInput) {
+  async showPermissions(
+    input: BrowserSitePermissionsInput
+  ): Promise<{ status: "opened" | "unavailable"; reason?: string }> {
     const parsed = browserSitePermissionsInputSchema.parse(input);
     const active = this.#active(this.#getCallerWindowId(), parsed.sessionId);
     if (!active || active.closing || !this.#sitePermissions)
       return {
         status: "unavailable" as const,
-        reason: "Website permissions are unavailable for this tab.",
+        reason: messages.browser_site_permissions_unavailable(
+          {},
+          { locale: readMainLocale(this.#locale) }
+        ),
       };
     return this.#sitePermissions.showSettings(active.webContents, parsed.anchor);
   }
@@ -365,6 +373,7 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
   constructor({
     createView,
     sitePermissions,
+    locale = defaultLocale,
     createComposerView,
     composerUrl,
     getCallerWindowId = () => getCurrentNativeCallerContext().windowId,
@@ -375,6 +384,7 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
     surfaces,
   }: {
     sitePermissions?: BrowserSitePermissions | undefined;
+    locale?: MainLocaleSource | undefined;
     createView: (ownerWindowId: string) => BrowserSidebarViewLike;
     createComposerView?: (() => BrowserSidebarViewLike) | undefined;
     composerUrl?: string | undefined;
@@ -393,6 +403,7 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
   }) {
     this.#createView = createView;
     this.#sitePermissions = sitePermissions;
+    this.#locale = locale;
     this.#createComposerView = createComposerView;
     this.#composerUrl = composerUrl;
     this.#getCallerWindowId = getCallerWindowId;
@@ -496,7 +507,10 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
     const active = this.#active(ownerWindowId, parsed.sessionId);
     if (!active || active.closing || active.webContents.isDestroyed()) {
       return {
-        reason: "This browser page is no longer available.",
+        reason: messages.browser_page_unavailable(
+          {},
+          { locale: readMainLocale(this.#locale) }
+        ),
         status: "unavailable",
       };
     }
@@ -556,7 +570,10 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
       return { status: "cancelled" };
     } catch {
       return {
-        reason: "The page changed before element selection finished.",
+        reason: messages.browser_inspect_page_changed(
+          {},
+          { locale: readMainLocale(this.#locale) }
+        ),
         status: "unavailable",
       };
     }
@@ -626,7 +643,13 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
       // Never turn a stale or missing fence into an unrelated retained-page eviction.
       const sessionCount = this.#activeByOwnerWindowId.get(ownerWindowId)?.size ?? 0;
       if (!exactVictimsDrained || sessionCount >= maxBrowserSidebarSessionsPerOwner) {
-        const state = capacityBlockedState(parsed.sessionId);
+        const state = capacityBlockedState(
+          parsed.sessionId,
+          messages.browser_sidebar_capacity_waiting(
+            {},
+            { locale: readMainLocale(this.#locale) }
+          )
+        );
         try {
           await this.#onStateChanged?.(ownerWindowId, state);
         } catch {
@@ -1301,7 +1324,12 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
     active.webContents.on("did-fail-load", (...args) => {
       const errorCode = typeof args[1] === "number" ? args[1] : undefined;
       const errorDescription =
-        typeof args[2] === "string" ? args[2] : "This page could not be loaded.";
+        typeof args[2] === "string"
+          ? args[2]
+          : messages.browser_page_load_failed(
+              {},
+              { locale: readMainLocale(this.#locale) }
+            );
       const validatedUrl = typeof args[3] === "string" ? args[3] : undefined;
       const isMainFrame = typeof args[4] !== "boolean" || args[4];
       if (
@@ -1407,7 +1435,12 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
         return;
       }
       active.reason =
-        error instanceof Error ? error.message : "This page could not be loaded.";
+        error instanceof Error
+          ? error.message
+          : messages.browser_page_load_failed(
+              {},
+              { locale: readMainLocale(this.#locale) }
+            );
       this.#rejectPendingClientTabOpen(active.tabId, asError(error));
       void this.#publishState(active).catch(() => undefined);
       return;
@@ -1431,7 +1464,12 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
           return;
         }
         active.reason =
-          error instanceof Error ? error.message : "This page could not be loaded.";
+          error instanceof Error
+            ? error.message
+            : messages.browser_page_load_failed(
+                {},
+                { locale: readMainLocale(this.#locale) }
+              );
         this.#rejectPendingClientTabOpen(active.tabId, asError(error));
         void this.#publishState(active).catch(() => undefined);
       }
@@ -1545,7 +1583,10 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
     const surface = await this.#ensureInspectionComposerSurface(active);
     if (!surface) {
       return {
-        reason: "The element composer is unavailable.",
+        reason: messages.browser_inspect_composer_unavailable(
+          {},
+          { locale: readMainLocale(this.#locale) }
+        ),
         status: "unavailable",
       };
     }
@@ -1597,7 +1638,10 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
         .executeJavaScript(browserInspectionComposerActivateSource)
         .catch(() =>
           finish({
-            reason: "The element composer could not be activated.",
+            reason: messages.browser_inspect_composer_activation_failed(
+              {},
+              { locale: readMainLocale(this.#locale) }
+            ),
             status: "unavailable",
           })
         );
@@ -1659,7 +1703,10 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
       }
       if (active.inspectionComposer?.view === view) {
         void active.inspectionComposer.finish({
-          reason: "The element composer closed before the prompt was sent.",
+          reason: messages.browser_inspect_composer_closed(
+            {},
+            { locale: readMainLocale(this.#locale) }
+          ),
           status: "unavailable",
         });
       }
@@ -2178,11 +2225,11 @@ function availableInactiveState(sessionId?: string): BrowserSidebarState {
   };
 }
 
-function capacityBlockedState(sessionId: string): BrowserSidebarState {
+function capacityBlockedState(sessionId: string, reason: string): BrowserSidebarState {
   return {
     active: false,
     available: true,
-    reason: "Waiting for an older browser sidebar session to finish closing.",
+    reason,
     reasonCode: "capacity",
     sessionId,
   };

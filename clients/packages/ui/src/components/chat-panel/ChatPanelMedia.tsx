@@ -164,7 +164,7 @@ const resolveFileType = ({
   const extension = cleanFileName.includes(".")
     ? cleanFileName.split(".").at(-1)
     : undefined;
-  return extension?.trim() ? extension.toUpperCase() : "FILE";
+  return extension?.trim() ? extension.toUpperCase() : undefined;
 };
 
 const convertImageBlobToPng = async (blob: Blob) => {
@@ -296,9 +296,12 @@ export const ChatPanelImage = ({
   download,
   onCopy,
   onContextMenu,
-  previewTitle = "Generated image preview",
+  previewTitle: suppliedPreviewTitle,
   src,
 }: ChatPanelImageProps) => {
+  const messages = useCommaMessages();
+  const previewTitle =
+    suppliedPreviewTitle ?? messages.ui_image_generated_preview_title();
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewInstantMotion, setPreviewInstantMotion] = useState(false);
@@ -345,7 +348,7 @@ export const ChatPanelImage = ({
     <>
       <figure className={cx("chat-panel-image", className)} {...keyboardFocusMotion}>
         <button
-          aria-label="Preview generated image"
+          aria-label={messages.ui_image_preview_generated()}
           className="chat-panel-image-preview-trigger"
           {...buttonPressFeedback}
           onClick={openPreview}
@@ -365,20 +368,20 @@ export const ChatPanelImage = ({
           <button
             aria-label={
               copyState === "copied"
-                ? "Image copied"
+                ? messages.drive_preview_copied_title()
                 : copyState === "error"
-                  ? "Copy image failed. Try again"
-                  : "Copy image"
+                  ? messages.ui_image_copy_failed_retry_label()
+                  : messages.drive_preview_copy_image()
             }
             className="chat-panel-image-action"
             {...buttonPressFeedback}
             onClick={() => void copyImage()}
             title={
               copyState === "copied"
-                ? "Copied"
+                ? messages.common_copied()
                 : copyState === "error"
-                  ? "Copy failed"
-                  : "Copy image"
+                  ? messages.ui_image_copy_failed_title()
+                  : messages.drive_preview_copy_image()
             }
             type="button"
           >
@@ -395,9 +398,9 @@ export const ChatPanelImage = ({
           ) : null}
           <span aria-live="polite" className="sr-only">
             {copyState === "copied"
-              ? "Image copied."
+              ? messages.ui_image_copied_feedback()
               : copyState === "error"
-                ? "Could not copy the image."
+                ? messages.ui_image_copy_failed_feedback()
                 : ""}
           </span>
         </div>
@@ -434,7 +437,9 @@ export const ChatPanelFile = ({
   typeLabel,
 }: ChatPanelFileProps) => {
   const messages = useCommaMessages();
-  const resolvedType = resolveFileType({ fileName, mimeType, typeLabel });
+  const resolvedType =
+    resolveFileType({ fileName, mimeType, typeLabel }) ??
+    messages.ui_file_type_fallback();
 
   return (
     <article className={cx("chat-panel-file", className)} data-testid={testId}>
@@ -477,11 +482,13 @@ export const ChatPanelVideo = ({
   download,
   duration = 19,
   poster,
-  previewTitle = "Generated video preview",
+  previewTitle: suppliedPreviewTitle,
   src,
   onContextMenu,
 }: ChatPanelVideoProps) => {
   const messages = useCommaMessages();
+  const previewTitle =
+    suppliedPreviewTitle ?? messages.ui_video_generated_preview_title();
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewInstantMotion, setPreviewInstantMotion] = useState(false);
   const suppliedAspectRatio = normalizeVideoAspectRatio(aspectRatio);

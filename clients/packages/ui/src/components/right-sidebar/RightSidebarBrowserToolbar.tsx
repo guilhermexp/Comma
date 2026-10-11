@@ -68,7 +68,7 @@ const reloadTransitionFallbackBufferMs = 30;
 export const RightSidebarBrowserToolbar = ({
   address,
   addressInvalid = false,
-  addressPlaceholder = "Search or enter URL",
+  addressPlaceholder,
   canGoBack,
   canGoForward,
   className,
@@ -251,7 +251,7 @@ export const RightSidebarBrowserToolbar = ({
   return (
     <form
       {...formProps}
-      aria-label={formProps["aria-label"] ?? "Browser navigation"}
+      aria-label={formProps["aria-label"] ?? messages.ui_browser_navigation()}
       className={cx(
         "comma-right-sidebar-browser-toolbar relative flex h-10 items-center gap-xl border-b-[0.5px] border-primary bg-main-panel-bg px-lg py-sm",
         className
@@ -262,7 +262,7 @@ export const RightSidebarBrowserToolbar = ({
     >
       <div className="flex shrink-0 items-center gap-xs">
         <button
-          aria-label="Back"
+          aria-label={messages.shell_back()}
           className={toolbarButtonClassName}
           disabled={disabled || !canGoBack}
           onClick={onBack}
@@ -271,7 +271,7 @@ export const RightSidebarBrowserToolbar = ({
           <ArrowLeftIcon className="comma-icon-press-back size-5" />
         </button>
         <button
-          aria-label="Forward"
+          aria-label={messages.shell_forward()}
           className={toolbarButtonClassName}
           disabled={disabled || !canGoForward}
           onClick={onForward}
@@ -280,7 +280,9 @@ export const RightSidebarBrowserToolbar = ({
           <ArrowRightIcon className="comma-icon-press-forward size-5" />
         </button>
         <button
-          aria-label={loading ? "Stop loading" : "Reload"}
+          aria-label={
+            loading ? messages.ui_browser_stop_loading() : messages.ui_browser_reload()
+          }
           className={cx(toolbarButtonClassName, "comma-right-sidebar-browser-reload")}
           disabled={disabled}
           onClick={handleReloadOrStop}
@@ -327,7 +329,7 @@ export const RightSidebarBrowserToolbar = ({
       </div>
 
       <label className="comma-right-sidebar-browser-address flex min-w-0 flex-1 items-start rounded-xs px-md py-xs outline-none transition-colors duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]">
-        <span className="sr-only">Address</span>
+        <span className="sr-only">{messages.ui_browser_address()}</span>
         <input
           aria-invalid={addressInvalid ? "true" : undefined}
           className={cx(
@@ -338,7 +340,7 @@ export const RightSidebarBrowserToolbar = ({
           onBlur={onAddressBlur}
           onChange={(event) => onAddressChange(event.currentTarget.value)}
           onFocus={onAddressFocus}
-          placeholder={addressPlaceholder}
+          placeholder={addressPlaceholder ?? messages.ui_browser_address_placeholder()}
           spellCheck={false}
           type="text"
           value={address}
@@ -351,8 +353,8 @@ export const RightSidebarBrowserToolbar = ({
             <button
               type="button"
               className={toolbarButtonClassName}
-              aria-label="Site permissions"
-              title="Site permissions"
+              aria-label={messages.site_permissions_title()}
+              title={messages.site_permissions_title()}
               disabled={disabled}
               onClick={(event) => {
                 const { x, y, width, height } =
@@ -370,7 +372,11 @@ export const RightSidebarBrowserToolbar = ({
           ) : null}
           {onInspect ? (
             <button
-              aria-label={inspecting ? "Cancel element selection" : "Select element"}
+              aria-label={
+                inspecting
+                  ? messages.ui_browser_cancel_element_selection()
+                  : messages.ui_browser_select_element()
+              }
               aria-pressed={inspecting}
               className={cx(
                 toolbarButtonClassName,
@@ -378,7 +384,11 @@ export const RightSidebarBrowserToolbar = ({
               )}
               disabled={disabled}
               onClick={onInspect}
-              title={inspecting ? "Cancel element selection" : "Select element"}
+              title={
+                inspecting
+                  ? messages.ui_browser_cancel_element_selection()
+                  : messages.ui_browser_select_element()
+              }
               type="button"
             >
               <SquareCursorIcon className="size-5" />
@@ -403,7 +413,7 @@ export const RightSidebarBrowserToolbar = ({
 
       {loading ? (
         <progress
-          aria-label="Loading page"
+          aria-label={messages.ui_browser_loading_page()}
           className="comma-right-sidebar-browser-progress"
         />
       ) : null}

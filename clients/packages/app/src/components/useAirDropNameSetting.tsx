@@ -46,7 +46,7 @@ export function useAirDropNameSetting({
     id: "app.airdrop-name",
     title: m.settings_airdrop_name(),
     description: m.settings_airdrop_name_description(),
-    keywords: ["airdrop", "rename", "隔空投送", "名称"],
+    keywords: ["airdrop", "rename", "隔空投送", "名称", "renomear", "nome"],
     control: {
       type: "custom",
       content: (

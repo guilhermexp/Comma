@@ -1,3 +1,5 @@
+import { messages } from "@comma/i18n";
+
 export type AppKeyCode =
   | "KeyA"
   | "KeyB"
@@ -250,7 +252,9 @@ export const formatAppKeybindingAria = (
 ): string => {
   if (binding === null) return "";
   if (binding.kind === "sequence") {
-    return binding.codes.map(appKeyCodeLabel).join(" then ");
+    return binding.codes
+      .map(appKeyCodeLabel)
+      .reduce((first, next) => messages.ui_shortcut_sequence_then({ first, next }));
   }
   const { modifiers, code } = binding.stroke;
   return [

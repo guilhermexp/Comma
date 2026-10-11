@@ -1,4 +1,4 @@
-import { baseLocale, messages, type CommaLocale } from "@comma/i18n";
+import { defaultLocale, messages, type CommaLocale } from "@comma/i18n";
 import {
   getNativeBridge,
   productInboxStateEnvelopeSchema,
@@ -588,7 +588,7 @@ export function productInboxUnavailableResult(
 
 export function productInboxErrorMessage(
   errorCode: ProductInboxListResult["errorCode"],
-  locale: CommaLocale = baseLocale
+  locale: CommaLocale = defaultLocale
 ): string {
   switch (errorCode) {
     case "network_unavailable":

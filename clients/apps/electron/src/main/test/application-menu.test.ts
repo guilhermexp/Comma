@@ -45,6 +45,7 @@ it("preserves the installed menu while route commands and focus change", () => {
     openMain: vi.fn(),
     openSideChat: vi.fn(),
     sideChatEnabled: () => true,
+    locale: "en",
   });
   const menu = host.setMenu.mock.calls[0]![0];
   expect(menu.getMenuItemById("side-chat-background-debug")).toBeUndefined();

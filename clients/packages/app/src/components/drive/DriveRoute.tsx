@@ -30,6 +30,7 @@ import { resolveWorkspaceChat } from "../chat/useWorkspaceChat";
 import type { DriveFileMenuAction } from "./DriveFileMenu";
 import { driveVersionCount } from "./driveStore";
 import { driveSpacesRoot } from "./driveSynchronicityBackend";
+import { driveErrorDescription } from "./driveErrors";
 import { DriveFileList } from "./DriveFileList";
 import { DriveSelectionBar } from "./DriveSelectionBar";
 import { DriveDeleteDialog } from "./DriveDeleteDialog";
@@ -96,15 +97,16 @@ export function DriveRoute() {
   const nodeRejected = useCallback(
     (title: string, error: unknown) => {
       toast.error(title, {
-        description:
-          error instanceof Error && error.message
-            ? error.message
-            : messages.drive_node_rejected_description(),
+        description: driveErrorDescription(
+          error,
+          messages.drive_node_rejected_description(),
+          locale
+        ),
         id: "comma-drive-node-rejected",
         testId: "comma-drive-node-rejected",
       });
     },
-    [messages]
+    [locale, messages]
   );
 
   const [selectedFileIds, setSelectedFileIds] = useState<ReadonlySet<string>>(

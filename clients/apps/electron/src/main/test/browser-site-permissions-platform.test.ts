@@ -46,6 +46,40 @@ describe("native website permission UI", () => {
     electron.dialog.showMessageBox.mockResolvedValue({ response: 1 });
     expect(await platform.prompt(input)).toBe("block");
   });
+  it("follows the app language Main holds when each dialog opens", async () => {
+    let locale: "pt-BR" | "zh-CN" | "en" = "pt-BR";
+    const platform = createSitePermissionPlatform(() => locale);
+    const input = {
+      owner: new electron.BaseWindow(),
+      origin: "https://meet.google.com",
+      media: ["camera"] as ("microphone" | "camera")[],
+      signal: new AbortController().signal,
+    };
+    await platform.prompt(input);
+    expect(electron.dialog.showMessageBox).toHaveBeenLastCalledWith(
+      input.owner,
+      expect.objectContaining({
+        title: "Permissões do site",
+        message: "https://meet.google.com quer usar sua câmera",
+        buttons: ["Permitir", "Bloquear", "Agora não"],
+      })
+    );
+    locale = "zh-CN";
+    await platform.prompt(input);
+    expect(electron.dialog.showMessageBox).toHaveBeenLastCalledWith(
+      input.owner,
+      expect.objectContaining({
+        title: "网站权限",
+        message: "https://meet.google.com 请求使用摄像头",
+        buttons: ["允许", "阻止", "暂不允许"],
+      })
+    );
+    platform.reportError(input.owner, "storage-full");
+    expect(electron.dialog.showMessageBox).toHaveBeenLastCalledWith(
+      input.owner,
+      expect.objectContaining({ type: "error", title: "网站权限" })
+    );
+  });
   it("opens Comma's dedicated menu with the document-bound callbacks and anchor", async () => {
     const open = vi.fn(async () => {});
     const menu = { open } as unknown as SitePermissionMenuWindow;
@@ -68,7 +102,7 @@ describe("native website permission UI", () => {
   it.runIf(process.platform === "darwin")(
     "requests macOS consent and explains an OS denial",
     async () => {
-      const platform = createSitePermissionPlatform();
+      const platform = createSitePermissionPlatform("en");
       const owner = new electron.BaseWindow();
       electron.systemPreferences.getMediaAccessStatus.mockReturnValue("not-determined");
       expect(platform.hasSystemAccess("microphone")).toBe(false);

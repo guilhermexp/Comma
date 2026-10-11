@@ -4,6 +4,8 @@ import {
 } from "./authorization-return";
 import { createServer, type Server } from "node:http";
 import { subscriptionAuthorizationPage } from "./subscription-authorization-page";
+import { defaultLocale } from "@comma/i18n";
+import { readMainLocale, type MainLocaleSource } from "./main-locale";
 import type { MainSessionBoundApi } from "./modules/session/main-session-transport";
 
 export interface SubscriptionAuthorizationInput {
@@ -33,7 +35,8 @@ export class SubscriptionAuthorizationService {
     private readonly bindSession: () => MainSessionBoundApi & { signal?: AbortSignal },
     private readonly openExternal: (url: string) => Promise<void>,
     private readonly timeoutMs = 900_000,
-    private readonly returnToApp?: AuthorizationReturn
+    private readonly returnToApp?: AuthorizationReturn,
+    private readonly locale: MainLocaleSource = defaultLocale
   ) {}
 
   async start(
@@ -48,6 +51,16 @@ export class SubscriptionAuthorizationService {
     let expectedState = "";
     let backendId = "";
     const server = createServer((request, response) => {
+      const page = (
+        state: Parameters<typeof subscriptionAuthorizationPage>[0],
+        returnUrl?: string
+      ) =>
+        subscriptionAuthorizationPage(
+          state,
+          "subscription",
+          returnUrl,
+          readMainLocale(this.locale)
+        );
       response.setHeader("Cache-Control", "no-store");
       response.setHeader("Content-Type", "text/html; charset=utf-8");
       response.setHeader("Content-Security-Policy", authorizationReturnCsp);
@@ -56,7 +69,7 @@ export class SubscriptionAuthorizationService {
         if ((request.url?.length ?? 0) > 8192) throw new Error("invalid_callback");
         url = new URL(request.url ?? "/", `http://localhost:${port}`);
       } catch {
-        response.writeHead(400).end(subscriptionAuthorizationPage("invalid"));
+        response.writeHead(400).end(page("invalid"));
         return;
       }
       const host = request.headers.host;
@@ -65,7 +78,7 @@ export class SubscriptionAuthorizationService {
         url.pathname !== path ||
         (host !== `localhost:${port}` && host !== `127.0.0.1:${port}`)
       ) {
-        response.writeHead(404).end(subscriptionAuthorizationPage("notFound"));
+        response.writeHead(404).end(page("notFound"));
         return;
       }
       if (
@@ -74,31 +87,20 @@ export class SubscriptionAuthorizationService {
         attempt.settled ||
         !boundary.isCurrent()
       ) {
-        response.writeHead(400).end(subscriptionAuthorizationPage("invalid"));
+        response.writeHead(400).end(page("invalid"));
         return;
       }
       if (!url.searchParams.get("code") || url.searchParams.has("error")) {
-        response
-          .writeHead(400)
-          .end(
-            subscriptionAuthorizationPage(
-              "denied",
-              "subscription",
-              this.returnToApp?.url
-            ),
-            () => {
-              this.returnToApp?.open();
-              this.finish(attempt, { status: "failed", error: "authorization_denied" });
-            }
-          );
+        response.writeHead(400).end(page("denied", this.returnToApp?.url), () => {
+          this.returnToApp?.open();
+          this.finish(attempt, { status: "failed", error: "authorization_denied" });
+        });
         return;
       }
       attempt.settled = true;
       this.returnToApp?.open();
       server.close();
-      response.end(
-        subscriptionAuthorizationPage("received", "subscription", this.returnToApp?.url)
-      );
+      response.end(page("received", this.returnToApp?.url));
       void (async () => {
         try {
           boundary.assertCurrent();

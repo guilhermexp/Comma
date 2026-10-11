@@ -12,6 +12,8 @@ import {
   type ChatAttachmentSource,
 } from "@comma/chat-contract";
 import { basename, extname } from "node:path";
+import { defaultLocale, messages, type CommaLocale } from "@comma/i18n";
+import { readMainLocale, type MainLocaleSource } from "../../main-locale";
 import { BrowserWindow, dialog, nativeImage, webContents } from "electron";
 import { getCurrentNativeCallerContext } from "../ipc";
 import {
@@ -143,15 +145,19 @@ export class LocalFilePickerService implements LocalFilePickerProvider {
   readonly #registrar: LocalFileRouteRegistrar;
   readonly #store: LocalFileSnapshotStore;
   readonly #uploadImageExtensions: ReadonlySet<string>;
+  readonly #locale: MainLocaleSource;
 
   constructor({
     createPreviewImage = (bytes) => nativeImage.createFromBuffer(bytes),
+    locale = defaultLocale,
     openDialog = openDialogOnCallerWindow,
     registrar,
     store,
     uploadImageExtensions = CHAT_UPLOAD_IMAGE_EXTENSIONS,
   }: {
     createPreviewImage?: CreatePreviewImage;
+    /** Main's app language for the attachment errors the composer shows. */
+    locale?: MainLocaleSource | undefined;
     openDialog?: OpenDialog;
     registrar: LocalFileRouteRegistrar;
     store: LocalFileSnapshotStore;
@@ -162,6 +168,7 @@ export class LocalFilePickerService implements LocalFilePickerProvider {
     this.#openDialog = openDialog;
     this.#registrar = registrar;
     this.#store = store;
+    this.#locale = locale;
     this.#uploadImageExtensions = new Set(
       uploadImageExtensions.map((extension) => extension.toLowerCase())
     );
@@ -274,6 +281,7 @@ export class LocalFilePickerService implements LocalFilePickerProvider {
       properties: ["openFile", "multiSelections"],
     });
     if (selected.canceled) return { cancelled: true, errors: [], files: [] };
+    const options = { locale: readMainLocale(this.#locale) };
 
     const files: LocalFileSnapshot[] = [];
     const snapshots: LocalFileSnapshot[] = [];
@@ -283,7 +291,7 @@ export class LocalFilePickerService implements LocalFilePickerProvider {
     if (selected.filePaths.length > maxFiles) {
       errors.push({
         errorClass: "too_many_local_files",
-        message: `Select at most ${maxFiles} more local files.`,
+        message: messages.local_files_too_many({ count: maxFiles }, options),
         retryable: true,
       });
     }
@@ -306,7 +314,7 @@ export class LocalFilePickerService implements LocalFilePickerProvider {
           snapshots.length = 0;
           errors.push({
             errorClass: "local_file_too_large",
-            message: "Selected local files exceed the remaining combined limit.",
+            message: messages.local_files_combined_limit({}, options),
             retryable: true,
           });
           break;
@@ -315,7 +323,7 @@ export class LocalFilePickerService implements LocalFilePickerProvider {
         snapshots.push(snapshot);
       } catch (error) {
         if (errors.length < MAX_LOCAL_FILES_PER_PICK) {
-          errors.push(publicSnapshotError(error));
+          errors.push(publicSnapshotError(error, options));
         }
       }
     }
@@ -344,7 +352,7 @@ export class LocalFilePickerService implements LocalFilePickerProvider {
           await this.#store.releaseDraft(snapshot.localFileRef).catch(() => false);
         }
         if (errors.length < MAX_LOCAL_FILES_PER_PICK) {
-          errors.push(publicSnapshotError(error));
+          errors.push(publicSnapshotError(error, options));
         }
       }
     }
@@ -376,6 +384,7 @@ export class LocalFilePickerService implements LocalFilePickerProvider {
       : await this.#openDialog({ properties: ["openFile", "multiSelections"] });
     input.onDialogClosed?.();
     if (selected.canceled) return { cancelled: true, errors: [], items: [] };
+    const options = { locale: readMainLocale(this.#locale) };
 
     const errors: ChatPickAttachmentError[] = [];
     const maxFiles = Math.min(MAX_LOCAL_FILES_PER_PICK, input.maxFiles);
@@ -404,7 +413,7 @@ export class LocalFilePickerService implements LocalFilePickerProvider {
           pushChatPickError(errors, {
             errorClass: "too_many_local_files",
             isImage: true,
-            message: "No more uploads can be added to this message.",
+            message: messages.local_files_no_more_uploads({}, options),
             name: sanitizeLocalFileDisplayName(source.name),
             retryable: true,
           });
@@ -423,7 +432,7 @@ export class LocalFilePickerService implements LocalFilePickerProvider {
         pushChatPickError(errors, {
           errorClass: "too_many_local_files",
           isImage: false,
-          message: `Select at most ${maxFiles} more files.`,
+          message: messages.local_files_too_many_chat({ count: maxFiles }, options),
           name: sourceName,
           retryable: true,
         });
@@ -433,7 +442,7 @@ export class LocalFilePickerService implements LocalFilePickerProvider {
         pushChatPickError(errors, {
           errorClass: "too_many_local_files",
           isImage: true,
-          message: "No more image uploads can be added to this message.",
+          message: messages.local_files_no_more_image_uploads({}, options),
           name: sourceName,
           retryable: true,
         });
@@ -443,7 +452,7 @@ export class LocalFilePickerService implements LocalFilePickerProvider {
         pushChatPickError(errors, {
           errorClass: "local_file_too_large",
           isImage: false,
-          message: "Selected local files exceed the remaining combined limit.",
+          message: messages.local_files_combined_limit({}, options),
           name: sourceName,
           retryable: true,
         });
@@ -464,7 +473,10 @@ export class LocalFilePickerService implements LocalFilePickerProvider {
           });
           uploadFiles += 1;
         } catch (error) {
-          pushChatPickError(errors, namedChatPickError(error, sourceName, true));
+          pushChatPickError(
+            errors,
+            namedChatPickError(error, sourceName, true, options)
+          );
         }
         continue;
       }
@@ -474,7 +486,10 @@ export class LocalFilePickerService implements LocalFilePickerProvider {
         const admission = getCurrentNativeSessionAdmission();
         snapshot = await this.#store.snapshot(sourcePath, admission.principalUserId);
       } catch (error) {
-        pushChatPickError(errors, namedChatPickError(error, sourceName, false));
+        pushChatPickError(
+          errors,
+          namedChatPickError(error, sourceName, false, options)
+        );
         continue;
       }
 
@@ -497,7 +512,7 @@ export class LocalFilePickerService implements LocalFilePickerProvider {
         pushChatPickError(errors, {
           errorClass: "local_file_too_large",
           isImage: false,
-          message: "Selected local files exceed the remaining combined limit.",
+          message: messages.local_files_combined_limit({}, options),
           name: snapshot.name,
           retryable: true,
         });
@@ -534,7 +549,7 @@ export class LocalFilePickerService implements LocalFilePickerProvider {
         }
         pushChatPickError(
           errors,
-          namedChatPickError(error, candidate.file.name, false)
+          namedChatPickError(error, candidate.file.name, false, options)
         );
       }
     }
@@ -828,13 +843,14 @@ function yieldToMainLoop() {
 function namedChatPickError(
   error: unknown,
   name: string,
-  isImage: boolean
+  isImage: boolean,
+  options: { locale: CommaLocale }
 ): ChatPickAttachmentError {
-  const publicError = publicSnapshotError(error);
+  const publicError = publicSnapshotError(error, options);
   return {
     ...publicError,
     ...(isImage && publicError.errorClass === "local_file_too_large"
-      ? { message: "The selected image is larger than 10 MB." }
+      ? { message: messages.local_files_image_too_large({}, options) }
       : {}),
     isImage,
     name,
@@ -848,7 +864,10 @@ function pushChatPickError(
   if (errors.length < MAX_LOCAL_FILES_PER_PICK) errors.push(error);
 }
 
-function publicSnapshotError(error: unknown): LocalFilesPickResult["errors"][number] {
+function publicSnapshotError(
+  error: unknown,
+  options: { locale: CommaLocale }
+): LocalFilesPickResult["errors"][number] {
   if (error instanceof LocalFileSnapshotError) {
     const errorClass =
       error instanceof LocalFileRouteRegistrationError &&
@@ -863,16 +882,16 @@ function publicSnapshotError(error: unknown): LocalFilesPickResult["errors"][num
         error instanceof LocalFileRouteRegistrationError
           ? error.message
           : errorClass === "local_file_too_large"
-            ? "The selected file is too large."
+            ? messages.local_files_file_too_large({}, options)
             : errorClass === "local_file_unsupported"
-              ? "The selected item is not a supported regular file."
-              : "The selected file is unavailable.",
+              ? messages.local_files_unsupported({}, options)
+              : messages.local_files_unavailable({}, options),
       retryable: errorClass !== "local_file_corrupt",
     };
   }
   return {
     errorClass: "local_file_unavailable",
-    message: "The selected file is unavailable.",
+    message: messages.local_files_unavailable({}, options),
     retryable: true,
   };
 }

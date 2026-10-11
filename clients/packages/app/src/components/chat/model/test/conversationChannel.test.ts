@@ -4565,7 +4565,7 @@ function createChannel(
     conversationId: "cnv_1",
     groupId: "grp_1",
     initialKind: opts.initialKind ?? "user_chat",
-    ...(opts.locale ? { locale: opts.locale } : {}),
+    locale: opts.locale ?? "en",
     ...(opts.onLocalFilesCommitted
       ? { onLocalFilesCommitted: opts.onLocalFilesCommitted }
       : {}),

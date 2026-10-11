@@ -1,4 +1,8 @@
-import { baseLocale, messages as commaMessages, type CommaLocale } from "@comma/i18n";
+import {
+  defaultLocale,
+  messages as commaMessages,
+  type CommaLocale,
+} from "@comma/i18n";
 import {
   chatAttachmentDownloadMaxBytes,
   chatAttachmentDownloadMaxFileNameBytes,
@@ -383,7 +387,7 @@ export class ConversationChannel {
   constructor(options: ConversationChannelOptions) {
     this.api = options.api;
     this.getClientDeviceId = options.getClientDeviceId;
-    this.locale = options.locale ?? baseLocale;
+    this.locale = options.locale ?? defaultLocale;
     this.groupId = options.groupId;
     this.workspaceId = options.workspaceId;
     this.conversationId = options.conversationId;

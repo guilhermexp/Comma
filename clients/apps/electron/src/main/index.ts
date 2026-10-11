@@ -40,7 +40,7 @@ import type {
   SideChatOpenTestWindowInput,
   SystemNotificationsStatus,
 } from "@comma/native-bridge";
-import { baseLocale, messages, type CommaLocale } from "@comma/i18n";
+import { defaultLocale, messages, type CommaLocale } from "@comma/i18n";
 import {
   notchHostEvent,
   onboardingHandoffEvent,
@@ -202,7 +202,7 @@ const notch = new NotchService();
 const opaqueWindowBackgrounds = new OpaqueWindowBackgroundController(
   nativeTheme.shouldUseDarkColors
 );
-let electronMainLocale: CommaLocale = baseLocale;
+let electronMainLocale: CommaLocale = defaultLocale;
 const authApiBaseUrl = e2eHooks.apiBaseUrl ?? releaseConfig.apiBaseUrl;
 const startupSession = resolveElectronStartupSession({
   apiBaseUrl: authApiBaseUrl,
@@ -372,6 +372,7 @@ function createStatusTrayHost(toolTip: string, reinstall: () => void): StatusTra
           helperStatusTrayHost({
             helper: sideChat,
             iconPath: resolveStatusTrayIconPath(),
+            locale: () => electronMainLocale,
             onLost,
             onQuit: () => app.quit(),
             toolTip,
@@ -1553,13 +1554,16 @@ async function createElectronMainContext() {
       return result.response === 1;
     },
     resolveMeetingRecovery: async (name) => {
+      const locale = { locale: electronMainLocale };
       const result = await dialog.showMessageBox({
         type: "question",
-        title: "Resume meeting",
-        message: `Continue the previous ${name} meeting?`,
-        detail:
-          "Comma restarted. Resume its existing Task, or create a Task for a new meeting.",
-        buttons: ["Resume this meeting", "New meeting"],
+        title: messages.electron_meeting_recovery_title({}, locale),
+        message: messages.electron_meeting_recovery_message({ name }, locale),
+        detail: messages.electron_meeting_recovery_detail({}, locale),
+        buttons: [
+          messages.electron_meeting_recovery_resume({}, locale),
+          messages.electron_meeting_recovery_new({}, locale),
+        ],
         defaultId: 0,
         cancelId: 1,
       });
@@ -1693,14 +1697,15 @@ async function createElectronMainContext() {
           }),
         }),
     notch,
-    onLocaleChanged: (locale) => {
+    onLocaleChanged: (localePreference) => {
       electronMainLocale = initializeElectronMainI18n({
         appLocale: app.getLocale(),
-        localePreference: locale,
+        localePreference,
         preferredSystemLanguages: app.getPreferredSystemLanguages(),
       });
       statusTrayContent = { ...statusTrayContent, locale: electronMainLocale };
       statusTray?.update(statusTrayContent);
+      return electronMainLocale;
     },
     onStatusTrayChanged: (content) => {
       statusTrayContent = {
@@ -1722,7 +1727,7 @@ async function createElectronMainContext() {
     windowAppearance: opaqueWindowBackgrounds,
     browserAppBundleIdentifier: releaseConfig.appBundleId,
     browserSitePermissionPlatform: createSitePermissionPlatform(
-      app.getLocale(),
+      () => electronMainLocale,
       new SitePermissionMenuWindow({
         onStateChanged: (state) =>
           appContext?.nativeEventBus.emit(sitePermissionMenuChangedEvent, state),
@@ -1846,7 +1851,7 @@ function startElectronApp() {
     .whenReady()
     .then(async () => {
       // The stored app language is the account's, synced by the renderer. A
-      // device without one yet follows the operating system.
+      // device without one yet uses the product default, Brazilian Portuguese.
       electronMainLocale = initializeElectronMainI18n({
         appLocale: app.getLocale(),
         localePreference: await readStoredLocalePreference(
@@ -1873,6 +1878,7 @@ function startElectronApp() {
         isMainFocused: () => primaryWindow?.isFocused() ?? false,
         dispatch: (id) =>
           appContext?.nativeEventBus.emit(applicationMenuCommandEvent, id),
+        locale: electronMainLocale,
         openMain: openMainApp,
         openSideChat: () => safelyControlSideChat(() => sideChat.open()),
         sideChatEnabled: () => sideChat.enabled(),

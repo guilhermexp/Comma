@@ -48,16 +48,20 @@ function fixture(files: SynchronicityEntry[]) {
     const end = start + entries.length;
     return { entries, nextCursor: end < rows.length ? String(end) : "" };
   });
-  const service = new DriveCatalogService({
-    state,
-    list,
-    subscribeChanges: (listener) => {
-      changed = listener;
-      return () => {
-        changed = undefined;
-      };
+  const service = new DriveCatalogService(
+    {
+      state,
+      list,
+      subscribeChanges: (listener) => {
+        changed = listener;
+        return () => {
+          changed = undefined;
+        };
+      },
     },
-  });
+    undefined,
+    "en"
+  );
   return { service, list, state, change: () => changed?.() };
 }
 const services: DriveCatalogService[] = [];

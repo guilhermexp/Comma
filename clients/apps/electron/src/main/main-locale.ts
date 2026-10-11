@@ -1,4 +1,5 @@
 import {
+  defaultLocalePreference,
   initializeCommaI18n,
   type CommaLocale,
   type CommaLocalePreference,
@@ -7,11 +8,12 @@ import {
 /**
  * Main's language. The app language is an account setting that the renderer
  * stores in client settings; a device that has not stored one yet (first run,
- * before sign-in) follows the operating system.
+ * before sign-in) uses the product default. Only an explicit System preference
+ * follows the operating system.
  */
 export function initializeElectronMainI18n({
   appLocale,
-  localePreference,
+  localePreference = defaultLocalePreference,
   preferredSystemLanguages,
 }: {
   appLocale: string;
@@ -19,9 +21,9 @@ export function initializeElectronMainI18n({
   preferredSystemLanguages: readonly string[];
 }): CommaLocale {
   return initializeCommaI18n(
-    localePreference && localePreference !== "system"
-      ? [localePreference]
-      : [appLocale, ...preferredSystemLanguages]
+    localePreference === "system"
+      ? [appLocale, ...preferredSystemLanguages]
+      : [localePreference]
   );
 }
 

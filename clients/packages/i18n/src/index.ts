@@ -7,7 +7,8 @@ export {
   formatRelativeTime,
 } from "./format";
 export {
-  baseLocale,
+  defaultLocale,
+  defaultLocalePreference,
   detectLocale,
   legacyCommaLocaleStorageKey,
   readLegacyCommaLocalePreference,
@@ -15,6 +16,7 @@ export {
   resolveLocalePreference,
   setDocumentLocale,
   supportedLocales,
+  withCurrentDefaultLocalePreference,
   type CommaLocale,
   type CommaLocalePreference,
 } from "./locale";

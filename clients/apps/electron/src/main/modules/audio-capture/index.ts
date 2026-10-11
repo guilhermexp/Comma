@@ -14,6 +14,8 @@ import type {
   AudioCaptureRecording,
   AudioCaptureSelectMicrophoneInput,
 } from "@comma/native-bridge";
+import { defaultLocale, messages } from "@comma/i18n";
+import { readMainLocale, type MainLocaleSource } from "../../main-locale";
 import { getCurrentNativeSessionAdmission } from "../session/native-session-admission";
 import {
   loadNativeAudioCapture,
@@ -130,6 +132,7 @@ export class AudioCaptureService implements AudioCaptureProvider {
   #reason: string | undefined;
   #revision = 1;
   #status: AudioCaptureState["status"] = "idle";
+  readonly #locale: MainLocaleSource;
 
   constructor({
     loadNative = loadNativeAudioCapture,
@@ -143,9 +146,12 @@ export class AudioCaptureService implements AudioCaptureProvider {
     screenAccessStatus,
     drive,
     encoder,
+    locale = defaultLocale,
     onSaved,
   }: {
     loadNative?: () => Promise<NativeAudioCapture | undefined>;
+    /** Main's app language; reasons shown to the user read it when they are set. */
+    locale?: MainLocaleSource | undefined;
     /** Microphone intake; absent means system audio only. */
     microphone?: MicrophoneCapture | undefined;
     now?: () => number;
@@ -174,6 +180,7 @@ export class AudioCaptureService implements AudioCaptureProvider {
     this.#drive = drive;
     this.#encoder = encoder;
     this.#onSaved = onSaved;
+    this.#locale = locale;
     this.#permission = readScreenAccess(screenAccessStatus) ? "granted" : "unknown";
   }
 
@@ -260,7 +267,10 @@ export class AudioCaptureService implements AudioCaptureProvider {
     };
     const onError = () => {
       if (!capture) return;
-      this.#capTap(capture, "The system audio tap stopped unexpectedly.");
+      this.#capTap(
+        capture,
+        messages.audio_capture_tap_stopped({}, this.#messageOptions())
+      );
     };
 
     let tap: NativeAudioTap;
@@ -280,7 +290,12 @@ export class AudioCaptureService implements AudioCaptureProvider {
               onFrames,
             });
     } catch (error) {
-      return this.#publish({ reason: startFailureReason(error) });
+      return this.#publish({
+        reason: startFailureReason(
+          error,
+          messages.audio_capture_tap_open_failed({}, this.#messageOptions())
+        ),
+      });
     }
 
     capture = {
@@ -338,7 +353,13 @@ export class AudioCaptureService implements AudioCaptureProvider {
       await this.#teardown(capture);
       if (this.#active === capture) this.#active = undefined;
       if (this.#startCancelled) return this.#snapshot();
-      return this.#publish({ reason: startFailureReason(error), status: "idle" });
+      return this.#publish({
+        reason: startFailureReason(
+          error,
+          messages.audio_capture_tap_open_failed({}, this.#messageOptions())
+        ),
+        status: "idle",
+      });
     }
 
     return this.#snapshot();
@@ -356,7 +377,7 @@ export class AudioCaptureService implements AudioCaptureProvider {
     if (capture.ownerUserId !== admission.principalUserId) {
       return {
         status: "unavailable",
-        reason: "Sign in to the account that started this recording to save it.",
+        reason: messages.audio_capture_save_wrong_account({}, this.#messageOptions()),
       };
     }
 
@@ -371,7 +392,10 @@ export class AudioCaptureService implements AudioCaptureProvider {
       summary = await capture.sink?.finalize();
     } catch {
       await rm(capture.path, { force: true });
-      this.#publish({ reason: "The recording could not be written.", status: "idle" });
+      this.#publish({
+        reason: messages.audio_capture_write_failed({}, this.#messageOptions()),
+        status: "idle",
+      });
       return { status: "unavailable" };
     }
 
@@ -380,14 +404,22 @@ export class AudioCaptureService implements AudioCaptureProvider {
         summary = await this.#mixMicrophone(capture, summary.sampleRate);
       } catch (error) {
         // The system track is still a valid recording on its own.
-        this.#publish({ reason: `Microphone mix failed: ${describeError(error)}` });
+        this.#publish({
+          reason: messages.audio_capture_microphone_mix_failed(
+            { detail: describeError(error) },
+            this.#messageOptions()
+          ),
+        });
       }
     }
     await rm(capture.micPath, { force: true }).catch(() => undefined);
 
     if (!summary || summary.byteLength === 0) {
       await rm(capture.path, { force: true });
-      this.#publish({ reason: "The recording captured no audio.", status: "idle" });
+      this.#publish({
+        reason: messages.audio_capture_no_audio({}, this.#messageOptions()),
+        status: "idle",
+      });
       return { status: "unavailable" };
     }
 
@@ -395,8 +427,7 @@ export class AudioCaptureService implements AudioCaptureProvider {
     try {
       encodedPath = await this.#encoder.encode(capture.path);
     } catch {
-      const reason =
-        "The recording could not be compressed. The WAV is retained in Comma's local recordings folder on this device.";
+      const reason = messages.audio_capture_compress_failed({}, this.#messageOptions());
       this.#publish({ reason, status: "idle" });
       return { reason, status: "unavailable" };
     }
@@ -438,8 +469,10 @@ export class AudioCaptureService implements AudioCaptureProvider {
         status: "ready",
       };
     } catch {
-      const reason =
-        "The recording could not be saved to Drive. The WAV and M4A are retained in Comma's local recordings folder on this device.";
+      const reason = messages.audio_capture_drive_save_failed(
+        {},
+        this.#messageOptions()
+      );
       // RecordingSave.tla: Fail retains the completed file without retrying Put.
       this.#publish({ reason, status: "idle" });
       return { reason, status: "unavailable" };
@@ -598,7 +631,12 @@ export class AudioCaptureService implements AudioCaptureProvider {
           capture.microphone = "unavailable";
           if (this.#active === capture)
             this.#publish({
-              reason: `Microphone stopped: ${error.message}`.slice(0, 200),
+              reason: messages
+                .audio_capture_microphone_stopped(
+                  { detail: error.message },
+                  this.#messageOptions()
+                )
+                .slice(0, 200),
             });
         },
         onFrames: (frames) => {
@@ -635,7 +673,12 @@ export class AudioCaptureService implements AudioCaptureProvider {
       if (capture.stopped || this.#active !== capture) return;
       capture.microphone = "unavailable";
       this.#publish({
-        reason: `Microphone unavailable: ${describeError(error)}`.slice(0, 200),
+        reason: messages
+          .audio_capture_microphone_unavailable_detail(
+            { detail: describeError(error) },
+            this.#messageOptions()
+          )
+          .slice(0, 200),
       });
     }
   }
@@ -701,7 +744,10 @@ export class AudioCaptureService implements AudioCaptureProvider {
       this.#publish({});
     }
     if (elapsedMs >= capture.maxDurationMs || sink.byteLength >= MAX_RECORDING_BYTES) {
-      this.#capTap(capture, "The recording reached its length limit.");
+      this.#capTap(
+        capture,
+        messages.audio_capture_length_limit({}, this.#messageOptions())
+      );
       return;
     }
 
@@ -746,12 +792,16 @@ export class AudioCaptureService implements AudioCaptureProvider {
     this.#available = Boolean(native);
     if (!native) {
       this.#status = "unavailable";
-      this.#reason = "Audio capture is unavailable in this runtime.";
+      this.#reason = messages.audio_capture_unavailable({}, this.#messageOptions());
     } else if (this.#status === "unavailable") {
       this.#status = "idle";
       this.#reason = undefined;
     }
     return native;
+  }
+
+  #messageOptions() {
+    return { locale: readMainLocale(this.#locale) };
   }
 
   #publish(patch: {
@@ -813,7 +863,7 @@ function recordingFileName(startedAtMs: number) {
   return `comma-recording-${stamp}-${randomUUID()}.wav`;
 }
 
-function startFailureReason(error: unknown) {
+function startFailureReason(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : String(error);
-  return message.trim().slice(0, 200) || "The system audio tap could not be opened.";
+  return message.trim().slice(0, 200) || fallback;
 }

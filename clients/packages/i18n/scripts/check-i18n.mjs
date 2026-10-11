@@ -5,7 +5,23 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { selectorShape } from "./catalog-shape.mjs";
 
 const require = createRequire(import.meta.url);
-const locales = ["en", "zh-CN"];
+const settings = JSON.parse(
+  await readFile(new URL("../project.inlang/settings.json", import.meta.url), "utf8")
+);
+// The source catalog comes first; every other locale is compared with it.
+const locales = [
+  settings.baseLocale,
+  ...settings.locales.filter((locale) => locale !== settings.baseLocale),
+];
+const { supportedLocales } = await import("../src/locale.ts");
+if (
+  JSON.stringify([...supportedLocales].toSorted()) !==
+  JSON.stringify(locales.toSorted())
+) {
+  throw new Error(
+    `src/locale.ts supportedLocales (${supportedLocales.join(", ")}) differ from project.inlang locales (${locales.join(", ")}).`
+  );
+}
 const pluginUrls = [
   pathToFileURL(require.resolve("@inlang/plugin-message-format")),
   pathToFileURL(require.resolve("@inlang/plugin-m-function-matcher")),

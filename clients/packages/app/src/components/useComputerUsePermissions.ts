@@ -2,10 +2,12 @@ import {
   getNativeBridge,
   type ComputerUsePermissionFlowResult,
 } from "@comma/native-bridge";
+import { useCommaMessages } from "@comma/i18n/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export function useComputerUsePermissions(active: boolean) {
   const bridge = getNativeBridge();
+  const messages = useCommaMessages();
   const available = bridge.platform === "electron" && bridge.os === "macos";
   const [permissions, setPermissions] =
     useState<ComputerUsePermissionFlowResult["permissions"]>();
@@ -18,25 +20,31 @@ export function useComputerUsePermissions(active: boolean) {
       inFlight.current = true;
       setPending(true);
       setError(undefined);
+      // The helper's own error text is a diagnostic in English; the row says
+      // which step failed in the app's language.
+      let step: "open" | "read" = open ? "open" : "read";
       try {
         if (open) {
           const result = await bridge.computerUse.openPermissionFlow();
-          if (!result.ok)
-            throw new Error(result.error || "Could not open permissions.");
+          if (!result.ok) throw new Error(result.error);
+          step = "read";
         }
         const result = await bridge.computerUse.getPermissions();
-        if (!result.ok || !result.permissions)
-          throw new Error(result.error || "Could not read permissions.");
+        if (!result.ok || !result.permissions) throw new Error(result.error);
         setPermissions(result.permissions);
-      } catch (reason) {
+      } catch {
         setPermissions(undefined);
-        setError(reason instanceof Error ? reason.message : String(reason));
+        setError(
+          step === "open"
+            ? messages.settings_computer_use_open_failed()
+            : messages.settings_computer_use_read_failed()
+        );
       } finally {
         inFlight.current = false;
         setPending(false);
       }
     },
-    [available, bridge]
+    [available, bridge, messages]
   );
 
   useEffect(() => {

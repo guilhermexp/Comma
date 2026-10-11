@@ -55,7 +55,7 @@ const renderRoute = (audience?: string) =>
           <CommaAppearanceProvider>
             <CommaSideChatShortcutProvider>
               <CommaAppShortcutsProvider>
-                <CommaI18nProvider>
+                <CommaI18nProvider locale="en">
                   <RecommendationMockDebugSettingsRoute />
                 </CommaI18nProvider>
               </CommaAppShortcutsProvider>

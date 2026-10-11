@@ -170,6 +170,7 @@ export const RightSidebar = <TabId extends string = string>({
   width,
   ...asideProps
 }: RightSidebarProps<TabId>) => {
+  const messages = useCommaMessages();
   const [resizing, setResizing] = useState(false);
   const constrainedWidth = clampWidth(width, minWidth, maxWidth);
   const renderedWidth = hostClampsRenderedWidth
@@ -599,7 +600,9 @@ export const RightSidebar = <TabId extends string = string>({
               ref={tablistRef}
               scrollbar={false}
               viewportProps={{
-                "aria-label": `${ariaLabel} content`,
+                "aria-label": messages.ui_right_sidebar_tabs_content({
+                  label: ariaLabel,
+                }),
                 role: "tablist",
                 tabIndex: -1,
               }}
@@ -653,7 +656,9 @@ export const RightSidebar = <TabId extends string = string>({
                     </button>
                     {tab.closable ? (
                       <button
-                        aria-label={`Close ${tab.label}`}
+                        aria-label={messages.ui_right_sidebar_close_tab({
+                          label: tab.label,
+                        })}
                         className="comma-right-sidebar-tab-close pointer-events-none absolute top-1/2 right-xs inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-sm border-0 bg-transparent p-0 outline-none transition-colors duration-150 focus-visible:shadow-focus-gray"
                         onClick={(event) => {
                           event.stopPropagation();
@@ -668,7 +673,9 @@ export const RightSidebar = <TabId extends string = string>({
                           closeTab(tab.id, event.detail > 0);
                         }}
                         tabIndex={selected ? 0 : -1}
-                        title={`Close ${tab.label}`}
+                        title={messages.ui_right_sidebar_close_tab({
+                          label: tab.label,
+                        })}
                         type="button"
                       >
                         <XIcon
@@ -683,7 +690,7 @@ export const RightSidebar = <TabId extends string = string>({
             </ScrollArea>
             {onAddTab ? (
               <button
-                aria-label="New tab"
+                aria-label={messages.chat_browser_new_tab()}
                 className="comma-right-sidebar-add-tab inline-flex size-7 shrink-0 items-center justify-center rounded-sm border-0 bg-transparent p-xs text-sidebar-icon-primary outline-none transition-[transform,background-color,color] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:shadow-focus-gray"
                 onClick={onAddTab}
                 type="button"
@@ -810,7 +817,9 @@ function RightSidebarResizeHandle({
     <>
       <button
         aria-describedby={resizeDescriptionId}
-        aria-label={`Resize ${ariaLabel.toLocaleLowerCase()}`}
+        aria-label={messages.ui_right_sidebar_resize({
+          label: ariaLabel.toLocaleLowerCase(),
+        })}
         aria-orientation="vertical"
         aria-valuemax={maxWidth}
         aria-valuemin={minWidth}

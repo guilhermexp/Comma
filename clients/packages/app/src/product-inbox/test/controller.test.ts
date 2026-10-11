@@ -1,3 +1,4 @@
+import { defaultLocale, messages } from "@comma/i18n";
 import type { ProductInboxListResult } from "@comma/native-bridge";
 import type { SessionProductLease } from "@comma/session-contract";
 import { describe, expect, it, vi } from "vitest";
@@ -340,6 +341,9 @@ describe("Electron ProductInbox projection controller", () => {
 describe("ProductInbox error copy", () => {
   it("uses the requested client locale", () => {
     expect(productInboxErrorMessage("network_unavailable")).toBe(
+      messages.product_inbox_network_unavailable({}, { locale: defaultLocale })
+    );
+    expect(productInboxErrorMessage("network_unavailable", "en")).toBe(
       "Comma could not reach the ProductInbox authority."
     );
     expect(productInboxErrorMessage("network_unavailable", "zh-CN")).toBe(

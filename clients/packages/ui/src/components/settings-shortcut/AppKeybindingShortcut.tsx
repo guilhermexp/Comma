@@ -1,3 +1,4 @@
+import { useCommaMessages } from "@comma/i18n/react";
 import { keycapSymbol } from "./SettingsShortcutKeycaps";
 import {
   useEffect,
@@ -61,16 +62,20 @@ const emptyKeycaps = ["-", "-"] as const;
 export const AppKeybindingShortcut = ({
   ariaLabel,
   className,
-  clearLabel = "Clear shortcut",
+  clearLabel: suppliedClearLabel,
   disabled = false,
-  emptyLabel = "Not set",
+  emptyLabel: suppliedEmptyLabel,
   errorMessage,
   onChange,
   onClear,
   platform,
-  recordingLabel = "Press shortcut",
+  recordingLabel: suppliedRecordingLabel,
   value,
 }: AppKeybindingShortcutProps) => {
+  const messages = useCommaMessages();
+  const clearLabel = suppliedClearLabel ?? messages.ui_shortcut_clear();
+  const emptyLabel = suppliedEmptyLabel ?? messages.ui_shortcut_not_set();
+  const recordingLabel = suppliedRecordingLabel ?? messages.settings_press_shortcut();
   const [capture, setCapture] = useState<CaptureState>({ kind: "idle" });
   const controlRef = useRef<HTMLButtonElement>(null);
   const sequenceTimerRef = useRef<number | undefined>(undefined);

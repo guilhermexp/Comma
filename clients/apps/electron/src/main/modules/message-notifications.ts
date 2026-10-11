@@ -1,7 +1,7 @@
 import type { ChatTarget } from "@comma/chat-contract";
 import type { CommaConversation } from "@comma/app/api";
 import type { ChatMessage } from "@comma/app/chat-runtime";
-import { baseLocale, messages as i18n } from "@comma/i18n";
+import { defaultLocale, messages as i18n } from "@comma/i18n";
 import { readMainLocale, type MainLocaleSource } from "../main-locale";
 
 // The banner wraps the body to a few lines and fades out the overflow itself,
@@ -85,7 +85,7 @@ export class MessageNotificationsService {
 
   constructor({
     emitEvent,
-    locale = baseLocale,
+    locale = defaultLocale,
     log,
     onDeliveryRefused,
     platform,

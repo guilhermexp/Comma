@@ -61,7 +61,7 @@ const trayHandlers = () => ({
 // The menu Electron draws: Windows and Linux, and macOS without the addon.
 function trayHarness(
   content: StatusTrayContent,
-  { locale }: { locale?: "zh-CN" } = {}
+  { locale = "en" }: { locale?: "en" | "zh-CN" } = {}
 ) {
   const tray = {
     destroy: vi.fn(),
@@ -92,7 +92,7 @@ function trayHarness(
         schedule: (run) => scheduled.push(run),
         toolTip,
       }),
-    ...(locale ? { locale } : {}),
+    locale,
     ...handlers,
     productName: "Comma",
   });
@@ -245,10 +245,12 @@ describe("helperStatusTrayHost", () => {
     const handlers = trayHandlers();
     const controller = createCommaStatusTray({
       content,
+      locale: "en",
       createHost: (toolTip) =>
         helperStatusTrayHost({
           helper,
           iconPath: "/resources/CommaTemplate.png",
+          locale: "en",
           onLost: vi.fn(),
           onQuit,
           toolTip,
@@ -349,6 +351,7 @@ describe("fallbackStatusTrayHost", () => {
       "Summarize every customer interview from last week & plan the follow-ups";
     const controller = createCommaStatusTray({
       content: { inProgressTasks: [task("1", longTitle)] },
+      locale: "en",
       createHost: (toolTip, reinstall) =>
         fallbackStatusTrayHost({
           createFallback: () =>
@@ -364,6 +367,7 @@ describe("fallbackStatusTrayHost", () => {
             helperStatusTrayHost({
               helper,
               iconPath: "/resources/CommaTemplate.png",
+              locale: "en",
               onLost,
               onQuit: vi.fn(),
               toolTip,

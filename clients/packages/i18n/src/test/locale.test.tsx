@@ -92,13 +92,13 @@ describe("initializeCommaI18n", () => {
         name: "renders Brazilian Portuguese messages",
         language: "pt-BR",
         expected: "pt-BR",
-        inbox: "Caixa de entrada",
+        inbox: "Entrada",
       },
       {
         name: "uses Brazilian Portuguese for an unsupported browser language",
         language: "fr-FR",
         expected: "pt-BR",
-        inbox: "Caixa de entrada",
+        inbox: "Entrada",
       },
       {
         name: "keeps English available",

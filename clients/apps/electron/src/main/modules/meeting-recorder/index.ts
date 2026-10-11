@@ -1,4 +1,6 @@
 import { meetingSubmissionError } from "./submission-error";
+import { defaultLocale, messages } from "@comma/i18n";
+import { readMainLocale, type MainLocaleSource } from "../../main-locale";
 import type { MeetingTaskReceipt } from "@comma/app/api";
 import type { MeetingTaskState } from "./tasks";
 import {
@@ -35,6 +37,8 @@ export interface MeetingRecorderProvider {
 }
 
 interface Dependencies {
+  /** Main's language for recorder errors published to the renderer. */
+  locale?: MainLocaleSource;
   layoutWindow?(input: MeetingRecorderWindowLayout): void;
   dragWindow?(input: MeetingRecorderWindowDrag): void;
   enterMeeting?(meeting: MeetingPresenceMeeting): Promise<void>;
@@ -255,7 +259,10 @@ export class MeetingRecorderService implements MeetingRecorderProvider {
           return this.#snapshot;
         }
         if (capture.status !== "recording")
-          throw new Error(capture.reason ?? "Recording could not start.");
+          throw new Error(
+            capture.reason ??
+              messages.meeting_recorder_start_failed({}, this.#options())
+          );
         this.#owned = true;
         this.#set({ phase: "recording", capture });
         await this.#changeMeeting(meeting, "recording");
@@ -269,7 +276,9 @@ export class MeetingRecorderService implements MeetingRecorderProvider {
         this.#owned = false;
         if (generation !== this.#generation || this.#closed) return this.#snapshot;
         if (result.status !== "ready")
-          throw new Error(result.reason ?? "Recording could not be saved to Drive.");
+          throw new Error(
+            result.reason ?? messages.meeting_recorder_save_failed({}, this.#options())
+          );
         this.#savedMeetingKey = meeting.key;
         this.#set({
           phase: "idle",
@@ -311,7 +320,8 @@ export class MeetingRecorderService implements MeetingRecorderProvider {
               settle(
                 "error",
                 undefined,
-                saved?.summaryError ?? meetingSubmissionError("prepare", error)
+                saved?.summaryError ??
+                  meetingSubmissionError("prepare", error, this.#options().locale)
               );
             }
           );
@@ -343,7 +353,10 @@ export class MeetingRecorderService implements MeetingRecorderProvider {
             ["recording", "paused"].includes(this.#snapshot.capture.status)
               ? (this.#snapshot.capture.status as "recording" | "paused")
               : "error",
-          error: error instanceof Error ? error.message : "Recording failed.",
+          error:
+            error instanceof Error
+              ? error.message
+              : messages.ui_meeting_recorder_failed({}, this.#options()),
         });
     } finally {
       this.#busy = false;
@@ -455,9 +468,15 @@ export class MeetingRecorderService implements MeetingRecorderProvider {
       taskSync: {
         ...this.#snapshot.taskSync,
         status: "error",
-        error: error instanceof Error ? error.message : "Meeting sync failed.",
+        error:
+          error instanceof Error
+            ? error.message
+            : messages.electron_meeting_sync_failed({}, this.#options()),
       },
     });
+  }
+  #options() {
+    return { locale: readMainLocale(this.deps.locale ?? defaultLocale) };
   }
   async #changeMeeting(
     meeting: MeetingPresenceMeeting,

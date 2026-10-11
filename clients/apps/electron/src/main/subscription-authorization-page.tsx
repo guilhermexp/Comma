@@ -1,4 +1,5 @@
 import { authorizationReturnScript } from "./authorization-return";
+import { defaultLocale, messages, type CommaLocale } from "@comma/i18n";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CommaMark } from "../../../../packages/ui/src/components/login/BrandMarks";
 import { fontFamily } from "../../../../packages/ui/src/tokens/typography";
@@ -11,56 +12,67 @@ import { brand } from "../../../../packages/ui/src/tokens/colors/brand";
 
 import { semanticDark } from "../../../../packages/ui/src/tokens/colors/semantic-dark";
 
-const copy = {
-  received: {
-    label: "Authorization received",
-    title: "Return to Comma",
-    description:
-      "Return to Comma to check that your subscription account is connected.",
-    detail: "You can close this tab. Comma will finish the connection in the app.",
-  },
-  denied: {
-    label: "Authorization not completed",
-    title: "Let’s try that again",
-    description: "Return to Comma and start the connection again when you are ready.",
-    detail: "You can close this tab.",
-  },
-  invalid: {
-    label: "Link unavailable",
-    title: "Start again from Comma",
-    description: "This authorization link is invalid or no longer available.",
-    detail: "Return to Subscribe proxy in Comma to connect your account.",
-  },
-  notFound: {
-    label: "Page not found",
-    title: "Looking for Comma?",
-    description: "Return to Comma to continue connecting your subscription account.",
-    detail: "You can close this tab.",
-  },
-} as const;
+type AuthorizationPageState = "received" | "denied" | "invalid" | "notFound";
+
+// Received and denied pages close themselves, so only the other states carry a
+// footer detail.
+function pageCopy(state: AuthorizationPageState, locale: CommaLocale) {
+  const options = { locale };
+  switch (state) {
+    case "received":
+      return {
+        label: messages.subscription_auth_received_label({}, options),
+        title: messages.subscription_auth_return({}, options),
+        description: messages.subscription_auth_received_description({}, options),
+      };
+    case "denied":
+      return {
+        label: messages.subscription_auth_denied_label({}, options),
+        title: messages.subscription_auth_denied_title({}, options),
+        description: messages.subscription_auth_denied_description({}, options),
+      };
+    case "invalid":
+      return {
+        label: messages.subscription_auth_invalid_label({}, options),
+        title: messages.subscription_auth_invalid_title({}, options),
+        description: messages.subscription_auth_invalid_description({}, options),
+        detail: messages.subscription_auth_invalid_detail({}, options),
+      };
+    case "notFound":
+      return {
+        label: messages.subscription_auth_not_found_label({}, options),
+        title: messages.subscription_auth_not_found_title({}, options),
+        description: messages.subscription_auth_not_found_description({}, options),
+        detail: messages.subscription_auth_close_tab({}, options),
+      };
+  }
+}
 
 // A self-contained document: the temporary listener closes after the callback,
 // so the page cannot depend on later asset requests or status polling.
 export function subscriptionAuthorizationPage(
-  state: keyof typeof copy,
+  state: AuthorizationPageState,
   source: "subscription" | "byok" = "subscription",
-  returnUrl?: string
+  returnUrl?: string,
+  locale: CommaLocale = defaultLocale
 ): string {
+  const options = { locale };
+  const copy = pageCopy(state, locale);
   const content =
     source === "byok"
       ? {
-          ...copy[state],
+          ...copy,
           description:
             state === "received"
-              ? "Return to Comma to choose a TokenDance model."
-              : "Return to Models in Comma and start the connection again.",
-          detail: "You can close this tab.",
+              ? messages.subscription_auth_byok_received_description({}, options)
+              : messages.subscription_auth_byok_retry_description({}, options),
+          detail: messages.subscription_auth_close_tab({}, options),
         }
-      : copy[state];
+      : copy;
   return (
     "<!doctype html>" +
     renderToStaticMarkup(
-      <html lang="en">
+      <html lang={locale}>
         <head>
           <meta charSet="utf-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -103,17 +115,28 @@ export function subscriptionAuthorizationPage(
               <p className="description">{content.description}</p>
               {returnUrl && (
                 <a id="comma-return" className="return" href={returnUrl}>
-                  Return to Comma
+                  {messages.subscription_auth_return({}, options)}
                 </a>
               )}
               <div className="next">
-                <strong>In the Comma app</strong>Settings ·{" "}
-                {source === "byok" ? "Models" : "Subscribe proxy"}
+                <strong>{messages.subscription_auth_in_app({}, options)}</strong>
+                {messages.subscription_auth_settings_path(
+                  {
+                    section:
+                      source === "byok"
+                        ? messages.settings_providers_models({}, options)
+                        : messages.subscription_auth_section_subscribe_proxy(
+                            {},
+                            options
+                          ),
+                  },
+                  options
+                )}
               </div>
             </section>
             <footer>
               {state === "received" || state === "denied"
-                ? "This tab will close automatically. If it stays open, you can close it."
+                ? messages.subscription_auth_auto_close({}, options)
                 : content.detail}
             </footer>
           </main>

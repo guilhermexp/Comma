@@ -935,7 +935,13 @@ export type KeepAwakeWhenLidClosedStatus = z.output<
   typeof keepAwakeWhenLidClosedStatusSchema
 >;
 
-export const commaClientLocalePreferenceSchema = z.enum(["system", "en", "zh-CN"]);
+// Matches @comma/i18n supportedLocales; "system" follows the operating system.
+export const commaClientLocalePreferenceSchema = z.enum([
+  "system",
+  "pt-BR",
+  "en",
+  "zh-CN",
+]);
 export const commaClientThemePreferenceSchema = z.enum([
   "default",
   "light",
@@ -1244,7 +1250,8 @@ export type CommaClientSettingsPatch = z.output<typeof commaClientSettingsPatchS
 export const defaultCommaClientSettings = commaClientSettingsSchema.parse({
   appShortcutOverrides: {},
   appearance: defaultCommaClientAppearancePreferences,
-  localePreference: "system",
+  // The product default (@comma/i18n defaultLocalePreference).
+  localePreference: "pt-BR",
   sideChatAppearance: "auto",
   sideChatShortcut: defaultSideChatShortcut,
 });
@@ -8249,7 +8256,7 @@ export const applicationMenuUpdateCapability = defineNativeCapability({
   id: "applicationMenu.update",
   input: z.object({
     items: applicationMenuItemsSchema,
-    locale: z.enum(["en", "zh-CN"]),
+    locale: commaClientLocalePreferenceSchema.exclude(["system"]),
   }),
   output: z.void(),
   mock: undefined,

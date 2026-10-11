@@ -120,7 +120,18 @@ export function useRouterApiKeysCategory(
   return {
     id: "inbound-api",
     icon: "inbound-api",
-    keywords: ["api", "key", "webhook", "inbound", "external", "接入", "密钥"],
+    keywords: [
+      "api",
+      "key",
+      "webhook",
+      "inbound",
+      "external",
+      "接入",
+      "密钥",
+      "chave",
+      "entrada",
+      "externo",
+    ],
     label: messages.settings_inbound_api(),
     title: messages.settings_inbound_api_title(),
     sections: [

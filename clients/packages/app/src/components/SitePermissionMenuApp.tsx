@@ -1,4 +1,4 @@
-import { useCommaLocale } from "@comma/i18n/react";
+import { useCommaMessages } from "@comma/i18n/react";
 import {
   getNativeBridge,
   emptySitePermissionMenuState,
@@ -71,18 +71,20 @@ function SitePermissionMenuContent({
   generation: number;
 }) {
   const bridge = getNativeBridge();
-  const zh = useCommaLocale() === "zh-CN";
+  const m = useCommaMessages();
   const [device, setDevice] = useState<"microphone" | "camera">();
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
+  const [failed, setFailed] = useState(false);
   const [changed, setChanged] = useState(false);
   const mediaName = (type: "microphone" | "camera") =>
-    type === "microphone" ? (zh ? "麦克风" : "Microphone") : zh ? "摄像头" : "Camera";
+    type === "microphone"
+      ? m.site_permissions_microphone()
+      : m.site_permissions_camera();
   const choiceName = (choice: "ask" | "allow" | "block") =>
     ({
-      ask: zh ? "询问" : "Ask",
-      allow: zh ? "允许" : "Allow",
-      block: zh ? "阻止" : "Block",
+      ask: m.site_permissions_ask(),
+      allow: m.site_permissions_allow(),
+      block: m.site_permissions_block(),
     })[choice];
   const close = useCallback(() => {
     void bridge.sitePermissionMenu.act({ action: "close", generation }).catch(() => {});
@@ -100,15 +102,16 @@ function SitePermissionMenuContent({
   const act = async (action: WithoutGeneration<SitePermissionMenuAction>) => {
     if (busy) return;
     setBusy(true);
-    setError(undefined);
+    setFailed(false);
     try {
       await bridge.sitePermissionMenu.act({ ...action, generation });
       if (action.action === "change" || action.action === "reset") {
         setChanged(true);
         setDevice(undefined);
       }
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+    } catch {
+      // The bridge's reason is English diagnostic text; the menu says what to do next.
+      setFailed(true);
     } finally {
       setBusy(false);
     }
@@ -121,14 +124,14 @@ function SitePermissionMenuContent({
       }}
     >
       <section
-        aria-label={zh ? "网站权限" : "Site permissions"}
+        aria-label={m.site_permissions_title()}
         className="flex max-h-full flex-col rounded-xl border-[0.5px] border-primary bg-popup-secondary py-sm text-sm text-secondary shadow-lg"
       >
         <h1
           className="truncate px-[calc(var(--spacing-sm)+var(--spacing-md))] py-md text-sm font-medium text-primary"
           title={snapshot?.origin}
         >
-          {snapshot?.origin ?? (zh ? "网站权限" : "Site permissions")}
+          {snapshot?.origin ?? m.site_permissions_title()}
         </h1>
         <ScrollArea
           className="min-h-0"
@@ -153,7 +156,7 @@ function SitePermissionMenuContent({
                   icon={<ArrowLeftIcon />}
                   onAction={() => setDevice(undefined)}
                 >
-                  {zh ? "返回" : "Back"}
+                  {m.shell_back()}
                 </MenuItem>
                 <MenuSeparator />
                 {(["ask", "allow", "block"] as const).map((value) => (
@@ -171,7 +174,7 @@ function SitePermissionMenuContent({
               </Menu>
             ) : (
               <Menu
-                aria-label={zh ? "网站权限" : "Site permissions"}
+                aria-label={m.site_permissions_title()}
                 variant="embedded"
                 // This dedicated menu window is a user-opened focus scope.
                 // eslint-disable-next-line jsx-a11y/no-autofocus
@@ -212,7 +215,7 @@ function SitePermissionMenuContent({
                     void act({ action: "reset" });
                   }}
                 >
-                  {zh ? "重置权限" : "Reset permissions"}
+                  {m.site_permissions_reset()}
                 </MenuItem>
                 <MenuItem
                   id="reload"
@@ -220,7 +223,7 @@ function SitePermissionMenuContent({
                     void act({ action: "reload" });
                   }}
                 >
-                  {zh ? "重新加载此页面" : "Reload this page"}
+                  {m.site_permissions_reload()}
                 </MenuItem>
                 {snapshot.systemSettings && <MenuSeparator />}
                 {snapshot.systemSettings &&
@@ -232,9 +235,9 @@ function SitePermissionMenuContent({
                         void act({ action: "system-settings", media: type });
                       }}
                     >
-                      {zh
-                        ? `系统${mediaName(type)}设置…`
-                        : `System ${mediaName(type).toLowerCase()} settings…`}
+                      {type === "microphone"
+                        ? m.site_permissions_system_microphone()
+                        : m.site_permissions_system_camera()}
                     </MenuItem>
                   ))}
               </Menu>
@@ -244,16 +247,14 @@ function SitePermissionMenuContent({
           className="px-[calc(var(--spacing-sm)+var(--spacing-md))] py-sm text-xs text-quaternary"
           role={changed ? "status" : undefined}
         >
-          {zh
-            ? "权限更改后，请重新加载已打开的标签页。"
-            : "Reload open tabs to apply permission changes."}
+          {m.site_permissions_reload_hint()}
         </p>
-        {error && (
+        {failed && (
           <p
             role="alert"
             className="px-[calc(var(--spacing-sm)+var(--spacing-md))] py-sm text-xs text-error-primary"
           >
-            {error}
+            {m.site_permissions_action_failed()}
           </p>
         )}
       </section>

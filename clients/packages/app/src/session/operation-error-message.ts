@@ -1,4 +1,4 @@
-import { baseLocale, messages, type CommaLocale } from "@comma/i18n";
+import { defaultLocale, messages, type CommaLocale } from "@comma/i18n";
 
 export class SessionOperationDisplayError extends Error {
   constructor(
@@ -13,7 +13,7 @@ export class SessionOperationDisplayError extends Error {
 export function sessionOperationDisplayError(
   code: string,
   unsupportedMessage: string,
-  locale: CommaLocale = baseLocale
+  locale: CommaLocale = defaultLocale
 ): SessionOperationDisplayError {
   let message: string;
   switch (code) {

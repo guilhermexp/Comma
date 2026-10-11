@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { withCurrentDefaultLocalePreference } from "@comma/i18n";
 import {
   appPreferencesSchema,
   commaClientSettingsSchema,
@@ -83,10 +84,9 @@ export class AppPreferencesService {
   }) {
     const { defaultsRevision, preferences: stored } =
       await readStoredPreferences(filePath);
-    const persisted =
-      defaultsRevision < currentDefaultsRevision ? withCurrentDefaults(stored) : stored;
+    const persisted = withCurrentDefaults(stored, defaultsRevision);
     if (defaultsRevision < currentDefaultsRevision) {
-      // Saved now, so a shortcut the user sets later is never moved again. A
+      // Saved now, so a setting the user chooses later is never moved again. A
       // failed write moves it again on the next launch, to the same value.
       await writePreferences(filePath, persisted).catch(() => undefined);
     }
@@ -415,7 +415,9 @@ async function rollbackApplied(applied: Array<() => Promise<void>>) {
 
 /** The stored app language, read before Main builds its first surfaces. */
 export async function readStoredLocalePreference(filePath: string) {
-  return (await readPreferences(filePath)).clientSettings?.localePreference;
+  const { defaultsRevision, preferences } = await readStoredPreferences(filePath);
+  return withCurrentDefaults(preferences, defaultsRevision).clientSettings
+    ?.localePreference;
 }
 
 /**
@@ -423,8 +425,9 @@ export async function readStoredLocalePreference(filePath: string) {
  * file beside the preferences and never published. Main moves an older file
  * forward once as it opens it; a new install starts at the current one.
  * - 1: Open Comma moved from Option-Space to Option-Comma.
+ * - 2: The app language moved from System to Brazilian Portuguese.
  */
-const currentDefaultsRevision = 1;
+const currentDefaultsRevision = 2;
 
 /** Open Comma's default before revision 1. */
 const optionSpace = {
@@ -439,26 +442,31 @@ const optionSpace = {
  * user never chose: it takes the new default. Anything the user set stays,
  * and so does whatever they set once this has run.
  */
-function withCurrentDefaults(preferences: AppPreferences): AppPreferences {
-  const settings = preferences.clientSettings;
-  const openComma = settings?.openCommaShortcut;
-  const untouched =
+function withCurrentDefaults(
+  preferences: AppPreferences,
+  defaultsRevision: number
+): AppPreferences {
+  let settings = preferences.clientSettings;
+  if (!settings || defaultsRevision >= currentDefaultsRevision) return preferences;
+  const openComma = settings.openCommaShortcut;
+  const openCommaUntouched =
+    defaultsRevision < 1 &&
     openComma?.key === optionSpace.key &&
     (
       Object.keys(optionSpace.modifiers) as (keyof typeof optionSpace.modifiers)[]
     ).every(
       (modifier) => openComma.modifiers[modifier] === optionSpace.modifiers[modifier]
     );
-  return settings && untouched
-    ? {
-        ...preferences,
-        clientSettings: { ...settings, openCommaShortcut: defaultOpenCommaShortcut },
-      }
-    : preferences;
-}
-
-async function readPreferences(filePath: string): Promise<AppPreferences> {
-  return (await readStoredPreferences(filePath)).preferences;
+  if (openCommaUntouched) {
+    settings = { ...settings, openCommaShortcut: defaultOpenCommaShortcut };
+  }
+  if (defaultsRevision < 2) {
+    settings = {
+      ...settings,
+      localePreference: withCurrentDefaultLocalePreference(settings.localePreference),
+    };
+  }
+  return { ...preferences, clientSettings: settings };
 }
 
 /** The file's preferences, and the defaults revision it was written at. */

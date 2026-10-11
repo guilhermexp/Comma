@@ -198,7 +198,7 @@ export function useIMessageIntegration(
     title: "iMessage",
     description,
     control,
-    keywords: ["iMessage", "Messages", "信息"],
+    keywords: ["iMessage", "Messages", "信息", "Mensagens"],
     integration: {
       status,
       content:

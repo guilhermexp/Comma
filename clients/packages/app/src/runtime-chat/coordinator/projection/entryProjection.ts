@@ -70,7 +70,10 @@ function projectRendererState(entry: ChatEntry): ConversationProjection {
     groupId: entry.groupId,
     workspaceId: entry.workspaceId,
   });
-  const intakeFailures = unresolvedIntakeFailureRows(entry.attachmentIntakeFailures);
+  const intakeFailures = unresolvedIntakeFailureRows(
+    entry.attachmentIntakeFailures,
+    entry.locale
+  );
   // Claim to settle, not dialog open to dialog closed: the files are
   // imported after the dialog closes, and a Renderer that stopped waiting
   // at that point would skip the outcome entirely.

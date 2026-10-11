@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { defaultLocale, messages } from "@comma/i18n";
+import { readMainLocale, type MainLocaleSource } from "../../main-locale";
 import { getCurrentNativeSessionAdmission } from "../session/native-session-admission";
 import {
   LocalFileSnapshotError,
@@ -82,15 +84,19 @@ export class LocalFileRouteRegistrationService implements LocalFileRouteRegistra
   readonly #prewarmTarget: ((workspaceId: string) => void) | undefined;
   readonly #resolveTarget: ResolveLocalFileRegistrationTarget;
   readonly #store: LocalFileSnapshotStore;
+  readonly #locale: MainLocaleSource;
 
   constructor({
     fetch: fetchImplementation = fetch,
+    locale = defaultLocale,
     onConnectorReconfigurationRequired,
     prewarmTarget,
     resolveTarget,
     store,
   }: {
     fetch?: typeof fetch;
+    /** Main's app language for failures shown on the attachment. */
+    locale?: MainLocaleSource | undefined;
     onConnectorReconfigurationRequired?: (workspaceId: string) => void;
     prewarmTarget?: (workspaceId: string) => void;
     resolveTarget: ResolveLocalFileRegistrationTarget;
@@ -101,6 +107,7 @@ export class LocalFileRouteRegistrationService implements LocalFileRouteRegistra
     this.#prewarmTarget = prewarmTarget;
     this.#resolveTarget = resolveTarget;
     this.#store = store;
+    this.#locale = locale;
   }
 
   prewarm(workspaceId: string): void {
@@ -118,7 +125,7 @@ export class LocalFileRouteRegistrationService implements LocalFileRouteRegistra
     const credential = admission.credential;
     const normalizedWorkspaceId = workspaceId.trim();
     if (!normalizedWorkspaceId || normalizedWorkspaceId.length > 160) {
-      throw unavailable("rejected");
+      throw this.#unavailable("rejected");
     }
 
     // Resolution ensures the Main-owned workspace connector is running and
@@ -135,9 +142,9 @@ export class LocalFileRouteRegistrationService implements LocalFileRouteRegistra
       connectorRunId.length > 160 ||
       target?.localFileIndexVersion !== 2
     ) {
-      throw unavailable(
+      throw this.#unavailable(
         "rejected",
-        "This workspace's Comma Connector is not ready yet. Select the file again to retry.",
+        messages.local_files_connector_not_ready({}, this.#messageOptions()),
         undefined,
         true
       );
@@ -147,7 +154,7 @@ export class LocalFileRouteRegistrationService implements LocalFileRouteRegistra
       `/v1/comma/workspaces/${encodeURIComponent(normalizedWorkspaceId)}/local-file-refs`,
       credential.audience
     );
-    if (url.origin !== credential.audience) throw unavailable("rejected");
+    if (url.origin !== credential.audience) throw this.#unavailable("rejected");
 
     const body = JSON.stringify({
       connector_run_id: connectorRunId,
@@ -158,7 +165,7 @@ export class LocalFileRouteRegistrationService implements LocalFileRouteRegistra
     let mayHaveCommitted = false;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       if (credential.signal.aborted) {
-        throw unavailable(mayHaveCommitted ? "ambiguous" : "rejected");
+        throw this.#unavailable(mayHaveCommitted ? "ambiguous" : "rejected");
       }
       // resolveTarget and prior attempts cross async boundaries. Revalidate
       // the exact Chat intake claim after all of them and immediately before
@@ -169,7 +176,7 @@ export class LocalFileRouteRegistrationService implements LocalFileRouteRegistra
         // Before the first dispatch this is a definite local rejection and
         // the draft may be released. After an ambiguous dispatch, preserve
         // the snapshot even though the stale fence forbids any retry.
-        throw unavailable(mayHaveCommitted ? "ambiguous" : "rejected");
+        throw this.#unavailable(mayHaveCommitted ? "ambiguous" : "rejected");
       }
       let response: Response;
       try {
@@ -194,7 +201,7 @@ export class LocalFileRouteRegistrationService implements LocalFileRouteRegistra
         // not erase that ambiguity and authorize deletion of the local bytes.
         mayHaveCommitted = true;
         if (attempt === 0 && !credential.signal.aborted) continue;
-        throw unavailable("ambiguous");
+        throw this.#unavailable("ambiguous");
       }
       if (!response.ok || response.status < 200 || response.status >= 300) {
         if (response.status >= 500) {
@@ -216,14 +223,14 @@ export class LocalFileRouteRegistrationService implements LocalFileRouteRegistra
           // token in the background, so the user's next selection succeeds
           // without any manual reconnect step.
           this.#onConnectorReconfigurationRequired?.(normalizedWorkspaceId);
-          throw unavailable(
+          throw this.#unavailable(
             mayHaveCommitted ? "ambiguous" : "rejected",
-            "Reconnect this workspace's Comma Connector with a newly issued token, then select the file again.",
+            messages.local_files_connector_reconnect({}, this.#messageOptions()),
             "reissue_connector_token",
             true
           );
         }
-        throw unavailable(
+        throw this.#unavailable(
           mayHaveCommitted ? "ambiguous" : "rejected",
           undefined,
           undefined,
@@ -235,7 +242,7 @@ export class LocalFileRouteRegistrationService implements LocalFileRouteRegistra
       if (!parsed.success || parsed.data.local_file_ref !== snapshot.localFileRef) {
         mayHaveCommitted = true;
         if (attempt === 0) continue;
-        throw unavailable("ambiguous");
+        throw this.#unavailable("ambiguous");
       }
 
       try {
@@ -244,19 +251,30 @@ export class LocalFileRouteRegistrationService implements LocalFileRouteRegistra
         // The authenticated server already returned success. A local
         // transition/fsync failure must not delete the bytes behind that
         // durable route; bounded reconciliation/cleanup owns settlement.
-        throw unavailable("ambiguous", undefined, undefined, false);
+        throw this.#unavailable("ambiguous", undefined, undefined, false);
       }
       return;
     }
-    throw unavailable("ambiguous");
+    throw this.#unavailable("ambiguous");
   }
-}
 
-function unavailable(
-  outcome: "ambiguous" | "rejected",
-  message?: string,
-  remediation?: "reissue_connector_token",
-  retryable = outcome === "ambiguous"
-) {
-  return new LocalFileRouteRegistrationError(outcome, message, remediation, retryable);
+  // The message reaches the composer's attachment error, so it reads the app
+  // language when the failure happens.
+  #unavailable(
+    outcome: "ambiguous" | "rejected",
+    message = messages.local_files_registration_failed({}, this.#messageOptions()),
+    remediation?: "reissue_connector_token",
+    retryable = outcome === "ambiguous"
+  ) {
+    return new LocalFileRouteRegistrationError(
+      outcome,
+      message,
+      remediation,
+      retryable
+    );
+  }
+
+  #messageOptions() {
+    return { locale: readMainLocale(this.#locale) };
+  }
 }

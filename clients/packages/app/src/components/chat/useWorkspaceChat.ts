@@ -1,4 +1,8 @@
-import { baseLocale, messages as commaMessages, type CommaLocale } from "@comma/i18n";
+import {
+  defaultLocale,
+  messages as commaMessages,
+  type CommaLocale,
+} from "@comma/i18n";
 import { useCommaLocale, useCommaMessages } from "@comma/i18n/react";
 import { getNativeBridge } from "@comma/native-bridge";
 import type { SessionProductLease } from "@comma/session-contract";
@@ -165,7 +169,7 @@ export function useWorkspaceChat({
 
 export async function resolveWorkspaceChat({
   api,
-  locale = baseLocale,
+  locale = defaultLocale,
   defaultTitle = commaMessages.chat_default_title({}, { locale }),
   exactWorkspace = false,
   session,

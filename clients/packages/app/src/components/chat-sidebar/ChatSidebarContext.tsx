@@ -1,3 +1,4 @@
+import { messages } from "@comma/i18n";
 import {
   getNativeBridge,
   maxBrowserSidebarSessionsPerOwner,
@@ -1223,7 +1224,7 @@ export function chatSidebarBrowserPageSessionId(hostKey: string, pageId: string)
 
 export function browserPageLabel(page: ChatSidebarBrowserPage) {
   if (page.title?.trim()) return page.title.trim();
-  if (!page.url) return "New tab";
+  if (!page.url) return messages.chat_browser_new_tab();
   try {
     return new URL(page.url).hostname || page.url;
   } catch {

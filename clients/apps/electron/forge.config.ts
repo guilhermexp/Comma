@@ -17,6 +17,10 @@ import {
 import { ensureDevNativeAddons } from "./scripts/dev-native-addons";
 import { electronDownloadCache } from "./scripts/electron-download-cache";
 import { macosDisplayNameHook } from "./scripts/macos-display-name";
+import {
+  macosInfoPlistStringsHook,
+  macosUsageDescriptions,
+} from "./scripts/macos-info-plist-strings";
 import { sleepGuardLaunchdHook } from "./scripts/sleep-guard-launchd";
 import { getCommaReleaseConfig } from "./src/release-config";
 
@@ -116,16 +120,10 @@ const config: ForgeConfig = {
       : {}),
     appBundleId: releaseConfig.appBundleId,
     extendInfo: {
-      // macOS 14.4+ gates Core Audio process taps on this usage string; without
-      // it the tap fails closed instead of prompting.
-      NSCameraUsageDescription:
-        "Websites you allow can use your camera for video meetings.",
-      NSMicrophoneUsageDescription:
-        "Comma uses your microphone for recording and for websites you allow, including meeting calls.",
-      NSAudioCaptureUsageDescription:
-        "Comma records meeting audio playing on this Mac so it can transcribe and summarize it.",
-      NSScreenCaptureUsageDescription:
-        "Comma lists the apps playing audio so a recording can be scoped to one of them.",
+      // macOS 14.4+ gates Core Audio process taps on NSAudioCaptureUsageDescription;
+      // without it the tap fails closed instead of prompting. The catalog words
+      // these prompts; other app languages ship as InfoPlist.strings (hook below).
+      ...macosUsageDescriptions("en"),
     },
     icon: channelIconBasePath,
     protocols: [
@@ -146,6 +144,7 @@ const config: ForgeConfig = {
     ],
     afterCopyExtraResources: [
       macosDisplayNameHook(releaseConfig.productName),
+      macosInfoPlistStringsHook(releaseConfig.productName),
       sleepGuardLaunchdHook(releaseConfig.productName, releaseConfig.appBundleId),
     ],
     afterCopy: [

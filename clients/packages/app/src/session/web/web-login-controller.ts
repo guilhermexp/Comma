@@ -1,4 +1,4 @@
-import { baseLocale, messages, type CommaLocale } from "@comma/i18n";
+import { defaultLocale, messages, type CommaLocale } from "@comma/i18n";
 import {
   renderGoogleSignInButton,
   type GoogleCredentialResponse,
@@ -23,7 +23,7 @@ export class WebCookieLoginController implements SessionAuthenticatorController 
 
   constructor(
     private readonly adapter: WebCookieSessionAdapter,
-    private readonly locale: CommaLocale = baseLocale
+    private readonly locale: CommaLocale = defaultLocale
   ) {}
 
   async requestEmailLogin(email: string): Promise<SessionLoginChallenge> {

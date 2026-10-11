@@ -9,8 +9,9 @@ import {
   type ReactNode,
 } from "react";
 import * as messages from "./paraglide/messages.js";
+import { getLocale } from "./paraglide/runtime.js";
 import {
-  baseLocale,
+  defaultLocalePreference,
   resolveLocalePreference,
   type CommaLocale,
   type CommaLocalePreference,
@@ -23,11 +24,9 @@ type CommaI18nContextValue = {
   setLocalePreference: (preference: CommaLocalePreference) => void;
 };
 
-const CommaI18nContext = createContext<CommaI18nContextValue>({
-  locale: baseLocale,
-  localePreference: "system",
-  setLocalePreference: () => undefined,
-});
+// Without a provider, a render reads whatever language the message runtime was
+// initialized with, so formatted dates and numbers agree with message text.
+const CommaI18nContext = createContext<CommaI18nContextValue | undefined>(undefined);
 
 export function CommaI18nProvider({
   children,
@@ -52,7 +51,7 @@ export function CommaI18nProvider({
   );
   const [localLocalePreference, setLocalLocalePreference] =
     useState<CommaLocalePreference>(
-      () => requestedLocale ?? controlledLocalePreference ?? "system"
+      () => requestedLocale ?? controlledLocalePreference ?? defaultLocalePreference
     );
   const localePreference =
     requestedLocale ?? controlledLocalePreference ?? localLocalePreference;
@@ -109,8 +108,16 @@ export function CommaI18nProvider({
   );
 }
 
-export function useCommaI18n() {
-  return useContext(CommaI18nContext);
+const ignoreLocalePreference = () => undefined;
+
+export function useCommaI18n(): CommaI18nContextValue {
+  return (
+    useContext(CommaI18nContext) ?? {
+      locale: getLocale(),
+      localePreference: defaultLocalePreference,
+      setLocalePreference: ignoreLocalePreference,
+    }
+  );
 }
 
 export function useCommaLocale() {

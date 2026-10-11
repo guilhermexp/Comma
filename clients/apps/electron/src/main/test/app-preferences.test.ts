@@ -86,7 +86,7 @@ describe("AppPreferencesService", () => {
     expect(service.state().clientSettings?.openCommaShortcut).toEqual(optionComma);
     expect(JSON.parse(await readFile(untouched, "utf8"))).toMatchObject({
       clientSettings: { openCommaShortcut: optionComma },
-      defaultsRevision: 1,
+      defaultsRevision: 2,
     });
     // Option-Space chosen again afterwards stays.
     await service.update({ clientSettings: { openCommaShortcut: optionSpace } });
@@ -548,7 +548,7 @@ describe("AppPreferencesService", () => {
     expect(service.state().launchAtLogin).toBe(false);
     expect(JSON.parse(await readFile(filePath, "utf8"))).toEqual({
       airDropName: null,
-      defaultsRevision: 1,
+      defaultsRevision: 2,
       keepAwakeWhenLidClosed: false,
       launchAtLogin: false,
       notchSideWidth: 156,
@@ -708,7 +708,7 @@ describe("AppPreferencesService", () => {
     });
     expect(JSON.parse(await readFile(filePath, "utf8"))).toEqual({
       airDropName: null,
-      defaultsRevision: 1,
+      defaultsRevision: 2,
       keepAwakeWhenLidClosed: false,
       launchAtLogin: true,
       notchSideWidth: 156,
@@ -919,7 +919,7 @@ describe("AppPreferencesService", () => {
     });
     expect(JSON.parse(await readFile(filePath, "utf8"))).toEqual({
       airDropName: null,
-      defaultsRevision: 1,
+      defaultsRevision: 2,
       keepAwakeWhenLidClosed: false,
       launchAtLogin: false,
       notchSideWidth: 156,
@@ -1062,7 +1062,7 @@ describe("AppPreferencesService", () => {
     });
     expect(JSON.parse(await readFile(filePath, "utf8"))).toEqual({
       airDropName: null,
-      defaultsRevision: 1,
+      defaultsRevision: 2,
       keepAwakeWhenLidClosed: false,
       launchAtLogin: true,
       notchSideWidth: 156,
@@ -1133,7 +1133,7 @@ describe("AppPreferencesService", () => {
     );
     expect(JSON.parse(await readFile(filePath, "utf8"))).toEqual({
       airDropName: null,
-      defaultsRevision: 1,
+      defaultsRevision: 2,
       keepAwakeWhenLidClosed: false,
       launchAtLogin: false,
       notchSideWidth: 156,

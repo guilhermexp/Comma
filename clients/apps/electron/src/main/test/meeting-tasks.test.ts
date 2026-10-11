@@ -91,6 +91,7 @@ async function setup() {
   };
   const deps = {
     filePath: join(directory, "meetings.json"),
+    locale: "en" as const,
     account: () => "local:alice",
     ownerUserId: () => "alice",
     runOwned: async <T>(handler: () => Promise<T>) => handler(),
@@ -492,6 +493,21 @@ describe("one Task for one meeting", () => {
     reopened.retryPending();
     expect(await readFile(h.deps.filePath, "utf8")).toBe("invalid journal");
     expect(h.api.enterMeetingTask).not.toHaveBeenCalled();
+    await reopened.close();
+  });
+  it("reports sync errors in Main's current language", async () => {
+    const h = await setup();
+    await h.service.close();
+    await writeFile(h.deps.filePath, "invalid journal");
+    let locale: "en" | "pt-BR" = "pt-BR";
+    const reopened = await MeetingTaskService.open({ ...h.deps, locale: () => locale });
+    await expect(reopened.enter(meeting)).rejects.toThrow(
+      "Não foi possível ler os dados de sincronização de reuniões salvos"
+    );
+    locale = "en";
+    await expect(reopened.enter(meeting)).rejects.toThrow(
+      "Saved meeting sync data could not be read"
+    );
     await reopened.close();
   });
   it("cancels a discarded recording without uploading or requesting summary", async () => {

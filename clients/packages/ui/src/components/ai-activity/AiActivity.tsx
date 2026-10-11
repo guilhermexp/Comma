@@ -10,6 +10,7 @@ import {
   type ReactNode,
   type TransitionEvent,
 } from "react";
+import { useCommaMessages } from "@comma/i18n/react";
 import { Button as AriaButton } from "react-aria-components";
 import { Collapse, CollapseContent } from "../collapse";
 import { ChevronDownSmallIcon, CircleXIcon } from "../icons";
@@ -412,6 +413,7 @@ function ActivityEventList({
   events: readonly AiActivityEvent[];
   initialEventIds: ReadonlySet<string> | null;
 }) {
+  const messages = useCommaMessages();
   return (
     <ScrollArea
       className="comma-ai-activity-events-scroll"
@@ -420,7 +422,7 @@ function ActivityEventList({
       edgeEffect="blur"
       orientation="vertical"
       scrollbar={false}
-      viewportProps={{ "aria-label": "Activity history" }}
+      viewportProps={{ "aria-label": messages.ui_activity_history() }}
     >
       <ol className="comma-ai-activity-events">
         {events.map((event) => (

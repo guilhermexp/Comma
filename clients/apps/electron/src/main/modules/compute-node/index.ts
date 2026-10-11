@@ -14,6 +14,9 @@ export {
   type ComputeNodeRuntimeAdapter,
   type ComputeNodeRuntimeObservation,
 } from "./runtime-adapter";
+import { defaultLocale, messages, type CommaLocale } from "@comma/i18n";
+import { readMainLocale, type MainLocaleSource } from "../../main-locale";
+import { computeProblem, problemText } from "./problem";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { HostPreparation, HostPreparationState } from "./host-preparation";
 import { randomUUID } from "node:crypto";
@@ -88,6 +91,8 @@ export interface ComputeNodeServiceOptions {
   initializationWaitMs?: number;
   authorityGeneration?: () => string | undefined;
   accountOwner?: { audience: string; subject: string };
+  /** Main's language for published problems. */
+  locale?: MainLocaleSource;
 }
 
 export class ComputeNodeService {
@@ -170,7 +175,7 @@ export class ComputeNodeService {
         accepted.environment_id !== expected.environment_id ||
         accepted.scope_key !== expected.scope_key
       )
-        throw new Error("Recovery binding changed.");
+        throw computeProblem(messages.electron_compute_recovery_binding_changed, {});
       // The effect may already be committed after logout. Only the original account receives it.
       await this.applyRecoveredBinding(accepted);
       this.requireCurrentAuthority();
@@ -242,18 +247,16 @@ export class ComputeNodeService {
       this.requireEligible();
       this.requireIntentReadable();
       if (this.intent.recoveryPending)
-        throw new Error(
-          "Check the accepted recovery result before changing this connection."
-        );
+        throw computeProblem(messages.electron_compute_recovery_result_pending, {});
       if (!input.desiredEnabled) return this.drainInternal();
       if (!input.workspaceId) {
-        throw new Error("Select a workspace before enabling this compute node.");
+        throw computeProblem(messages.electron_compute_select_workspace, {});
       }
       if (!this.options.installAuthorization) {
-        throw new Error("Compute node product authorization is unavailable.");
+        throw computeProblem(messages.electron_compute_authorization_unavailable, {});
       }
       if (this.intent.workspaceId && this.intent.workspaceId !== input.workspaceId) {
-        throw new Error("Remove the existing compute node before changing workspace.");
+        throw computeProblem(messages.electron_compute_workspace_change_blocked, {});
       }
 
       // Persist the user's target before crossing the helper side-effect
@@ -282,7 +285,10 @@ export class ComputeNodeService {
         );
         const operation = this.intent.operation;
         if (!operation) {
-          throw new Error("Compute node authorization identity is unavailable.");
+          throw computeProblem(
+            messages.electron_compute_authorization_identity_unavailable,
+            {}
+          );
         }
         if (this.intent.installOperationId && this.snapshot.status !== "removed") {
           const operationId = this.intent.installOperationId;
@@ -306,9 +312,7 @@ export class ComputeNodeService {
             if (this.intent.installAppliedOperationId !== operationId) {
               this.intent.receiptMissing = true;
               await this.persistIntent();
-              throw new Error(
-                "The original installation receipt is missing. Recover management of the existing connection before continuing."
-              );
+              throw computeProblem(messages.electron_compute_receipt_missing, {});
             } else if (!this.intent.initializationPending) {
               await this.options.installAuthorization.configure({
                 enabled: true,
@@ -321,10 +325,11 @@ export class ComputeNodeService {
               );
             }
           } else {
-            throw new Error(
+            throw computeProblem(
               projection.authorizationStatus === "revoked"
-                ? "Compute node installation was removed."
-                : "Compute node installation requires operator action."
+                ? messages.electron_compute_installation_removed
+                : messages.electron_compute_installation_operator_action,
+              {}
             );
           }
         } else {
@@ -350,7 +355,7 @@ export class ComputeNodeService {
         this.publish(
           "action_required",
           observed,
-          error instanceof Error ? error.message : "Compute node operation failed."
+          this.problem(error, messages.electron_compute_operation_failed)
         );
         throw error;
       }
@@ -361,9 +366,9 @@ export class ComputeNodeService {
         this.publish(
           "action_required",
           observed,
-          "Compute node product authorization requires attention."
+          messages.electron_compute_authorization_attention({}, { locale: this.locale })
         );
-        throw new Error("Compute node product authorization requires attention.");
+        throw computeProblem(messages.electron_compute_authorization_attention, {});
       }
       this.intent.initializationPending = true;
       await this.persistIntent();
@@ -399,9 +404,7 @@ export class ComputeNodeService {
         status === "removed" ||
         Date.now() >= deadline
       ) {
-        throw new Error(
-          "Compute node workload initialization could not complete. Check the node connection, then select Continue / Retry."
-        );
+        throw computeProblem(messages.electron_compute_initialization_incomplete, {});
       }
       await new Promise((resolve) => setTimeout(resolve, 1_000));
     }
@@ -429,7 +432,7 @@ export class ComputeNodeService {
         this.publish(
           "action_required",
           await this.observeAfterFailure(),
-          error instanceof Error ? error.message : String(error)
+          problemText(error, this.locale) ?? String(error)
         );
         throw error;
       }
@@ -466,7 +469,7 @@ export class ComputeNodeService {
         this.publish(
           "action_required",
           observed,
-          error instanceof Error ? error.message : "Compute node repair failed."
+          this.problem(error, messages.electron_compute_repair_failed)
         );
         throw error;
       }
@@ -501,7 +504,7 @@ export class ComputeNodeService {
         const workspaceId = this.intent.workspaceId;
         const installOperationId = this.intent.installOperationId;
         if (!workspaceId || !installOperationId || !this.options.installAuthorization) {
-          throw new Error("Compute node product authorization is unavailable.");
+          throw computeProblem(messages.electron_compute_authorization_unavailable, {});
         }
         try {
           if (!this.intent.remoteRevocationConfirmed) {
@@ -520,14 +523,10 @@ export class ComputeNodeService {
         }
         const local = await this.options.adapter.observe(this.intent.registrationId);
         if (local.registration === "unreadable" || local.readability !== "readable") {
-          throw new Error(
-            "The local registration could not be read. Check the Host connection."
-          );
+          throw computeProblem(messages.electron_compute_registration_unreadable, {});
         }
         if (unavailableRegistration && local.registration !== "absent") {
-          throw new Error(
-            "This session cannot revoke the registration. Use local VMM management."
-          );
+          throw computeProblem(messages.electron_compute_revoke_unavailable, {});
         }
         if (local.registration !== "absent")
           await this.options.adapter.remove(
@@ -541,7 +540,7 @@ export class ComputeNodeService {
         this.publish(
           "action_required",
           observed,
-          error instanceof Error ? error.message : "Compute node removal failed."
+          this.problem(error, messages.electron_compute_removal_failed)
         );
         throw error;
       }
@@ -557,7 +556,7 @@ export class ComputeNodeService {
         return this.publish(
           "action_required",
           observed,
-          "Compute node removal is not confirmed."
+          messages.electron_compute_removal_unconfirmed({}, { locale: this.locale })
         );
       }
       this.finishOperation("succeeded");
@@ -586,7 +585,7 @@ export class ComputeNodeService {
         "removed",
         observed,
         unavailableRegistration
-          ? "Local binding removed. The previous registration was inaccessible; remote revocation is not confirmed."
+          ? messages.electron_compute_local_binding_removed({}, { locale: this.locale })
           : undefined
       );
     });
@@ -605,7 +604,7 @@ export class ComputeNodeService {
         this.intent.recoveryPending ||
         !this.options.installAuthorization?.abandon
       )
-        throw new Error("This unfinished request cannot be closed here.");
+        throw computeProblem(messages.electron_compute_request_not_closable, {});
       // The cloud owner checks original subject, scope, and absence of any accepted exchange under its row lock.
       await this.options.installAuthorization.abandon({ operationId, workspaceId });
       await this.completeAbandon();
@@ -655,7 +654,7 @@ export class ComputeNodeService {
         this.publish(
           "action_required",
           undefined,
-          "Saved compute node intent is unreadable."
+          messages.electron_compute_intent_unreadable({}, { locale: this.locale })
         );
         return;
       }
@@ -676,7 +675,7 @@ export class ComputeNodeService {
       const workspaceId = this.intent.workspaceId;
       const installOperationId = this.intent.installOperationId;
       if (!workspaceId || !installOperationId || !this.options.installAuthorization) {
-        throw new Error("Compute node product authorization is unavailable.");
+        throw computeProblem(messages.electron_compute_authorization_unavailable, {});
       }
       await this.options.installAuthorization.configure({
         enabled: false,
@@ -705,7 +704,7 @@ export class ComputeNodeService {
       this.publish(
         "action_required",
         observed,
-        error instanceof Error ? error.message : "Compute node drain failed."
+        this.problem(error, messages.electron_compute_drain_failed)
       );
       throw error;
     }
@@ -1045,11 +1044,8 @@ export class ComputeNodeService {
   }
 
   private requireEligible() {
-    if (!this.snapshot.eligibility.eligible) {
-      throw new Error(
-        this.snapshot.eligibility.reason ?? "Compute node is unsupported."
-      );
-    }
+    if (!this.snapshot.eligibility.eligible)
+      throw computeProblem(messages.electron_compute_requires_apple_silicon, {});
   }
 
   private requireCurrentAuthority() {
@@ -1062,9 +1058,18 @@ export class ComputeNodeService {
 
   private requireIntentReadable() {
     if (!this.intentReadable)
-      throw new Error(
-        "Saved compute node intent is unreadable. Repair its storage before changing it."
-      );
+      throw computeProblem(messages.electron_compute_intent_unreadable_repair, {});
+  }
+
+  private get locale() {
+    return readMainLocale(this.options.locale ?? defaultLocale);
+  }
+
+  private problem(
+    error: unknown,
+    fallback: (inputs: {}, options: { locale: CommaLocale }) => string
+  ) {
+    return problemText(error, this.locale) ?? fallback({}, { locale: this.locale });
   }
 
   // Only accepted facts may be saved after a Session change, to this service's original account file.
@@ -1146,7 +1151,7 @@ export class ComputeNodeService {
           this.publish(
             "action_required",
             undefined,
-            error instanceof Error ? error.message : "Compute node operation failed."
+            this.problem(error, messages.electron_compute_operation_failed)
           );
           throw error;
         }

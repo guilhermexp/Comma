@@ -1,3 +1,4 @@
+import { useCommaMessages } from "@comma/i18n/react";
 import { useId } from "react";
 import type { ComponentProps, CSSProperties } from "react";
 
@@ -55,6 +56,7 @@ export const CommaLogoAnimation = ({
   style,
   ...svgProps
 }: CommaLogoAnimationProps) => {
+  const messages = useCommaMessages();
   const animationId = useId().replaceAll(":", "");
   const cycleSeconds = zoomSeconds + intervalSeconds;
   if (
@@ -95,7 +97,7 @@ export const CommaLogoAnimation = ({
 
   return (
     <svg
-      aria-label="Animated Comma logo"
+      aria-label={messages.ui_comma_logo_animated()}
       width={size}
       height={size}
       {...svgProps}

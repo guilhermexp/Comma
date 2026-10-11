@@ -110,7 +110,7 @@ const renderStudio = (
   render(
     <CommaWebClientSettingsProvider>
       <CommaAppearanceProvider>
-        <CommaI18nProvider>
+        <CommaI18nProvider locale="en">
           <CustomThemeStudio />
         </CommaI18nProvider>
       </CommaAppearanceProvider>
@@ -643,7 +643,7 @@ describe("CustomThemeStudio with asynchronous settings", () => {
     render(
       <CommaElectronClientSettingsProvider initialPreferences={preferences}>
         <CommaAppearanceProvider>
-          <CommaI18nProvider>
+          <CommaI18nProvider locale="en">
             <CustomThemeStudio />
           </CommaI18nProvider>
         </CommaAppearanceProvider>

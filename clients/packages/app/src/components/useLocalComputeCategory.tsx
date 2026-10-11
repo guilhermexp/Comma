@@ -5,7 +5,8 @@ import {
   type LocalComputeWorkloads,
   type LocalComputeOverview,
 } from "@comma/native-bridge";
-import { useCommaMessages } from "@comma/i18n/react";
+import { formatDate } from "@comma/i18n";
+import { useCommaLocale, useCommaMessages } from "@comma/i18n/react";
 import {
   Button,
   ComputeDiskUsage,
@@ -30,6 +31,7 @@ export function useLocalComputeCategory(
 ) {
   const bridge = getNativeBridge();
   const m = useCommaMessages();
+  const locale = useCommaLocale();
   const available = bridge.platform === "electron";
   const [cloudWorkloads, setCloudWorkloads] = useState<LocalComputeWorkloads>();
   const [overview, setOverview] = useState<LocalComputeOverview>();
@@ -210,10 +212,16 @@ export function useLocalComputeCategory(
             : data?.collectedAt
               ? fresh
                 ? m.compute_disk_read_at({
-                    time: new Date(data.collectedAt).toLocaleString(),
+                    time: formatDate(new Date(data.collectedAt), locale, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    }),
                   })
                 : m.compute_disk_old_at({
-                    time: new Date(data.collectedAt).toLocaleString(),
+                    time: formatDate(new Date(data.collectedAt), locale, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    }),
                   })
               : m.compute_disk_unavailable(),
         control: {

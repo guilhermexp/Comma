@@ -1,4 +1,4 @@
-import { baseLocale, messages, type CommaLocale } from "@comma/i18n";
+import { defaultLocale, messages, type CommaLocale } from "@comma/i18n";
 import { sessionExpectation } from "@comma/session-contract";
 import type { CommaApiSessionTransport } from "../../api";
 import type { SessionGuestController, SessionHostController } from "../controller";
@@ -40,7 +40,7 @@ export function createWebSessionHostControllerFromAdapter(
       }
     | undefined;
 
-  const guestLocale = locale ?? baseLocale;
+  const guestLocale = locale ?? defaultLocale;
   const guestError = (code: string) =>
     sessionOperationDisplayError(
       code,

@@ -1,3 +1,4 @@
+import { defaultLocale, messages } from "@comma/i18n";
 import {
   assertMaintenanceCapable,
   nativeReceiptSchema,
@@ -16,6 +17,8 @@ import {
 import { AgentVMMHostPreparation, type HostCommand } from "./host-preparation";
 import publishedHost from "../../../../../../../.github/agent-vmm-host.json";
 import type { LocalComputeOperator } from "./local-operator";
+import { readMainLocale, type MainLocaleSource } from "../../main-locale";
+import { ComputeProblemError, computeProblem, problemText } from "./problem";
 
 const journalSchema = z.strictObject({
   version: z.literal(1),
@@ -51,7 +54,7 @@ const ownerPolicySchema = z.object({
   supersededRequests: z.record(z.string(), z.string()).optional(),
 });
 type OwnerPolicy = z.infer<typeof ownerPolicySchema>;
-class MaintenanceReplacedError extends Error {}
+class MaintenanceReplacedError extends ComputeProblemError {}
 
 /** This local operator is deliberately independent of the product Session.
  * Native lifecycle owns VM stopping, data deletion, replay fences and completion.
@@ -68,7 +71,8 @@ export class LocalHostMaintenance {
     private readonly localDisposals?: Pick<
       LocalComputeOperator,
       "currentDisposalRequest" | "supersedeAfterHostReset"
-    >
+    >,
+    private readonly locale: MainLocaleSource = defaultLocale
   ) {}
 
   private get journalPath() {
@@ -396,10 +400,10 @@ export class LocalHostMaintenance {
           receipt.artifactSha256 !== journal.artifactSha256 ||
           receipt.artifactSize !== journal.artifactSize))
     )
-      throw new Error("Maintenance receipt does not match the confirmed scope.");
+      throw computeProblem(messages.electron_compute_maintenance_receipt_mismatch, {});
     if (receipt.outcome === "superseded")
-      throw new MaintenanceReplacedError(
-        "This maintenance operation was replaced. Continue the latest local maintenance operation."
+      throw new MaintenanceReplacedError((locale) =>
+        messages.electron_compute_maintenance_replaced({}, { locale })
       );
     const phase: Journal["operation"]["phase"] =
       receipt.outcome === "succeeded"
@@ -454,8 +458,9 @@ export class LocalHostMaintenance {
         journal.artifact,
         async (staged) => {
           if (journal.sourceApp && journal.sourceApp !== staged.sourceApp)
-            throw new Error(
-              "Maintenance recovery material changed its confirmed location."
+            throw computeProblem(
+              messages.electron_compute_maintenance_material_moved,
+              {}
             );
           Object.assign(journal, staged);
           await this.save(journal);
@@ -507,13 +512,14 @@ export class LocalHostMaintenance {
           )
         );
       } catch {
+        const locale = readMainLocale(this.locale);
         journal.operation = {
           ...journal.operation,
           phase: "failed",
           outcome: "failed",
-          problem: (error instanceof Error
-            ? error.message
-            : "Local maintenance could not be confirmed."
+          problem: (
+            problemText(error, locale) ??
+            messages.electron_compute_maintenance_unconfirmed({}, { locale })
           ).slice(0, 2000),
         };
       }

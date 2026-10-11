@@ -37,6 +37,8 @@ export type ChatEntry = {
   draftEpoch: number;
   draftOwnerSurfaceId: string | undefined;
   key: string;
+  /** The language the entry's own failure rows are written in. */
+  locale: CommaLocale;
   /** The channel state last projected, to tell a draft-only emit apart. */
   observedState: ConversationChannelState;
   projection: ConversationProjection | undefined;
@@ -122,6 +124,7 @@ export function createChatEntry(
     draftEpoch: 0,
     draftOwnerSurfaceId: undefined,
     key: chatKey(target),
+    locale: host.locale,
     observedState: channel.getSnapshot(),
     projection: undefined,
     runtimeProjection: undefined,

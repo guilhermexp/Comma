@@ -1,3 +1,4 @@
+import { useCommaMessages } from "@comma/i18n/react";
 import { Header, MenuSection } from "react-aria-components";
 import { LoadingIndicator } from "../LoadingIndicator";
 import {
@@ -334,13 +335,13 @@ const Control = ({
           fullWidth && "w-full"
         )}
         items={control.items}
-        placeholder={control.placeholder ?? "Select team member"}
         size="sm"
         width={fullWidth || control.width === "fixed" ? "default" : "content"}
         {...definedProps({
           ariaLabel: control.ariaLabel,
           disabled: control.disabled,
           loading: control.loading,
+          placeholder: control.placeholder,
           virtualized: control.virtualized,
           value: control.value,
           onChange: control.onChange,
@@ -900,11 +901,14 @@ export const SettingsPanel = ({
   sections = defaultSections,
   className,
   surface = "standalone",
-  title = "General",
+  title: suppliedTitle,
   titleAction,
-  emptyTitle = "No settings available",
+  emptyTitle: suppliedEmptyTitle,
   emptyDescription,
 }: SettingsPanelProps) => {
+  const messages = useCommaMessages();
+  const title = suppliedTitle ?? messages.settings_general();
+  const emptyTitle = suppliedEmptyTitle ?? messages.ui_settings_panel_empty();
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

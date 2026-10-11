@@ -1,4 +1,6 @@
 import type { SitePermissionMenuProvider } from "../../site-permission-menu-window";
+import { defaultLocale, messages } from "@comma/i18n";
+import { readMainLocale, type MainLocaleSource } from "../../main-locale";
 import type { Session } from "electron";
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -7,6 +9,21 @@ import { z } from "zod";
 export type SiteMediaPermission = "microphone" | "camera";
 export type SitePermissionChoice = "ask" | "allow" | "block";
 export type SitePermissionChoices = Record<SiteMediaPermission, SitePermissionChoice>;
+/** What went wrong, so the platform can explain it in the app language. */
+export type SitePermissionErrorKind = "storage-unreadable" | "storage-full" | "failed";
+class SitePermissionError extends Error {
+  constructor(
+    readonly kind: SitePermissionErrorKind,
+    message: string
+  ) {
+    super(message);
+  }
+}
+const unreadableStorageError = () =>
+  new SitePermissionError(
+    "storage-unreadable",
+    "Website permissions could not be read. Repair or remove browser-site-permissions.json in the Comma profile, then restart Comma."
+  );
 const defaults = (): SitePermissionChoices => ({ microphone: "ask", camera: "ask" });
 const choice = z.enum(["ask", "allow", "block"]);
 const storedSites = z
@@ -50,7 +67,7 @@ export interface SitePermissionPlatform {
   }): Promise<void>;
   hasSystemAccess(media: SiteMediaPermission): boolean;
   ensureSystemAccess(owner: unknown, media: SiteMediaPermission[]): Promise<boolean>;
-  reportError(owner: unknown, message: string): void;
+  reportError(owner: unknown, kind: SitePermissionErrorKind): void;
 }
 interface Tab {
   contents: SitePermissionContents;
@@ -76,12 +93,13 @@ export class BrowserSitePermissions {
   readonly #sites = new Map<string, SitePermissionChoices>();
   readonly #pending = new Set<number>();
   #promptTail: Promise<unknown> = Promise.resolve();
-  #storageError: string | undefined;
+  #storageUnreadable = false;
   #settingsOpen = false;
   #decisionVersion = 0;
   constructor(
     private readonly platform: SitePermissionPlatform,
-    private readonly filePath?: string
+    private readonly filePath?: string,
+    private readonly locale: MainLocaleSource = defaultLocale
   ) {
     if (!filePath) return;
     try {
@@ -96,8 +114,7 @@ export class BrowserSitePermissions {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         this.#sites.clear();
-        this.#storageError =
-          "Website permissions could not be read. Repair or remove browser-site-permissions.json in the Comma profile, then restart Comma.";
+        this.#storageUnreadable = true;
       }
     }
   }
@@ -125,7 +142,12 @@ export class BrowserSitePermissions {
     this.#sessions.add(session);
     session.setPermissionCheckHandler((contents, permission, origin, details) => {
       const tab = contents && this.#tabs.get(contents.id);
-      if (!tab || permission !== "media" || !details.isMainFrame || this.#storageError)
+      if (
+        !tab ||
+        permission !== "media" ||
+        !details.isMainFrame ||
+        this.#storageUnreadable
+      )
         return false;
       if (
         tab.contents !== contents ||
@@ -198,7 +220,7 @@ export class BrowserSitePermissions {
           answer(false);
           this.platform.reportError(
             tab.owner,
-            error instanceof Error ? error.message : "Website permission failed."
+            error instanceof SitePermissionError ? error.kind : "failed"
           );
         }
       );
@@ -207,15 +229,18 @@ export class BrowserSitePermissions {
   async showSettings(
     contents: SitePermissionContents,
     anchor?: { x: number; y: number; width: number; height: number }
-  ) {
+  ): Promise<{ status: "opened" | "unavailable"; reason?: string }> {
     const tab = this.#tabs.get(contents.id);
     const origin = sitePermissionOrigin(contents.getURL());
     if (!tab || !origin || !this.#valid(tab))
       return {
         status: "unavailable" as const,
-        reason: "Website permissions require an active HTTPS page.",
+        reason: messages.site_permissions_requires_https(
+          {},
+          { locale: readMainLocale(this.locale) }
+        ),
       };
-    if (this.#storageError) throw new Error(this.#storageError);
+    if (this.#storageUnreadable) throw unreadableStorageError();
     const signal = tab.document.signal;
     const current = () =>
       !signal.aborted &&
@@ -259,7 +284,7 @@ export class BrowserSitePermissions {
       this.#valid(tab) &&
       sitePermissionOrigin(tab.contents.getURL()) === origin;
     if (!current()) return false;
-    if (this.#storageError) throw new Error(this.#storageError);
+    if (this.#storageUnreadable) throw unreadableStorageError();
     const choices = this.choices(origin);
     if (media.some((type) => choices[type] === "block")) return false;
     const requested = media.filter((type) => choices[type] === "ask");
@@ -290,7 +315,8 @@ export class BrowserSitePermissions {
     if (choices.microphone === "ask" && choices.camera === "ask") next.delete(origin);
     else next.set(origin, choices);
     if (next.size > 256)
-      throw new Error(
+      throw new SitePermissionError(
+        "storage-full",
         "Website permission storage is full. Reset an unused site's permissions first."
       );
     if (this.filePath) {

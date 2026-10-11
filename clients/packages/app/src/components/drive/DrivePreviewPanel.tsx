@@ -26,6 +26,7 @@ import {
   refreshDrive,
 } from "./driveBackend";
 import { downloadDriveFile } from "./driveTransfers";
+import { driveErrorDescription } from "./driveErrors";
 import { FilePreviewPanel } from "../file-preview/FilePreviewPanel";
 import { createResolvedFileOpenInAction } from "../../runtime-files/fileOpenActions";
 
@@ -163,10 +164,11 @@ export function DrivePreviewPanel({
           await backend.adopt(file, version);
         } catch (error) {
           toast.error(messages.drive_versions_keep_failed_title(), {
-            description:
-              error instanceof Error && error.message
-                ? error.message
-                : messages.drive_node_rejected_description(),
+            description: driveErrorDescription(
+              error,
+              messages.drive_node_rejected_description(),
+              locale
+            ),
             id: `comma-drive-version-${fileId}`,
             testId: `comma-drive-version-${fileId}`,
           });
@@ -187,7 +189,7 @@ export function DrivePreviewPanel({
         testId: `comma-drive-version-${fileId}`,
       });
     },
-    [backend, file, fileId, messages, store]
+    [backend, file, fileId, locale, messages, store]
   );
 
   const copyImage = useCallback(async () => {

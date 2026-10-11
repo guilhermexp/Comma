@@ -1,5 +1,6 @@
 import { applicationMenuIcons } from "./generated/application-menu-icons";
 import { app, Menu, nativeImage, type MenuItemConstructorOptions } from "electron";
+import { defaultLocale, messages, type CommaLocale } from "@comma/i18n";
 import type {
   ApplicationMenuCommand,
   ApplicationMenuItems,
@@ -9,12 +10,18 @@ import { applicationMenuProvider } from "./application-menu-provider";
 type Options = {
   isMainFocused: () => boolean;
   dispatch: (id: ApplicationMenuCommand) => void;
+  /** Main's language until the renderer publishes its menu presentation. */
+  locale?: CommaLocale;
   openMain: () => unknown;
   openSideChat: () => unknown;
   openSideChatBackground?: () => unknown;
   /** False hides Open Side Chat, as Side Chat is turned off in General. */
   sideChatEnabled: () => boolean;
 };
+type MenuLabel = (
+  inputs: Record<string, never>,
+  options: { locale: CommaLocale }
+) => string;
 const accelerators = (entries: ApplicationMenuItems) =>
   JSON.stringify(
     entries
@@ -34,42 +41,12 @@ export function installApplicationMenu(options: Options) {
     })
   );
   let items: ApplicationMenuItems = [];
-  let locale = "en";
-  const translations: Record<string, string> = {
-    File: "文件",
-    View: "显示",
-    Window: "窗口",
-    "Settings…": "设置…",
-    "Start Recording": "开始录音",
-    "Pause Recording": "暂停录音",
-    "Resume Recording": "继续录音",
-    "Stop and Save Recording": "停止并保存录音",
-    "Recording Settings…": "录音设置…",
-    "Upload Files…": "上传文件…",
-    "Upload Folder…": "上传文件夹…",
-    "Add Local Folder to Drive…": "添加本地文件夹到 Drive…",
-    "Download Selected Files": "下载选中文件",
-    "New Browser Tab": "新建浏览器标签页",
-    "Close Tab": "关闭标签页",
-    Home: "首页",
-    Inbox: "收件箱",
-    Tasks: "任务",
-    Plugins: "插件",
-    "Search Tasks…": "搜索任务…",
-    Back: "后退",
-    Forward: "前进",
-    "Show Left Sidebar": "显示左侧栏",
-    "Show Right Sidebar": "显示右侧栏",
-    "Show Comma": "显示 Comma",
-    "Open Side Chat": "打开 Side Chat",
-    "Side Chat Background…": "Side Chat 背景调试…",
-    "Keyboard Shortcuts…": "快捷键…",
-    "Check for Updates…": "检查更新…",
-  };
-  const t = (label: string) =>
-    locale === "zh-CN" ? (translations[label] ?? label) : label;
+  let locale: CommaLocale = options.locale ?? defaultLocale;
+  // Electron's role items carry English labels; every label comes from the
+  // catalog so the whole menu follows the app language.
+  const t = (label: MenuLabel) => label({}, { locale });
   let menu: Menu | undefined;
-  const labels = new Map<ApplicationMenuCommand, string>();
+  const labels = new Map<ApplicationMenuCommand, MenuLabel>();
 
   function update() {
     if (!menu) return;
@@ -97,7 +74,7 @@ export function installApplicationMenu(options: Options) {
   function build() {
     const command = (
       id: ApplicationMenuCommand,
-      label: string
+      label: MenuLabel
     ): MenuItemConstructorOptions => {
       labels.set(id, label);
       const state = items.find((item) => item.id === id);
@@ -125,69 +102,114 @@ export function installApplicationMenu(options: Options) {
         click: () => options.dispatch(id),
       };
     };
+    const product = { productName: app.name };
     const separator: MenuItemConstructorOptions = { type: "separator" };
+    const mac = process.platform === "darwin";
     const template: MenuItemConstructorOptions[] = [
       {
         label: app.name,
         submenu: [
-          { role: "about" },
-          command("check-updates", "Check for Updates…"),
+          { role: "about", label: messages.app_menu_about(product, { locale }) },
+          command("check-updates", messages.app_menu_check_updates),
           separator,
-          command("go-settings", "Settings…"),
+          command("go-settings", messages.app_menu_settings),
           separator,
-          { role: "services" },
+          { role: "services", label: t(messages.app_menu_services) },
           separator,
-          { role: "hide" },
-          { role: "hideOthers" },
-          { role: "unhide" },
+          { role: "hide", label: messages.app_menu_hide(product, { locale }) },
+          { role: "hideOthers", label: t(messages.app_menu_hide_others) },
+          { role: "unhide", label: t(messages.app_menu_show_all) },
           separator,
-          { role: "quit" },
+          { role: "quit", label: messages.app_menu_quit(product, { locale }) },
         ],
       },
       {
-        label: t("File"),
+        label: t(messages.app_menu_file),
         submenu: [
-          command("record-start", "Start Recording"),
-          command("record-pause", "Pause Recording"),
-          command("record-resume", "Resume Recording"),
-          command("record-stop", "Stop and Save Recording"),
-          command("go-recording-settings", "Recording Settings…"),
+          command("record-start", messages.app_menu_record_start),
+          command("record-pause", messages.app_menu_record_pause),
+          command("record-resume", messages.app_menu_record_resume),
+          command("record-stop", messages.app_menu_record_stop),
+          command("go-recording-settings", messages.app_menu_recording_settings),
           separator,
-          command("drive-upload", "Upload Files…"),
-          command("drive-upload-folder", "Upload Folder…"),
-          command("drive-add-folder", "Add Local Folder to Drive…"),
-          command("drive-download", "Download Selected Files"),
+          command("drive-upload", messages.app_menu_drive_upload),
+          command("drive-upload-folder", messages.app_menu_drive_upload_folder),
+          command("drive-add-folder", messages.app_menu_drive_add_folder),
+          command("drive-download", messages.app_menu_drive_download),
           separator,
-          command("browser-new-tab", "New Browser Tab"),
-          command("browser-close-tab", "Close Tab"),
+          command("browser-new-tab", messages.app_menu_browser_new_tab),
+          command("browser-close-tab", messages.app_menu_browser_close_tab),
           separator,
-          { role: "close" },
+          { role: "close", label: t(messages.app_menu_close_window) },
         ],
       },
-      { role: "editMenu" },
       {
-        label: t("View"),
+        // Electron's editMenu role, spelled out so each item takes a label.
+        label: t(messages.app_menu_edit),
         submenu: [
-          command("go-comma-assistant", "Home"),
-          command("go-inbox", "Inbox"),
-          command("go-drive", "Drive"),
-          command("go-tasks", "Tasks"),
-          command("go-plugins", "Plugins"),
-          command("go-routines", "Routines"),
-          command("go-search", "Search Tasks…"),
+          { role: "undo", label: t(messages.app_menu_undo) },
+          { role: "redo", label: t(messages.app_menu_redo) },
           separator,
-          command("history-back", "Back"),
-          command("history-forward", "Forward"),
+          { role: "cut", label: t(messages.app_menu_cut) },
+          { role: "copy", label: t(messages.app_menu_copy) },
+          { role: "paste", label: t(messages.app_menu_paste) },
+          ...(mac
+            ? [
+                {
+                  role: "pasteAndMatchStyle",
+                  label: t(messages.app_menu_paste_match_style),
+                } as const,
+              ]
+            : []),
+          { role: "delete", label: t(messages.app_menu_delete) },
+          { role: "selectAll", label: t(messages.app_menu_select_all) },
+          ...(mac
+            ? [
+                separator,
+                {
+                  label: t(messages.app_menu_speech),
+                  submenu: [
+                    {
+                      role: "startSpeaking",
+                      label: t(messages.app_menu_start_speaking),
+                    },
+                    {
+                      role: "stopSpeaking",
+                      label: t(messages.app_menu_stop_speaking),
+                    },
+                  ],
+                } satisfies MenuItemConstructorOptions,
+              ]
+            : []),
+        ],
+      },
+      {
+        label: t(messages.app_menu_view),
+        submenu: [
+          command("go-comma-assistant", messages.app_menu_home),
+          command("go-inbox", messages.app_menu_inbox),
+          command("go-drive", messages.app_menu_drive),
+          command("go-tasks", messages.app_menu_tasks),
+          command("go-plugins", messages.app_menu_plugins),
+          command("go-routines", messages.app_menu_routines),
+          command("go-search", messages.app_menu_search_tasks),
           separator,
-          command("toggle-left-sidebar", "Show Left Sidebar"),
-          command("toggle-right-sidebar", "Show Right Sidebar"),
+          command("history-back", messages.app_menu_back),
+          command("history-forward", messages.app_menu_forward),
           separator,
-          { id: "toggle-devtools", role: "toggleDevTools" },
+          command("toggle-left-sidebar", messages.app_menu_show_left_sidebar),
+          command("toggle-right-sidebar", messages.app_menu_show_right_sidebar),
+          separator,
+          {
+            id: "toggle-devtools",
+            role: "toggleDevTools",
+            label: t(messages.app_menu_toggle_devtools),
+          },
           ...(options.openSideChatBackground
             ? [
                 {
                   id: "side-chat-background-debug",
-                  label: t("Side Chat Background…"),
+                  label: t(messages.app_menu_side_chat_background),
                   click: () => {
                     void options.openSideChatBackground?.();
                   },
@@ -195,39 +217,43 @@ export function installApplicationMenu(options: Options) {
               ]
             : []),
           separator,
-          { role: "zoomIn" },
-          { role: "zoomOut" },
-          { role: "resetZoom" },
+          { role: "zoomIn", label: t(messages.app_menu_zoom_in) },
+          { role: "zoomOut", label: t(messages.app_menu_zoom_out) },
+          { role: "resetZoom", label: t(messages.app_menu_actual_size) },
           separator,
-          { role: "togglefullscreen" },
+          { role: "togglefullscreen", label: t(messages.app_menu_toggle_full_screen) },
         ],
       },
       {
         role: "windowMenu",
-        label: t("Window"),
+        label: t(messages.app_menu_window),
         submenu: [
           {
-            label: t("Show Comma"),
+            label: t(messages.app_menu_show_comma),
             click: () => {
               void options.openMain();
             },
           },
           {
             id: "open-side-chat",
-            label: t("Open Side Chat"),
+            label: t(messages.app_menu_open_side_chat),
             visible: options.sideChatEnabled(),
             click: () => {
               void options.openSideChat();
             },
           },
           separator,
-          { role: "minimize" },
-          { role: "zoom" },
+          { role: "minimize", label: t(messages.app_menu_minimize) },
+          { role: "zoom", label: t(messages.app_menu_zoom) },
           separator,
-          { role: "front" },
+          { role: "front", label: t(messages.app_menu_bring_all_to_front) },
         ],
       },
-      { role: "help", submenu: [command("go-shortcuts", "Keyboard Shortcuts…")] },
+      {
+        role: "help",
+        label: t(messages.app_menu_help),
+        submenu: [command("go-shortcuts", messages.app_menu_keyboard_shortcuts)],
+      },
     ];
     menu = Menu.buildFromTemplate(template);
     Menu.setApplicationMenu(menu);

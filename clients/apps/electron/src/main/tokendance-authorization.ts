@@ -16,6 +16,8 @@ import type {
   TokenDanceAuthorizationStatus,
 } from "@comma/native-bridge";
 import { subscriptionAuthorizationPage } from "./subscription-authorization-page";
+import { defaultLocale } from "@comma/i18n";
+import { readMainLocale, type MainLocaleSource } from "./main-locale";
 import { getCommaReleaseConfig, type CommaReleaseConfig } from "../release-config";
 
 const origin = "https://tokendance.space";
@@ -51,7 +53,8 @@ export class TokenDanceAuthorizationService {
     private readonly appIdentity: Pick<
       CommaReleaseConfig,
       "urlScheme" | "productName"
-    > = getCommaReleaseConfig()
+    > = getCommaReleaseConfig(),
+    private readonly locale: MainLocaleSource = defaultLocale
   ) {}
 
   async start(input: { requestId: string; workspaceId: string }): Promise<Status> {
@@ -67,6 +70,16 @@ export class TokenDanceAuthorizationService {
     const state = randomState();
     let callbackUrl: URL;
     const server = createServer((request, response) => {
+      const page = (
+        pageState: Parameters<typeof subscriptionAuthorizationPage>[0],
+        returnUrl?: string
+      ) =>
+        subscriptionAuthorizationPage(
+          pageState,
+          "byok",
+          returnUrl,
+          readMainLocale(this.locale)
+        );
       response.setHeader("Cache-Control", "no-store");
       response.setHeader("Content-Type", "text/html; charset=utf-8");
       response.setHeader("Content-Security-Policy", authorizationReturnCsp);
@@ -75,7 +88,7 @@ export class TokenDanceAuthorizationService {
         if (!callbackUrl || (request.url?.length ?? 0) > 8192) throw new Error();
         url = new URL(request.url ?? "/", callbackUrl);
       } catch {
-        response.writeHead(400).end(subscriptionAuthorizationPage("invalid", "byok"));
+        response.writeHead(400).end(page("invalid"));
         return;
       }
       if (
@@ -83,7 +96,7 @@ export class TokenDanceAuthorizationService {
         request.headers.host !== callbackUrl.host ||
         url.pathname !== callbackUrl.pathname
       ) {
-        response.writeHead(404).end(subscriptionAuthorizationPage("notFound", "byok"));
+        response.writeHead(404).end(page("notFound"));
         return;
       }
       if (
@@ -92,7 +105,7 @@ export class TokenDanceAuthorizationService {
         url.searchParams.getAll("state").length !== 1 ||
         url.searchParams.get("state") !== state
       ) {
-        response.writeHead(400).end(subscriptionAuthorizationPage("invalid", "byok"));
+        response.writeHead(400).end(page("invalid"));
         return;
       }
       const code = url.searchParams.get("code");
@@ -101,18 +114,14 @@ export class TokenDanceAuthorizationService {
         url.searchParams.getAll("code").length !== 1 ||
         url.searchParams.has("error")
       ) {
-        response
-          .writeHead(400)
-          .end(subscriptionAuthorizationPage("denied", "byok", this.returnToApp?.url));
+        response.writeHead(400).end(page("denied", this.returnToApp?.url));
         this.returnToApp?.open();
         this.fail(attempt, "authorization_denied");
         return;
       }
       attempt.callbackReceived = true;
       this.returnToApp?.open();
-      response.end(
-        subscriptionAuthorizationPage("received", "byok", this.returnToApp?.url)
-      );
+      response.end(page("received", this.returnToApp?.url));
       server.close();
       void this.exchange(attempt, code, verifier);
     });
