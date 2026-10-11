@@ -68,7 +68,7 @@ defmodule Comma.Accounts.User do
   end
 
   @doc "App languages, mirrored from `@comma/i18n` `supportedLocales`."
-  def locales, do: ~w(en zh-CN)
+  def locales, do: ~w(pt-BR en zh-CN)
 
   @spec new_id() :: String.t()
   def new_id do

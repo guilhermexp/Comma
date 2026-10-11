@@ -146,6 +146,46 @@ defmodule CommaWeb.ProactiveNotebookTest do
              "Automatic messages are off."
   end
 
+  test "a Brazilian Portuguese owner reads the notebook in Portuguese" do
+    notebook =
+      ProactiveNotebook.render(
+        facts(%{
+          locale: "pt-BR",
+          notifications: {:closed, @now + @hour},
+          urgent: {:open, 2},
+          matters: [
+            matter("quiet", %{
+              "state" => "quiet",
+              "decision" => %{"decision" => "quiet", "reason" => "Milo cuida disso"}
+            })
+          ],
+          judged: [
+            %MemberSourceItem{
+              title: "newsletter",
+              url: "https://example.com/n",
+              attention: %{"outcome" => "quiet", "urgency" => "low", "at" => @now}
+            }
+          ],
+          monitors: [%{"name" => "PR #12", "status" => "paused"}]
+        })
+      )
+
+    assert notebook =~ "# Bloco de notas do Comma"
+    assert notebook =~ "Até 09-30 15:33, só assuntos urgentes podem interromper você."
+    assert section(notebook, "Precisa de você") =~ "Nada precisa de você agora."
+
+    quiet = section(notebook, "Não interrompeu você")
+    assert quiet =~ "[quiet](https://example.com/quiet) — não interrompeu: Milo cuida disso"
+
+    assert quiet =~
+             "[newsletter](https://example.com/n) — classificado como prioridade baixa, deixado para o resumo diário"
+
+    assert section(notebook, "Acompanhando") =~ "Acompanhamento: PR #12 — pausado"
+
+    assert ProactiveNotebook.render(facts(%{locale: "pt-BR", automatic: false})) =~
+             "As mensagens automáticas estão desativadas."
+  end
+
   test "a notified matter leaves \"needs you\" after three days, and unusable judgments say so" do
     notebook =
       ProactiveNotebook.render(

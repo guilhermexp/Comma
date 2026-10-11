@@ -423,6 +423,24 @@ defmodule Comma.RecommendationsTest do
     assert Comma.Accounts.locale(profile.user_id) == "zh-CN"
   end
 
+  test "a Brazilian Portuguese client language fills an account without one" do
+    {profile, _workspace} = profile_fixture!()
+
+    assert Comma.Accounts.adopt_locale(profile.user_id, "pt-BR") == :adopted
+    assert Comma.Accounts.locale(profile.user_id) == "pt-BR"
+
+    assert Comma.Accounts.adopt_locale(profile.user_id, "zh-CN") == :unchanged
+    assert Comma.Accounts.locale(profile.user_id) == "pt-BR"
+  end
+
+  test "a stored language is kept when a Brazilian Portuguese client reads" do
+    {profile, _workspace} = profile_fixture!()
+
+    assert Comma.Accounts.adopt_locale(profile.user_id, "en") == :adopted
+    assert Comma.Accounts.adopt_locale(profile.user_id, "pt-BR") == :unchanged
+    assert Comma.Accounts.locale(profile.user_id) == "en"
+  end
+
   test "a profile created without a device timezone takes the first reported one" do
     {profile, workspace} = profile_fixture!()
     user = %{"id" => profile.user_id}

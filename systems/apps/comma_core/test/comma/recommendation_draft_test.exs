@@ -80,6 +80,19 @@ defmodule Comma.RecommendationDraftTest do
 
     assert RecommendationContract.validate(snapshot, %{"account" => [url]}, []) == :ok
 
+    # Portuguese keeps the row's own wording after the request for help.
+    assert {:ok, portuguese} =
+             RecommendationDraft.compile(draft, context, %{generation: 1, source_revision: 1}, [],
+               locale: "pt-BR"
+             )
+
+    assert get_in(portuguese, ["cards", Access.at(0), "items", Access.at(0), "action"]) == %{
+             "type" => "send_to_comma",
+             "label" => "Usar prompt",
+             "prompt" => "Me ajude com esta tarefa: Review #1 before release.\n\n" <> url,
+             "requiresConfirmation" => true
+           }
+
     # A full-length row keeps its source URL whole within the prompt limit.
     long =
       put_in(draft, path ++ ["parts"], [
@@ -129,6 +142,23 @@ defmodule Comma.RecommendationDraftTest do
 
     assert [%{"code" => "partial_sources", "sourceIds" => ["failed-source"]}] =
              snapshot["warnings"]
+
+    assert {:ok, portuguese} =
+             RecommendationDraft.compile(
+               draft,
+               context,
+               %{generation: 1, source_revision: 1},
+               [%{"sourceId" => "failed-source"}],
+               locale: "pt-BR"
+             )
+
+    assert [
+             %{
+               "code" => "partial_sources",
+               "message" => "Não foi possível ler todas as fontes conectadas por completo.",
+               "sourceIds" => ["failed-source"]
+             }
+           ] = portuguese["warnings"]
 
     assert RecommendationContract.validate(
              snapshot,
@@ -425,6 +455,17 @@ defmodule Comma.RecommendationDraftTest do
     [summary_link] = Enum.filter(snapshot["summary"], &(&1["kind"] == "inline-link"))
     assert summary_link["link"]["promptId"] == id
 
+    assert {:ok, portuguese} =
+             RecommendationDraft.compile(
+               %{"selected" => [%{"id" => "s1r1", "recommendation" => "Revisar o item"}]},
+               context,
+               run,
+               [],
+               locale: "pt-BR"
+             )
+
+    assert portuguese["prompts"]["s1r1"]["contextLabel"] == "Contexto original (citado)"
+
     for text <- [
           " ",
           "Open https://evil.example",
@@ -541,6 +582,28 @@ defmodule Comma.RecommendationDraftTest do
 
     assert Enum.map_join(paragraph, &(&1["text"] || &1["label"])) =~
              ~r/:\sReview first Slack source; /
+
+    assert {:ok, portuguese} =
+             Comma.RecommendationMemberSelection.project(selection, context, "pt-BR")
+
+    assert portuguese["title"] == "Seu resumo de trabalho"
+
+    assert [
+             [
+               %{"text" => "Sugiro que você se concentre nestes itens: "},
+               %{"text" => "Review first "},
+               %{"reference" => "s1r1", "label" => "fonte no Slack"},
+               %{"text" => "; "},
+               %{"text" => "Review second "},
+               %{"reference" => "s2r1", "label" => "COMMA-244"},
+               %{"text" => "."}
+             ]
+           ] = portuguese["paragraphs"]
+
+    assert {:ok, %{"paragraphs" => [[%{"text" => empty}]]}} =
+             Comma.RecommendationMemberSelection.project(%{"selected" => []}, context, "pt-BR")
+
+    assert empty == "No momento, não tenho nenhum item de trabalho para destacar."
 
     assert {:ok, _} =
              RecommendationDraft.compile(

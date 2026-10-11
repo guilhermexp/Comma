@@ -490,6 +490,54 @@ defmodule CommaWeb.ProactiveNotebook do
     }
   end
 
+  defp text("pt-BR") do
+    %{
+      title: "Bloco de notas do Comma",
+      intro:
+        "O Comma mantém esta página atualizada: o que ele acompanha para você, o que decidiu e por que não interrompeu você. Edições feitas aqui são substituídas; para ajustar algo, diga ao Comma na conversa.",
+      automatic_on: "As mensagens automáticas estão ativadas.",
+      automatic_off:
+        "As mensagens automáticas estão desativadas. O Comma não verifica o que chega de novo; os assuntos que você pediu para ele acompanhar continuam sendo acompanhados.",
+      budget_open: &"Mensagens automáticas restantes hoje: #{&1}.",
+      budget_urgent: &"Até #{&1}, só assuntos urgentes podem interromper você.",
+      budget_closed: &"Sem mensagens automáticas até #{&1}.",
+      today: "Precisa de você",
+      empty_today: "Nada precisa de você agora.",
+      later: "Em breve",
+      waiting: "Aguardando e em andamento",
+      watching: "Acompanhando",
+      empty_watching: "Ainda não há fontes conectadas nem assuntos acompanhados.",
+      quiet: "Não interrompeu você",
+      done: "Concluídos recentemente",
+      urgency: &%{"critical" => "urgente", "high" => "importante"}[&1],
+      recheck: &"nova verificação em #{&1}",
+      in_task: "em uma tarefa",
+      failed: "a última ação falhou",
+      notified: &if(&1, do: "avisou você em #{&1}", else: "avisou você"),
+      stayed_quiet: &if(&1, do: "não interrompeu em #{&1}", else: "não interrompeu"),
+      watch: "Acompanhamento",
+      watch_active: "ativo",
+      watch_paused: "pausado",
+      watch_stopped: "interrompido",
+      untitled: "sem título",
+      source: "Fonte",
+      source_read: &"última leitura por volta de #{&1}",
+      source_failed: "a última leitura falhou",
+      source_waiting: "aguardando a primeira leitura",
+      judged_off: "as mensagens automáticas estavam desativadas",
+      judged_below:
+        &"classificado como prioridade #{%{"critical" => "crítica", "high" => "alta", "normal" => "normal", "low" => "baixa"}[&1] || &1}, deixado para o resumo diário",
+      judged_quiet: "nada para você fazer, deixado para o resumo diário",
+      judged_in_briefing: "no resumo mais recente",
+      briefing: "Resumo mais recente",
+      briefing_handled: "resolvido",
+      briefing_notified: "avisou você",
+      judged_invalid: "não foi possível avaliar desta vez, deixado para o resumo diário",
+      separator: "; ",
+      colon: ": "
+    }
+  end
+
   defp text(_locale) do
     %{
       title: "Comma notebook",

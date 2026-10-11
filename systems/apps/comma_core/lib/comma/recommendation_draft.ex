@@ -147,7 +147,7 @@ defmodule Comma.RecommendationDraft do
   # composer actions reference it; the client assembles the same displayed text.
   defp member_prompt_context(context, draft, %{relevance_mode: "member"}, locale) do
     candidates = Map.new(Comma.RecommendationMemberSelection.candidates(context), &{&1["id"], &1})
-    context_label = if locale == "zh-CN", do: "原始上下文（引用）", else: "Original context (quoted)"
+    context_label = context_label(locale)
 
     prompts =
       for routine <- draft["routines"], item <- routine["items"], into: %{} do
@@ -388,12 +388,21 @@ defmodule Comma.RecommendationDraft do
 
   @doc "The label of a row action that fills the composer with the row's task."
   def prompt_label("zh-CN"), do: "填入输入框"
+  def prompt_label("pt-BR"), do: "Usar prompt"
   def prompt_label(_locale), do: "Use prompt"
+
+  defp context_label("zh-CN"), do: "原始上下文（引用）"
+  defp context_label("pt-BR"), do: "Contexto original (citado)"
+  defp context_label(_locale), do: "Original context (quoted)"
 
   # A text row is the member's own task. Sent as is, the imperative would hand
   # the member's part, such as a decision, to Comma, so the prompt asks Comma for
   # help with it. A leading name such as GitHub or PR keeps its case.
   defp task_request(text, "zh-CN"), do: "帮我" <> String.trim(text)
+
+  # Portuguese has no safe way to turn the imperative into an infinitive, so the
+  # task follows a request for help as written.
+  defp task_request(text, "pt-BR"), do: "Me ajude com esta tarefa: " <> String.trim(text)
 
   defp task_request(text, _locale) do
     task = String.replace(String.trim(text), ~r/^[A-Z](?=[a-z]+\b)/, &String.downcase/1)
@@ -421,9 +430,11 @@ defmodule Comma.RecommendationDraft do
 
   defp warnings(failures, locale) do
     message =
-      if locale == "zh-CN",
-        do: "部分来源未能完整读取。",
-        else: "Some connected sources could not be fully read."
+      case locale do
+        "zh-CN" -> "部分来源未能完整读取。"
+        "pt-BR" -> "Não foi possível ler todas as fontes conectadas por completo."
+        _ -> "Some connected sources could not be fully read."
+      end
 
     [
       %{

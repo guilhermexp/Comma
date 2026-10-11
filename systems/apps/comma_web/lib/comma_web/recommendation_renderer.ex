@@ -424,8 +424,10 @@ defmodule CommaWeb.RecommendationRenderer do
   end
 
   defp language("zh-CN"), do: "Simplified Chinese"
+  defp language("pt-BR"), do: "Brazilian Portuguese"
   defp language(_), do: "English"
 
   defp output_language("zh-CN"), do: "zh-CN"
+  defp output_language("pt-BR"), do: "pt-BR"
   defp output_language(_), do: "en"
 end

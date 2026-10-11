@@ -154,10 +154,16 @@ defmodule Comma.ProfileAvatarTest do
     assert name == user["name"]
     assert Comma.Accounts.locale(user["id"]) == "zh-CN"
 
+    assert {:ok, %{"locale" => "pt-BR"}} =
+             ProfileAvatar.update(user["id"], %{"locale" => "pt-BR"})
+
+    assert Comma.Accounts.locale(user["id"]) == "pt-BR"
+
     # A follow-OS value or free text never becomes the stored language.
     assert {:error, :invalid_locale} = ProfileAvatar.update(user["id"], %{"locale" => "system"})
+    assert {:error, :invalid_locale} = ProfileAvatar.update(user["id"], %{"locale" => "pt"})
     assert {:error, :invalid_profile} = ProfileAvatar.update(user["id"], %{})
-    assert Comma.Accounts.locale(user["id"]) == "zh-CN"
+    assert Comma.Accounts.locale(user["id"]) == "pt-BR"
   end
 
   @tag :tmp_dir

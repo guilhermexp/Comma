@@ -108,9 +108,9 @@ defmodule SalixIM.Provider.OperationRegistry do
           "Optional HTTPS static map image. Omit when no trusted image URL is available.",
         "locale" => %{
           "type" => "string",
-          "enum" => ["en", "zh-CN"],
+          "enum" => ["en", "zh-CN", "pt-BR"],
           "description" =>
-            "Optional card-label locale. Use zh-CN when the active conversation is Chinese; defaults to en."
+            "Optional card-label locale. Use zh-CN when the active conversation is Chinese and pt-BR when it is Portuguese; defaults to en."
         },
         "thread_ts" => "Optional parent thread timestamp."
       },
@@ -156,9 +156,9 @@ defmodule SalixIM.Provider.OperationRegistry do
         "source_url" => "Optional HTTPS quote source.",
         "locale" => %{
           "type" => "string",
-          "enum" => ["en", "zh-CN"],
+          "enum" => ["en", "zh-CN", "pt-BR"],
           "description" =>
-            "Optional card-label locale. Use zh-CN when the active conversation is Chinese; defaults to en."
+            "Optional card-label locale. Use zh-CN when the active conversation is Chinese and pt-BR when it is Portuguese; defaults to en."
         },
         "thread_ts" => "Optional parent thread timestamp."
       },
@@ -212,9 +212,9 @@ defmodule SalixIM.Provider.OperationRegistry do
         "forecast_url" => "Optional HTTPS forecast source.",
         "locale" => %{
           "type" => "string",
-          "enum" => ["en", "zh-CN"],
+          "enum" => ["en", "zh-CN", "pt-BR"],
           "description" =>
-            "Optional card-label locale. Use zh-CN when the active conversation is Chinese; defaults to en."
+            "Optional card-label locale. Use zh-CN when the active conversation is Chinese and pt-BR when it is Portuguese; defaults to en."
         },
         "thread_ts" => "Optional parent thread timestamp."
       },

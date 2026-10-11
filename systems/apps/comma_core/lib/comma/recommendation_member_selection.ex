@@ -136,22 +136,11 @@ defmodule Comma.RecommendationMemberSelection do
           }
         end)
 
-      summary =
-        if selected == [],
-          do:
-            if(locale == "zh-CN",
-              do: "暂时没有需要提醒你的工作事项。",
-              else: "I have no work items to flag for you right now."
-            ),
-          else:
-            if(locale == "zh-CN",
-              do: "建议你先关注这几件事：",
-              else: "Here is what I suggest you focus on: "
-            )
+      summary = summary_intro(selected == [], locale)
 
       {:ok,
        %{
-         "title" => if(locale == "zh-CN", do: "你的工作简报", else: "Your work briefing"),
+         "title" => briefing_title(locale),
          "paragraphs" => [[%{"text" => summary}] ++ summary_parts(selected, context, locale)],
          "routines" => routines
        }}
@@ -159,6 +148,29 @@ defmodule Comma.RecommendationMemberSelection do
   end
 
   def project(_selection, _context, _locale), do: {:error, :invalid_briefing_content}
+
+  defp briefing_title("zh-CN"), do: "你的工作简报"
+  defp briefing_title("pt-BR"), do: "Seu resumo de trabalho"
+  defp briefing_title(_locale), do: "Your work briefing"
+
+  defp summary_intro(true, "zh-CN"), do: "暂时没有需要提醒你的工作事项。"
+
+  defp summary_intro(true, "pt-BR"),
+    do: "No momento, não tenho nenhum item de trabalho para destacar."
+
+  defp summary_intro(true, _locale), do: "I have no work items to flag for you right now."
+  defp summary_intro(false, "zh-CN"), do: "建议你先关注这几件事："
+  defp summary_intro(false, "pt-BR"), do: "Sugiro que você se concentre nestes itens: "
+  defp summary_intro(false, _locale), do: "Here is what I suggest you focus on: "
+
+  defp source_label(app, "zh-CN"), do: app <> " 原文"
+  defp source_label(app, "pt-BR"), do: "fonte no " <> app
+  defp source_label(app, _locale), do: app <> " source"
+
+  defp separator(true, "zh-CN"), do: "。"
+  defp separator(false, "zh-CN"), do: "；"
+  defp separator(true, _locale), do: "."
+  defp separator(false, _locale), do: "; "
 
   defp summary_parts(selected, context, locale) do
     items = Enum.take(selected, 3)
@@ -171,13 +183,8 @@ defmodule Comma.RecommendationMemberSelection do
       text = Regex.replace(~r/[\\`*_{}\[\]()#+.!|>-]/u, text, fn mark -> "\\" <> mark end)
       app = context.sources[item["source"]]["appName"]
 
-      label =
-        item["facts"]["identifier"] || app <> if(locale == "zh-CN", do: " 原文", else: " source")
-
-      separator =
-        if index == length(items) - 1,
-          do: if(locale == "zh-CN", do: "。", else: "."),
-          else: if(locale == "zh-CN", do: "；", else: "; ")
+      label = item["facts"]["identifier"] || source_label(app, locale)
+      separator = separator(index == length(items) - 1, locale)
 
       [
         %{"text" => text <> " "},

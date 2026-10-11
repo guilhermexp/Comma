@@ -26,6 +26,22 @@ defmodule SalixIM.SlackRichCardTest do
     refute_interactive(card.blocks)
   end
 
+  test "map labels follow a Brazilian Portuguese conversation" do
+    assert {:ok, card} =
+             RichCard.render("map", %{
+               "location" => "São Paulo",
+               "latitude" => -23.5505,
+               "longitude" => -46.6333,
+               "image_url" => "https://example.com/map.png",
+               "locale" => "pt-BR"
+             })
+
+    assert card.text == "Mapa: São Paulo — -23.5505, -46.6333"
+    assert [%{"type" => "card"} = block] = card.blocks
+    assert block["hero_image"]["alt_text"] == "Mapa de São Paulo"
+    assert String.ends_with?(block["body"]["text"], "|Ver mapa>")
+  end
+
   test "map reserves its complete destination link before truncating a long note" do
     map_url = "https://maps.example.test/place/123"
 
@@ -205,7 +221,7 @@ defmodule SalixIM.SlackRichCardTest do
                "price_history" => %{}
              })
 
-    assert {:error, "locale must be one of en, zh-CN"} =
+    assert {:error, "locale must be one of en, zh-CN, pt-BR"} =
              RichCard.render("map", %{
                "location" => "Nowhere",
                "latitude" => 0,

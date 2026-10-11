@@ -58,6 +58,30 @@ defmodule SalixIM.Provider.Slack.RichCard do
       forecast: "未来天气",
       hourly: "逐小时",
       today: "今日"
+    },
+    pt_br: %{
+      map: "Mapa",
+      open_map: "Ver mapa",
+      map_of: "Mapa de",
+      stock: "Ação",
+      change_unavailable: "Variação indisponível",
+      open: "Abertura",
+      high: "Máxima",
+      low: "Mínima",
+      volume: "Volume",
+      source: "Fonte",
+      market_data: "Dados de mercado",
+      price_trend: "Tendência de preço",
+      weather: "Tempo",
+      feels_like: "Sensação térmica",
+      humidity: "Umidade",
+      precipitation: "Precipitação",
+      wind: "Vento",
+      full_forecast: "Previsão completa",
+      weather_data: "Dados meteorológicos",
+      forecast: "Previsão",
+      hourly: "Por hora",
+      today: "Hoje"
     }
   }
 
@@ -481,7 +505,8 @@ defmodule SalixIM.Provider.Slack.RichCard do
         case value |> String.replace("_", "-") |> String.downcase() do
           "en" -> :en
           "zh-cn" -> :zh_cn
-          _ -> raise ArgumentError, "locale must be one of en, zh-CN"
+          "pt-br" -> :pt_br
+          _ -> raise ArgumentError, "locale must be one of en, zh-CN, pt-BR"
         end
     end
   end
@@ -489,7 +514,7 @@ defmodule SalixIM.Provider.Slack.RichCard do
   defp label(locale, key), do: get_in(@labels, [locale, key])
 
   defp fallback_prefix(:zh_cn, key), do: label(:zh_cn, key) <> "："
-  defp fallback_prefix(:en, key), do: label(:en, key) <> ": "
+  defp fallback_prefix(locale, key), do: label(locale, key) <> ": "
 
   defp required_string(params, key) do
     case optional_string(params, key) do
