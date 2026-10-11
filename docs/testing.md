@@ -55,6 +55,32 @@ To run only that suite, run this command from `clients/`:
 pnpm exec playwright test --config apps/electron/e2e/dynamic-ui/playwright.config.ts
 ```
 
+### Interface language
+
+The client ships three catalogs: `pt-BR` (the product default), `en` and `zh-CN`.
+English is the catalog source (`project.inlang` `baseLocale`), not the default.
+`pnpm i18n:check` fails when a catalog misses a key, has an empty value, or
+differs from English in parameters or plural shape. It also fails when
+`supportedLocales` and `project.inlang` disagree.
+
+Unit tests and existing E2E scenarios assert English text. Their harness must
+choose English explicitly: a provider `locale="en"`, client settings with
+`localePreference: "en"`, or a Main service `locale: "en"`. Web E2E projects
+store `comma.locale = "en"` through `e2e/helpers/english-locale.ts`. Fresh
+Electron E2E profiles store English through `e2e/helpers/electron-profile.ts`.
+The language contract itself has these checks, run from `clients/`:
+
+```sh
+NODE_ENV=test pnpm exec vitest run packages/i18n/src/test/locale.test.tsx apps/electron/src/main/test/main-locale.test.ts apps/electron/src/main/test/app-preferences.test.ts
+pnpm exec playwright test packages/app/e2e/i18n.spec.ts --project=app-shell
+COMMA_PLAYWRIGHT_SKIP_WEB_SERVER=1 pnpm exec playwright test apps/electron/e2e/app-preferences-lifecycle.spec.ts --project=electron-shell --grep "Brazilian Portuguese"
+```
+
+The Electron check needs `COMMA_SKIP_NATIVE_BUILD=1 pnpm build:electron` first.
+It proves the shared shell and the native menu labels on Linux. macOS-only
+surfaces, such as the Notch, the localized `InfoPlist.strings` privacy prompts
+and the AppKit-owned menu items, need a run on a Mac.
+
 ## Client Harness
 
 - Vitest runs unit and component tests across Node and jsdom projects.
