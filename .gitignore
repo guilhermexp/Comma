@@ -81,3 +81,8 @@ systems/apps/salix_web/priv/cloud_vm_connector.tar.gz
 
 /selfhost/__pycache__/
 __pycache__/
+
+/graft/
+
+# Local verification data and evidence.
+/.tmp/
