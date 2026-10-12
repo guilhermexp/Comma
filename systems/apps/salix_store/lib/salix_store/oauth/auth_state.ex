@@ -87,7 +87,7 @@ defmodule SalixStore.OAuth.AuthState do
           |> Map.put_new("created_at", now)
           |> then(&Map.put_new(&1, "expires_at", &1["created_at"] + @default_ttl_ms))
 
-        case S3.put(key(state), Jason.encode!(rec), if_none_match: "*") do
+        case put_record(state, rec, if_none_match: "*") do
           {:ok, _} -> :ok
           {:error, :precondition_failed} -> {:error, :already_exists}
           {:error, reason} -> {:error, reason}
@@ -302,7 +302,7 @@ defmodule SalixStore.OAuth.AuthState do
   defp read(state_id) do
     case S3.get(key(state_id)) do
       {:ok, %{body: body, etag: etag}} ->
-        case Jason.decode(body) do
+        case decode_record(state_id, body) do
           {:ok, rec} -> {:ok, rec, etag}
           {:error, reason} -> {:error, reason}
         end
@@ -315,8 +315,33 @@ defmodule SalixStore.OAuth.AuthState do
     end
   end
 
+  defp put_record(id, %{"origin" => "composio_connect", "tenant" => tenant} = record, opts) do
+    with {:ok, sealed} <- SalixStore.CredentialCipher.seal(tenant, "oauth-attempt:" <> id, record) do
+      envelope =
+        Map.take(record, ~w(origin tenant expires_at created_at status))
+        |> Map.put("sealed", sealed)
+
+      S3.put(key(id), Jason.encode!(envelope), opts)
+    end
+  end
+
+  defp put_record(id, record, opts), do: S3.put(key(id), Jason.encode!(record), opts)
+
+  defp decode_record(id, body) do
+    case Jason.decode(body) do
+      {:ok, %{"origin" => "composio_connect", "tenant" => tenant, "sealed" => sealed}} ->
+        SalixStore.CredentialCipher.open(tenant, "oauth-attempt:" <> id, sealed)
+
+      {:ok, %{"origin" => "composio_connect"}} ->
+        {:error, :unavailable}
+
+      result ->
+        result
+    end
+  end
+
   defp cas_put(state_id, rec, etag) do
-    case S3.put(key(state_id), Jason.encode!(rec), if_match: etag) do
+    case put_record(state_id, rec, if_match: etag) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end

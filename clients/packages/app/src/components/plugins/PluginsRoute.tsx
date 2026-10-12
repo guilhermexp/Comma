@@ -14,6 +14,7 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { CommaPlugin } from "../../api";
+import { ComposioPanel } from "./ComposioPanel";
 import { PluginBrandArtwork } from "./PluginBrandArtwork";
 import { usePluginInstall } from "./PluginInstallProvider";
 import { PluginPersonalSources, withMcpGrants } from "./PluginPersonalSources";
@@ -70,6 +71,7 @@ export function PluginsRoute() {
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<PluginsRouteState>({ status: "loading" });
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
+  const [showComposio, setShowComposio] = useState(false);
   const [catalogTab, setCatalogTab] = useState<PluginCatalogTab>("plugins");
   const [selectedSkillId, setSelectedSkillId] = useState<string>();
   const [skillCategoryId, setSkillCategoryId] = useState<string>();
@@ -295,6 +297,17 @@ export function PluginsRoute() {
     );
   }
 
+  if (showComposio) {
+    return (
+      <ComposioPanel
+        key={workspaceId}
+        api={api}
+        workspaceId={state.workspaceId}
+        onBack={() => setShowComposio(false)}
+      />
+    );
+  }
+
   // Salix source families, in display order.
   const skillCategories = [
     { id: "custom", name: messages.plugins_skills_category_custom() },
@@ -330,6 +343,15 @@ export function PluginsRoute() {
 
   return (
     <PluginCatalog
+      headerActions={
+        <Button
+          hierarchy="secondary-gray"
+          size="sm"
+          onPress={() => setShowComposio(true)}
+        >
+          {messages.composio_title()}
+        </Button>
+      }
       className="comma-plugins-route"
       categories={categories}
       copy={catalogCopy}

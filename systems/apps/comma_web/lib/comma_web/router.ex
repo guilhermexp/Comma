@@ -2699,6 +2699,37 @@ defmodule CommaWeb.Router do
     end)
   end
 
+  get "/v1/comma/workspaces/:workspace_id/composio" do
+    with_user(conn, fn user, session ->
+      with :ok <- full_workspace_session(session),
+           {:ok, result} <- CommaWeb.ComposioConnect.get(user, session, workspace_id) do
+        send_json(conn, 200, result)
+      else
+        {:error, reason} -> comma_error(conn, reason)
+      end
+    end)
+  end
+
+  post "/v1/comma/workspaces/:workspace_id/composio/:action" do
+    with_user(conn, fn user, session ->
+      with :ok <- full_workspace_session(session),
+           {:ok, result} <-
+             CommaWeb.ComposioConnect.command(
+               user,
+               session,
+               workspace_id,
+               action,
+               conn.body_params
+             ) do
+        send_json(conn, 200, result)
+      else
+        {:error, reason} when is_atom(reason) -> send_error(conn, 422, reason)
+        {:error, _} -> send_error(conn, 502, :composio_unavailable)
+        _ -> send_error(conn, 403, :composio_access_denied)
+      end
+    end)
+  end
+
   get "/v1/comma/workspaces/:workspace_id/plugins" do
     with_user(conn, fn user, session ->
       with :ok <- full_workspace_session(session),

@@ -227,7 +227,41 @@ export type CommaComputeWorkload = z.infer<typeof computeWorkloadSchema>;
 const proactiveSettingsSchema = z.object({ enabled: z.boolean() });
 export type CommaProactiveSettings = z.infer<typeof proactiveSettingsSchema>;
 
+export const composioAccountSchema = z.object({
+  id: z.string(),
+  toolkit: z.string(),
+  name: z.string(),
+  status: z.string(),
+  enabled: z.boolean(),
+  mode: z.enum(["connect", "project"]),
+});
+export const composioStatusSchema = z.object({
+  mode: z.enum(["connect", "project"]),
+  status: z.string(),
+  user_id: z.string(),
+  accounts: z.array(composioAccountSchema),
+  next_cursor: z.string().nullable(),
+  capabilities: z.object({
+    catalog: z.boolean(),
+    search: z.boolean(),
+    account_management: z.boolean(),
+  }),
+  expires_at: z.number().nullable(),
+});
+export type ComposioStatus = z.infer<typeof composioStatusSchema>;
+export type ComposioAccount = z.infer<typeof composioAccountSchema>;
+
 export interface CommaApiClient {
+  getComposio(
+    workspaceId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<ComposioStatus>;
+  composioCommand(
+    workspaceId: string,
+    action: string,
+    params?: Record<string, JsonValue>,
+    options?: { signal?: AbortSignal }
+  ): Promise<Record<string, unknown>>;
   getCompute(
     workspaceId: string,
     options?: {
@@ -2096,6 +2130,25 @@ export function createCommaApi(config: CommaApiConfig): CommaApiClient {
         `/v1/comma/workspaces/${encodeURIComponent(workspaceId)}/skills/${encodeURIComponent(skillId)}/file?path=${encodeURIComponent(path)}`,
         commaSkillFileSchema,
         undefined,
+        options.signal
+      );
+    },
+
+    getComposio(workspaceId, options = {}) {
+      return request(
+        "GET",
+        `/v1/comma/workspaces/${encodeURIComponent(workspaceId)}/composio`,
+        composioStatusSchema,
+        undefined,
+        options.signal
+      );
+    },
+    composioCommand(workspaceId, action, params = {}, options = {}) {
+      return request(
+        "POST",
+        `/v1/comma/workspaces/${encodeURIComponent(workspaceId)}/composio/${encodeURIComponent(action)}`,
+        z.record(z.string(), z.unknown()),
+        params,
         options.signal
       );
     },

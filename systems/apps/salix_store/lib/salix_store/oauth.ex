@@ -18,9 +18,11 @@ defmodule SalixStore.OAuth do
   @doc "Create (or overwrite) a connection record."
   @spec put(String.t(), conn_record()) :: :ok | {:error, term()}
   def put(id, record) do
-    case S3.put(Keys.oauth_connection(id), Jason.encode!(record)) do
-      {:ok, _} -> :ok
-      other -> other
+    with {:ok, body} <- encode(id, record) do
+      case S3.put(Keys.oauth_connection(id), body) do
+        {:ok, _} -> :ok
+        other -> other
+      end
     end
   end
 
@@ -28,7 +30,7 @@ defmodule SalixStore.OAuth do
   @spec get(String.t()) :: {:ok, conn_record()} | {:error, :not_found} | {:error, term()}
   def get(id) do
     case S3.get(Keys.oauth_connection(id)) do
-      {:ok, %{body: body}} -> {:ok, Jason.decode!(body)}
+      {:ok, %{body: body}} -> decode(id, body)
       {:error, :not_found} -> {:error, :not_found}
       other -> other
     end
@@ -49,12 +51,12 @@ defmodule SalixStore.OAuth do
 
     case S3.get(Keys.oauth_connection(id)) do
       {:ok, %{body: body, etag: etag}} ->
-        record = Jason.decode!(body)
-
-        if fresh?(record, now) do
-          {:ok, record["access_token"]}
-        else
-          cas_refresh(id, record, etag, refresher)
+        with {:ok, record} <- decode(id, body) do
+          if fresh?(record, now) do
+            {:ok, record["access_token"]}
+          else
+            cas_refresh(id, record, etag, refresher)
+          end
         end
 
       other ->
@@ -71,13 +73,14 @@ defmodule SalixStore.OAuth do
   @spec update(String.t(), (conn_record() -> {:ok, conn_record()} | :skip), pos_integer()) ::
           {:ok, conn_record()} | :skipped | {:error, term()}
   def update(id, fun, attempts \\ 3) do
-    with {:ok, %{body: body, etag: etag}} <- S3.get(Keys.oauth_connection(id)) do
-      case fun.(Jason.decode!(body)) do
+    with {:ok, %{body: body, etag: etag}} <- S3.get(Keys.oauth_connection(id)),
+         {:ok, current} <- decode(id, body) do
+      case fun.(current) do
         :skip ->
           :skipped
 
         {:ok, record} ->
-          case S3.put(Keys.oauth_connection(id), Jason.encode!(record), if_match: etag) do
+          case write_encoded(id, record, etag) do
             {:ok, _} -> {:ok, record}
             {:error, :precondition_failed} when attempts > 1 -> update(id, fun, attempts - 1)
             {:error, _} = error -> error
@@ -93,7 +96,7 @@ defmodule SalixStore.OAuth do
         |> Map.merge(refreshed)
         |> Map.update("version", 1, &(&1 + 1))
 
-      case S3.put(Keys.oauth_connection(id), Jason.encode!(new_record), if_match: etag) do
+      case write_encoded(id, new_record, etag) do
         {:ok, _} ->
           {:ok, new_record["access_token"]}
 
@@ -107,6 +110,41 @@ defmodule SalixStore.OAuth do
         other ->
           other
       end
+    end
+  end
+
+  defp write_encoded(id, record, etag) do
+    with {:ok, body} <- encode(id, record),
+         do: S3.put(Keys.oauth_connection(id), body, if_match: etag)
+  end
+
+  defp encode(id, %{"credential_protection" => "composio_connect", "tenant" => tenant} = record) do
+    with {:ok, sealed} <- SalixStore.CredentialCipher.seal(tenant, "oauth:" <> id, record) do
+      {:ok,
+       Jason.encode!(%{
+         "credential_protection" => "composio_connect",
+         "tenant" => tenant,
+         "sealed" => sealed
+       })}
+    end
+  end
+
+  defp encode(_id, record), do: {:ok, Jason.encode!(record)}
+
+  defp decode(id, body) do
+    case Jason.decode(body) do
+      {:ok,
+       %{"credential_protection" => "composio_connect", "tenant" => tenant, "sealed" => sealed}} ->
+        SalixStore.CredentialCipher.open(tenant, "oauth:" <> id, sealed)
+
+      {:ok, %{"credential_protection" => "composio_connect"}} ->
+        {:error, :unavailable}
+
+      {:ok, record} when is_map(record) ->
+        {:ok, record}
+
+      _ ->
+        {:error, :unavailable}
     end
   end
 

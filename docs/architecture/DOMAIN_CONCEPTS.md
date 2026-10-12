@@ -448,7 +448,7 @@ It does not create another tenant or credential identity. See [storage and recov
 
 | Concept | Meaning and boundary |
 | --- | --- |
-| Capability Request | An existing durable permission, location, OAuth, runtime-auth, or IFC decision request. Its owner stores expiry and the winning result; the Session separately owns execution and result publication. |
+| Capability Request | An existing durable permission, location, OAuth, runtime-auth, IFC, or personal Composio action request. Its owner stores expiry and the winning result; the Session separately owns execution and result publication. |
 | Tool / Provider Operation | An operation available to an Agent. An invocation is not a durable capability definition. |
 | Skill | Instructions and resources projected into runtime files. Packaged built-ins belong to the running node. Stored user skills overlay them. Regular skills preload catalog entries. Miniskills use per-message selection. |
 | Plugin Definition | A capability package with metadata and references. Referenced domains still own their resources. |
@@ -480,6 +480,74 @@ The runtime projection overlays stored global imports, Tenant, Group, and Agent 
 It ignores previously stored global entries with `origin: builtin`, without deleting their records or blobs.
 Copying a built-in creates durable blobs and a user-owned skill. Copies remain available after the source leaves a later release.
 Plugin visibility, write authorization, and user-skill ownership remain unchanged. Built-ins follow each node's image during a rolling deployment.
+
+### Personal Composio access
+
+Personal Composio reuses OAuth credentials, provider account references, Agent grants,
+and Capability Requests. It adds no independent identity or lifecycle owner.
+[ComposioAccess](../../systems/apps/salix_store/lib/salix_store/composio_access.ex)
+owns the relationship for one Tenant, Group, and authenticated Comma member.
+A tenant-wide Composio setting cannot represent this member boundary. The private
+settings projection selects either Connect OAuth or an explicit project key.
+Changing mode does not copy credentials or grant access to accounts in the other mode.
+The existing Group Composio configuration and native plugin connections stay separate.
+
+[RemoteMCPOAuth](../../systems/apps/salix_web/lib/salix/control/remote_mcp_oauth.ex)
+owns Connect registration, PKCE, callback state, refresh, and the existing encrypted
+OAuth record. Comma rechecks active workspace ownership at callback commit.
+A cancelled, expired, or superseded attempt cannot select a credential. An ambiguous
+profile commit preserves the encrypted record because the profile write may have landed.
+A personal credential cannot become a generic MCP binding.
+[CredentialCipher](../../systems/apps/salix_store/lib/salix_store/credential_cipher.ex)
+reuses the persistent subscription storage key for AES-256-GCM encryption. This protects
+provider secrets from disclosure in stored objects and rejects ciphertext moved between
+Tenant/record contexts. The backend verifies the authentication tag; the configured
+persistent key is the authority. Missing or changed keys fail closed. Preserve the key
+with its data. Tokens, project keys, PKCE material, and consent links stay out of public
+account DTOs. The renderer receives a consent URL only for the requested browser action.
+
+[The desktop API](../../systems/apps/comma_web/lib/comma_web/composio_connect.ex)
+requires the workspace owner. Connect discovery uses authenticated MCP search results;
+project mode uses paginated Platform REST. Both provide app and action selectors.
+Search results and provider instructions do not grant permission. Remote custom OAuth
+application setup is not provided by this panel. Configure such applications at Composio.
+The panel does not add triggers or replace existing trigger authorization.
+
+Provider account IDs are external references within the member relationship.
+Opening a consent URL leaves the account pending. Explicit verification confirms its
+remote state. Cancel prevents a late verification from restoring the local attempt.
+Reopen uses the encrypted, unexpired link. Reconnect preserves the selected old account
+until the replacement verifies as active, then disables only the old local reference.
+Disable blocks Comma execution and does not revoke the remote connection. Confirmed
+disconnect disables local use first and removes only the selected remote account.
+An uncertain remote removal remains disabled and reports failure. Native credentials
+and sibling accounts are outside these operations.
+
+[ComposioBroker](../../systems/apps/salix_agent/lib/salix_agent/composio_broker.ex)
+resolves Tenant and Group from the authenticated Agent. It lists only that Agent's
+current grants and serves schemas only for granted tool IDs. Account selection names
+one exact provider account. The broker checks every inner action before it creates a
+Capability Request, and rechecks the current grant immediately before dispatch.
+Each action or batch requires the member's confirmation of the exact arguments.
+Connection status alone grants nothing. Remote bash, workbench, proxy tools, and remote
+skills cannot substitute for a grant. All provider instructions remain untrusted data.
+The existing request settlement CAS selects one decision winner. It stores the provider
+result before asynchronous Session delivery. Recovery never repeats execution.
+An uncertain result requires inspection at the provider before a new user decision.
+Dispatch has a 90-second total deadline; settlement reserves 120 seconds. A local
+timeout cannot prove that a remote effect stopped. Personal results use the existing
+agent-private IFC label when labeling is active, including asynchronous recovery.
+The grant does not establish a Group-wide audience. Under IFC enforcement,
+agent-private results cannot flow to human recipients or external effects. The
+existing declassification flow cannot lift this label because it has no human
+readers. No member-specific audience label is invented.
+
+Requests have at most 50 inner tools and 64 KiB of encoded arguments. Catalog pages,
+account pages, grant pages, and approval pages are bounded; no full member/account scan
+runs on render. Login polls once every two seconds for at most ten minutes, with one
+request in flight per window. Account verification and approval refresh are explicit.
+There is no timer per account. Connect uses existing MCP transport and Platform uses
+the existing REST adapter; neither mode falls back to another credential type.
 
 ### Miniskill activation
 

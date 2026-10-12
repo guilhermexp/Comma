@@ -4,54 +4,8 @@ defmodule SalixAgent.SubscriptionStore do
 
   # The operator secret protects stored subscription material. Tenant and record
   # identity bind ciphertext to its owner, as in the previous encrypted vault.
-  def seal(tenant, id, value) do
-    with {:ok, key} <- key() do
-      nonce = :crypto.strong_rand_bytes(12)
-
-      {body, tag} =
-        :crypto.crypto_one_time_aead(
-          :aes_256_gcm,
-          key,
-          nonce,
-          Jason.encode!(value),
-          tenant <> ":" <> id,
-          true
-        )
-
-      {:ok, Base.encode64(nonce <> tag <> body)}
-    end
-  end
-
-  def open(tenant, id, encoded) do
-    with {:ok, key} <- key(),
-         {:ok, <<nonce::binary-size(12), tag::binary-size(16), body::binary>>} <-
-           Base.decode64(encoded),
-         plain when is_binary(plain) <-
-           :crypto.crypto_one_time_aead(
-             :aes_256_gcm,
-             key,
-             nonce,
-             body,
-             tenant <> ":" <> id,
-             tag,
-             false
-           ),
-         {:ok, value} <- Jason.decode(plain) do
-      {:ok, value}
-    else
-      _ -> {:error, :unavailable}
-    end
-  end
-
-  defp key do
-    case Application.get_env(:salix_agent, :subscription_storage_key) do
-      secret when is_binary(secret) and byte_size(secret) == 32 ->
-        {:ok, secret}
-
-      _ ->
-        {:error, :not_configured}
-    end
-  end
+  defdelegate seal(tenant, id, value), to: SalixStore.CredentialCipher
+  defdelegate open(tenant, id, encoded), to: SalixStore.CredentialCipher
 
   def id, do: Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
 

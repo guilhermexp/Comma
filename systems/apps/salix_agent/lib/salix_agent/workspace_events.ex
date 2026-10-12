@@ -400,6 +400,7 @@ defmodule SalixAgent.WorkspaceEvents do
       "tool_name" => result[:name] || result["name"],
       "status" => result[:status] || result["status"],
       "content" => result[:content] || result["content"],
+      "ifc" => result[:ifc] || result["ifc"],
       "error" => result[:error] || result["error"] || false,
       "error_class" => result[:error_class] || result["error_class"],
       "error_message" => result[:error_message] || result["error_message"],

@@ -68,6 +68,7 @@ defmodule Salix.App do
     )
 
     Application.put_env(:salix_agent, :composio_store_mod, Salix.Bindings.AgentComposioStore)
+    Application.put_env(:salix_agent, :personal_composio_transport, Salix.Control.ComposioConnect)
     Application.put_env(:salix_agent, :drive_mod, Salix.Bindings.AgentDrive)
     Application.put_env(:salix_agent, :remote_shell_mod, Salix.RemoteShell)
 

@@ -4,6 +4,44 @@ defmodule CommaWeb.OAuthCommit do
   alias Comma.{PluginInstallAttempts, Repo}
   alias Comma.Data.{Workspace, WorkspaceMembership}
 
+  # Personal Connect has no plugin install attempt. The member/profile CAS owns
+  # cancellation; the workspace lock rechecks the live authenticated owner scope.
+  def run(
+        %{
+          "origin" => "composio_connect",
+          "comma_operation" => %{"kind" => "composio_connect"} = op
+        } = auth,
+        write
+      ) do
+    import Ecto.Query
+
+    Repo.transaction(fn ->
+      workspace =
+        Repo.one(from(w in Workspace, where: w.id == ^op["workspace_id"], lock: "FOR UPDATE"))
+
+      user = op["user_id"]
+
+      if workspace && workspace.status == "active" && workspace.owner_user_id == user &&
+           auth["composio_user_id"] == user &&
+           workspace.salix_tenant_id == auth["tenant"] &&
+           workspace.salix_group_id == auth["group_id"] &&
+           Repo.get_by(WorkspaceMembership,
+             workspace_id: workspace.id,
+             user_id: user,
+             role: "owner",
+             status: "active"
+           ) do
+        write.()
+      else
+        {:error, "Composio workspace access changed"}
+      end
+    end)
+    |> case do
+      {:ok, result} -> result
+      _ -> {:error, "Composio workspace access unavailable"}
+    end
+  end
+
   # OAuth token exchange runs before this call. Claiming the Comma generation is
   # durable before Salix writes the connection or binding. A second row lock
   # covers those writes, so cancel and a later authorization cannot overtake

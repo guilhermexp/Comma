@@ -469,7 +469,7 @@ defmodule SalixAgent.ToolDisclosure do
 
   # ---- tenant-configuration capability gating ----
 
-  # `oauth.*` and `composio.*` are integration surfaces a tenant explicitly
+  # `oauth.*` and legacy group Composio are surfaces a tenant explicitly
   # opts into (OAuth client credentials / a Composio API key, each with a
   # platform-default fallback). A tenant on only one path should not carry the
   # other path's dead tools in every session prompt, so a capability family
@@ -490,12 +490,28 @@ defmodule SalixAgent.ToolDisclosure do
       else
         candidates
         |> maybe_reject_family("oauth.", fn -> oauth_configured?(tenant) end)
-        |> maybe_reject_family("composio.", fn -> composio_configured?(tenant) end)
+        |> reject_unconfigured_group_composio(tenant)
       end
 
     candidates
     |> maybe_reject_family("email.", fn -> owner_emails_configured?(ctx) end)
     |> maybe_reject_family("video.generate", fn -> video_configured?(ctx) end)
+  end
+
+  defp reject_unconfigured_group_composio(candidates, tenant) do
+    if composio_configured?(tenant) do
+      candidates
+    else
+      # Personal account discovery is always available. It returns only current
+      # grants; schema and execution recheck those grants in the broker. Tenant
+      # project settings do not control or supply personal credentials.
+      Enum.reject(candidates, fn candidate ->
+        name = candidate["name"]
+
+        String.starts_with?(name, "composio.") and
+          not SalixAgent.ComposioBroker.personal_tool?(name)
+      end)
+    end
   end
 
   defp video_configured?(ctx) do

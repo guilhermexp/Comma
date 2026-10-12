@@ -1,33 +1,34 @@
 # Tools and integrations
 
 [UI](clients.md#chat-dynamic-ui).
+[Personal Composio](architecture/DOMAIN_CONCEPTS.md#personal-composio-access).
 
 ## Admission and disclosure
 
 Admission owns access. Test it. Resolve sources/destinations before dispatch. See IFC help.
-Keep secrets out of catalogs, logs, clients and user redirects.
+Exclude secrets from catalogs, logs, clients and redirects.
 [Private templates](billing-models.md) and [Composio](identity-security.md#composio-trigger-authorization).
-MCP: discover via `mcp.list`. Management, Calendar, inbound API, SSH and labels: discover via `help` namespaces. No hidden tools.
+Discover MCP via `mcp.list`; management, Calendar, inbound API, SSH and labels via `help`. No hidden tools.
 
 Common schemas preload; others use `help`. Session filters and Task/voice exceptions apply. Native schemas stay full.
 
 ## Plugin and remote authorization boundaries
 
-Reuse SDK/auth owners. Bind OAuth enrollment to tenant/operation.
+Reuse SDK/auth owners. Bind OAuth to tenant/operation.
 Check the installed connection and scope at execution. Listings and stale status grant no access.
-Separate approval, callback, credential storage, and dispatch.
-Bound integration errors. Preserve unrelated Agent control.
+Keep approval, callback, credential storage and dispatch separate.
+Bound integration errors; preserve unrelated Agent control.
 
 `resources/salix-system-files/skills/` supplies read-only built-ins below stored user skills. See [miniskills](architecture/DOMAIN_CONCEPTS.md#miniskill-activation).
 
 ### Comma plugin authorization
 
-Comma Dev uses loopback mocks. Remote rejection cannot interrupt OAuth.
+Plugin Dev mocks use loopback. Remote rejection cannot interrupt OAuth.
 The signed-in window verifies every two seconds, one request at a time, also outside Plugins.
 Sign-out stops checks. Each request has 30 seconds within a two-minute attempt.
 Timeout releases Add. Late responses cannot replace new attempts. Focus can check early; completion returns Home in the starting workspace.
 
-Composio keeps old accounts until a verified install retires older active accounts in the same group and toolkit.
+Legacy Composio installs keep old accounts until verification retires older active siblings in that Group/toolkit.
 Other toolkits and newer or undated accounts remain. Cleanup errors do not fail the install.
 Owners confirm old accounts for personal use. Comma checks group, toolkit, active status, and self identity at display and confirmation.
 The receipt pins the account. Newer accounts cannot replace it; unavailable accounts fail collection.
@@ -37,11 +38,11 @@ Drive is optional; Gmail and Calendar are required. Settings links to Plugins. D
 
 GitHub, Linear, Notion, and Slack use Salix OAuth for APIs and recommendations. Notion alone needs separate MCP OAuth.
 Linear requests `read` and `write`.
-Native reauthorization gives the OAuth callback the attempt's two-minute deadline.
+Native OAuth callbacks retain the attempt's two-minute deadline.
 The callback checks generation before binding writes. Cancellation keeps old access if it wins; otherwise it conflicts.
-Comma connects `setup.required_connections` in order and installs after all complete. MCP callbacks match the plugin and group.
-App credentials use tenant overrides or defaults. Grants remain group-scoped.
-Recommendation reads retain scope, refresh, count, concurrency, timeout, and output bounds.
+Comma installs after all `setup.required_connections` connect in order. MCP callbacks match the plugin and group.
+App credentials use tenant overrides/defaults; grants stay group-scoped.
+Recommendation reads bound scope, refresh, count, concurrency, timeout and output.
 Native sources need no Composio setup. Active managed Slack replaces old Composio sources and keeps their enabled choice.
 Other saved Composio sources or consents require Composio. Discovery errors block sync.
 Migration keeps choices, old accounts, and unrelated connections. Reauthorize old native grants.
@@ -55,8 +56,8 @@ Agents must never put tokens in commands, files, or tool arguments.
 ## Capability request recovery
 
 `CapabilityRequests` owns status, expiry, and the winning result. Session owns execution and result publication.
-The request owner stores its terminal result before callback delivery. Recovery reuses it after interrupted delivery or async-start commit.
-Completed executions stay discoverable until the request owner confirms termination.
+The request owner stores terminal results before callback delivery. Recovery reuses it after interrupted delivery or async-start commit.
+Completed executions remain discoverable until the request owner confirms termination.
 Late completions cannot replace terminal results. Recovery never reexecutes the tool.
 Direct internal calls persist execution addresses before dispatch.
 

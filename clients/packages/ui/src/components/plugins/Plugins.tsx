@@ -888,6 +888,7 @@ const PluginCategorySection = ({
 };
 
 export interface PluginCatalogProps {
+  headerActions?: ReactNode;
   categories: readonly PluginCategory[];
   copy?: Partial<PluginCatalogCopy>;
   installedPlugins?: readonly PluginDefinition[];
@@ -979,6 +980,7 @@ export const PluginCatalog = ({
   defaultTab = "plugins",
   onTabChange,
   className,
+  headerActions,
 }: PluginCatalogProps) => {
   const messages = useCommaMessages();
   const resolvedCopy = { ...defaultPluginCatalogCopy(messages), ...copy };
@@ -1158,6 +1160,7 @@ export const PluginCatalog = ({
                 {resolvedCopy.title}
               </h1>
             )}
+            {headerActions}
           </header>
           <InputField
             aria-label={

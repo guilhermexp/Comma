@@ -65,6 +65,36 @@ defmodule SalixStore.ComposioTest do
            ] = MockComposio.requests("/api/v3.1/trigger_instances/manage/ti_test")
   end
 
+  test "approved batches pin account and tools in a restricted session and do not retry writes" do
+    MockComposio.stub("POST", "/api/v3.1/tool_router/session", %{
+      "session_id" => "session-approved"
+    })
+
+    assert {:ok, "session-approved"} =
+             Composio.create_action_session(@settings, "member", "account-exact", "gmail", [
+               "GMAIL_SEND_EMAIL"
+             ])
+
+    assert [%{body: config}] = MockComposio.requests("/api/v3.1/tool_router/session")
+    assert config["connected_accounts"] == %{"gmail" => ["account-exact"]}
+    assert config["tools"] == %{"gmail" => %{"enable" => ["GMAIL_SEND_EMAIL"]}}
+    assert config["multi_account"]["require_explicit_selection"]
+
+    for capability <- ~w(workbench manage_connections proxy_execute),
+        do: refute(config[capability]["enable"])
+
+    path = "/api/v3.1/tool_router/session/session-approved/execute"
+    MockComposio.stub("POST", path, %{"error" => "uncertain"}, 503)
+    tools = [%{"tool_slug" => "GMAIL_SEND_EMAIL", "arguments" => %{"subject" => "approved"}}]
+
+    assert {:error, _} =
+             Composio.execute_action_batch(@settings, "session-approved", "account-exact", tools)
+
+    assert [%{body: body}] = MockComposio.requests(path)
+    assert body["arguments"]["tools"] == [Map.put(hd(tools), "account", "account-exact")]
+    refute body["arguments"]["sync_response_to_workbench"]
+  end
+
   # ---- mock Composio server ----
 
   defmodule MockComposio do

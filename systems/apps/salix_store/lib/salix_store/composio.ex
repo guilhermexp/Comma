@@ -249,6 +249,34 @@ defmodule SalixStore.Composio do
     end
   end
 
+  @doc "A bounded catalog page for the desktop integration manager."
+  def list_toolkits_page(settings, opts \\ []) do
+    params =
+      [limit: bounded_positive(opts[:limit], 20, 50)]
+      |> put_param(:search, opts[:search])
+      |> put_param(:cursor, opts[:cursor])
+
+    case request(settings, :get, "/api/v3/toolkits",
+           params: params,
+           label: "list toolkits",
+           error_mode: :structured,
+           max_response_bytes: 1_000_000
+         ) do
+      {:ok, %{"items" => items} = page} when is_list(items) ->
+        {:ok,
+         %{
+           "items" => Enum.map(items, &Map.take(&1, ~w(slug name description meta))),
+           "next_cursor" => page["next_cursor"]
+         }}
+
+      {:ok, _} ->
+        {:error, :invalid_toolkits_response}
+
+      error ->
+        error
+    end
+  end
+
   @doc """
   Search the toolkit catalog (the ~300 connectable services). `opts`:
   `:search` (full-text over name/slug), `:limit`. Returns `{:ok, items}` with
@@ -265,6 +293,45 @@ defmodule SalixStore.Composio do
       {:ok, %{"items" => items}} when is_list(items) -> {:ok, items}
       {:ok, _other} -> {:ok, []}
       {:error, message} -> {:error, message}
+    end
+  end
+
+  @doc "A bounded tool-discovery page for personal desktop grants."
+  def list_tools_page(settings, opts \\ []) do
+    params =
+      [limit: bounded_positive(opts[:limit], 20, 50)]
+      |> put_param(:toolkit_slug, opts[:toolkit])
+      |> put_param(:query, opts[:query])
+      |> put_param(:cursor, opts[:cursor])
+      |> put_param(:tool_slugs, opts[:tool_slugs])
+
+    case request(settings, :get, "/api/v3/tools",
+           params: params,
+           label: "discover tools",
+           error_mode: :structured,
+           max_response_bytes: 1_000_000
+         ) do
+      {:ok, %{"items" => items} = page} when is_list(items) and length(items) <= 50 ->
+        if Enum.all?(items, &(is_map(&1) and is_binary(&1["slug"]) and is_binary(&1["name"]))) do
+          {:ok,
+           %{
+             "items" =>
+               Enum.map(items, fn item ->
+                 item
+                 |> Map.take(~w(slug name description))
+                 |> Map.put("toolkit", get_in(item, ["toolkit", "slug"]))
+               end),
+             "next_cursor" => page["next_cursor"]
+           }}
+        else
+          {:error, :invalid_composio_response}
+        end
+
+      {:ok, _} ->
+        {:error, :invalid_composio_response}
+
+      error ->
+        error
     end
   end
 
@@ -370,6 +437,53 @@ defmodule SalixStore.Composio do
       label: "execute proxy request",
       max_response_bytes: opts[:max_response_bytes],
       error_mode: opts[:error_mode] || :message
+    )
+  end
+
+  @doc "Create a Tool Router session restricted to one account and the locally approved tool set."
+  def create_action_session(settings, user_id, account_id, toolkit, tools) do
+    body = %{
+      "user_id" => user_id,
+      "toolkits" => %{"enable" => [toolkit]},
+      "connected_accounts" => %{toolkit => [account_id]},
+      "tools" => %{toolkit => %{"enable" => tools}},
+      "manage_connections" => %{"enable" => false},
+      "workbench" => %{"enable" => false},
+      "proxy_execute" => %{"enable" => false},
+      "multi_account" => %{"enable" => true, "require_explicit_selection" => true}
+    }
+
+    case request(settings, :post, "/api/v3.1/tool_router/session",
+           json: body,
+           label: "create restricted session",
+           error_mode: :structured
+         ) do
+      {:ok, %{"session_id" => id}} when is_binary(id) and id != "" -> {:ok, id}
+      {:error, _} = error -> error
+      _ -> {:error, :invalid_composio_response}
+    end
+  end
+
+  def execute_action_session(settings, session_id, account_id, slug, arguments) do
+    request(settings, :post, "/api/v3.1/tool_router/session/#{URI.encode(session_id)}/execute",
+      json: %{"tool_slug" => slug, "arguments" => arguments, "account" => account_id},
+      label: "execute approved action",
+      error_mode: :structured
+    )
+  end
+
+  def execute_action_batch(settings, session_id, account_id, tools) do
+    arguments = %{
+      "tools" => Enum.map(tools, &Map.put(&1, "account", account_id)),
+      "sync_response_to_workbench" => false,
+      "session_id" => session_id,
+      "current_step" => "EXECUTING_APPROVED_ACTION"
+    }
+
+    request(settings, :post, "/api/v3.1/tool_router/session/#{URI.encode(session_id)}/execute",
+      json: %{"tool_slug" => "COMPOSIO_MULTI_EXECUTE_TOOL", "arguments" => arguments},
+      label: "execute approved batch",
+      error_mode: :structured
     )
   end
 
@@ -492,7 +606,8 @@ defmodule SalixStore.Composio do
                "/api/v3/connected_accounts",
                "/api/v3/auth_configs",
                "/api/v3.1/trigger",
-               "/api/v3.1/webhook_subscriptions"
+               "/api/v3.1/webhook_subscriptions",
+               "/api/v3.1/tool_router/session"
              ]) do
             Keyword.merge(req_opts,
               receive_timeout: 8_000,

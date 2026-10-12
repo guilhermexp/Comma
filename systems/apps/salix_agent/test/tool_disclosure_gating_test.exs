@@ -3,7 +3,7 @@ defmodule SalixAgent.ToolDisclosureGatingTest do
   Tenant-configuration capability gating in `SalixAgent.ToolDisclosure`:
   the `oauth.*` family is dropped from a session's disclosure when no OAuth
   provider app resolves for the tenant (no tenant credentials, no platform
-  default), and the `composio.*` family when the tenant has no Composio
+  default), and the legacy group Composio tools when the tenant has no Composio
   settings — so a single-path tenant's context is not polluted by the other
   path's dead tools. Fail-open cases: no wired store seam, blank tenant, or
   a transient store error keeps the family visible.
@@ -179,12 +179,13 @@ defmodule SalixAgent.ToolDisclosureGatingTest do
 
   defp family(names, prefix), do: Enum.filter(names, &String.starts_with?(&1, prefix))
 
-  test "both families are dropped for a tenant with neither path configured" do
+  test "tenant configuration hides legacy tools but preserves personal account discovery" do
     wire(%{result: {:error, :not_configured}}, {:error, :not_configured})
 
     names = disclosed_names()
     assert family(names, "oauth.") == []
-    assert family(names, "composio.") == []
+    refute "composio.execute" in names
+    assert "composio.personal_accounts" in names
     # Everything else is untouched.
     assert "fs.read_file" in names
   end
@@ -201,7 +202,8 @@ defmodule SalixAgent.ToolDisclosureGatingTest do
              "oauth.request_authorization"
            ]
 
-    assert family(names, "composio.") == []
+    refute "composio.execute" in names
+    assert "composio.personal_accounts" in names
   end
 
   test "composio settings keep the composio family for a composio-only tenant" do
@@ -210,22 +212,8 @@ defmodule SalixAgent.ToolDisclosureGatingTest do
     names = disclosed_names()
     assert family(names, "oauth.") == []
 
-    assert Enum.sort(family(names, "composio.")) == [
-             "composio.bind_trigger",
-             "composio.check_connection",
-             "composio.create_trigger",
-             "composio.delete_connection",
-             "composio.execute",
-             "composio.get_tool",
-             "composio.get_trigger_type",
-             "composio.list_connections",
-             "composio.list_toolkits",
-             "composio.list_tools",
-             "composio.list_trigger_types",
-             "composio.list_triggers",
-             "composio.manage_trigger",
-             "composio.request_connection"
-           ]
+    assert "composio.execute" in names
+    assert "composio.personal_accounts" in names
   end
 
   test "transient store errors fail open" do
@@ -332,7 +320,7 @@ defmodule SalixAgent.ToolDisclosureGatingTest do
     end
   end
 
-  test "gated families disappear from callable and helpable surfaces too" do
+  test "legacy gates do not require project settings for personal broker calls" do
     wire(%{result: {:error, :not_configured}}, {:error, :not_configured})
 
     ctx = SalixAgent.TestSupport.with_plugin_projection(%{tenant_id: "tenant-1"})
@@ -341,6 +329,9 @@ defmodule SalixAgent.ToolDisclosureGatingTest do
 
     refute ToolDisclosure.callable?(ctx, "oauth.list_credentials")
     refute ToolDisclosure.helpable?(ctx, "composio.execute")
+    assert ToolDisclosure.callable?(ctx, "composio.personal_accounts")
+    assert ToolDisclosure.helpable?(ctx, "composio.personal_schema")
+    assert ToolDisclosure.callable?(ctx, "composio.personal_execute")
     assert ToolDisclosure.callable?(ctx, "fs.read_file")
   end
 

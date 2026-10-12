@@ -58,53 +58,54 @@ defmodule SalixAgent.Tools.Composio do
             | {String.t(), String.t(), (map(), map() -> term()), pos_integer(), keyword()}
           ]
   def defs do
-    [
-      {"composio.list_connections",
-       "List this agent group's Composio connected accounts.\n\n" <>
-         "Returns one entry per connected account with its toolkit (provider), status, and connected_account_id. " <>
-         "Only ACTIVE accounts can serve composio.execute calls. " <>
-         "Requires the tenant to have Composio configured; otherwise use the oauth.* tools.",
-       &__MODULE__.list_connections/2, @normal_auto_wait_seconds},
-      {"composio.request_connection",
-       "Connect a third-party toolkit (e.g. gmail, googlecalendar, notion, linear) for this agent group via Composio.\n\n" <>
-         "Returns a hosted Connect Link URL and sets a session wait until the user completes it. " <>
-         "The URL is NOT surfaced automatically: you must post it to the requester yourself through the current visible reply path. For an internal Comma conversation, use call(tool=\"im_api.internal.send_message\", params={...}) with connect_id=\"internal\" inside params. For an external provider, call the matching im_api.* operation directly when provider/connect/API are known; use IM discovery/help only when those facts are missing. " <>
-         "Ask the user to complete the browser flow, then verify with composio.check_connection using the returned connected_account_id. " <>
-         "No per-provider OAuth app setup is needed. Unsure of the toolkit slug? Search with composio.list_toolkits first.",
-       &__MODULE__.request_connection/2, @user_interaction_auto_wait_seconds,
-       @external_side_effect_opts},
-      {"composio.check_connection",
-       "Check whether a Composio connection started by composio.request_connection is ready.\n\n" <>
-         "Returns status=active once the user finishes the browser flow, status=pending while they have not, " <>
-         "or status=failed with the provider status otherwise. Idempotent.",
-       &__MODULE__.check_connection/2, @normal_auto_wait_seconds},
-      {"composio.delete_connection",
-       "Delete (disconnect) one of this agent group's Composio connected accounts.\n\n" <>
-         "Identify it by connected_account_id (as returned by composio.list_connections). Idempotent: " <>
-         "deleting an unknown account returns status=not_found.", &__MODULE__.delete_connection/2,
-       @normal_auto_wait_seconds},
-      {"composio.list_tools",
-       "Search Composio's tool catalog for a connected toolkit.\n\n" <>
-         "Filter by toolkit slug (e.g. gmail) and/or a full-text query (e.g. \"fetch emails\"). " <>
-         "Returns tool slugs with short descriptions; call composio.get_tool for a tool's full input schema before executing it.",
-       &__MODULE__.list_tools/2, @normal_auto_wait_seconds},
-      {"composio.get_tool",
-       "Fetch one Composio tool's full definition, including its input_parameters JSON schema.\n\n" <>
-         "Use the schema to build the arguments for composio.execute.", &__MODULE__.get_tool/2,
-       @normal_auto_wait_seconds},
-      {"composio.execute",
-       "Execute a Composio tool for this agent group and return the provider data inline.\n\n" <>
-         "Examples: tool_slug=GMAIL_FETCH_EMAILS to read Gmail, tool_slug=GOOGLECALENDAR_EVENTS_LIST to read Google Calendar. " <>
-         "arguments must match the tool's input_parameters (see composio.get_tool). " <>
-         "The toolkit must have an ACTIVE connected account (composio.list_connections); " <>
-         "successful=false in the result is a provider-level failure such as missing scopes, not a runtime error.",
-       &__MODULE__.execute/2, @normal_auto_wait_seconds, @external_side_effect_opts},
-      {"composio.list_toolkits",
-       "Search Composio's toolkit catalog (~300 connectable services) by name.\n\n" <>
-         "Use this to find the toolkit slug for composio.request_connection or composio.list_tools when it is not obvious " <>
-         "(common slugs: gmail, googlecalendar, googledrive, notion, linear, slack, github).",
-       &__MODULE__.list_toolkits_catalog/2, @normal_auto_wait_seconds}
-    ]
+    SalixAgent.ComposioBroker.defs() ++
+      [
+        {"composio.list_connections",
+         "List this agent group's Composio connected accounts.\n\n" <>
+           "Returns one entry per connected account with its toolkit (provider), status, and connected_account_id. " <>
+           "Only ACTIVE accounts can serve composio.execute calls. " <>
+           "Requires the tenant to have Composio configured; otherwise use the oauth.* tools.",
+         &__MODULE__.list_connections/2, @normal_auto_wait_seconds},
+        {"composio.request_connection",
+         "Connect a third-party toolkit (e.g. gmail, googlecalendar, notion, linear) for this agent group via Composio.\n\n" <>
+           "Returns a hosted Connect Link URL and sets a session wait until the user completes it. " <>
+           "The URL is NOT surfaced automatically: you must post it to the requester yourself through the current visible reply path. For an internal Comma conversation, use call(tool=\"im_api.internal.send_message\", params={...}) with connect_id=\"internal\" inside params. For an external provider, call the matching im_api.* operation directly when provider/connect/API are known; use IM discovery/help only when those facts are missing. " <>
+           "Ask the user to complete the browser flow, then verify with composio.check_connection using the returned connected_account_id. " <>
+           "No per-provider OAuth app setup is needed. Unsure of the toolkit slug? Search with composio.list_toolkits first.",
+         &__MODULE__.request_connection/2, @user_interaction_auto_wait_seconds,
+         @external_side_effect_opts},
+        {"composio.check_connection",
+         "Check whether a Composio connection started by composio.request_connection is ready.\n\n" <>
+           "Returns status=active once the user finishes the browser flow, status=pending while they have not, " <>
+           "or status=failed with the provider status otherwise. Idempotent.",
+         &__MODULE__.check_connection/2, @normal_auto_wait_seconds},
+        {"composio.delete_connection",
+         "Delete (disconnect) one of this agent group's Composio connected accounts.\n\n" <>
+           "Identify it by connected_account_id (as returned by composio.list_connections). Idempotent: " <>
+           "deleting an unknown account returns status=not_found.",
+         &__MODULE__.delete_connection/2, @normal_auto_wait_seconds},
+        {"composio.list_tools",
+         "Search Composio's tool catalog for a connected toolkit.\n\n" <>
+           "Filter by toolkit slug (e.g. gmail) and/or a full-text query (e.g. \"fetch emails\"). " <>
+           "Returns tool slugs with short descriptions; call composio.get_tool for a tool's full input schema before executing it.",
+         &__MODULE__.list_tools/2, @normal_auto_wait_seconds},
+        {"composio.get_tool",
+         "Fetch one Composio tool's full definition, including its input_parameters JSON schema.\n\n" <>
+           "Use the schema to build the arguments for composio.execute.", &__MODULE__.get_tool/2,
+         @normal_auto_wait_seconds},
+        {"composio.execute",
+         "Execute a Composio tool for this agent group and return the provider data inline.\n\n" <>
+           "Examples: tool_slug=GMAIL_FETCH_EMAILS to read Gmail, tool_slug=GOOGLECALENDAR_EVENTS_LIST to read Google Calendar. " <>
+           "arguments must match the tool's input_parameters (see composio.get_tool). " <>
+           "The toolkit must have an ACTIVE connected account (composio.list_connections); " <>
+           "successful=false in the result is a provider-level failure such as missing scopes, not a runtime error.",
+         &__MODULE__.execute/2, @normal_auto_wait_seconds, @external_side_effect_opts},
+        {"composio.list_toolkits",
+         "Search Composio's toolkit catalog (~300 connectable services) by name.\n\n" <>
+           "Use this to find the toolkit slug for composio.request_connection or composio.list_tools when it is not obvious " <>
+           "(common slugs: gmail, googlecalendar, googledrive, notion, linear, slack, github).",
+         &__MODULE__.list_toolkits_catalog/2, @normal_auto_wait_seconds}
+      ]
   end
 
   # ---- composio.list_connections ----

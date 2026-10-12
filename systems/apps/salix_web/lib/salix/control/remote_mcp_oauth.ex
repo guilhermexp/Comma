@@ -13,6 +13,100 @@ defmodule Salix.Control.RemoteMCPOAuth do
   @provider "mcp"
   @provider_kind "remote_mcp"
 
+  # Composio's consumer credential is private to one authenticated member. It
+  # deliberately has no group MCP binding and cannot enter generic MCP dispatch.
+  def start_composio_authorization(tenant_id, group_id, user_id, workspace_id) do
+    definition = %{"mcp_id" => "composio-connect", "name" => "Comma Composio Connect"}
+
+    binding = %{
+      "alias" => "composio-connect",
+      "mcp_id" => "composio-connect",
+      "target_ref" => "composio-connect"
+    }
+
+    config = %{
+      "url" =>
+        Application.get_env(
+          :salix_web,
+          :composio_connect_endpoint,
+          "https://connect.composio.dev/mcp"
+        ),
+      "headers" => %{}
+    }
+
+    with true <- SalixStore.CredentialCipher.available?(),
+         {:ok, identity} <- discover_identity(definition, binding, config),
+         identity = Map.put(identity, "personal_composio", true),
+         {:ok, client} <- client_for_authorization(tenant_id, identity),
+         {:ok, auth} <-
+           create_auth_state(tenant_id, group_id, binding, identity, client, %{
+             "scope" => "openid profile email offline_access",
+             "composio_user_id" => user_id,
+             "comma_operation" => %{
+               "kind" => "composio_connect",
+               "workspace_id" => workspace_id,
+               "user_id" => user_id
+             }
+           }),
+         {:ok, _} <-
+           SalixStore.ComposioAccess.begin_authorization(
+             tenant_id,
+             group_id,
+             user_id,
+             auth.state,
+             System.system_time(:millisecond) + @auth_state_ttl_ms
+           ) do
+      {:ok,
+       %{
+         "authorization_url" => auth.authorization_url,
+         "state" => auth.state,
+         "expires_at" => System.system_time(:millisecond) + @auth_state_ttl_ms
+       }}
+    else
+      false -> {:error, :credential_storage_not_configured}
+      error -> error
+    end
+  end
+
+  def composio_headers(tenant_id, group_id, user_id) do
+    with {:ok, profile} <- SalixStore.ComposioAccess.profile(tenant_id, group_id, user_id) do
+      result =
+        with true <- profile["mode"] == "connect" and profile["status"] == "connected",
+             id when is_binary(id) <- profile["connection_id"],
+             {:ok, record} <- OAuth.get(id),
+             true <-
+               record["tenant"] == tenant_id and record["composio_user_id"] == user_id and
+                 record["group_id"] == group_id,
+             {:ok, token} <- valid_remote_token(tenant_id, id) do
+          {:ok, %{"authorization" => "Bearer " <> token}}
+        else
+          {:error, _} = error -> error
+          _ -> {:error, :composio_sign_in_required}
+        end
+
+      case result do
+        {:error, {:reauthorization_required, _}} ->
+          _ =
+            SalixStore.ComposioAccess.update_profile(tenant_id, group_id, user_id, fn current ->
+              if current["connection_id"] == profile["connection_id"],
+                do: {:ok, Map.put(current, "status", "reauthorization_required")},
+                else: {:error, :stale_connection}
+            end)
+
+          {:error, :composio_reauthorization_required}
+
+        {:error, :composio_sign_in_required} = error ->
+          error
+
+        {:error, _} ->
+          {:error, :composio_unavailable}
+
+        ok ->
+          ok
+      end
+    end
+  end
+
   def start_authorization(tenant_id, group_id, binding_id, params \\ %{}) do
     params = if is_map(params), do: stringify(params), else: %{}
 
@@ -104,7 +198,13 @@ defmodule Salix.Control.RemoteMCPOAuth do
 
       string(query["error"]) != "" ->
         with {:ok, auth} <- consume_state(state_id) do
-          finish(auth, "authorization denied: " <> string(query["error"]))
+          finish(
+            auth,
+            if(auth["origin"] == "composio_connect",
+              do: "Composio authorization denied",
+              else: "authorization denied: " <> string(query["error"])
+            )
+          )
         else
           {:error, reason} -> finish(nil, callback_state_error(reason))
         end
@@ -150,6 +250,7 @@ defmodule Salix.Control.RemoteMCPOAuth do
          :ok <- ensure_oauth_binding_scope(binding, tenant_id, group_id),
          :ok <- ensure_oauth_binding_enabled(binding),
          {:ok, connection_id} <- oauth_connection_id(binding),
+         :ok <- ensure_group_credential(connection_id),
          {:ok, token} <- valid_remote_token(tenant_id, connection_id) do
       {:ok, %{"authorization" => "Bearer " <> token}}
     else
@@ -246,6 +347,19 @@ defmodule Salix.Control.RemoteMCPOAuth do
     do: OAuthApps.delete_remote_mcp(tenant_id, provider_key)
 
   # ---- discovery / authorization setup ----
+
+  defp ensure_group_credential(connection_id) do
+    case OAuth.get(connection_id) do
+      {:ok, %{"credential_protection" => "composio_connect"}} ->
+        {:error, :personal_composio_requires_broker}
+
+      {:ok, _} ->
+        :ok
+
+      error ->
+        error
+    end
+  end
 
   defp ensure_remote_binding(definition, binding) do
     with {:ok, entry} <- SalixMCP.Store.target_entry(definition, binding) do
@@ -391,7 +505,12 @@ defmodule Salix.Control.RemoteMCPOAuth do
   end
 
   defp client_for_authorization(tenant_id, identity) do
-    case get_client_registration(tenant_id, identity["provider_key"]) do
+    stored =
+      if identity["personal_composio"],
+        do: SalixStore.ComposioAccess.registration(tenant_id, identity["provider_key"]),
+        else: get_client_registration(tenant_id, identity["provider_key"])
+
+    case stored do
       {:ok, client} ->
         if compatible_client_registration?(client, callback_url()) do
           {:ok, client}
@@ -421,7 +540,9 @@ defmodule Salix.Control.RemoteMCPOAuth do
               ok
 
             {:error, reason} ->
-              fallback_static_client_for_authorization(tenant_id, identity, reason)
+              if identity["personal_composio"],
+                do: {:error, reason},
+                else: fallback_static_client_for_authorization(tenant_id, identity, reason)
           end
         else
           static_client_for_authorization(tenant_id, identity)
@@ -453,6 +574,9 @@ defmodule Salix.Control.RemoteMCPOAuth do
         error
     end
   end
+
+  defp static_client_for_authorization(_tenant_id, %{"personal_composio" => true}),
+    do: {:error, :composio_public_registration_unavailable}
 
   defp static_client_for_authorization(tenant_id, identity) do
     case OAuthApps.get_remote_mcp(tenant_id, identity["provider_key"]) do
@@ -497,7 +621,7 @@ defmodule Salix.Control.RemoteMCPOAuth do
           "provider_kind" => @provider_kind,
           "provider_key" => identity["provider_key"],
           "tenant_id" => tenant_id,
-          "client_source" => "dynamic",
+          "client_source" => if(identity["personal_composio"], do: "composio", else: "dynamic"),
           "client_id" => client_id,
           "client_secret" => client_secret,
           "token_endpoint_auth_method" => dynamic_token_auth_method(parsed, client_secret),
@@ -508,7 +632,10 @@ defmodule Salix.Control.RemoteMCPOAuth do
           "updated_at" => Store.now()
         }
 
-      put_client_registration(tenant_id, identity["provider_key"], client)
+      if identity["personal_composio"],
+        do:
+          SalixStore.ComposioAccess.put_registration(tenant_id, identity["provider_key"], client),
+        else: put_client_registration(tenant_id, identity["provider_key"], client)
     else
       "" -> {:error, {:bad_request, "dynamic client registration response missing client_id"}}
       {:error, reason} -> {:error, reason}
@@ -554,7 +681,8 @@ defmodule Salix.Control.RemoteMCPOAuth do
         "code_verifier" => verifier,
         "redirect_uri" => redirect_uri,
         "redirect_after" => redirect_after,
-        "origin" => "mcp",
+        "origin" => if(params["composio_user_id"], do: "composio_connect", else: "mcp"),
+        "composio_user_id" => params["composio_user_id"],
         "comma_operation" => params["comma_operation"],
         "status" => "pending",
         "error" => nil,
@@ -659,6 +787,9 @@ defmodule Salix.Control.RemoteMCPOAuth do
     end
   end
 
+  defp ensure_auth_binding_current(%{"origin" => "composio_connect"} = auth),
+    do: SalixStore.ComposioAccess.current_attempt(auth)
+
   defp ensure_auth_binding_current(auth) do
     with {:ok, binding, _definition, _connection} <-
            SalixMCP.Store.get_binding_with_definition(
@@ -689,6 +820,9 @@ defmodule Salix.Control.RemoteMCPOAuth do
     provider_key = string(auth["provider_key"])
 
     case string(auth["client_source"]) do
+      "composio" ->
+        SalixStore.ComposioAccess.registration(auth["tenant"], provider_key)
+
       "dynamic" ->
         get_client_registration(auth["tenant"], provider_key)
 
@@ -737,6 +871,42 @@ defmodule Salix.Control.RemoteMCPOAuth do
       {:ok, token}
     else
       {:error, reason} -> {:error, {auth, reason}}
+    end
+  end
+
+  defp persist_authorization(%{"origin" => "composio_connect"} = auth, client, token) do
+    connection_id = "conn-" <> Store.random_id()
+    metadata = auth["oauth_metadata"]
+
+    record =
+      Map.merge(token, %{
+        "connection_id" => connection_id,
+        "tenant" => auth["tenant"],
+        "group_id" => auth["group_id"],
+        "composio_user_id" => auth["composio_user_id"],
+        "credential_protection" => "composio_connect",
+        "provider" => "remote_mcp",
+        "provider_kind" => "remote_mcp",
+        "provider_key" => auth["provider_key"],
+        "status" => "active",
+        "created_at" => Store.now(),
+        "metadata" =>
+          Map.merge(metadata, %{
+            "client_source" => "composio",
+            "client_registration_id" => client["client_registration_id"],
+            "token_endpoint" => metadata["authorization_server_metadata"]["token_endpoint"]
+          })
+      })
+
+    with :ok <- OAuth.put(connection_id, record),
+         {:ok, _} <- SalixStore.ComposioAccess.complete(auth, connection_id) do
+      {:ok, %{"connection_id" => connection_id, "provider_account_name" => "Composio Connect"}}
+    else
+      {:error, reason} ->
+        # A failed response may follow a committed profile write. Keep the
+        # encrypted credential; deleting it could break the selected identity.
+        # Only the member profile can select it, and generic MCP rejects it.
+        {:error, {auth, reason}}
     end
   end
 
@@ -1013,6 +1183,9 @@ defmodule Salix.Control.RemoteMCPOAuth do
     provider_key = get_in(conn, ["metadata", "provider_key"]) || conn["provider_key"]
 
     case get_in(conn, ["metadata", "client_source"]) do
+      "composio" ->
+        SalixStore.ComposioAccess.registration(tenant_id, provider_key)
+
       "dynamic" ->
         case get_client_registration(tenant_id, provider_key) do
           {:ok, client} -> {:ok, client}
@@ -1360,6 +1533,15 @@ defmodule Salix.Control.RemoteMCPOAuth do
   # ---- response rendering ----
 
   defp finish(auth, error_message, completion \\ nil) do
+    error_message =
+      if auth && auth["origin"] == "composio_connect" && error_message,
+        do: "Composio authorization failed. Return to Comma and sign in again.",
+        else: error_message
+
+    if auth && auth["origin"] == "composio_connect" && error_message do
+      _ = SalixStore.ComposioAccess.fail_authorization(auth)
+    end
+
     record_outcome(auth, error_message, completion)
 
     redirect_after = auth && blank_to_nil(auth["redirect_after"])
