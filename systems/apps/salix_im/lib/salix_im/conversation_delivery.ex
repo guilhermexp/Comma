@@ -1029,13 +1029,19 @@ defmodule SalixIM.ConversationDelivery do
       # (docs/verification.md). A Task conversation is
       # its own audience, so a Worker reporting into its own Task is a
       # same-atom flow that needs no membership at all.
-      "ifc" => conversation_ifc(rec)
+      "ifc" => conversation_ifc(rec),
+      "locale" => notice_locale(rec["message_metadata"])
     }
     |> Enum.reject(fn {_key, value} -> value in [nil, ""] end)
     |> Map.new()
     |> with_meeting_authority(rec)
     |> with_triage_authority(rec)
   end
+
+  # The sender's account language, which Comma stamps on its Messages. The
+  # runtime writes its own notices for this source in it. It grants nothing.
+  defp notice_locale(%{"locale" => locale}) when locale in ~w(pt-BR en zh-CN), do: locale
+  defp notice_locale(_metadata), do: nil
 
   defp with_triage_authority(origin, rec) do
     case SalixIM.Triage.InvestigationAuthority.seal_conversation(rec) do

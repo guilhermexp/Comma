@@ -1087,15 +1087,17 @@ defmodule Comma.Conversations do
        ),
        do: {:error, {:unsupported_for_kind, binding["kind"], "message"}}
 
+  # The sender's account language rides on the Message so the runtime writes its
+  # own failure notices for this request in it. It grants no authority.
   defp user_salix_message_attrs(user, content, request_id, client_metadata, reply_to_message_id) do
     %{
       "client_request_id" => request_id,
       "reply_to_message_id" => reply_to_message_id,
       "actor_type" => "user",
       "user_id" => user["id"],
-      "content" => content
+      "content" => content,
+      "metadata" => Map.put(client_metadata, "locale", Comma.Accounts.locale(user["id"]))
     }
-    |> put_message_client_metadata(client_metadata)
   end
 
   # Display-only source context for this Message. The caller cannot use it
@@ -1130,12 +1132,6 @@ defmodule Comma.Conversations do
   end
 
   defp session_client_metadata(_session), do: %{}
-
-  defp put_message_client_metadata(attrs, client_metadata)
-       when is_map(client_metadata) and map_size(client_metadata) > 0,
-       do: Map.put(attrs, "metadata", client_metadata)
-
-  defp put_message_client_metadata(attrs, _client_metadata), do: attrs
 
   defp append_router_conversation_message(workspace, attrs) do
     client = Comma.Salix.Client.impl()

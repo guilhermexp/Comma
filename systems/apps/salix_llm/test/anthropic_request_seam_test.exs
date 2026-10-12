@@ -155,7 +155,100 @@ defmodule SalixLlm.AnthropicRequestSeamTest do
     assert Jason.encode!(decoded["messages"]) =~ "接�"
   end
 
+  # Synthetic stand-ins for persisted runtime IDs. The Messages API rejects a
+  # tool_use.id outside ^[a-zA-Z0-9_-]+$ with HTTP 400, and the stored
+  # transcript is resent on every round, so one such ID blocks the Session.
+  test "persisted tool IDs reach Anthropic in its ID alphabet, paired and distinct", %{
+    server: server,
+    base_url: base_url
+  } do
+    ids = [
+      "runtime-failure-reply:ses1_42:3",
+      "runtime-failure-reply.ses1_42.3",
+      "runtime-failure-reply/ses1_42/3",
+      # Already-valid IDs that a lossy replacement of the IDs above would produce.
+      "runtime-failure-reply_ses1_42_3",
+      "runtime-failure-reply-ses1_42-3",
+      "runtime-failure-replyses1_423",
+      "toolu_01AbC-xyz"
+    ]
+
+    history = [%{role: "user", content: "hello"} | Enum.flat_map(ids, &tool_round/1)]
+    opts = Map.put(base_opts(base_url), :transport_retry, false)
+
+    assert {:final, "ok"} = Provider.complete(history, [], opts)
+
+    assert {:final, "ok"} =
+             Provider.complete(history ++ [%{role: "user", content: "next"}], [], opts)
+
+    assert [first, next] = Enum.map(requests(server), &sent_tool_ids(&1.raw_body))
+
+    assert length(first) == length(ids)
+    assert Enum.all?(first, fn {use_id, result_id} -> use_id == result_id end)
+    wire = Enum.map(first, &elem(&1, 0))
+    assert Enum.all?(wire, &anthropic_id?/1)
+    assert length(Enum.uniq(wire)) == length(ids)
+
+    for {id, wire_id} <- Enum.zip(ids, wire), anthropic_id?(id) do
+      assert wire_id == id
+    end
+
+    # A later round resends the same wire IDs, keeping the cached prefix.
+    assert next == first
+  end
+
+  test "an already-valid tool ID keeps its value when another ID's wire form equals it", %{
+    server: server,
+    base_url: base_url
+  } do
+    opts = Map.put(base_opts(base_url), :transport_retry, false)
+    user = %{role: "user", content: "hello"}
+    persisted = "runtime-failure-reply:ses1_42:3"
+
+    assert {:final, "ok"} = Provider.complete([user | tool_round(persisted)], [], opts)
+    assert [%{raw_body: body}] = requests(server)
+    assert [{wire, wire}] = sent_tool_ids(body)
+
+    history = [user | tool_round(persisted) ++ tool_round(wire)]
+    assert {:final, "ok"} = Provider.complete(history, [], opts)
+    assert [_, %{raw_body: body}] = requests(server)
+    assert [{moved, moved}, {^wire, ^wire}] = sent_tool_ids(body)
+    assert moved != wire
+    assert anthropic_id?(moved)
+  end
+
   defp requests(server), do: Agent.get(server, &Enum.reverse(&1.requests))
+
+  defp tool_round(id) do
+    [
+      %{
+        role: "assistant",
+        content: "",
+        tool_calls: [%{"id" => id, "name" => "call", "args" => %{"text" => "notice"}}]
+      },
+      %{role: "tool", tool_call_id: id, content: "sent"}
+    ]
+  end
+
+  # Each tool_use paired with the tool_result in the message that follows it.
+  defp sent_tool_ids(raw_body) do
+    raw_body
+    |> Jason.decode!()
+    |> Map.fetch!("messages")
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.flat_map(fn
+      [
+        %{"role" => "assistant", "content" => [%{"type" => "tool_use", "id" => use_id}]},
+        %{"role" => "user", "content" => [%{"type" => "tool_result", "tool_use_id" => result_id}]}
+      ] ->
+        [{use_id, result_id}]
+
+      _ ->
+        []
+    end)
+  end
+
+  defp anthropic_id?(id), do: id =~ ~r/\A[a-zA-Z0-9_-]+\z/
 
   defp success do
     %{"content" => [%{"type" => "text", "text" => "retried"}], "stop_reason" => "end_turn"}

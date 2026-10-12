@@ -14,6 +14,17 @@ private def openaiRole (m : Term) : Term :=
 def reasoningFields : List String := ["reasoning_content", "reasoning", "reasoning_details", "thought", "thoughts", "thought_signature", "thought_signatures"]
 def thinking (blocks : List Term) : List Term := blocks.filter (fun v => v.isMap && member (get v "type") ["thinking", "redacted_thinking"])
 
+-- Valid provider IDs are binary. Keep legacy/non-binary equality intact without
+-- changing Term's global hashing contract; those uncommon keys share a bucket.
+private structure CallKey where
+  value : Term
+  deriving BEq
+
+private instance : Hashable CallKey where
+  hash key := match key.value with | .binary raw => hash raw | _ => 0
+
+private abbrev CallMap (α : Type) := Std.HashMap CallKey α
+
 def anthropicMessage (m model : Term) : KernelM (List (Bool × Term)) := do
   let role := field m "role"
   if member role ["system", "summary", "runtime"] then
@@ -60,6 +71,58 @@ private def adjacentAnthropic (tagged : List (Bool × Term)) : List (Bool × Ter
         else []
   return (held ++ out).reverse
 
+-- Anthropic accepts only `^[a-zA-Z0-9_-]+$` tool IDs. Persisted runtime IDs may
+-- hold other bytes, e.g. `runtime-failure-reply:<session>:<message>`. Only this
+-- outbound copy changes. Valid IDs stay verbatim. Any other ID escapes each byte
+-- outside `[a-zA-Z0-9-]` as `_XX`, so distinct IDs stay distinct and each round
+-- encodes the same way. An escape equal to a valid ID in the same request takes
+-- a `__N` suffix; no escape contains `__`.
+private def anthropicIdByte (c : UInt8) : Bool :=
+  (c ≥ 48 && c ≤ 57) || (c ≥ 65 && c ≤ 90) || (c ≥ 97 && c ≤ 122) || c == 45 || c == 95
+
+private def anthropicIdEscape (raw : ByteArray) : ByteArray := Id.run do
+  let hex := "0123456789ABCDEF".toUTF8
+  let mut out := ByteArray.empty
+  for c in raw.data do
+    out := if c != 95 && anthropicIdByte c then out.push c
+      else ((out.push 95).push hex[(c >>> 4).toNat]!).push hex[(c &&& 15).toNat]!
+  return out
+
+private def anthropicIdKey (block : Term) : Option String :=
+  if get block "type" == b "tool_use" then some "id"
+  else if get block "type" == b "tool_result" then some "tool_use_id" else none
+
+private def anthropicToolIds (tagged : List (Bool × Term)) : KernelM (List (Bool × Term)) := do
+  let ids := tagged.flatMap fun (_, m) =>
+    (items (get m "content")).filterMap fun block => (anthropicIdKey block).map (get block ·)
+  let valid := fun id : Term => id.isBinary && (bytes id).size > 0 && (bytes id).data.all anthropicIdByte
+  let mut reserved : Std.HashSet CallKey := {}
+  for id in ids do
+    if valid id then reserved := reserved.insert ⟨id⟩
+  let mut wire : CallMap Term := {}
+  let mut suffix := 2
+  for id in ids do
+    if !id.isBinary || valid id || wire.contains ⟨id⟩ then continue
+    let escaped := Term.binary (anthropicIdEscape (bytes id))
+    let mut wireId := escaped
+    if (bytes escaped).size == 0 || reserved.contains ⟨escaped⟩ then
+      -- Suffixes never repeat, so only reserved IDs can block a candidate.
+      for _ in [:reserved.size + 1] do
+        wireId ← cat [escaped, b "__", b (toString suffix)]
+        suffix := suffix + 1
+        if !reserved.contains ⟨wireId⟩ then break
+    wire := wire.insert ⟨id⟩ wireId
+  if wire.isEmpty then return tagged
+  return tagged.map fun (trailing, m) =>
+    let content := get m "content"
+    if !content.isList then (trailing, m) else
+      (trailing, m.put (b "content") (list ((items content).map fun block =>
+        match anthropicIdKey block with
+        | some key => match wire.get? ⟨get block key⟩ with
+          | some wireId => block.put (b key) wireId
+          | none => block
+        | none => block)))
+
 def anthropicParts (messages : List Term) (model : Term) : KernelM Term := do
   let leading := messages.takeWhile (fun m => member (field m "role") ["system", "summary", "runtime"])
   let mut rest := messages.drop leading.length
@@ -70,7 +133,7 @@ def anthropicParts (messages : List Term) (model : Term) : KernelM Term := do
     rest := m :: rest
   let texts := (← kept.reverse.mapM Content.systemText).filter (· != b "")
   let system ← if texts.isEmpty then pure nil else join texts "\n\n"
-  let tagged := adjacentAnthropic ((← rest.mapM (anthropicMessage · model)).flatten)
+  let tagged ← anthropicToolIds (adjacentAnthropic ((← rest.mapM (anthropicMessage · model)).flatten))
   let trailing := (tagged.reverse.takeWhile Prod.fst).length
   return .tuple [system, list (tagged.map Prod.snd), i trailing]
 
@@ -91,17 +154,6 @@ def chatMessage (m model : Term) : KernelM (List Term) := do
     select (coalesce [get metadata "chat_message_extra", metadata.get (a "chat_message_extra")]) reasoningFields true
   let base := obj [("role", role), ("content", ← str (coalesce [field m "content", b ""]))]
   return [mergeMaps (if calls.isEmpty then base else base.put (b "tool_calls") (list calls)) extra]
-
--- Valid provider IDs are binary. Keep legacy/non-binary equality intact without
--- changing Term's global hashing contract; those uncommon keys share a bucket.
-private structure CallKey where
-  value : Term
-  deriving BEq
-
-private instance : Hashable CallKey where
-  hash key := match key.value with | .binary raw => hash raw | _ => 0
-
-private abbrev CallMap (α : Type) := Std.HashMap CallKey α
 
 private def chatTool (m : Term) (names : CallMap Term) : KernelM (Term × List Term) := do
   let content ← str (coalesce [field m "content", b ""])

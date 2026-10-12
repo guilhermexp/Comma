@@ -80,7 +80,7 @@ After dependency recovery, later activation or operator wake can retry that exac
 Reply identity uses the accepted human source and trusted target; context source IDs retain provenance.
 Non-runaway model/guard failures use the authorized notification path when safe. With no destination or unsafe foreign-work cleanup, they record local blocked retirement and ACK only materialized input, without a send. Blocking cards and pending visible commits prevent this fallback; queued input and accepted work retain their lifecycles. The separate two-round runaway policy remains unchanged.
 
-Reserve before sending. Committed attempts never resend; refused/unknown outcomes are not delivery proof. Pending work retains its source and cards. Background completion can resume it; no-wake context cannot. Fixed notification text omits provider errors and credentials. Each queued human input grants at most one bounded retry, without borrowing authority or permitting another notice.
+Reserve before sending. Committed attempts never resend; refused/unknown outcomes are not delivery proof. Pending work retains its source and cards. Background completion can resume it; no-wake context cannot. Fixed notification text omits provider errors and credentials. Comma Messages carry the sender's account language (`pt-BR`, `en` or `zh-CN`) for the notice; other sources get English. Each queued human input grants at most one bounded retry, without borrowing authority or permitting another notice.
 
 `force_recover` reports `command_recorded`, `processing_observed` (a subsequent model response), or `blocked`. Wake acknowledgement and active status are not evidence of model progress. The immediate observation is conservative, not a delivery guarantee. Failed activations use their existing settlement path instead of injecting another recovery message.
 
@@ -164,8 +164,7 @@ source, destination and IFC declaration before it publishes the complete text.
 This rejects nonempty delivery filters regardless of field order. Repair rounds
 do not publish this draft. The draft stays visible until the send result commits.
 This path does not show text during generation.
-Ordinary `call` streaming retains its existing behavior. Its audience-filter
-handling is outside this change and is not covered by this guarantee.
+Ordinary `call` streaming and its audience-filter handling are outside this guarantee.
 
 A standalone send delivers a message without ending the activation. The
 model-visible `call` schema does not offer `reply_mode` or `final_outcome`.
@@ -280,11 +279,10 @@ The field is routing data, not an execution grant: Workers still report through
 the Task, and scheduled Task delivery restrictions are unchanged. Tasks
 created before this field existed do not invent a source from the current turn.
 
-These are operation-contract and source-presentation changes, not new Session
-settlement, persistence or IFC-authority semantics. The retained system-core
-TLA+ abstractions and their mappings are unchanged; implementation regressions
-cover source persistence, interleaved delivery, split transport validation and
-exact-target reply settlement.
+These operation and source-presentation rules add no Session settlement,
+persistence or IFC authority. Retained TLA+ mappings are unchanged;
+implementation regressions cover source persistence, interleaved delivery, split
+transport validation and exact-target reply settlement.
 
 Existing immutable Task execution grants retain their exact destination and
 installation. The runtime reads historical Slack operation names as the matching

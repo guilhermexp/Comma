@@ -901,6 +901,27 @@ defmodule CommaCoreTest do
     end
   end
 
+  test "a sent Message carries the sender's account language, not a client-chosen one" do
+    {user, workspace, session} = setup_user_workspace("message-locale@example.com")
+    group_id = workspace["default_group_id"]
+    {:ok, chat} = converge_assistant_chat(user, session, group_id)
+
+    # An account without a stored language reads as English for server-written text.
+    for {stored, expected} <- [{nil, "en"}, {"pt-BR", "pt-BR"}, {"zh-CN", "zh-CN"}] do
+      if stored, do: assert({:ok, _} = Comma.Accounts.update_user(user["id"], %{locale: stored}))
+
+      assert {:ok, _} =
+               Comma.Conversations.send_message(user, session, group_id, chat["id"], %{
+                 "client_request_id" => "message-locale-#{expected}",
+                 "metadata" => %{"locale" => "forged"},
+                 "message" => %{"content" => "hello"}
+               })
+
+      message = RuntimeFake.messages(stored_salix_id(chat)) |> List.last()
+      assert message["metadata"]["locale"] == expected
+    end
+  end
+
   test "Chat send and read use the canonical Salix Conversation identity" do
     {user, workspace, session} = setup_user_workspace("chat-canonical@example.com")
     {:ok, conversation} = converge_assistant_chat(user, session, workspace["default_group_id"])

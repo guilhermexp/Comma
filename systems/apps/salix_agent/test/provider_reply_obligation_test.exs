@@ -760,13 +760,21 @@ defmodule SalixAgent.ProviderReplyObligationTest do
     end
   end
 
-  for adapter <- [:call, :model_failure] do
+  # The requester's account language arrives as Message metadata. No locale
+  # covers every other source: the notice stays English.
+  for {adapter, locale} <- [
+        {:call, nil},
+        {:model_failure, nil},
+        {:model_failure, "pt-BR"},
+        {:model_failure, "zh-CN"}
+      ] do
     @tag :unified_reply
     @tag model_failure_reply: adapter == :model_failure
-    test "Comma #{adapter} reply creates one canonical Message and completes separately", %{
-      agent_id: agent_id,
-      session_id: session_id
-    } do
+    test "Comma #{adapter} reply#{if locale, do: " in " <> locale} creates one canonical Message and completes separately",
+         %{
+           agent_id: agent_id,
+           session_id: session_id
+         } do
       group_id = SalixStore.Ids.group_id_from_agent!(agent_id)
       SalixAgent.TestSupport.create_control_group!(group_id, %{"router_agent_id" => agent_id})
       previous_delivery = Application.get_env(:salix_im, :agent_delivery_mod)
@@ -781,10 +789,16 @@ defmodule SalixAgent.ProviderReplyObligationTest do
       assert {:ok, input} =
                SalixIM.RouterConversationInput.append_user_message(
                  group_id,
-                 %{
-                   "content" => "Prepare a holiday calendar",
-                   "client_request_id" => "unified-comma"
-                 }
+                 Map.merge(
+                   %{
+                     "content" => "Prepare a holiday calendar",
+                     "client_request_id" => "unified-comma"
+                   },
+                   if(unquote(locale),
+                     do: %{"metadata" => %{"locale" => unquote(locale)}},
+                     else: %{}
+                   )
+                 )
                )
 
       {pid, _, _} = await_request!()
@@ -828,8 +842,9 @@ defmodule SalixAgent.ProviderReplyObligationTest do
                )
 
       if unquote(adapter) == :model_failure do
-        assert inspect(message["content"]) =~ "model service"
-        refute inspect(message["content"]) =~ "private credit details"
+        assert [%{"text" => notice}] = message["content"]
+        refute notice =~ "private credit details"
+        assert_notice_language(notice, unquote(locale))
       else
         assert message["content"] == [
                  %{"type" => "text", "text" => "I will prepare the calendar."}
@@ -3881,4 +3896,16 @@ defmodule SalixAgent.ProviderReplyObligationTest do
 
   defp put_or_delete_env(app, key, nil), do: Application.delete_env(app, key)
   defp put_or_delete_env(app, key, value), do: Application.put_env(app, key, value)
+
+  defp assert_notice_language(notice, "pt-BR") do
+    assert notice =~ "modelo"
+    refute notice =~ "model service"
+  end
+
+  defp assert_notice_language(notice, "zh-CN") do
+    assert notice =~ "模型"
+    refute notice =~ ~r/[A-Za-z]/
+  end
+
+  defp assert_notice_language(notice, nil), do: assert(notice =~ "model service")
 end

@@ -202,19 +202,35 @@ private def fresh (state record : Term) : KernelM Bool := do
 
 /-! ## Guard parking and the runtime failure notice -/
 
-private def failureSummary : String :=
+/-- The fixed notice text follows the account language that Comma stamps on
+the source's trusted origin. Other channels and other values read English. -/
+private def localized (locale : Term) (en ptBR zhCN : String) : Term :=
+  b (if locale == b "pt-BR" then ptBR else if locale == b "zh-CN" then zhCN else en)
+
+private def failureSummary (locale : Term) : Term := localized locale
   "I couldn't complete this request. I have stopped this execution. Any external action without a confirmed result may still need cleanup."
-private def modelSummary : String :=
+  "Não consegui concluir este pedido. Interrompi esta execução. Ações externas sem resultado confirmado ainda podem precisar de limpeza."
+  "我无法完成这个请求，已停止本次执行。结果未经确认的外部操作可能仍需清理。"
+private def modelSummary (locale : Term) : Term := localized locale
   "The model service could not continue this request. Ask your workspace administrator to check model availability, access and usage limits. Work already started may still finish. This notice does not cancel it or confirm its result."
+  "O serviço do modelo não conseguiu continuar este pedido. Peça ao administrador do seu espaço de trabalho para verificar a disponibilidade do modelo, o acesso e os limites de uso. O trabalho já iniciado ainda pode terminar. Este aviso não o cancela nem confirma o resultado."
+  "模型服务无法继续处理这个请求。请联系工作区管理员检查模型可用性、访问权限和用量上限。已经开始的工作可能仍会完成。本通知不会取消这些工作，也不确认其结果。"
+private def creditsSummary (locale : Term) : Term := localized locale
+  "Not enough credits to continue this request. Add credits, then send a new message to try again."
+  "Não há créditos suficientes para continuar este pedido. Adicione créditos e envie uma nova mensagem para tentar novamente."
+  "额度不足，无法继续这个请求。请充值后发送一条新消息重试。"
+private def billingSummary (locale : Term) : Term := localized locale
+  "Billing is unavailable for this request. Ask your workspace administrator to check the billing account, then try again."
+  "A cobrança não está disponível para este pedido. Peça ao administrador do seu espaço de trabalho para verificar a conta de cobrança e tente novamente."
+  "此请求暂时无法计费。请联系工作区管理员检查计费账户后再试。"
 
 private def noticeCall (binding : Term) : Term :=
   let model := key binding "failure_reason" == b "model"
   let billing := key binding "billing_reason"
-  let summary := b (if billing == b "insufficient_credits" then
-      "Not enough credits to continue this request. Add credits, then send a new message to try again."
-    else if billing == b "account_inactive" || billing == b "missing_account" then
-      "Billing is unavailable for this request. Ask your workspace administrator to check the billing account, then try again."
-    else if model then modelSummary else failureSummary)
+  let locale := key (key binding "trusted_origin") "locale"
+  let summary := if billing == b "insufficient_credits" then creditsSummary locale
+    else if billing == b "account_inactive" || billing == b "missing_account" then billingSummary locale
+    else if model then modelSummary locale else failureSummary locale
   let target := key binding "reply_target"
   let (tool, params) :=
     if target.isMap then

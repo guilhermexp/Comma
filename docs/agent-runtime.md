@@ -83,6 +83,7 @@ Elixir executes batches in order without extra concurrency. Selected active refe
 Projection cannot mutate Session or persist activation facts. Response acceptance owns those writes.
 Elixir supplies Router authority, source-tool availability, disclosure, result sizing, image preparation, stored-result reads, credentials, callbacks, and network calls.
 Lean owns Anthropic Messages, OpenAI Chat, and Responses bodies, headers, parsing, usage, and stream reconstruction.
+Anthropic bodies keep tool IDs in `[A-Za-z0-9_-]` and escape others byte-wise. Stored IDs need no migration.
 Stream state stays in the native heap and produces ordered text, tool, and classified reasoning callbacks.
 Lean decodes partial Responses argument strings before a complete SSE line arrives. It rejects inconsistent prefixes and preserves opaque reasoning data.
 Lean selects Responses retries and the watchdog phase. Elixir executes the delay, timeout, cancellation, and HTTP operations.
@@ -138,7 +139,6 @@ A working-state ledger hit cannot confirm durable acceptance.
 For a committed revision, the fence checks ownership and epoch without another write. For pending work, it commits the frozen candidate first.
 Direct-log staging carries a working input/frontier revision into activation within one owner callback.
 The combined CAS commits input, its source frontier, activation, and miniskill selection.
-Generic delivery keeps its durable acknowledgment. A busy Router leaves unadmitted inputs in the source log.
 Input, activation, log, and recovery commands retain their native Revision and continuation through writes and CAS, including first creation.
 The host validates events, repairs command-argument UTF-8, and performs external effects.
 Native revisions retain materialization plans through activation and persistence.
