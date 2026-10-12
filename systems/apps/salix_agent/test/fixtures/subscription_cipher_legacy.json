@@ -1,0 +1,15 @@
+{
+  "ciphertext": "iECEk3hxVvv9wAcmoJxMn41lx1LRZ3bSV31lDHjiJag4vu0X3R3NU4pAcAYX4kErGQvj6ep+OFWkqAhuCBL/de5qmoQx7H8zNu2UwGmPDlRYfkOsjY/BssHNtrMr1RxQw23pCEVrv4BdUBdMaNuw0y4LcbgNQWGIf/PIkRQy7qInMkrNK72jw5zDTIrRZRTIsDY6hIZgiLRHBaX2kLGwqqZOt7HIJfRWlTMJiX0=",
+  "id": "legacy-subscription",
+  "key": "legacy-fixture-key-legacy-fixtur",
+  "plaintext": {
+    "access_token": "synthetic-legacy-access",
+    "account": {
+      "name": "Fixture 账户"
+    },
+    "expires_at": 1700000000,
+    "refresh_token": "synthetic-legacy-refresh"
+  },
+  "source_commit": "b2dd1c6b814c42aa252d7b1f35388a3f620da374",
+  "tenant": "legacy-tenant"
+}

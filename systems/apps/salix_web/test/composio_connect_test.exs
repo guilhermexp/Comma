@@ -92,51 +92,77 @@ defmodule Salix.Control.ComposioConnectTest do
           if get_req_header(conn, "authorization") == ["Bearer private-test-access"] do
             {:ok, raw, conn} = read_body(conn)
             rpc = Jason.decode!(raw)
+            session_id = List.first(get_req_header(conn, "mcp-session-id"))
 
-            case rpc["method"] do
-              "notifications/initialized" ->
-                send_resp(conn, 202, "")
+            Agent.update(
+              state,
+              &Map.update!(&1, :rpc_requests, fn requests ->
+                [{rpc["method"], rpc["params"], session_id} | requests]
+              end)
+            )
 
-              "initialize" ->
-                rpc(conn, rpc, %{
-                  "protocolVersion" => "2025-06-18",
-                  "capabilities" => %{"tools" => %{}},
-                  "serverInfo" => %{"name" => "fixture", "version" => "1"}
-                })
+            reject = Agent.get(state, & &1.reject_session)
 
-              "tools/list" ->
-                rpc(conn, rpc, %{
-                  "tools" => [
-                    %{"name" => "COMPOSIO_SEARCH_TOOLS", "inputSchema" => %{"type" => "object"}}
-                  ]
-                })
+            expired =
+              rpc["method"] not in ["initialize", "notifications/initialized"] and
+                (reject == :all or (reject == :expired and session_id == "expired") or
+                   reject == {:tool, rpc["params"]["name"]})
 
-              "tools/call" ->
-                mode = Agent.get(state, & &1.failure)
+            if expired do
+              send_resp(conn, 404, "expired session")
+            else
+              case rpc["method"] do
+                "notifications/initialized" ->
+                  send_resp(conn, 202, "")
 
-                case mode do
-                  :none ->
-                    params = rpc["params"]
+                "initialize" ->
+                  generation =
+                    Agent.get_and_update(state, fn s ->
+                      {s.initializations + 1, %{s | initializations: s.initializations + 1}}
+                    end)
 
-                    Agent.update(
-                      state,
-                      &Map.update!(&1, :calls, fn calls -> [params | calls] end)
-                    )
+                  conn = put_resp_header(conn, "mcp-session-id", "session-#{generation}")
 
-                    result =
-                      Agent.get(
+                  rpc(conn, rpc, %{
+                    "protocolVersion" => "2025-06-18",
+                    "capabilities" => %{"tools" => %{}},
+                    "serverInfo" => %{"name" => "fixture", "version" => "1"}
+                  })
+
+                "tools/list" ->
+                  rpc(conn, rpc, %{
+                    "tools" => [
+                      %{"name" => "COMPOSIO_SEARCH_TOOLS", "inputSchema" => %{"type" => "object"}}
+                    ]
+                  })
+
+                "tools/call" ->
+                  mode = Agent.get(state, & &1.failure)
+
+                  case mode do
+                    :none ->
+                      params = rpc["params"]
+
+                      Agent.update(
                         state,
-                        &Map.get(&1.responses, params["name"], %{"tool" => "GMAIL_FETCH_EMAILS"})
+                        &Map.update!(&1, :calls, fn calls -> [params | calls] end)
                       )
 
-                    rpc(conn, rpc, %{"structuredContent" => result})
+                      result =
+                        Agent.get(
+                          state,
+                          &Map.get(&1.responses, params["name"], %{"tool" => "GMAIL_FETCH_EMAILS"})
+                        )
 
-                  :malformed ->
-                    rpc(conn, rpc, %{"content" => [%{"type" => "text", "text" => "not json"}]})
+                      rpc(conn, rpc, %{"structuredContent" => result})
 
-                  code ->
-                    send_resp(conn, code, "private upstream diagnostic")
-                end
+                    :malformed ->
+                      rpc(conn, rpc, %{"content" => [%{"type" => "text", "text" => "not json"}]})
+
+                    code ->
+                      send_resp(conn, code, "private upstream diagnostic")
+                  end
+              end
             end
           else
             conn
@@ -181,6 +207,9 @@ defmodule Salix.Control.ComposioConnectTest do
         {Agent,
          fn ->
            %{
+             initializations: 0,
+             rpc_requests: [],
+             reject_session: :none,
              registrations: 0,
              exchanges: 0,
              reject_refresh: false,
@@ -228,6 +257,97 @@ defmodule Salix.Control.ComposioConnectTest do
     refute inspect(S3.Fake.dump()) =~ "private-test-refresh"
     assert {:ok, _} = start()
     assert Agent.get(c.state, & &1.registrations) == 1
+  end
+
+  defp stale_session(c, rejection) do
+    {:ok, _} =
+      ComposioAccess.update_profile("tenant", "group", "member", fn profile ->
+        {:ok, Map.put(profile, "mcp_session_headers", %{"mcp-session-id" => "expired"})}
+      end)
+
+    Agent.update(
+      c.state,
+      &%{&1 | rpc_requests: [], initializations: 0, reject_session: rejection}
+    )
+  end
+
+  test "expired MCP sessions recover once for discovery reads without another OAuth exchange",
+       c do
+    {:ok, auth} = start()
+    assert {:page, 200, _} = callback(auth)
+
+    reads = [
+      fn -> ComposioConnect.schemas("tenant", "group", "member") end,
+      fn ->
+        ComposioConnect.call("tenant", "group", "member", "COMPOSIO_SEARCH_TOOLS", %{
+          "queries" => [%{"use_case" => "list"}]
+        })
+      end,
+      fn ->
+        ComposioConnect.call("tenant", "group", "member", "COMPOSIO_GET_TOOL_SCHEMAS", %{
+          "tool_slugs" => ["GMAIL_FETCH_EMAILS"]
+        })
+      end,
+      fn ->
+        ComposioConnect.call("tenant", "group", "member", "COMPOSIO_MANAGE_CONNECTIONS", %{
+          "toolkits" => [%{"name" => "gmail", "action" => "list"}]
+        })
+      end
+    ]
+
+    for read <- reads do
+      stale_session(c, :expired)
+      assert {:ok, _} = read.()
+      assert Agent.get(c.state, & &1.initializations) == 1
+
+      requests =
+        Agent.get(c.state, & &1.rpc_requests)
+        |> Enum.filter(fn {method, _, _} -> method in ["tools/list", "tools/call"] end)
+
+      assert length(requests) == 2
+
+      assert {:ok, %{"mcp_session_headers" => %{"mcp-session-id" => "session-1"}}} =
+               ComposioAccess.profile("tenant", "group", "member")
+    end
+
+    assert Agent.get(c.state, & &1.exchanges) == 1
+  end
+
+  test "a fresh session returning 404 stops after one recovery and clears only transport state",
+       c do
+    {:ok, auth} = start()
+    assert {:page, 200, _} = callback(auth)
+    stale_session(c, :all)
+    assert {:error, :composio_unavailable} = ComposioConnect.schemas("tenant", "group", "member")
+    assert Agent.get(c.state, & &1.initializations) == 1
+    assert Enum.count(Agent.get(c.state, & &1.rpc_requests), &(elem(&1, 0) == "tools/list")) == 2
+    assert {:ok, profile} = ComposioAccess.profile("tenant", "group", "member")
+    refute profile["mcp_session_headers"]
+    assert profile["status"] == "connected"
+  end
+
+  test "session 404 never replays connection mutations, including mixed list/add requests", c do
+    {:ok, auth} = start()
+    assert {:page, 200, _} = callback(auth)
+
+    for actions <- [["add"], ["remove"], ["reinitiate"], ["rename"], ["list", "add"]] do
+      stale_session(c, :expired)
+      args = %{"toolkits" => Enum.map(actions, &%{"name" => "gmail", "action" => &1})}
+
+      assert {:error, :composio_unavailable} =
+               ComposioConnect.call(
+                 "tenant",
+                 "group",
+                 "member",
+                 "COMPOSIO_MANAGE_CONNECTIONS",
+                 args
+               )
+
+      assert [{"tools/call", _, "expired"}] = Agent.get(c.state, & &1.rpc_requests)
+      assert Agent.get(c.state, & &1.initializations) == 0
+      assert {:ok, profile} = ComposioAccess.profile("tenant", "group", "member")
+      refute profile["mcp_session_headers"]
+    end
   end
 
   test "project authorization revoked after session preparation submits no effect and cleans up",
@@ -422,6 +542,18 @@ defmodule Salix.Control.ComposioConnectTest do
                assert length(Agent.get(c.state, & &1.calls)) > calls_before
                {:error, :revoked}
              end)
+
+    stale_session(c, {:tool, "COMPOSIO_MULTI_EXECUTE_TOOL"})
+
+    assert {:error, :composio_unavailable} =
+             ComposioConnect.execute("tenant", "group", "member", local, actions, fn -> :ok end)
+
+    assert Enum.count(Agent.get(c.state, & &1.rpc_requests), fn {_, params, _} ->
+             params["name"] == "COMPOSIO_MULTI_EXECUTE_TOOL"
+           end) == 1
+
+    assert Agent.get(c.state, & &1.initializations) == 0
+    Agent.update(c.state, &%{&1 | reject_session: :none})
 
     assert {:error, :composio_account_not_owned} =
              ComposioConnect.execute(

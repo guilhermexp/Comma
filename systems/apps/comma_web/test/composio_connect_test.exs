@@ -109,6 +109,71 @@ defmodule CommaWeb.ComposioConnectTest do
   defp command(c, action, params),
     do: ComposioConnect.command(c.user, %{}, c.w["id"], action, params)
 
+  defp post_command(token, workspace, action, params \\ %{}) do
+    Plug.Test.conn(
+      :post,
+      "/v1/comma/workspaces/#{workspace}/composio/#{action}",
+      Jason.encode!(params)
+    )
+    |> Plug.Conn.put_req_header("content-type", "application/json")
+    |> Plug.Conn.put_req_header("x-comma-session-transport", "bearer")
+    |> Plug.Conn.put_req_header("authorization", "Bearer " <> token)
+    |> CommaWeb.Router.call(CommaWeb.Router.init([]))
+  end
+
+  test "HTTP commands preserve forbidden and missing workspace semantics", c do
+    {:ok, outsider} =
+      Comma.Accounts.create_user(%{
+        "email" => "outsider-#{System.unique_integer([:positive])}@comma.test"
+      })
+
+    {:ok, stranger_session} = Comma.Accounts.create_session(outsider["id"])
+    assert post_command(stranger_session["token"], c.w["id"], "grant").status == 403
+    {:ok, session} = Comma.Accounts.create_session(c.user["id"])
+    assert post_command(session["token"], "wsp_missing", "grant").status == 404
+    assert post_command(session["token"], c.w["id"], "unknown").status == 422
+  end
+
+  test "HTTP commands retain provisioning retry guidance and unavailable workspace status", c do
+    {:ok, session} = Comma.Accounts.create_session(c.user["id"])
+    workspace = Comma.Repo.get!(Comma.Data.Workspace, c.w["id"])
+
+    for {status, expected} <- [{"provisioning", 202}, {"suspended", 503}] do
+      workspace |> Ecto.Changeset.change(status: status) |> Comma.Repo.update!()
+      response = post_command(session["token"], c.w["id"], "grant")
+      assert response.status == expected
+
+      if status == "provisioning",
+        do: assert(Plug.Conn.get_resp_header(response, "retry-after") != [])
+    end
+  end
+
+  test "HTTP commands report invalid cursors as a bad request", c do
+    {:ok, session} = Comma.Accounts.create_session(c.user["id"])
+    assert post_command(session["token"], c.w["id"], "approvals", %{"cursor" => 1}).status == 400
+  end
+
+  test "HTTP commands reject replay of a settled decision as a conflict", c do
+    {:ok, session} = Comma.Accounts.create_session(c.user["id"])
+
+    {:ok, request} =
+      SalixAgent.CapabilityRequests.create_capability_request(%{
+        "source_agent_id" => c.w["router_agent_id"],
+        "source_session_id" => SalixStore.Ids.new_session_id(),
+        "tool_call_id" => "review-#{System.unique_integer([:positive])}",
+        "request_type" => "composio_execution",
+        "request_payload" => %{"user_id" => c.user["id"]}
+      })
+
+    params = %{"request_id" => request["request_id"], "approved" => false}
+    assert post_command(session["token"], c.w["id"], "decide", params).status == 200
+
+    assert post_command(session["token"], c.w["id"], "decide", Map.put(params, "approved", true)).status ==
+             409
+
+    assert Agent.get(c.provider, & &1.deleted) == []
+  end
+
   test "explicit project mode browses its authenticated catalog with display fields", c do
     assert {:ok, _} = command(c, "project", %{"api_key" => "test-project-key"})
 

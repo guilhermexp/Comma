@@ -2723,9 +2723,30 @@ defmodule CommaWeb.Router do
              ) do
         send_json(conn, 200, result)
       else
-        {:error, reason} when is_atom(reason) -> send_error(conn, 422, reason)
-        {:error, _} -> send_error(conn, 502, :composio_unavailable)
-        _ -> send_error(conn, 403, :composio_access_denied)
+        {:error, reason}
+        when reason in [
+               :forbidden,
+               :not_found,
+               :workspace_provisioning,
+               :workspace_unavailable,
+               :workspace_provisioning_failed
+             ] ->
+          comma_error(conn, reason)
+
+        {:error, {:conflict, _} = reason} ->
+          comma_error(conn, reason)
+
+        {:error, {:bad_request, _} = reason} ->
+          comma_error(conn, reason)
+
+        {:error, reason} when is_atom(reason) ->
+          send_error(conn, 422, reason)
+
+        {:error, _} ->
+          send_error(conn, 502, :composio_unavailable)
+
+        _ ->
+          send_error(conn, 403, :composio_access_denied)
       end
     end)
   end

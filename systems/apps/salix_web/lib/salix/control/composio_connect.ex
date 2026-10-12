@@ -262,7 +262,7 @@ defmodule Salix.Control.ComposioConnect do
 
   def execute(_, _, _, _, _, _), do: {:error, :composio_access_denied}
 
-  # One finite MCP exchange per UI action. No background per-account poller.
+  # Bounded MCP exchanges per UI action. No background per-account poller.
   # Session headers are private transport state, never a credential-mode fallback.
   def schemas(tenant, group, user) do
     with {:ok, result} <- request(tenant, group, user, "tools/list", %{}),
@@ -313,15 +313,16 @@ defmodule Salix.Control.ComposioConnect do
     with {:ok, headers} <- RemoteMCPOAuth.composio_headers(tenant, group, user),
          {:ok, profile} <- Access.profile(tenant, group, user),
          config = %{"url" => endpoint(), "headers" => headers},
-         {:ok, session_headers} <- session(config, profile),
-         :ok <- authorize_effect.(),
-         {:ok, result, _} <- client().request(config, method, params, session_headers, 15_000),
-         {:ok, _} <-
-           Access.update_profile(tenant, group, user, fn current ->
-             if current["connection_id"] == profile["connection_id"],
-               do: {:ok, Map.put(current, "mcp_session_headers", session_headers)},
-               else: {:error, :composio_sign_in_required}
-           end) do
+         {:ok, result} <-
+           request_session(
+             {tenant, group, user},
+             config,
+             profile,
+             method,
+             params,
+             authorize_effect,
+             true
+           ) do
       {:ok, result}
     else
       {:error, {:http_error, status, _, _}} when status in [401, 403] ->
@@ -343,6 +344,76 @@ defmodule Salix.Control.ComposioConnect do
         {:error, :invalid_composio_response}
     end
   end
+
+  defp request_session(scope, config, profile, method, params, authorize_effect, retry?) do
+    with {:ok, headers} <- session(config, profile),
+         :ok <- authorize_effect.() do
+      case client().request(config, method, params, headers, 15_000) do
+        {:ok, result, _} ->
+          with {:ok, _} <-
+                 update_session(scope, profile, fn current ->
+                   # Do not overwrite a session recovered by another request.
+                   if current["mcp_session_headers"] == profile["mcp_session_headers"],
+                     do: Map.put(current, "mcp_session_headers", headers),
+                     else: current
+                 end),
+               do: {:ok, result}
+
+        {:error, {:http_error, 404, _, _}} = error ->
+          if is_binary(headers["mcp-session-id"]) do
+            with {:ok, current} <-
+                   update_session(scope, profile, fn current ->
+                     if current["mcp_session_headers"] == headers,
+                       do: Map.delete(current, "mcp_session_headers"),
+                       else: current
+                   end) do
+              # Expired transport sessions are not expired OAuth credentials.
+              # Only an explicitly read-only request with a cached session may
+              # be repeated once. Effects always return the uncertain failure.
+              if retry? and is_map(profile["mcp_session_headers"]) and
+                   safe_session_read?(method, params),
+                 do:
+                   request_session(
+                     scope,
+                     config,
+                     current,
+                     method,
+                     params,
+                     authorize_effect,
+                     false
+                   ),
+                 else: error
+            end
+          else
+            error
+          end
+
+        error ->
+          error
+      end
+    end
+  end
+
+  defp update_session({tenant, group, user}, profile, change) do
+    Access.update_profile(tenant, group, user, fn current ->
+      if current["connection_id"] == profile["connection_id"],
+        do: {:ok, change.(current)},
+        else: {:error, :composio_sign_in_required}
+    end)
+  end
+
+  defp safe_session_read?("tools/list", _), do: true
+
+  defp safe_session_read?("tools/call", %{"name" => name})
+       when name in ~w(COMPOSIO_SEARCH_TOOLS COMPOSIO_GET_TOOL_SCHEMAS), do: true
+
+  defp safe_session_read?("tools/call", %{
+         "name" => "COMPOSIO_MANAGE_CONNECTIONS",
+         "arguments" => %{"toolkits" => [_ | _] = toolkits}
+       }),
+       do: Enum.all?(toolkits, &match?(%{"action" => "list"}, &1))
+
+  defp safe_session_read?(_, _), do: false
 
   defp session(config, profile) do
     case profile["mcp_session_headers"] do

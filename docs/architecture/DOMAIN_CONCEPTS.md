@@ -507,7 +507,8 @@ reuses the persistent subscription storage key for AES-256-GCM encryption. This 
 provider secrets from disclosure in stored objects and rejects ciphertext moved between
 Tenant/record contexts. The backend verifies the authentication tag; the configured
 persistent key is the authority. Missing or changed keys fail closed. Preserve the key
-with its data. Tokens, project keys, PKCE material, and consent links stay out of public
+with its data. The cipher retains the preexisting subscription ciphertext format.
+Tokens, project keys, PKCE material, and consent links stay out of public
 account DTOs. The renderer receives a consent URL only for the requested browser action.
 
 [The desktop API](../../systems/apps/comma_web/lib/comma_web/composio_connect.ex)
@@ -566,6 +567,10 @@ runs on render. Login polls once every two seconds for at most ten minutes, with
 request in flight per window. Account verification and approval refresh are explicit.
 There is no timer per account. Connect uses existing MCP transport and Platform uses
 the existing REST adapter; neither mode falls back to another credential type.
+An MCP session 404 clears only the matching cached transport session. Discovery reads
+may initialize a new session and retry once. Account add, remove, rename, reconnect,
+and tool execution never retry automatically. Session expiry does not require a new
+OAuth consent. A concurrent connection or newer cached session is not cleared.
 
 ### Miniskill activation
 
