@@ -64,6 +64,30 @@ defmodule Salix.Control.ComposioConnectTest do
             })
           end
 
+        "/api/" <> _ ->
+          Agent.update(
+            state,
+            &Map.update!(&1, :calls, fn calls -> [{conn.method, conn.request_path} | calls] end)
+          )
+
+          case {conn.method, conn.request_path} do
+            {"GET", "/api/v3/connected_accounts/selected"} ->
+              json(conn, %{
+                "id" => "selected",
+                "user_id" => "comma:group:member",
+                "status" => "ACTIVE"
+              })
+
+            {"POST", "/api/v3.1/tool_router/session"} ->
+              json(conn, %{"session_id" => "prepared"})
+
+            {"DELETE", "/api/v3.1/tool_router/session/prepared"} ->
+              json(conn, %{})
+
+            _ ->
+              send_resp(conn, 500, "unexpected effect")
+          end
+
         "/mcp" ->
           if get_req_header(conn, "authorization") == ["Bearer private-test-access"] do
             {:ok, raw, conn} = read_body(conn)
@@ -138,6 +162,7 @@ defmodule Salix.Control.ComposioConnectTest do
   setup do
     entries = [
       {:salix_store, :s3_backend},
+      {:salix_store, :composio_base_url_override},
       {:salix_agent, :subscription_storage_key},
       {:salix_web, :composio_connect_endpoint},
       {:salix_web, :comma_oauth_commit_mod},
@@ -180,7 +205,7 @@ defmodule Salix.Control.ComposioConnectTest do
       end)
     end)
 
-    %{state: state}
+    %{state: state, base: "http://127.0.0.1:#{port}"}
   end
 
   defp start,
@@ -203,6 +228,32 @@ defmodule Salix.Control.ComposioConnectTest do
     refute inspect(S3.Fake.dump()) =~ "private-test-refresh"
     assert {:ok, _} = start()
     assert Agent.get(c.state, & &1.registrations) == 1
+  end
+
+  test "project authorization revoked after session preparation submits no effect and cleans up",
+       c do
+    Application.put_env(:salix_store, :composio_base_url_override, c.base)
+
+    {:ok, _} =
+      ComposioAccess.put_project_settings("tenant", "group", "member", %{"api_key" => "test-key"})
+
+    local = %{"id" => "selected", "toolkit" => "github", "mode" => "project"}
+
+    tools = [
+      %{"tool_slug" => "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER", "arguments" => %{}}
+    ]
+
+    assert {:error, :revoked} =
+             ComposioConnect.execute("tenant", "group", "member", local, tools, fn ->
+               assert {"POST", "/api/v3.1/tool_router/session"} in Agent.get(c.state, & &1.calls)
+               {:error, :revoked}
+             end)
+
+    assert Enum.reverse(Agent.get(c.state, & &1.calls)) == [
+             {"GET", "/api/v3/connected_accounts/selected"},
+             {"POST", "/api/v3.1/tool_router/session"},
+             {"DELETE", "/api/v3.1/tool_router/session/prepared"}
+           ]
   end
 
   test "an ambiguous profile commit preserves the selected encrypted credential" do
@@ -349,7 +400,9 @@ defmodule Salix.Control.ComposioConnectTest do
 
     actions = [%{"tool_slug" => tool["slug"], "arguments" => %{"per_page" => 1}}]
     local = %{"id" => "selected", "toolkit" => "github", "mode" => "connect"}
-    assert {:ok, _} = ComposioConnect.execute("tenant", "group", "member", local, actions)
+
+    assert {:ok, _} =
+             ComposioConnect.execute("tenant", "group", "member", local, actions, fn -> :ok end)
 
     executions =
       Agent.get(
@@ -361,13 +414,23 @@ defmodule Salix.Control.ComposioConnectTest do
     assert execution["arguments"]["tools"] == [Map.put(hd(actions), "account", "selected")]
     assert execution["arguments"]["sync_response_to_workbench"] == false
 
+    # Authorization is checked after provider preparation, before the effect.
+    calls_before = length(Agent.get(c.state, & &1.calls))
+
+    assert {:error, :revoked} =
+             ComposioConnect.execute("tenant", "group", "member", local, actions, fn ->
+               assert length(Agent.get(c.state, & &1.calls)) > calls_before
+               {:error, :revoked}
+             end)
+
     assert {:error, :composio_account_not_owned} =
              ComposioConnect.execute(
                "tenant",
                "group",
                "member",
                Map.put(local, "id", "foreign"),
-               actions
+               actions,
+               fn -> :ok end
              )
 
     assert length(
@@ -473,7 +536,9 @@ defmodule Salix.Control.ComposioConnectTest do
                ComposioConnect.call("tenant", "group", "member", "COMPOSIO_SEARCH_TOOLS", %{})
     end
 
-    assert {:error, :composio_tool_not_allowed} =
-             ComposioConnect.call("tenant", "group", "member", "COMPOSIO_REMOTE_BASH_TOOL", %{})
+    for tool <- ~w(COMPOSIO_REMOTE_BASH_TOOL COMPOSIO_MULTI_EXECUTE_TOOL) do
+      assert {:error, :composio_tool_not_allowed} =
+               ComposioConnect.call("tenant", "group", "member", tool, %{})
+    end
   end
 end

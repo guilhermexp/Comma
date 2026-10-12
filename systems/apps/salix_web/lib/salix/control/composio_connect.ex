@@ -5,6 +5,17 @@ defmodule Salix.Control.ComposioConnect do
   alias SalixStore.ComposioAccess, as: Access
   alias SalixMCP.RemoteClient
 
+  @impl true
+  def authorize_member(tenant, group, user) do
+    case Application.get_env(:salix_web, :comma_oauth_commit_mod) do
+      module when is_atom(module) and not is_nil(module) ->
+        module.authorize_composio_member(tenant, group, user)
+
+      _ ->
+        {:error, :composio_access_denied}
+    end
+  end
+
   def discover(tenant, group, user, query) do
     with {:ok, response} <-
            call(tenant, group, user, "COMPOSIO_SEARCH_TOOLS", %{
@@ -144,7 +155,7 @@ defmodule Salix.Control.ComposioConnect do
 
   defp valid_tool?({slug, %{"toolkit" => toolkit} = tool}),
     do:
-      is_binary(slug) and String.match?(slug, ~r/^[A-Z][A-Z0-9_]{1,180}$/) and
+      is_binary(slug) and String.match?(slug, ~r/^[A-Z0-9_]{1,180}$/) and
         is_binary(toolkit) and String.match?(toolkit, ~r/^[A-Za-z0-9_]{1,100}$/) and
         (is_nil(tool["description"]) or is_binary(tool["description"]))
 
@@ -181,7 +192,7 @@ defmodule Salix.Control.ComposioConnect do
   end
 
   @impl true
-  def execute(tenant, group, user, %{"mode" => "project"} = account, tools) do
+  def execute(tenant, group, user, %{"mode" => "project"} = account, tools, authorize_effect) do
     with {:ok, %{"mode" => "project", "status" => "connected"}} <-
            Access.profile(tenant, group, user),
          {:ok, settings} <- Access.project_settings(tenant, group, user),
@@ -199,18 +210,20 @@ defmodule Salix.Control.ComposioConnect do
       # One finite provider request. Every inner action was checked by the
       # broker before creating this account/tool-restricted session.
       try do
-        case tools do
-          [tool] ->
-            SalixStore.Composio.execute_action_session(
-              settings,
-              session,
-              account["id"],
-              tool["tool_slug"],
-              tool["arguments"]
-            )
+        with :ok <- authorize_effect.() do
+          case tools do
+            [tool] ->
+              SalixStore.Composio.execute_action_session(
+                settings,
+                session,
+                account["id"],
+                tool["tool_slug"],
+                tool["arguments"]
+              )
 
-          _ ->
-            SalixStore.Composio.execute_action_batch(settings, session, account["id"], tools)
+            _ ->
+              SalixStore.Composio.execute_action_batch(settings, session, account["id"], tools)
+          end
         end
       after
         _ = SalixStore.Composio.delete_proxy_session(settings, session)
@@ -220,7 +233,7 @@ defmodule Salix.Control.ComposioConnect do
     end
   end
 
-  def execute(tenant, group, user, %{"mode" => "connect"} = local, tools) do
+  def execute(tenant, group, user, %{"mode" => "connect"} = local, tools, authorize_effect) do
     with {:ok, %{"mode" => "connect", "status" => "connected"}} <-
            Access.profile(tenant, group, user),
          {:ok, %{"status" => "ACTIVE"}} <-
@@ -228,19 +241,26 @@ defmodule Salix.Control.ComposioConnect do
          {:ok, workflow} <-
            discover(tenant, group, user, "Use " <> Enum.map_join(tools, ", ", & &1["tool_slug"])),
          session when is_binary(session) <- workflow["session_id"] do
-      call(tenant, group, user, "COMPOSIO_MULTI_EXECUTE_TOOL", %{
-        "tools" => Enum.map(tools, &Map.put(&1, "account", local["id"])),
-        "sync_response_to_workbench" => false,
-        "session_id" => session,
-        "current_step" => "EXECUTING_APPROVED_ACTION"
-      })
+      call(
+        tenant,
+        group,
+        user,
+        "COMPOSIO_MULTI_EXECUTE_TOOL",
+        %{
+          "tools" => Enum.map(tools, &Map.put(&1, "account", local["id"])),
+          "sync_response_to_workbench" => false,
+          "session_id" => session,
+          "current_step" => "EXECUTING_APPROVED_ACTION"
+        },
+        authorize_effect
+      )
     else
       {:error, _} = error -> error
       _ -> {:error, :composio_access_denied}
     end
   end
 
-  def execute(_, _, _, _, _), do: {:error, :composio_access_denied}
+  def execute(_, _, _, _, _, _), do: {:error, :composio_access_denied}
 
   # One finite MCP exchange per UI action. No background per-account poller.
   # Session headers are private transport state, never a credential-mode fallback.
@@ -256,9 +276,22 @@ defmodule Salix.Control.ComposioConnect do
   end
 
   def call(tenant, group, user, name, arguments)
-      when name in ~w(COMPOSIO_SEARCH_TOOLS COMPOSIO_GET_TOOL_SCHEMAS COMPOSIO_MANAGE_CONNECTIONS COMPOSIO_WAIT_FOR_CONNECTIONS COMPOSIO_MULTI_EXECUTE_TOOL) do
+      when name in ~w(COMPOSIO_SEARCH_TOOLS COMPOSIO_GET_TOOL_SCHEMAS COMPOSIO_MANAGE_CONNECTIONS COMPOSIO_WAIT_FOR_CONNECTIONS),
+      do: call(tenant, group, user, name, arguments, fn -> :ok end)
+
+  def call(_, _, _, _, _), do: {:error, :composio_tool_not_allowed}
+
+  defp call(tenant, group, user, name, arguments, authorize_effect)
+       when name in ~w(COMPOSIO_SEARCH_TOOLS COMPOSIO_GET_TOOL_SCHEMAS COMPOSIO_MANAGE_CONNECTIONS COMPOSIO_WAIT_FOR_CONNECTIONS COMPOSIO_MULTI_EXECUTE_TOOL) do
     with {:ok, result} <-
-           request(tenant, group, user, "tools/call", %{"name" => name, "arguments" => arguments}),
+           request(
+             tenant,
+             group,
+             user,
+             "tools/call",
+             %{"name" => name, "arguments" => arguments},
+             authorize_effect
+           ),
          false <- result["isError"] == true do
       with {:ok, decoded} <- decode_result(result),
            false <-
@@ -274,13 +307,14 @@ defmodule Salix.Control.ComposioConnect do
     end
   end
 
-  def call(_, _, _, _, _), do: {:error, :composio_tool_not_allowed}
+  defp call(_, _, _, _, _, _), do: {:error, :composio_tool_not_allowed}
 
-  defp request(tenant, group, user, method, params) do
+  defp request(tenant, group, user, method, params, authorize_effect \\ fn -> :ok end) do
     with {:ok, headers} <- RemoteMCPOAuth.composio_headers(tenant, group, user),
          {:ok, profile} <- Access.profile(tenant, group, user),
          config = %{"url" => endpoint(), "headers" => headers},
          {:ok, session_headers} <- session(config, profile),
+         :ok <- authorize_effect.(),
          {:ok, result, _} <- client().request(config, method, params, session_headers, 15_000),
          {:ok, _} <-
            Access.update_profile(tenant, group, user, fn current ->

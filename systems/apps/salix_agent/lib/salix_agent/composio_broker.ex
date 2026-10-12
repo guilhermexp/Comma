@@ -8,9 +8,11 @@ defmodule SalixAgent.ComposioBroker do
   alias SalixAgent.{OAuthStore, CapabilityRequests, CapabilityRequestStore, Waits}
   @wait 600
 
+  @callback authorize_member(String.t(), String.t(), String.t()) :: :ok | {:error, term()}
+
   @callback schema(String.t(), String.t(), String.t(), map(), [String.t()]) ::
               {:ok, map()} | {:error, term()}
-  @callback execute(String.t(), String.t(), String.t(), map(), [map()]) ::
+  @callback execute(String.t(), String.t(), String.t(), map(), [map()], (-> :ok | {:error, term()})) ::
               {:ok, map()} | {:error, term()}
 
   def defs do
@@ -50,9 +52,9 @@ defmodule SalixAgent.ComposioBroker do
           end
         end)
 
-      private_result(
+      SalixAgent.IFC.ConnectorLabels.group_audience(
         Jason.encode!(%{"accounts" => items, "next_cursor" => page["next_cursor"]}),
-        ctx
+        Map.put(ctx, :group_id, scope.group_id)
       )
     else
       _ -> raise "Composio access unavailable"
@@ -66,7 +68,10 @@ defmodule SalixAgent.ComposioBroker do
          true <- Enum.all?(tools, &(&1 in grant["tools"])),
          {:ok, result} <-
            transport().schema(scope.tenant, scope.group_id, grant["user_id"], account, tools) do
-      private_result(Jason.encode!(result), ctx)
+      SalixAgent.IFC.ConnectorLabels.group_audience(
+        Jason.encode!(result),
+        Map.put(ctx, :group_id, scope.group_id)
+      )
     else
       _ -> raise "Composio schema access denied or unavailable"
     end
@@ -161,13 +166,47 @@ defmodule SalixAgent.ComposioBroker do
          {:ok, account} <-
            Access.account(scope.tenant, scope.group_id, payload["user_id"], payload["account_id"]),
          true <- account["mode"] == payload["mode"],
+         :ok <- transport().authorize_member(scope.tenant, scope.group_id, payload["user_id"]),
          tools when is_list(tools) and length(tools) in 1..50 <- payload["tools"],
          :ok <- authorize_batch(scope, agent_id, payload["user_id"], account["id"], tools),
          {:ok, result} <-
-           transport().execute(scope.tenant, scope.group_id, payload["user_id"], account, tools) do
+           transport().execute(
+             scope.tenant,
+             scope.group_id,
+             payload["user_id"],
+             account,
+             tools,
+             fn -> authorize_effect(request) end
+           ) do
       {:ok, result}
     else
       _ -> {:error, :composio_execution_denied_or_uncertain}
+    end
+  end
+
+  # Provider account/session preparation can yield to revocation. The adapter
+  # must call this again immediately before submitting the actual action.
+  defp authorize_effect(request) do
+    payload = request["request_payload"]
+    agent_id = request["source_agent_id"]
+
+    with {:ok, current} <- scope(agent_id),
+         true <-
+           current.tenant == request["tenant_id"] and current.group_id == request["group_id"],
+         :ok <- transport().authorize_member(current.tenant, current.group_id, payload["user_id"]),
+         {:ok, account} <-
+           Access.account(
+             current.tenant,
+             current.group_id,
+             payload["user_id"],
+             payload["account_id"]
+           ),
+         true <- account["mode"] == payload["mode"],
+         :ok <-
+           authorize_batch(current, agent_id, payload["user_id"], account["id"], payload["tools"]) do
+      :ok
+    else
+      _ -> {:error, :composio_access_denied}
     end
   end
 
@@ -204,24 +243,20 @@ defmodule SalixAgent.ComposioBroker do
   defp permitted_account(scope, agent, grant) do
     case grant["tools"] do
       [tool | _] ->
-        Access.authorize(
-          scope.tenant,
-          scope.group_id,
-          agent,
-          grant["user_id"],
-          grant["account_id"],
-          tool
-        )
+        with :ok <- transport().authorize_member(scope.tenant, scope.group_id, grant["user_id"]) do
+          Access.authorize(
+            scope.tenant,
+            scope.group_id,
+            agent,
+            grant["user_id"],
+            grant["account_id"],
+            tool
+          )
+        end
 
       _ ->
         {:error, :composio_access_denied}
     end
-  end
-
-  defp private_result(content, ctx) do
-    if is_map(Map.get(ctx, :ifc)),
-      do: {:tool_ifc, content, [], %{"label" => SalixAgent.IFC.Context.private_wire()}},
-      else: content
   end
 
   defp scope(agent), do: OAuthStore.impl().agent_oauth_context(agent)

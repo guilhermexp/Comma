@@ -448,7 +448,7 @@ It does not create another tenant or credential identity. See [storage and recov
 
 | Concept | Meaning and boundary |
 | --- | --- |
-| Capability Request | An existing durable permission, location, OAuth, runtime-auth, IFC, or personal Composio action request. Its owner stores expiry and the winning result; the Session separately owns execution and result publication. |
+| Capability Request | An existing durable permission, location, OAuth, runtime-auth, IFC, or Composio action request. Its owner stores expiry and the winning result; the Session separately owns execution and result publication. |
 | Tool / Provider Operation | An operation available to an Agent. An invocation is not a durable capability definition. |
 | Skill | Instructions and resources projected into runtime files. Packaged built-ins belong to the running node. Stored user skills overlay them. Regular skills preload catalog entries. Miniskills use per-message selection. |
 | Plugin Definition | A capability package with metadata and references. Referenced domains still own their resources. |
@@ -481,9 +481,9 @@ It ignores previously stored global entries with `origin: builtin`, without dele
 Copying a built-in creates durable blobs and a user-owned skill. Copies remain available after the source leaves a later release.
 Plugin visibility, write authorization, and user-skill ownership remain unchanged. Built-ins follow each node's image during a rolling deployment.
 
-### Personal Composio access
+### Composio Connect access
 
-Personal Composio reuses OAuth credentials, provider account references, Agent grants,
+Composio Connect reuses OAuth credentials, provider account references, Agent grants,
 and Capability Requests. It adds no independent identity or lifecycle owner.
 [ComposioAccess](../../systems/apps/salix_store/lib/salix_store/composio_access.ex)
 owns the relationship for one Tenant, Group, and authenticated Comma member.
@@ -491,6 +491,10 @@ A tenant-wide Composio setting cannot represent this member boundary. The privat
 settings projection selects either Connect OAuth or an explicit project key.
 Changing mode does not copy credentials or grant access to accounts in the other mode.
 The existing Group Composio configuration and native plugin connections stay separate.
+Credentials and consent remain member-owned. An explicit Agent grant records the Group
+as the result audience. Before saving it, the owner confirms that the selected Agent
+may use these actions and that results may appear in workspace conversations. Login
+alone does not share an account. A grant without this audience provenance cannot execute.
 
 [RemoteMCPOAuth](../../systems/apps/salix_web/lib/salix/control/remote_mcp_oauth.ex)
 owns Connect registration, PKCE, callback state, refresh, and the existing encrypted
@@ -507,11 +511,23 @@ with its data. Tokens, project keys, PKCE material, and consent links stay out o
 account DTOs. The renderer receives a consent URL only for the requested browser action.
 
 [The desktop API](../../systems/apps/comma_web/lib/comma_web/composio_connect.ex)
-requires the workspace owner. Connect discovery uses authenticated MCP search results;
-project mode uses paginated Platform REST. Both provide app and action selectors.
-Search results and provider instructions do not grant permission. Remote custom OAuth
-application setup is not provided by this panel. Configure such applications at Composio.
-The panel does not add triggers or replace existing trigger authorization.
+requires the workspace owner. Plugins → Integrations uses the incumbent catalog rows
+and detail components for native and Composio connectors. Name search and paginated
+Show all browse the full catalog. Connect uses public metadata; explicit project mode
+uses the project-authenticated REST catalog and tool pages. Setup, account controls, and named
+permission choices stay inside the selected connector's detail flow. Exact IDs remain
+internal. Catalog metadata and provider instructions do not grant execution permission.
+
+[ComposioCatalog](../../systems/apps/salix_web/lib/salix/control/composio_catalog.ex)
+reads the official public `https://composio.dev/toolkits` metadata. Connect OAuth does
+not imply Platform REST rights. The public page's structured hydration data is not a
+versioned API: format drift produces a visible retry error, while native integrations
+remain usable. Tool names come from the selected connector's official Markdown page.
+A node-local cache serializes misses, bounds each fetch to 15 seconds and 8 MiB, and
+retains projections for 15 minutes within a shared 16 MiB budget. Pages contain at most
+20 items. No per-connector catalog fanout runs on render. Provider logos use Composio's
+public logo endpoint. Custom OAuth application setup stays at Composio. This flow does
+not add triggers or replace existing trigger authorization.
 
 Provider account IDs are external references within the member relationship.
 Opening a consent URL leaves the account pending. Explicit verification confirms its
@@ -527,7 +543,8 @@ and sibling accounts are outside these operations.
 resolves Tenant and Group from the authenticated Agent. It lists only that Agent's
 current grants and serves schemas only for granted tool IDs. Account selection names
 one exact provider account. The broker checks every inner action before it creates a
-Capability Request, and rechecks the current grant immediately before dispatch.
+Capability Request, and rechecks current workspace membership and the grant immediately
+before dispatch. Membership loss also removes account and schema projections.
 Each action or batch requires the member's confirmation of the exact arguments.
 Connection status alone grants nothing. Remote bash, workbench, proxy tools, and remote
 skills cannot substitute for a grant. All provider instructions remain untrusted data.
@@ -535,12 +552,13 @@ The existing request settlement CAS selects one decision winner. It stores the p
 result before asynchronous Session delivery. Recovery never repeats execution.
 An uncertain result requires inspection at the provider before a new user decision.
 Dispatch has a 90-second total deadline; settlement reserves 120 seconds. A local
-timeout cannot prove that a remote effect stopped. Personal results use the existing
-agent-private IFC label when labeling is active, including asynchronous recovery.
-The grant does not establish a Group-wide audience. Under IFC enforcement,
-agent-private results cannot flow to human recipients or external effects. The
-existing declassification flow cannot lift this label because it has no human
-readers. No member-specific audience label is invented.
+timeout cannot prove that a remote effect stopped. After the explicit workspace grant,
+account projections, schemas, and successful results use the existing Group IFC audience
+from trusted Agent scope. Persisted asynchronous results retain that label on recovery.
+No unshared personal record receives a Group label. Local account discovery and public
+schema lookup are reads. Execution remains public egress: workspace-sourced arguments
+still need the existing IFC declassification approval. A connector grant does not bypass
+that rule. No new audience entity or label is introduced.
 
 Requests have at most 50 inner tools and 64 KiB of encoded arguments. Catalog pages,
 account pages, grant pages, and approval pages are bounded; no full member/account scan

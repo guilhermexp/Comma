@@ -487,7 +487,11 @@ defmodule SalixAgent.IFC.Destination do
 
       # Discovery reads the group's stored binding projection; it does not call
       # the remote server. Returned metadata keeps its connector audience label.
-      name == "mcp.list" ->
+      # Personal account discovery is a grant-filtered local projection. Schema
+      # lookup sends only validated public tool identifiers; neither sends user
+      # content. Execution below remains public egress and needs normal IFC
+      # approval for workspace-sourced arguments.
+      name in ~w(mcp.list composio.personal_accounts composio.personal_schema) ->
         {:read, %{}}
 
       String.starts_with?(name, "mcp.") or String.starts_with?(name, "composio.") ->

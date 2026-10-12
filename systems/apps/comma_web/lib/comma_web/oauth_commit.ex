@@ -4,6 +4,18 @@ defmodule CommaWeb.OAuthCommit do
   alias Comma.{PluginInstallAttempts, Repo}
   alias Comma.Data.{Workspace, WorkspaceMembership}
 
+  # Used by the Composio broker at projection and effect time. A stored grant
+  # cannot preserve access after its owner loses workspace membership.
+  def authorize_composio_member(tenant, group, user) do
+    with {:ok, workspace} <- Comma.Workspaces.get_by_group(group),
+         true <- workspace["salix_tenant_id"] == tenant,
+         {:ok, _} <- Comma.Workspaces.authorize_group_owner(workspace["id"], group, user) do
+      :ok
+    else
+      _ -> {:error, :composio_access_denied}
+    end
+  end
+
   # Personal Connect has no plugin install attempt. The member/profile CAS owns
   # cancellation; the workspace lock rechecks the live authenticated owner scope.
   def run(

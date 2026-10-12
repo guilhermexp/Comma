@@ -11,13 +11,25 @@ defmodule SalixAgent.ComposioBrokerTest do
   end
 
   defmodule Transport do
-    def execute(tenant, group, user, account, tools) do
-      send(
-        Application.fetch_env!(:salix_agent, :composio_effect_test_pid),
-        {:effect, tenant, group, user, account["id"], tools}
-      )
+    def authorize_member(_, _, _) do
+      if Application.get_env(:salix_agent, :composio_member_revoked, false),
+        do: {:error, :revoked},
+        else: :ok
+    end
 
-      {:ok, %{"data" => "provider result"}}
+    def schema(_, _, _, _, tools), do: {:ok, %{"tools" => tools}}
+
+    def execute(tenant, group, user, account, tools, authorize_effect) do
+      Application.get_env(:salix_agent, :composio_prepare_hook, fn -> :ok end).()
+
+      with :ok <- authorize_effect.() do
+        send(
+          Application.fetch_env!(:salix_agent, :composio_effect_test_pid),
+          {:effect, tenant, group, user, account["id"], tools}
+        )
+
+        {:ok, %{"data" => "provider result"}}
+      end
     end
   end
 
@@ -26,7 +38,9 @@ defmodule SalixAgent.ComposioBrokerTest do
       {:salix_store, :s3_backend},
       {:salix_agent, :oauth_store_mod},
       {:salix_agent, :personal_composio_transport},
-      {:salix_agent, :composio_effect_test_pid}
+      {:salix_agent, :composio_effect_test_pid},
+      {:salix_agent, :composio_member_revoked},
+      {:salix_agent, :composio_prepare_hook}
     ]
 
     previous = Enum.map(entries, fn {app, key} -> {app, key, Application.get_env(app, key)} end)
@@ -40,6 +54,7 @@ defmodule SalixAgent.ComposioBrokerTest do
     Application.put_env(:salix_agent, :oauth_store_mod, Scope)
     Application.put_env(:salix_agent, :personal_composio_transport, Transport)
     Application.put_env(:salix_agent, :composio_effect_test_pid, self())
+    Application.put_env(:salix_agent, :composio_member_revoked, false)
     tenant = SalixAgent.TestSupport.new_tenant_id()
     group = Ids.new_group_id(tenant)
 
@@ -113,17 +128,26 @@ defmodule SalixAgent.ComposioBrokerTest do
     refute_received {:effect, _, _, _, _, _}
   end
 
-  test "personal account data and asynchronous provider results retain a private audience", c do
-    ctx = Map.put(c.ctx, :ifc, %{})
+  test "explicitly shared account metadata and provider results retain the trusted Group audience",
+       c do
+    ctx = c.ctx |> Map.put(:ifc, %{}) |> Map.put(:group_id, "untrusted-group")
+    {:ok, group_label} = SalixIFC.Codec.encode_atom({:group, c.group})
 
-    assert {:tool_ifc, content, [], %{"label" => ["agent_private"]}} =
+    assert {:tool_ifc, content, [], %{"label" => [^group_label]}} =
              ComposioBroker.accounts(%{}, ctx)
 
     assert Jason.decode!(content)["accounts"] |> Enum.any?(&(&1["account_id"] == "account-a"))
+
+    assert {:tool_ifc, _, [], %{"label" => [^group_label]}} =
+             ComposioBroker.schema(
+               %{"account_id" => "account-a", "tool_slugs" => ["GMAIL_FETCH_EMAILS"]},
+               ctx
+             )
+
     {pending, _} = ComposioBroker.execute(args(), ctx)
     id = Jason.decode!(pending)["request_id"]
     assert {:ok, done} = decide(c, id, true)
-    assert done["result"]["ifc"] == %{"label" => ["agent_private"]}
+    assert done["result"]["ifc"] == %{"label" => [group_label]}
     assert {:ok, recovered} = CapabilityRequests.get(c.group, id, c.tenant)
     assert recovered["result"]["ifc"] == done["result"]["ifc"]
 
@@ -140,7 +164,9 @@ defmodule SalixAgent.ComposioBrokerTest do
                c.ctx.agent_id,
                c.ctx.session_id,
                stored,
-               SalixAgent.AsyncToolResults.operation_source(:internal), store_result: true)
+               SalixAgent.AsyncToolResults.operation_source(:internal),
+               store_result: true
+             )
 
     assert {:ok, restored} =
              SalixAgent.Runtime.get_async_tool_setup_result(
@@ -155,6 +181,62 @@ defmodule SalixAgent.ComposioBrokerTest do
   test "revocation after discovery and approval request blocks dispatch", c do
     id = pending(c)
     {:ok, _} = ComposioAccess.grant(c.tenant, c.group, "member", "account-a", c.ctx.agent_id, [])
+    assert {:ok, done} = decide(c, id, true)
+    assert done["result"]["error"]
+    refute_received {:effect, _, _, _, _, _}
+  end
+
+  test "grant revocation during provider preparation blocks the actual effect", c do
+    id = pending(c)
+
+    Application.put_env(:salix_agent, :composio_prepare_hook, fn ->
+      ComposioAccess.grant(c.tenant, c.group, "member", "account-a", c.ctx.agent_id, [])
+    end)
+
+    assert {:ok, done} = decide(c, id, true)
+    assert done["result"]["error"]
+    refute_received {:effect, _, _, _, _, _}
+  end
+
+  test "membership loss during provider preparation blocks the actual effect", c do
+    id = pending(c)
+
+    Application.put_env(:salix_agent, :composio_prepare_hook, fn ->
+      Application.put_env(:salix_agent, :composio_member_revoked, true)
+    end)
+
+    assert {:ok, done} = decide(c, id, true)
+    assert done["result"]["error"]
+    refute_received {:effect, _, _, _, _, _}
+  end
+
+  test "connected alone reveals no account and grants no schema or execution", c do
+    {:ok, _} = ComposioAccess.grant(c.tenant, c.group, "member", "account-a", c.ctx.agent_id, [])
+    assert Jason.decode!(ComposioBroker.accounts(%{}, c.ctx))["accounts"] == []
+
+    assert_raise RuntimeError, fn ->
+      ComposioBroker.schema(
+        %{"account_id" => "account-a", "tool_slugs" => ["GMAIL_FETCH_EMAILS"]},
+        c.ctx
+      )
+    end
+
+    assert_raise RuntimeError, fn -> ComposioBroker.execute(args(), c.ctx) end
+    refute_received {:effect, _, _, _, _, _}
+  end
+
+  test "membership loss removes the projection and blocks a previously approved action", c do
+    id = pending(c)
+    Application.put_env(:salix_agent, :composio_member_revoked, true)
+    assert Jason.decode!(ComposioBroker.accounts(%{}, c.ctx))["accounts"] == []
+
+    assert_raise RuntimeError, fn ->
+      ComposioBroker.schema(
+        %{"account_id" => "account-a", "tool_slugs" => ["GMAIL_FETCH_EMAILS"]},
+        c.ctx
+      )
+    end
+
     assert {:ok, done} = decide(c, id, true)
     assert done["result"]["error"]
     refute_received {:effect, _, _, _, _, _}

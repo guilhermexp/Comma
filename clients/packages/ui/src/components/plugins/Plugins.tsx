@@ -888,7 +888,8 @@ const PluginCategorySection = ({
 };
 
 export interface PluginCatalogProps {
-  headerActions?: ReactNode;
+  catalogFooter?: ReactNode;
+  searchNamesOnly?: boolean;
   categories: readonly PluginCategory[];
   copy?: Partial<PluginCatalogCopy>;
   installedPlugins?: readonly PluginDefinition[];
@@ -980,7 +981,8 @@ export const PluginCatalog = ({
   defaultTab = "plugins",
   onTabChange,
   className,
-  headerActions,
+  catalogFooter,
+  searchNamesOnly = false,
 }: PluginCatalogProps) => {
   const messages = useCommaMessages();
   const resolvedCopy = { ...defaultPluginCatalogCopy(messages), ...copy };
@@ -1002,8 +1004,11 @@ export const PluginCatalog = ({
   );
 
   const filteredInstalledPlugins = useMemo(
-    () => installedPlugins.filter((plugin) => matchesPlugin(plugin, normalizedQuery)),
-    [installedPlugins, normalizedQuery]
+    () =>
+      installedPlugins.filter((plugin) =>
+        matchesPlugin(plugin, normalizedQuery, searchNamesOnly)
+      ),
+    [installedPlugins, normalizedQuery, searchNamesOnly]
   );
   const filteredCategories = useMemo(
     () =>
@@ -1013,12 +1018,13 @@ export const PluginCatalog = ({
           plugins: category.plugins.filter(
             (plugin) =>
               !installedPluginIds.has(plugin.id) &&
-              (category.name.toLocaleLowerCase().includes(normalizedQuery) ||
-                matchesPlugin(plugin, normalizedQuery))
+              ((!searchNamesOnly &&
+                category.name.toLocaleLowerCase().includes(normalizedQuery)) ||
+                matchesPlugin(plugin, normalizedQuery, searchNamesOnly))
           ),
         }))
         .filter((category) => category.plugins.length > 0),
-    [categories, installedPluginIds, normalizedQuery]
+    [categories, installedPluginIds, normalizedQuery, searchNamesOnly]
   );
   const populatedSkillCategories = useMemo(
     () =>
@@ -1160,7 +1166,6 @@ export const PluginCatalog = ({
                 {resolvedCopy.title}
               </h1>
             )}
-            {headerActions}
           </header>
           <InputField
             aria-label={
@@ -1293,7 +1298,10 @@ export const PluginCatalog = ({
                 })}
               />
             ))}
-            {!hasResults && !(showsSkills && skillsStatus) ? (
+            {!showsSkills ? catalogFooter : null}
+            {!hasResults &&
+            !(showsSkills && skillsStatus) &&
+            !(!showsSkills && catalogFooter) ? (
               <output className="block px-md py-3xl text-center text-sm text-quaternary">
                 {showsSkills ? resolvedCopy.skillsEmptyLabel : resolvedCopy.emptyLabel}
               </output>
@@ -1305,9 +1313,13 @@ export const PluginCatalog = ({
   );
 };
 
-const matchesPlugin = (plugin: PluginDefinition, query: string) => {
+const matchesPlugin = (plugin: PluginDefinition, query: string, namesOnly = false) => {
   if (!query) return true;
-  return `${plugin.name} ${plugin.summary} ${plugin.description ?? ""}`
+  return (
+    namesOnly
+      ? plugin.name
+      : `${plugin.name} ${plugin.summary} ${plugin.description ?? ""}`
+  )
     .toLocaleLowerCase()
     .includes(query);
 };

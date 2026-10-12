@@ -109,6 +109,23 @@ defmodule CommaWeb.ComposioConnectTest do
   defp command(c, action, params),
     do: ComposioConnect.command(c.user, %{}, c.w["id"], action, params)
 
+  test "explicit project mode browses its authenticated catalog with display fields", c do
+    assert {:ok, _} = command(c, "project", %{"api_key" => "test-project-key"})
+
+    assert {:ok,
+            %{
+              "items" => [
+                %{
+                  "slug" => "linear",
+                  "name" => "Linear",
+                  "description" => "",
+                  "logo" => "https://logos.composio.dev/api/linear"
+                }
+              ],
+              "next_cursor" => "next"
+            }} = command(c, "catalog", %{"query" => "Linear"})
+  end
+
   test "project validation is write-only, encrypted, and does not fall back", c do
     assert {:error, :composio_project_validation_failed} =
              command(c, "project", %{"api_key" => "invalid"})
@@ -216,12 +233,26 @@ defmodule CommaWeb.ComposioConnectTest do
       }
     }
 
+    assert :ok =
+             CommaWeb.OAuthCommit.authorize_composio_member(
+               c.w["salix_tenant_id"],
+               c.w["default_group_id"],
+               c.user["id"]
+             )
+
     assert {:ok, :written} = CommaWeb.OAuthCommit.run(auth, fn -> {:ok, :written} end)
 
     Repo.update_all(
       from(m in Comma.Data.WorkspaceMembership, where: m.workspace_id == ^c.w["id"]),
       set: [status: "removed"]
     )
+
+    assert {:error, :composio_access_denied} =
+             CommaWeb.OAuthCommit.authorize_composio_member(
+               c.w["salix_tenant_id"],
+               c.w["default_group_id"],
+               c.user["id"]
+             )
 
     assert {:error, _} =
              CommaWeb.OAuthCommit.run(auth, fn -> flunk("revoked owner must not commit") end)

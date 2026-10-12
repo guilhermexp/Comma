@@ -58,30 +58,32 @@ defmodule CommaWeb.ComposioConnect do
     end
   end
 
-  defp run(s, "search", params) do
-    query = params["query"]
-
-    if is_binary(query) and byte_size(query) in 1..500 do
-      with {:ok, p} <- Access.profile(s.tenant, s.group, s.user) do
-        case p["mode"] do
-          "project" ->
-            with {:ok, settings} <- Access.project_settings(s.tenant, s.group, s.user),
-                 {:ok, page} <-
-                   SalixStore.Composio.list_toolkits_page(settings,
-                     search: query,
-                     cursor: params["cursor"],
-                     limit: 20
-                   ),
-                 do: {:ok, Map.put(page, "kind", "catalog")}
-
-          "connect" ->
-            with {:ok, page} <- Connect.discover(s.tenant, s.group, s.user, query) do
-              {:ok, Map.put(Map.drop(page, ["session_id"]), "kind", "catalog")}
-            end
+  defp run(s, "catalog", params) do
+    with {:ok, profile} <- Access.profile(s.tenant, s.group, s.user) do
+      if profile["mode"] == "project" do
+        with {:ok, settings} <- Access.project_settings(s.tenant, s.group, s.user),
+             {:ok, page} <-
+               SalixStore.Composio.list_toolkits_page(settings,
+                 search: params["query"],
+                 cursor: params["cursor"],
+                 limit: 20
+               ) do
+          {:ok,
+           Map.update!(page, "items", fn items ->
+             Enum.map(items, fn item ->
+               %{
+                 "slug" => item["slug"],
+                 "name" => item["name"],
+                 "description" =>
+                   item["description"] || get_in(item, ["meta", "description"]) || "",
+                 "logo" => "https://logos.composio.dev/api/" <> item["slug"]
+               }
+             end)
+           end)}
         end
+      else
+        Salix.Control.ComposioCatalog.page(params)
       end
-    else
-      {:error, :invalid_query}
     end
   end
 
@@ -153,10 +155,16 @@ defmodule CommaWeb.ComposioConnect do
         {"grant", _} ->
           agent_id = params["agent_id"]
 
+          tools = params["tools"] || []
+
           with true <- is_binary(agent_id),
+               true <- tools == [] or params["share_with_workspace"] == true,
                {:ok, agent} <- SalixAgent.Control.get(agent_id),
-               true <- agent["group_id"] == s.group and agent["tenant_id"] == s.tenant,
-               do: Access.grant(s.tenant, s.group, s.user, id, agent_id, params["tools"] || [])
+               true <- agent["group_id"] == s.group and agent["tenant_id"] == s.tenant do
+            Access.grant(s.tenant, s.group, s.user, id, agent_id, tools)
+          else
+            _ -> {:error, :composio_access_denied}
+          end
 
         _ ->
           {:error, :unsupported_composio_operation}
@@ -177,26 +185,25 @@ defmodule CommaWeb.ComposioConnect do
     end
   end
 
-  defp run(s, "tools", %{"account_id" => id, "query" => query} = params)
-       when is_binary(id) and is_binary(query) and byte_size(query) in 1..500 do
+  defp run(s, "tools", %{"account_id" => id} = params) when is_binary(id) do
     with {:ok, account} <- Access.account(s.tenant, s.group, s.user, id) do
-      if account["mode"] == "connect" do
-        with {:ok, page} <-
-               Connect.discover(s.tenant, s.group, s.user, query <> " in " <> account["toolkit"]),
-             tools = Enum.filter(page["tools"], &(&1["toolkit"] == account["toolkit"])) do
-          {:ok, %{"items" => tools, "next_cursor" => nil}}
-        end
-      else
+      if account["mode"] == "project" do
         with {:ok, settings} <- Access.project_settings(s.tenant, s.group, s.user),
              {:ok, page} <-
                SalixStore.Composio.list_tools_page(settings,
                  toolkit: account["toolkit"],
-                 query: query,
+                 query: params["query"],
                  cursor: params["cursor"]
-               ),
-             tools = Enum.filter(page["items"], &(&1["toolkit"] == account["toolkit"])) do
-          {:ok, Map.put(page, "items", tools)}
+               ) do
+          {:ok,
+           Map.update!(
+             page,
+             "items",
+             &Enum.filter(&1, fn tool -> tool["toolkit"] == account["toolkit"] end)
+           )}
         end
+      else
+        Salix.Control.ComposioCatalog.tools(account["toolkit"], params)
       end
     end
   end
@@ -376,7 +383,7 @@ defmodule CommaWeb.ComposioConnect do
       "accounts" => public_accounts(accounts["items"]),
       "next_cursor" => accounts["next_cursor"],
       "capabilities" => %{
-        "catalog" => profile["mode"] == "project",
+        "catalog" => true,
         "search" => true,
         "account_management" => true
       },

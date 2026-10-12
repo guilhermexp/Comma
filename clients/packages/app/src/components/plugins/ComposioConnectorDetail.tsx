@@ -3,10 +3,11 @@ import { useCommaMessages } from "@comma/i18n/react";
 import {
   Button,
   InputField,
-  ScrollArea,
   ScrollAreaLoadMore,
   PageLoading,
   Dialog,
+  PluginDetail,
+  type PluginDefinition,
 } from "@comma/ui";
 import type { CommaApiClient, ComposioStatus } from "../../api";
 import { composioAccountSchema } from "../../api";
@@ -15,35 +16,34 @@ import { openNativePlatformExternalUrl } from "../../runtime-chat/nativePlatform
 
 import { ComposioAccessPanel } from "./ComposioAccessPanel";
 
-type CatalogItem = {
-  slug: string;
-  name: string;
-  description?: string;
-  has_active_connection?: boolean;
-};
-
-export function ComposioPanel({
+export function ComposioConnectorDetail({
   api,
   workspaceId,
   onBack,
+  plugin,
+  toolkit,
+  startConnecting = false,
 }: {
   api: CommaApiClient;
   workspaceId: string;
   onBack: () => void;
+  plugin: PluginDefinition;
+  toolkit: string;
+  startConnecting?: boolean;
 }) {
   const m = useCommaMessages();
   const [status, setStatus] = useState<ComposioStatus>();
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [advanced, setAdvanced] = useState(false);
+  const [configuring, setConfiguring] = useState(false);
   const [key, setKey] = useState("");
-  const [query, setQuery] = useState("");
-  const [catalog, setCatalog] = useState<CatalogItem[]>();
-  const [cursor, setCursor] = useState<string>();
   const [disconnect, setDisconnect] = useState<{ id: string; name: string }>();
   const [authorization, setAuthorization] = useState<string>();
   const mounted = useRef(true);
   const inFlight = useRef(false);
+  const connectionStarted = useRef(false);
+  const signInStarted = useRef(false);
   const load = useCallback(
     async (signal?: AbortSignal) => {
       const next = await api.getComposio(workspaceId, signal ? { signal } : {});
@@ -141,21 +141,6 @@ export function ComposioPanel({
         );
         return;
       }
-      if (action === "search") {
-        if (result.kind === "catalog" && Array.isArray(result.items)) {
-          const items = result.items.filter(
-            (item): item is CatalogItem =>
-              typeof item === "object" &&
-              item !== null &&
-              typeof item.slug === "string" &&
-              typeof item.name === "string"
-          );
-          setCatalog(params?.cursor ? [...(catalog ?? []), ...items] : items);
-          setCursor(
-            typeof result.next_cursor === "string" ? result.next_cursor : undefined
-          );
-        }
-      }
       await load();
     } catch {
       if (mounted.current) setError(true);
@@ -165,39 +150,56 @@ export function ComposioPanel({
     }
   };
 
+  useEffect(() => {
+    if (!startConnecting || !status) return;
+    if (status.status === "connected" && !connectionStarted.current) {
+      connectionStarted.current = true;
+      void act("connect", { toolkit });
+    } else if (
+      status.mode === "connect" &&
+      status.status !== "pending" &&
+      status.status !== "connected" &&
+      !signInStarted.current
+    ) {
+      signInStarted.current = true;
+      void act("authorize");
+    }
+  });
+
   return (
-    <ScrollArea
-      className="size-full min-h-0 min-w-0"
-      contentClassName="min-h-full"
-      edgeEffect="none"
+    <PluginDetail
+      plugin={plugin}
+      onBack={onBack}
+      backLabel={m.plugins_back()}
+      installLabel={m.composio_connect()}
+      installPending={busy}
+      {...(status?.status === "connected"
+        ? { onInstall: () => void act("connect", { toolkit }) }
+        : {})}
     >
-      <div className="mx-auto flex w-full max-w-[700px] flex-col gap-xl px-3xl py-3xl">
-        <div>
-          <Button hierarchy="tertiary-gray" onPress={onBack} size="sm">
-            {m.plugins_back()}
-          </Button>
-        </div>
-        <h1 className="m-0 text-xl font-medium text-primary">{m.composio_title()}</h1>
-        <p className="m-0 text-sm text-secondary">{m.composio_intro()}</p>
+      <section className="flex flex-col gap-lg px-md">
+        <h2 className="m-0 text-sm font-medium">{m.composio_via()}</h2>
         {error && (
           <div role="alert" className="text-sm text-secondary">
             {m.composio_error()}
           </div>
         )}
         {!status && !error ? <PageLoading label={m.common_loading()} /> : null}
-        <div className="flex flex-wrap gap-md">
-          <Button isDisabled={busy} onPress={() => void act("authorize")}>
-            {m.composio_sign_in()}
-          </Button>
-          <Button
-            hierarchy="secondary-gray"
-            isDisabled={busy}
-            onPress={() => setAdvanced(!advanced)}
-          >
-            {m.composio_project()}
-          </Button>
-        </div>
-        {advanced && (
+        {(status?.status !== "connected" || configuring) && (
+          <div className="flex flex-wrap gap-md">
+            <Button isDisabled={busy} onPress={() => void act("authorize")}>
+              {m.composio_sign_in()}
+            </Button>
+            <Button
+              hierarchy="secondary-gray"
+              isDisabled={busy}
+              onPress={() => setAdvanced(!advanced)}
+            >
+              {m.composio_project()}
+            </Button>
+          </div>
+        )}
+        {advanced && (status?.status !== "connected" || configuring) && (
           <form
             className="flex flex-col gap-md"
             onSubmit={(event) => {
@@ -234,6 +236,17 @@ export function ComposioPanel({
               : m.composio_project_scope()}
           </output>
         )}
+        {status?.status === "connected" && (
+          <div>
+            <Button
+              hierarchy="tertiary-gray"
+              size="sm"
+              onPress={() => setConfiguring(!configuring)}
+            >
+              {m.composio_connection_settings()}
+            </Button>
+          </div>
+        )}
         {(authorization || status?.status === "pending") && (
           <div className="flex flex-wrap gap-md">
             {authorization && (
@@ -256,81 +269,38 @@ export function ComposioPanel({
         {status?.status === "connected" && (
           <>
             {status.mode === "connect" && (
-              <p className="m-0 text-sm text-secondary">{m.composio_capabilities()}</p>
-            )}
-            <form
-              className="flex items-end gap-md"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void act("search", { query });
-              }}
-            >
-              <InputField
-                className="flex-1"
-                label={m.composio_search()}
-                value={query}
-                maxLength={500}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-              <Button type="submit" isDisabled={busy || !query.trim()}>
-                {m.composio_search_action()}
-              </Button>
-            </form>
-            {catalog?.length === 0 && <p>{m.composio_no_results()}</p>}
-            {catalog?.map((item) => (
-              <div
-                key={item.slug}
-                className="flex items-center justify-between gap-lg border-b border-secondary pb-lg"
-              >
-                <div>
-                  <h2 className="m-0 text-sm font-medium">{item.name}</h2>
-                  <p className="m-0 text-sm text-secondary">{item.description}</p>
-                </div>
-                <div className="flex shrink-0 flex-wrap gap-md">
-                  {status.mode === "connect" && item.has_active_connection && (
-                    <Button
-                      hierarchy="secondary-gray"
-                      size="sm"
-                      isDisabled={busy}
-                      onPress={() =>
-                        void act("refresh_accounts", { toolkit: item.slug })
-                      }
-                    >
-                      {m.composio_show_accounts()}
-                    </Button>
-                  )}
-                  <Button
-                    hierarchy="secondary-gray"
-                    size="sm"
-                    isDisabled={busy}
-                    onPress={() => void act("connect", { toolkit: item.slug })}
-                  >
-                    {m.composio_connect()}
-                  </Button>
-                </div>
+              <div>
+                <Button
+                  hierarchy="secondary-gray"
+                  isDisabled={busy}
+                  onPress={() => void act("refresh_accounts", { toolkit })}
+                >
+                  {m.composio_show_accounts()}
+                </Button>
               </div>
-            ))}
-            <ScrollAreaLoadMore
-              hasMore={Boolean(cursor)}
-              loading={busy}
-              failed={error}
-              onLoadMore={() => {
-                if (cursor) void act("search", { query, cursor });
-              }}
-            />
+            )}
             <h2 className="m-0 text-lg font-medium">{m.composio_accounts()}</h2>
-            {status.accounts.length === 0 && (
+            {status.accounts.filter(
+              (account) => account.toolkit === toolkit && account.mode === status.mode
+            ).length === 0 && (
               <p className="m-0 text-sm text-secondary">{m.composio_empty()}</p>
             )}
             {status.accounts
-              .filter((account) => account.mode === status.mode)
+              .filter(
+                (account) => account.mode === status.mode && account.toolkit === toolkit
+              )
               .map((account) => (
                 <div
                   key={account.id}
                   className="flex flex-col gap-md border-b border-secondary pb-lg"
                 >
                   <p className="m-0 text-sm">
-                    {account.name} · {account.id} · {account.status}
+                    {account.name} ·{" "}
+                    {account.status === "ACTIVE"
+                      ? m.composio_connected()
+                      : account.status === "INITIATED"
+                        ? m.composio_pending()
+                        : m.composio_unavailable()}
                   </p>
                   <div className="flex flex-wrap gap-md">
                     {(account.status === "INITIATED"
@@ -380,16 +350,25 @@ export function ComposioPanel({
                   void act("accounts", { cursor: status.next_cursor });
               }}
             />
-            <ComposioAccessPanel
-              api={api}
-              workspaceId={workspaceId}
-              accounts={status.accounts.filter(
-                (account) => account.mode === status.mode
-              )}
-            />
+            {status.accounts.some(
+              (account) =>
+                account.toolkit === toolkit &&
+                account.mode === status.mode &&
+                account.status === "ACTIVE" &&
+                account.enabled
+            ) && (
+              <ComposioAccessPanel
+                api={api}
+                workspaceId={workspaceId}
+                accounts={status.accounts.filter(
+                  (account) =>
+                    account.mode === status.mode && account.toolkit === toolkit
+                )}
+              />
+            )}
           </>
         )}
-      </div>
+      </section>
       <Dialog
         isOpen={Boolean(disconnect)}
         onOpenChange={(open) => {
@@ -398,7 +377,7 @@ export function ComposioPanel({
         isDismissable={!busy}
         title={m.composio_disconnect()}
         description={m.composio_disconnect_confirmation({
-          account: `${disconnect?.name ?? ""} · ${disconnect?.id ?? ""}`,
+          account: disconnect?.name ?? "",
         })}
         actions={[
           {
@@ -421,6 +400,6 @@ export function ComposioPanel({
           },
         ]}
       />
-    </ScrollArea>
+    </PluginDetail>
   );
 }

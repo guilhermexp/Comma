@@ -71,6 +71,7 @@ defmodule SalixWeb.Application do
       {Task.Supervisor, name: SalixWeb.CloudVM.ImageArchiveSupervisor, max_children: 4},
       SalixWeb.CloudVM.ArchiveGC,
       Salix.Control.PluginCatalogCache,
+      Salix.Control.ComposioCatalog,
       # One supervised Redis connection for the global SiteLLM sliding window.
       {SalixWeb.SiteAPI.RateLimit,
        url: Application.fetch_env!(:salix_web, :site_rate_limit_redis_url)},

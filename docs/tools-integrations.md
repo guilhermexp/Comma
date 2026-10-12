@@ -1,7 +1,7 @@
 # Tools and integrations
 
 [UI](clients.md#chat-dynamic-ui).
-[Personal Composio](architecture/DOMAIN_CONCEPTS.md#personal-composio-access).
+[Composio Connect](architecture/DOMAIN_CONCEPTS.md#composio-connect-access).
 
 ## Admission and disclosure
 

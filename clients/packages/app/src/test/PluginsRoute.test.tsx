@@ -21,6 +21,8 @@ import { PluginsRoute } from "../components/plugins/PluginsRoute";
 import { resetWorkspaceSkillsCacheForTest } from "../components/chat/useWorkspaceSkills";
 
 const harness = vi.hoisted(() => {
+  const composioCommand = vi.fn();
+  const getComposio = vi.fn();
   const getWorkspaceSkill = vi.fn();
   const getWorkspaceSkillFile = vi.fn();
   const getPluginPersonalSources = vi.fn();
@@ -35,7 +37,11 @@ const harness = vi.hoisted(() => {
   const uninstallWorkspacePlugin = vi.fn();
 
   return {
+    composioCommand,
+    getComposio,
     api: {
+      composioCommand,
+      getComposio,
       getWorkspaceSkill,
       getWorkspaceSkillFile,
       getPluginPersonalSources,
@@ -181,6 +187,18 @@ const availablePlugins = [
 
 describe("PluginsRoute", () => {
   beforeEach(() => {
+    harness.composioCommand
+      .mockReset()
+      .mockResolvedValue({ items: [], next_cursor: null });
+    harness.getComposio.mockReset().mockResolvedValue({
+      mode: "connect",
+      status: "signed_out",
+      user_id: "member",
+      accounts: [],
+      next_cursor: null,
+      expires_at: null,
+      capabilities: { catalog: true, search: true, account_management: true },
+    });
     localStorage.clear();
     harness.installWorkspacePlugin.mockReset();
     harness.getPluginPersonalSources.mockReset();
@@ -899,6 +917,59 @@ describe("PluginsRoute", () => {
         `[data-slot="plugin-detail"] [data-provider-logo="${logo}"]`
       )
     ).toBeInTheDocument();
+  });
+
+  it("browses and searches remote connectors in Integrations and opens contextual setup", async () => {
+    const user = userEvent.setup();
+    harness.listWorkspacePlugins.mockResolvedValue(availablePlugins);
+    harness.composioCommand.mockImplementation(async (_workspace, action, params) => {
+      if (action === "catalog")
+        return {
+          items: [
+            {
+              slug: "todoist",
+              name: "Todoist",
+              description: "Manage tasks",
+              logo: "https://logos.composio.dev/api/todoist",
+            },
+          ],
+          next_cursor: null,
+        };
+      if (action === "authorize")
+        return { authorization_url: "https://connect.composio.dev/authorize" };
+      throw new Error(`Unexpected action ${action} ${JSON.stringify(params)}`);
+    });
+    render(<PluginsRoute />);
+    await waitFor(() =>
+      expect(harness.composioCommand).toHaveBeenCalledWith(
+        "wsp_1",
+        "catalog",
+        { query: "" },
+        expect.anything()
+      )
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Show all Integrations plugins" })
+    );
+    expect(await screen.findByRole("button", { name: "Add Todoist" })).toBeVisible();
+    await user.type(screen.getByRole("textbox", { name: "Search plugins" }), "Todoist");
+    await user.click(await screen.findByRole("button", { name: "Add Todoist" }));
+    expect(await screen.findByRole("heading", { name: "Todoist" })).toBeVisible();
+    await waitFor(() =>
+      expect(harness.openNativePlatformExternalUrl).toHaveBeenCalledWith(
+        "https://connect.composio.dev/authorize"
+      )
+    );
+    expect(harness.installWorkspacePlugin).not.toHaveBeenCalled();
+  });
+
+  it("a remote catalog outage keeps native integrations usable", async () => {
+    const user = userEvent.setup();
+    harness.composioCommand.mockRejectedValue(new Error("upstream outage"));
+    render(<PluginsRoute />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Composio catalog");
+    await user.click(screen.getByRole("button", { name: "Add Linear" }));
+    expect(harness.installWorkspacePlugin).toHaveBeenCalled();
   });
 
   it("keeps unreleased Feishu out of catalog browsing and search", async () => {

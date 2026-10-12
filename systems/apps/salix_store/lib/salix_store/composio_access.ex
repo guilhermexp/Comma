@@ -244,7 +244,7 @@ defmodule SalixStore.ComposioAccess do
       when is_list(tools) and length(tools) <= 50 do
     if Enum.all?(
          tools,
-         &(is_binary(&1) and String.match?(&1, ~r/^[A-Z][A-Z0-9_]{1,180}$/) and
+         &(is_binary(&1) and String.match?(&1, ~r/^[A-Z0-9_]{1,180}$/) and
              not String.starts_with?(&1, "COMPOSIO_"))
        ) do
       update(grant_key(tenant, group, agent, user, account), fn _ ->
@@ -254,6 +254,7 @@ defmodule SalixStore.ComposioAccess do
            "account_id" => account,
            "agent_id" => agent,
            "tools" => Enum.uniq(tools),
+           "audience" => "group",
            "enabled" => tools != []
          }}
       end)
@@ -278,7 +279,9 @@ defmodule SalixStore.ComposioAccess do
     with {:ok, account} <- account(tenant, group, user, id),
          true <- account["enabled"] == true and account["status"] == "ACTIVE",
          {:ok, grant, _} <- read(grant_key(tenant, group, agent, user, id)),
-         true <- grant["user_id"] == user and grant["enabled"] == true and tool in grant["tools"] do
+         true <-
+           grant["user_id"] == user and grant["enabled"] == true and grant["audience"] == "group" and
+             tool in grant["tools"] do
       {:ok, account}
     else
       _ -> {:error, :composio_access_denied}

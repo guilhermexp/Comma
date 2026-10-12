@@ -4,7 +4,7 @@ import { render, screen, waitFor, cleanup } from "@comma/test-utils/render";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CommaApiClient, ComposioStatus } from "../../../api";
-import { ComposioPanel } from "../ComposioPanel";
+import { ComposioConnectorDetail } from "../ComposioConnectorDetail";
 import { openNativePlatformExternalUrl } from "../../../runtime-chat/nativePlatformActions";
 vi.mock("../../../runtime-chat/nativePlatformActions", () => ({
   openNativePlatformExternalUrl: vi.fn(async () => true),
@@ -26,7 +26,9 @@ const signedOut: ComposioStatus = {
 function show(api: Partial<CommaApiClient>) {
   return render(
     <CommaI18nProvider locale="en">
-      <ComposioPanel
+      <ComposioConnectorDetail
+        plugin={{ id: "composio:github", name: "GitHub", summary: "Code hosting" }}
+        toolkit="github"
         api={api as CommaApiClient}
         workspaceId="workspace"
         onBack={() => {}}
@@ -88,7 +90,7 @@ it("app consent reopen and cancel address the selected account, not the Composio
         {
           id: "selected-account",
           name: "Linear",
-          toolkit: "linear",
+          toolkit: "github",
           mode: "project",
           status: "INITIATED",
           enabled: true,
@@ -115,37 +117,23 @@ it("app consent reopen and cancel address the selected account, not the Composio
   );
 });
 
-it("discovers an app and starts its selected consent without requiring provider identifiers", async () => {
+it("connects the selected connector from its existing detail flow", async () => {
   const user = userEvent.setup();
-  const composioCommand = vi.fn(async (_workspace, action) => {
-    if (action === "search")
-      return {
-        kind: "catalog",
-        items: [{ slug: "todoist", name: "Todoist", description: "Manage tasks" }],
-        next_cursor: null,
-      };
-    return { authorization_url: "https://provider.example/consent" };
-  });
+  const composioCommand = vi
+    .fn()
+    .mockResolvedValue({ authorization_url: "https://provider.example/consent" });
   show({
     getComposio: async () => ({ ...signedOut, status: "connected" }),
+    composioCommand,
     getAgentModels: vi.fn().mockResolvedValue({
       agents: { router: { agent_id: "router", name: "Router" } },
       workers: { items: [], next_cursor: null },
     }),
-    composioCommand,
   });
-  await user.type(
-    await screen.findByRole("textbox", { name: /Search apps/ }),
-    "List my tasks"
-  );
-  await user.click(screen.getByRole("button", { name: "Search" }));
-  await screen.findByRole("heading", { name: "Todoist" });
-  await user.click(screen.getByRole("button", { name: "Connect app" }));
-  await waitFor(() =>
-    expect(composioCommand).toHaveBeenLastCalledWith("workspace", "connect", {
-      toolkit: "todoist",
-    })
-  );
+  await user.click(await screen.findByRole("button", { name: "Connect app GitHub" }));
+  expect(composioCommand).toHaveBeenCalledWith("workspace", "connect", {
+    toolkit: "github",
+  });
   expect(openNativePlatformExternalUrl).toHaveBeenCalledWith(
     "https://provider.example/consent"
   );
@@ -178,9 +166,17 @@ it("disconnect requires confirmation for the selected account", async () => {
   await user.click(
     await screen.findByRole("button", { name: "Disconnect this account" })
   );
-  expect(composioCommand).not.toHaveBeenCalled();
+  expect(composioCommand).not.toHaveBeenCalledWith(
+    "workspace",
+    "account",
+    expect.objectContaining({ operation: "disconnect" })
+  );
   await user.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(composioCommand).not.toHaveBeenCalled();
+  expect(composioCommand).not.toHaveBeenCalledWith(
+    "workspace",
+    "account",
+    expect.objectContaining({ operation: "disconnect" })
+  );
   await user.click(screen.getByRole("button", { name: "Disconnect this account" }));
   const buttons = screen.getAllByRole("button", { name: "Disconnect this account" });
   await user.click(buttons[buttons.length - 1]!);
@@ -224,23 +220,27 @@ it("selects discovered actions by label and saves their exact IDs for the chosen
         },
       ],
     }),
-    getAgentModels: vi
-      .fn()
-      .mockResolvedValue({
-        agents: { router: { agent_id: "router", name: "Router" } },
-        workers: { items: [], next_cursor: null },
-      }),
+    getAgentModels: vi.fn().mockResolvedValue({
+      agents: { router: { agent_id: "router", name: "Router" } },
+      workers: { items: [], next_cursor: null },
+    }),
     composioCommand,
   });
   await user.click(await screen.findByRole("button", { name: /Connected accounts/ }));
   await user.click(await screen.findByRole("option", { name: /Work GitHub/ }));
   await user.type(
-    await screen.findByRole("textbox", { name: /Find an action/ }),
+    await screen.findByRole("textbox", { name: /Search actions by name/ }),
     "List repositories"
   );
   const searches = screen.getAllByRole("button", { name: "Search" });
   await user.click(searches[searches.length - 1]!);
   await user.click(await screen.findByRole("checkbox", { name: /List repositories/ }));
+  expect(screen.getByRole("button", { name: "Save access" })).toBeDisabled();
+  await user.click(
+    screen.getByRole("checkbox", {
+      name: /Results may appear in workspace conversations/,
+    })
+  );
   await user.click(screen.getByRole("button", { name: "Save access" }));
   await waitFor(() =>
     expect(composioCommand).toHaveBeenLastCalledWith("workspace", "account", {
@@ -248,6 +248,7 @@ it("selects discovered actions by label and saves their exact IDs for the chosen
       account_id: "selected-account",
       agent_id: "router",
       tools: ["GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER"],
+      share_with_workspace: true,
     })
   );
 });

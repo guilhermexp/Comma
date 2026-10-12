@@ -262,12 +262,25 @@ defmodule SalixStore.Composio do
            error_mode: :structured,
            max_response_bytes: 1_000_000
          ) do
-      {:ok, %{"items" => items} = page} when is_list(items) ->
-        {:ok,
-         %{
-           "items" => Enum.map(items, &Map.take(&1, ~w(slug name description meta))),
-           "next_cursor" => page["next_cursor"]
-         }}
+      {:ok, %{"items" => items} = page} when is_list(items) and length(items) <= 50 ->
+        if Enum.all?(items, fn item ->
+             is_map(item) and is_binary(item["slug"]) and
+               Regex.match?(~r/^[a-z0-9_]{1,100}$/, item["slug"]) and
+               is_binary(item["name"]) and
+               (is_nil(item["description"]) or is_binary(item["description"])) and
+               (is_nil(item["meta"]) or
+                  (is_map(item["meta"]) and
+                     (is_nil(item["meta"]["description"]) or
+                        is_binary(item["meta"]["description"]))))
+           end) do
+          {:ok,
+           %{
+             "items" => Enum.map(items, &Map.take(&1, ~w(slug name description meta))),
+             "next_cursor" => page["next_cursor"]
+           }}
+        else
+          {:error, :invalid_toolkits_response}
+        end
 
       {:ok, _} ->
         {:error, :invalid_toolkits_response}

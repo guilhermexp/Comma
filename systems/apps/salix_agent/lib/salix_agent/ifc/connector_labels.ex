@@ -3,11 +3,13 @@ defmodule SalixAgent.IFC.ConnectorLabels do
   The audience a connector read returned
   (`docs/verification.md` §3.3, §15).
 
-  An MCP binding and a Composio connection are both configured per Group and
-  authorized as the Group — Composio's `user_id` *is* the group id, and an MCP
-  binding is a group binding — so anyone in the Group could have made the same
-  call themselves. That is exactly the audience `{:group, id}` names, the same
-  one Group memory has.
+  Group MCP bindings and legacy Composio connections authorize a Group audience.
+  Member-owned Composio Connect records acquire this audience only after the
+  owner explicitly grants Agent use and accepts workspace-visible results.
+  Its broker checks the current owner membership and exact grant before using
+  this helper. Login or an unshared account alone does not establish that audience.
+  `{:group, id}` is the same audience used by Group memory; it does not authorize
+  another Agent to execute tools or bypass external-egress approval.
 
   Saying so matters more than it looks. Without a label of its own a connector
   result is not a *read* in `SalixAgent.IFC.Destination`'s sense — the call

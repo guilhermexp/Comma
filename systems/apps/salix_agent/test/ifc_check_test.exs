@@ -166,6 +166,42 @@ defmodule SalixAgent.IFCCheckTest do
 
   # ---------------------------------------------------------------------------
 
+  test "shared Composio discovery is a read but workspace-sourced execution keeps public egress approval" do
+    declaration = %{"sources" => ["src:q-1"]}
+
+    for name <- ["composio.personal_accounts", "composio.personal_schema"] do
+      assert {:execute, _} =
+               authorize(
+                 call(
+                   name,
+                   %{"account_id" => "account-a", "tool_slugs" => ["GMAIL_FETCH_EMAILS"]},
+                   declaration
+                 ),
+                 ctx(),
+                 facts(destination(["public"]))
+               )
+    end
+
+    assert {:blocked, _} =
+             authorize(
+               call(
+                 "composio.personal_execute",
+                 %{
+                   "account_id" => "account-a",
+                   "tools" => [
+                     %{
+                       "tool_slug" => "GMAIL_SEND_EMAIL",
+                       "arguments" => %{"body" => "workspace content"}
+                     }
+                   ]
+                 },
+                 declaration
+               ),
+               ctx(),
+               facts(destination(["public"]))
+             )
+  end
+
   test "identified Slack app requests dispatch under their own identity; legacy anonymous inputs do not retry" do
     source_id = "im_provider:slack:cnx1:C_GENERAL:123.456"
     bot = "provider_user|cnx1|U_BOT"

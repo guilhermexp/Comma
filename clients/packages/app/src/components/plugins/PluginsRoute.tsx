@@ -2,6 +2,7 @@ import { PageLoading } from "@comma/ui";
 import { useCommaMessages } from "@comma/i18n/react";
 import {
   Button,
+  ScrollAreaLoadMore,
   PluginCatalog,
   PluginDetail,
   toast,
@@ -14,7 +15,8 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { CommaPlugin } from "../../api";
-import { ComposioPanel } from "./ComposioPanel";
+import { ComposioConnectorDetail } from "./ComposioConnectorDetail";
+import { useComposioCatalog, type ComposioCatalogItem } from "./useComposioCatalog";
 import { PluginBrandArtwork } from "./PluginBrandArtwork";
 import { usePluginInstall } from "./PluginInstallProvider";
 import { PluginPersonalSources, withMcpGrants } from "./PluginPersonalSources";
@@ -71,7 +73,10 @@ export function PluginsRoute() {
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<PluginsRouteState>({ status: "loading" });
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
-  const [showComposio, setShowComposio] = useState(false);
+  const [startConnecting, setStartConnecting] = useState(false);
+  const [selectedConnector, setSelectedConnector] = useState<ComposioCatalogItem>();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [expandedCategories, setExpandedCategories] = useState<readonly string[]>([]);
   const [catalogTab, setCatalogTab] = useState<PluginCatalogTab>("plugins");
   const [selectedSkillId, setSelectedSkillId] = useState<string>();
   const [skillCategoryId, setSkillCategoryId] = useState<string>();
@@ -152,6 +157,11 @@ export function PluginsRoute() {
   }, []);
 
   const workspaceId = state.status === "ready" ? state.workspaceId : undefined;
+  const composioCatalog = useComposioCatalog(
+    api,
+    workspaceId,
+    catalogTab === "plugins" ? searchQuery : ""
+  );
   const skillCatalog = useWorkspaceSkillsState(api, workspaceId ?? "");
   const skills = skillCatalog.skills;
   useEffect(() => {
@@ -242,6 +252,9 @@ export function PluginsRoute() {
   const pendingIds = new Set(pendingPluginIds);
   if (installation.pending?.workspaceId === state.workspaceId)
     pendingIds.add(installation.pending.pluginId);
+  const nativeNames = new Set(
+    state.plugins.map((plugin) => plugin.name.toLocaleLowerCase())
+  );
   const pluginDefinitions = state.plugins.map(toPluginDefinition);
   const definitionById = new Map(
     pluginDefinitions.map((plugin) => [plugin.id, plugin])
@@ -285,6 +298,7 @@ export function PluginsRoute() {
             }
           : {})}
       >
+        <p className="m-0 px-md text-sm text-secondary">{messages.composio_native()}</p>
         {selectedPlugin.installed ? (
           <PluginPersonalSources
             onReauthorize={reauthorize}
@@ -297,13 +311,20 @@ export function PluginsRoute() {
     );
   }
 
-  if (showComposio) {
+  if (selectedConnector) {
     return (
-      <ComposioPanel
-        key={workspaceId}
+      <ComposioConnectorDetail
+        key={`${workspaceId}:${selectedConnector.slug}`}
         api={api}
         workspaceId={state.workspaceId}
-        onBack={() => setShowComposio(false)}
+        toolkit={selectedConnector.slug}
+        startConnecting={startConnecting}
+        plugin={composioDefinition(
+          selectedConnector,
+          messages.composio_via(),
+          nativeNames
+        )}
+        onBack={() => setSelectedConnector(undefined)}
       />
     );
   }
@@ -341,23 +362,76 @@ export function PluginsRoute() {
     messages.plugins_category_integrations()
   );
 
+  const remoteDefinitions = composioCatalog.items.map((item) =>
+    composioDefinition(item, messages.composio_via(), nativeNames)
+  );
+  const integrations = categories.find((category) => category.id === "integrations");
+  if (integrations)
+    integrations.plugins = [...integrations.plugins, ...remoteDefinitions];
+  else
+    categories.push({
+      id: "integrations",
+      name: messages.plugins_category_integrations(),
+      plugins: remoteDefinitions,
+    });
+  const openConnector = (plugin: PluginDefinition, connect = false) => {
+    const connector = composioCatalog.items.find(
+      (item) => plugin.id === `composio:${item.slug}`
+    );
+    if (connector) {
+      setSelectedPluginId(undefined);
+      setStartConnecting(connect);
+      setSelectedConnector(connector);
+      return true;
+    }
+    return false;
+  };
+
   return (
     <PluginCatalog
-      headerActions={
-        <Button
-          hierarchy="secondary-gray"
-          size="sm"
-          onPress={() => setShowComposio(true)}
-        >
-          {messages.composio_title()}
-        </Button>
+      searchNamesOnly
+      searchQuery={searchQuery}
+      onSearchQueryChange={setSearchQuery}
+      expandedCategoryIds={expandedCategories}
+      onExpandedCategoryIdsChange={setExpandedCategories}
+      catalogFooter={
+        composioCatalog.failed ? (
+          <div className="px-md" role="alert">
+            <p className="text-sm text-secondary">
+              {messages.composio_catalog_error()}
+            </p>
+            <Button
+              hierarchy="secondary-gray"
+              size="sm"
+              onPress={() => void composioCatalog.load()}
+            >
+              {messages.common_retry()}
+            </Button>
+          </div>
+        ) : composioCatalog.loading ? (
+          <PageLoading label={messages.common_loading()} />
+        ) : (searchQuery.trim() || expandedCategories.includes("integrations")) &&
+          composioCatalog.cursor ? (
+          <ScrollAreaLoadMore
+            hasMore
+            loading={false}
+            failed={false}
+            onLoadMore={() =>
+              void composioCatalog.load(composioCatalog.cursor ?? undefined)
+            }
+          />
+        ) : null
       }
       className="comma-plugins-route"
       categories={categories}
       copy={catalogCopy}
       installedPlugins={installedPlugins}
-      onPluginInstall={(plugin) => void mutatePlugin(plugin.id, true)}
-      onPluginOpen={(plugin) => setSelectedPluginId(plugin.id)}
+      onPluginInstall={(plugin) => {
+        if (!openConnector(plugin, true)) void mutatePlugin(plugin.id, true);
+      }}
+      onPluginOpen={(plugin) => {
+        if (!openConnector(plugin)) setSelectedPluginId(plugin.id);
+      }}
       onTabChange={setCatalogTab}
       pendingPluginIds={pendingIds}
       onSkillCategoryChange={setSkillCategoryId}
@@ -455,4 +529,28 @@ function workspaceSupportsPlugins(workspace: {
   status?: "failed" | "provisioning" | "ready" | undefined;
 }) {
   return workspace.status === undefined || workspace.status === "ready";
+}
+
+function composioDefinition(
+  item: ComposioCatalogItem,
+  via: string,
+  nativeNames: ReadonlySet<string>
+): PluginDefinition {
+  return {
+    id: `composio:${item.slug}`,
+    name: nativeNames.has(item.name.toLocaleLowerCase())
+      ? `${item.name} · ${via}`
+      : item.name,
+    summary: `${via} · ${item.description}`,
+    description: item.description,
+    icon: (
+      <img
+        src={item.logo}
+        alt=""
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        className="size-full object-contain"
+      />
+    ),
+  };
 }

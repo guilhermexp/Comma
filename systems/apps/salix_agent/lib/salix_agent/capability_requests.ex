@@ -526,9 +526,19 @@ defmodule SalixAgent.CapabilityRequests do
   defp settlement_budget(_), do: @receipt_result_budget_ms
 
   defp composio_result_label(result, request) do
-    if get_in(request, ["request_payload", "ifc_enabled"]) == true,
-      do: Map.put(result, "ifc", %{"label" => SalixAgent.IFC.Context.private_wire()}),
-      else: result
+    if get_in(request, ["request_payload", "ifc_enabled"]) == true do
+      # The broker derived this Group from the current Agent, and dispatch
+      # rechecked the owner's membership and exact grant before the effect.
+      {:tool_ifc, _, [], label} =
+        SalixAgent.IFC.ConnectorLabels.group_audience("", %{
+          ifc: %{},
+          group_id: request["group_id"]
+        })
+
+      Map.put(result, "ifc", label)
+    else
+      result
+    end
   end
 
   defp write_declassification_receipt(_request, false), do: :ok
