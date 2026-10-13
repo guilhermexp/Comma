@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import type { CommaApiClient } from "../../api";
 
-const pageSchema = z.object({
+export const composioCatalogPageSchema = z.object({
   items: z.array(
     z.object({
       slug: z.string(),
@@ -13,7 +13,9 @@ const pageSchema = z.object({
   ),
   next_cursor: z.string().nullable(),
 });
-export type ComposioCatalogItem = z.infer<typeof pageSchema>["items"][number];
+export type ComposioCatalogItem = z.infer<
+  typeof composioCatalogPageSchema
+>["items"][number];
 
 export function useComposioCatalog(
   api: CommaApiClient,
@@ -34,7 +36,7 @@ export function useComposioCatalog(
       setLoading(true);
       setFailed(false);
       try {
-        const page = pageSchema.parse(
+        const page = composioCatalogPageSchema.parse(
           await api.composioCommand(
             workspaceId,
             "catalog",

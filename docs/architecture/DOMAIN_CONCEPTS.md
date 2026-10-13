@@ -514,7 +514,17 @@ account DTOs. The renderer receives a consent URL only for the requested browser
 [The desktop API](../../systems/apps/comma_web/lib/comma_web/composio_connect.ex)
 requires the workspace owner. Plugins → Integrations uses the incumbent catalog rows
 and detail components for native and Composio connectors. Name search and paginated
-Show all browse the full catalog. Connect uses public metadata; explicit project mode
+Show all browse the full catalog. The default view also shows each connected Composio
+toolkit once, with Connected status and the existing detail action. This projection
+uses enabled ACTIVE accounts in the selected mode under the current workspace/member.
+Login alone does not make a toolkit connected. Native plugins retain their own state.
+The client reads local account pages of at most 50 records serially and resolves
+metadata in batches of at most 20 exact toolkit slugs against the public catalog cache.
+It does not crawl remote catalog pages or refresh provider accounts for this list.
+Missing account state or metadata produces a visible retry error. Returning from
+connector details or changing workspace reloads the projection; old-scope responses
+cannot publish rows. Opening a connected row does not start consent.
+Connect uses public metadata; explicit project mode
 uses the project-authenticated REST catalog and tool pages. Setup, account controls, and named
 permission choices stay inside the selected connector's detail flow. Tool and Agent IDs
 remain internal. Connect account labels use allowlisted provider identity metadata when

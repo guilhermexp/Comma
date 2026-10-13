@@ -18,6 +18,7 @@ import { OnboardingPluginHandoff } from "../components/onboarding/OnboardingPlug
 import { useOnboardingPlugins } from "../components/onboarding/useOnboardingPlugins";
 import { PluginInstallProvider } from "../components/plugins/PluginInstallProvider";
 import { PluginsRoute } from "../components/plugins/PluginsRoute";
+import { writeActiveWorkspaceId } from "../components/activeWorkspace";
 import { resetWorkspaceSkillsCacheForTest } from "../components/chat/useWorkspaceSkills";
 
 const harness = vi.hoisted(() => {
@@ -923,6 +924,210 @@ describe("PluginsRoute", () => {
     ).toBeInTheDocument();
   });
 
+  function connectedCatalogFixture() {
+    const gmail = {
+      slug: "gmail",
+      name: "Gmail",
+      description: "Mail",
+      logo: "https://logos.composio.dev/api/gmail",
+    };
+    const drive = {
+      slug: "googledrive",
+      name: "Google Drive",
+      description: "Files",
+      logo: "https://logos.composio.dev/api/googledrive",
+    };
+    const account = (
+      toolkit: string,
+      id: string,
+      status = "ACTIVE",
+      enabled = true
+    ) => ({
+      id,
+      toolkit,
+      name: id,
+      status,
+      enabled,
+      mode: "connect" as const,
+    });
+    const status = (
+      accounts: ReturnType<typeof account>[],
+      next_cursor: string | null = null
+    ) => ({
+      mode: "connect",
+      status: "connected",
+      user_id: "member",
+      accounts,
+      next_cursor,
+      expires_at: null,
+      capabilities: { catalog: true, search: true, account_management: true },
+    });
+    const metadata = [gmail, drive];
+    harness.listWorkspacePlugins.mockResolvedValue([notionPlugin, ...availablePlugins]);
+    harness.getComposio.mockResolvedValue(
+      status([
+        account("gmail", "work-mail"),
+        account("googledrive", "drive-one"),
+        account("googledrive", "drive-two"),
+        account("pending", "pending", "INITIALIZING"),
+        account("failed", "failed", "FAILED"),
+        account("disabled", "disabled", "ACTIVE", false),
+        account("disconnected", "disconnected", "DISCONNECTED"),
+      ])
+    );
+    harness.composioCommand.mockImplementation(async (_workspace, action, params) => {
+      if (action === "catalog") {
+        if (params.toolkits)
+          return {
+            items: metadata.filter((item) => params.toolkits.includes(item.slug)),
+            next_cursor: null,
+          };
+        // Connected services are absent from the first remote catalog page.
+        return { items: [], next_cursor: "20" };
+      }
+      if (action === "consent") return { consent: null };
+      if (action === "accounts") return { items: [], next_cursor: null };
+      throw new Error(`Unexpected action ${action}`);
+    });
+    return { gmail, drive, account, status, metadata };
+  }
+
+  it("shows connected connectors outside the first page in the collapsed principal list and opens details without consent", async () => {
+    const user = userEvent.setup();
+    const { account, status } = connectedCatalogFixture();
+    // A later local account page must also participate, without browsing the remote catalog.
+    harness.getComposio.mockResolvedValueOnce(
+      status([account("gmail", "work-mail")], "accounts-2")
+    );
+    const original = harness.composioCommand.getMockImplementation()!;
+    harness.composioCommand.mockImplementation(async (workspace, action, params) =>
+      action === "accounts"
+        ? {
+            items: [
+              account("googledrive", "drive-one"),
+              account("googledrive", "drive-two"),
+              account("pending", "pending", "INITIALIZING"),
+              account("failed", "failed", "FAILED"),
+              account("disabled", "disabled", "ACTIVE", false),
+              account("disconnected", "disconnected", "DISCONNECTED"),
+              { ...account("other_mode", "other-mode"), mode: "project" },
+            ],
+            next_cursor: null,
+          }
+        : original(workspace, action, params)
+    );
+    render(
+      <CommaI18nProvider locale="en">
+        <PluginsRoute />
+      </CommaI18nProvider>
+    );
+    const gmail = await screen.findByRole("button", {
+      name: "View Gmail plugin details",
+    });
+    const drive = await screen.findByRole("button", {
+      name: "View Google Drive plugin details",
+    });
+    expect(within(gmail).getByText("Connected")).toBeVisible();
+    expect(within(drive).getByText("Connected")).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: "View Google Drive plugin details" })
+    ).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Add Gmail" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "View Notion plugin details" })
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add Linear" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Show all Integrations plugins" })
+    ).toBeVisible();
+    expect(
+      harness.composioCommand.mock.calls.filter(
+        ([, action, params]) => action === "catalog" && params.cursor
+      )
+    ).toHaveLength(0);
+    expect(
+      harness.composioCommand.mock.calls
+        .filter(([, action, params]) => action === "catalog" && params.toolkits)
+        .flatMap(([, , params]) => params.toolkits)
+    ).toEqual(["gmail", "googledrive"]);
+    await user.click(drive);
+    expect(await screen.findByRole("heading", { name: "Google Drive" })).toBeVisible();
+    await waitFor(() =>
+      expect(harness.composioCommand).toHaveBeenCalledWith(
+        "wsp_1",
+        "consent",
+        { toolkit: "googledrive", operation: "get" },
+        expect.anything()
+      )
+    );
+    expect(
+      harness.composioCommand.mock.calls.filter(
+        ([, action]) => action === "connect" || action === "authorize"
+      )
+    ).toHaveLength(0);
+    expect(harness.openNativePlatformExternalUrl).not.toHaveBeenCalled();
+  });
+
+  it("refreshes connected connectors on detail return and fences an old workspace response", async () => {
+    const user = userEvent.setup();
+    const { account, status } = connectedCatalogFixture();
+    harness.listWorkspaces.mockResolvedValue([
+      { id: "wsp_1", name: "Main", status: "ready" },
+      { id: "wsp_2", name: "Other", status: "ready" },
+    ]);
+    render(<PluginsRoute />);
+    await user.click(
+      await screen.findByRole("button", { name: "View Gmail plugin details" })
+    );
+    await screen.findByRole("heading", { name: "Gmail" });
+    harness.getComposio.mockResolvedValue(
+      status([account("googledrive", "drive-one")])
+    );
+    await user.click(screen.getByRole("button", { name: "Back to plugins" }));
+    await screen.findByRole("button", { name: "View Google Drive plugin details" });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "View Gmail plugin details" })
+      ).toBeNull()
+    );
+    const stale = Promise.withResolvers<ReturnType<typeof status>>();
+    harness.getComposio.mockImplementation((workspace) =>
+      workspace === "wsp_2" ? stale.promise : Promise.resolve(status([]))
+    );
+    act(() => writeActiveWorkspaceId("wsp_2"));
+    await waitFor(() =>
+      expect(harness.getComposio).toHaveBeenCalledWith("wsp_2", expect.anything())
+    );
+    expect(
+      screen.queryByRole("button", { name: "View Google Drive plugin details" })
+    ).toBeNull();
+    act(() => writeActiveWorkspaceId("wsp_1"));
+    await waitFor(() =>
+      expect(harness.getComposio).toHaveBeenLastCalledWith("wsp_1", expect.anything())
+    );
+    await act(async () => stale.resolve(status([account("gmail", "other-workspace")])));
+    expect(
+      screen.queryByRole("button", { name: "View Gmail plugin details" })
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "Add Linear" })).toBeVisible();
+  });
+
+  it("reports connected account read failure and retries while native plugins and skills remain usable", async () => {
+    const user = userEvent.setup();
+    const { account, status } = connectedCatalogFixture();
+    harness.getComposio.mockRejectedValue(new Error("Account storage unavailable"));
+    render(<PluginsRoute />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Composio catalog");
+    expect(screen.getByRole("button", { name: "Add Linear" })).toBeVisible();
+    harness.getComposio.mockResolvedValue(status([account("gmail", "work-mail")]));
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(
+      await screen.findByRole("button", { name: "View Gmail plugin details" })
+    ).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "Skills" }));
+    expect(await screen.findByText("summarize")).toBeVisible();
+  });
+
   it("browses and searches remote connectors in Integrations and opens contextual setup", async () => {
     const user = userEvent.setup();
     harness.listWorkspacePlugins.mockResolvedValue(availablePlugins);
@@ -941,8 +1146,7 @@ describe("PluginsRoute", () => {
         };
       if (action === "authorize")
         return { authorization_url: "https://connect.composio.dev/authorize" };
-      if (action === "consent" && params.operation === "get")
-        return { consent: null };
+      if (action === "consent" && params.operation === "get") return { consent: null };
       throw new Error(`Unexpected action ${action} ${JSON.stringify(params)}`);
     });
     render(<PluginsRoute />);
@@ -988,15 +1192,16 @@ describe("PluginsRoute", () => {
         status: string;
         expires_at: number;
       } | null = null;
-      harness.getComposio.mockResolvedValue({
+      let accountVisible = false;
+      harness.getComposio.mockImplementation(async () => ({
         mode: "connect",
         status: "connected",
         user_id: "member",
-        accounts: [account],
+        accounts: accountVisible ? [account] : [],
         next_cursor: null,
         expires_at: null,
         capabilities: { catalog: true, search: true, account_management: true },
-      });
+      }));
       harness.composioCommand.mockImplementation(async (_workspace, action, params) => {
         if (action === "catalog")
           return {
@@ -1011,6 +1216,7 @@ describe("PluginsRoute", () => {
             next_cursor: null,
           };
         if (action === "connect") {
+          accountVisible = true;
           if (outcome === "response lost") throw new Error("Connection response lost");
           consent = {
             id: "gmail-consent",

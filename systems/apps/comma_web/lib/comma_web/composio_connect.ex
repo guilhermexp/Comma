@@ -58,6 +58,11 @@ defmodule CommaWeb.ComposioConnect do
     end
   end
 
+  defp run(_s, "catalog", %{"toolkits" => toolkits}) do
+    with {:ok, items} <- Salix.Control.ComposioCatalog.lookup(toolkits),
+         do: {:ok, %{"items" => items, "next_cursor" => nil}}
+  end
+
   defp run(s, "catalog", params) do
     with {:ok, profile} <- Access.profile(s.tenant, s.group, s.user) do
       if profile["mode"] == "project" do

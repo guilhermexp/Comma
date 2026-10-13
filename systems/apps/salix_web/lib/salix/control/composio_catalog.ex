@@ -30,6 +30,29 @@ defmodule Salix.Control.ComposioCatalog do
 
   def page(params, server \\ __MODULE__), do: read(server, :catalog, params)
 
+  # Resolve one bounded account batch against the existing metadata owner.
+  def lookup(toolkits, server \\ __MODULE__)
+  def lookup([], _server), do: {:ok, []}
+
+  def lookup(toolkits, server) when is_list(toolkits) and length(toolkits) <= 20 do
+    if Enum.all?(toolkits, &(is_binary(&1) and Regex.match?(~r/^[a-z0-9_]{1,100}$/, &1))) do
+      with {:ok, items} <- GenServer.call(server, {:get, :catalog}, 30_000) do
+        by_slug = Map.new(items, &{&1["slug"], &1})
+        selected = Enum.map(Enum.uniq(toolkits), &by_slug[&1])
+
+        if Enum.any?(selected, &is_nil/1),
+          do: {:error, :composio_catalog_unavailable},
+          else: {:ok, selected}
+      end
+    else
+      {:error, :invalid_toolkits}
+    end
+  catch
+    :exit, _ -> {:error, :composio_catalog_unavailable}
+  end
+
+  def lookup(_, _), do: {:error, :invalid_toolkits}
+
   def tools(toolkit, params, server \\ __MODULE__) do
     if is_binary(toolkit) and Regex.match?(~r/^[a-z0-9_]{1,100}$/, toolkit),
       do: read(server, {:tools, toolkit}, params),

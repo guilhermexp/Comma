@@ -87,6 +87,17 @@ defmodule Salix.Control.ComposioCatalogTest do
     assert Agent.get(c.state, & &1) == [{"/toolkits", [], []}]
   end
 
+  test "looks up exact connected toolkits beyond the first page from the same cached catalog", c do
+    assert {:ok, %{"items" => first}} = ComposioCatalog.page(%{}, c.cache)
+    refute Enum.any?(first, &(&1["slug"] == "app_43"))
+    assert {:ok, [%{"slug" => "app_43", "name" => "App 43"}]} =
+             ComposioCatalog.lookup(["app_43", "app_43"], c.cache)
+    assert Agent.get(c.state, & &1) == [{"/toolkits", [], []}]
+    assert {:error, :composio_catalog_unavailable} = ComposioCatalog.lookup(["missing"], c.cache)
+    assert {:error, :invalid_toolkits} = ComposioCatalog.lookup(List.duplicate("app_1", 21), c.cache)
+    assert {:error, :invalid_toolkits} = ComposioCatalog.lookup(["../private"], c.cache)
+  end
+
   test "lists human-readable permissions within a connector and rejects path injection", c do
     assert {:ok, %{"items" => [tool]}} =
              ComposioCatalog.tools("app_1", %{"query" => "List"}, c.cache)

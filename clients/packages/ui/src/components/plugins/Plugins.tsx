@@ -33,6 +33,7 @@ export interface PluginResource {
 }
 
 export interface PluginDefinition {
+  statusLabel?: string;
   id: string;
   name: string;
   summary: string;
@@ -188,7 +189,9 @@ export const PluginInstalledCard = ({
       <PluginArtwork icon={plugin.icon} />
       <span className="flex w-full min-w-0 flex-col text-sm">
         <span className="truncate font-medium text-primary">{plugin.name}</span>
-        <span className="truncate text-quaternary">{resolvedInstalledLabel}</span>
+        <span className="truncate text-quaternary">
+          {plugin.statusLabel ?? resolvedInstalledLabel}
+        </span>
       </span>
     </>
   );

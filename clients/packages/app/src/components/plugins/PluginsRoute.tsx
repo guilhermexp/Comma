@@ -17,12 +17,17 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import type { CommaPlugin } from "../../api";
 import { ComposioConnectorDetail } from "./ComposioConnectorDetail";
 import { useComposioCatalog, type ComposioCatalogItem } from "./useComposioCatalog";
+import { useComposioConnectedCatalog } from "./useComposioConnectedCatalog";
 import { PluginBrandArtwork } from "./PluginBrandArtwork";
 import { usePluginInstall } from "./PluginInstallProvider";
 import { PluginPersonalSources, withMcpGrants } from "./PluginPersonalSources";
 import { SkillDetailPage } from "./SkillDetailPage";
 import { usePluginPersonalSources } from "./usePluginPersonalSources";
-import { readActiveWorkspaceId, writeActiveWorkspaceId } from "../activeWorkspace";
+import {
+  readActiveWorkspaceId,
+  writeActiveWorkspaceId,
+  subscribeActiveWorkspace,
+} from "../activeWorkspace";
 import { useChatApi } from "../chat/ChatProvider";
 import { useWorkspaceSkillsState } from "../chat/useWorkspaceSkills";
 
@@ -85,6 +90,22 @@ export function PluginsRoute() {
   );
   const mutationInFlight = useRef(new Map<string, symbol>());
 
+  const activeWorkspace = useRef(readActiveWorkspaceId());
+  useEffect(
+    () =>
+      subscribeActiveWorkspace((next) => {
+        if (next === activeWorkspace.current) return;
+        activeWorkspace.current = next;
+        setSelectedPluginId(undefined);
+        setSelectedConnector(undefined);
+        setStartConnecting(false);
+        setSelectedSkillId(undefined);
+        setState({ status: "loading" });
+        setRevision((value) => value + 1);
+      }),
+    []
+  );
+
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
@@ -106,6 +127,8 @@ export function PluginsRoute() {
           return;
         }
 
+        if (!active) return;
+        activeWorkspace.current = workspace.id;
         writeActiveWorkspaceId(workspace.id);
         const plugins = await api.listWorkspacePlugins(workspace.id, {
           signal: controller.signal,
@@ -162,6 +185,7 @@ export function PluginsRoute() {
     workspaceId,
     catalogTab === "plugins" ? searchQuery : ""
   );
+  const connectedCatalog = useComposioConnectedCatalog(api, workspaceId);
   const skillCatalog = useWorkspaceSkillsState(api, workspaceId ?? "");
   const skills = skillCatalog.skills;
   useEffect(() => {
@@ -325,7 +349,10 @@ export function PluginsRoute() {
           messages.composio_via(),
           nativeNames
         )}
-        onBack={() => setSelectedConnector(undefined)}
+        onBack={() => {
+          setSelectedConnector(undefined);
+          connectedCatalog.refresh();
+        }}
       />
     );
   }
@@ -357,6 +384,12 @@ export function PluginsRoute() {
   const installedPlugins = state.plugins
     .filter((plugin) => plugin.installed)
     .map((plugin) => definitionById.get(plugin.id)!);
+  installedPlugins.push(
+    ...connectedCatalog.items.map((item) => ({
+      ...composioDefinition(item, messages.composio_via(), nativeNames),
+      statusLabel: messages.composio_connected(),
+    }))
+  );
   const categories = pluginCategories(
     state.plugins,
     definitionById,
@@ -376,7 +409,7 @@ export function PluginsRoute() {
       plugins: remoteDefinitions,
     });
   const openConnector = (plugin: PluginDefinition, connect = false) => {
-    const connector = composioCatalog.items.find(
+    const connector = [...connectedCatalog.items, ...composioCatalog.items].find(
       (item) => plugin.id === `composio:${item.slug}`
     );
     if (connector) {
@@ -396,7 +429,7 @@ export function PluginsRoute() {
       expandedCategoryIds={expandedCategories}
       onExpandedCategoryIdsChange={setExpandedCategories}
       catalogFooter={
-        composioCatalog.failed ? (
+        composioCatalog.failed || connectedCatalog.failed ? (
           <div className="px-md" role="alert">
             <p className="text-sm text-secondary">
               {messages.composio_catalog_error()}
@@ -404,12 +437,15 @@ export function PluginsRoute() {
             <Button
               hierarchy="secondary-gray"
               size="sm"
-              onPress={() => void composioCatalog.load()}
+              onPress={() => {
+                if (composioCatalog.failed) void composioCatalog.load();
+                if (connectedCatalog.failed) connectedCatalog.refresh();
+              }}
             >
               {messages.common_retry()}
             </Button>
           </div>
-        ) : composioCatalog.loading ? (
+        ) : composioCatalog.loading || connectedCatalog.loading ? (
           <PageLoading label={messages.common_loading()} />
         ) : (searchQuery.trim() || expandedCategories.includes("integrations")) &&
           composioCatalog.cursor ? (
