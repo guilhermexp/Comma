@@ -263,19 +263,21 @@ export function ComposioConnectorDetail({
   );
   const accountRows = (items: ComposioAccount[]) =>
     items.map((account) => {
-      const { name, number } = composioAccountPresentation(account, accounts);
+      const { name, email, number } = composioAccountPresentation(account, accounts);
       const discriminator = number ? m.composio_connection_number({ number }) : "";
       return (
         <fieldset
           key={account.id}
-          aria-label={discriminator ? `${name} · ${discriminator}` : name}
+          aria-label={[name, email !== name ? email : null, discriminator]
+            .filter(Boolean)
+            .join(" · ")}
           className="m-0 flex min-w-0 items-center gap-lg border-0 border-b border-solid border-secondary px-xl py-lg last:border-b-0"
         >
           <Avatar name={name} size="sm" />
           <div className="flex min-w-0 flex-1 flex-col gap-xxs text-sm">
             <span className="break-words font-medium">{name}</span>
-            {account.email && account.email !== name && (
-              <span className="break-all text-secondary">{account.email}</span>
+            {email && email !== name && (
+              <span className="break-all text-secondary">{email}</span>
             )}
             <span className="text-xs text-secondary">
               {!account.enabled

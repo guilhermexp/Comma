@@ -1,10 +1,17 @@
 import type { ComposioAccount } from "../../api";
 
-function accountName(account: ComposioAccount) {
+function accountIdentity(account: ComposioAccount) {
   const suffix = ` (${account.id})`;
-  return account.name.endsWith(suffix)
+  const label = account.name.endsWith(suffix)
     ? account.name.slice(0, -suffix.length)
     : account.name;
+  // Presentation of previously saved composed labels only. This does not
+  // establish provider identity, write metadata, or authorize an account.
+  const composed = /^(.+) <([^<>\s]+@[^<>\s]+)>$/.exec(label);
+  return {
+    name: composed?.[1] ?? label,
+    email: account.email ?? composed?.[2] ?? null,
+  };
 }
 
 // Legacy labels may include the exact public connection reference. Keep that
@@ -13,13 +20,16 @@ export function composioAccountPresentation(
   account: ComposioAccount,
   accounts: ComposioAccount[]
 ) {
-  const name = accountName(account);
+  const { name, email } = accountIdentity(account);
   const duplicates = accounts
-    .filter((item) => accountName(item) === name && item.email === account.email)
+    .filter((item) => {
+      const identity = accountIdentity(item);
+      return identity.name === name && identity.email === email;
+    })
     .toSorted((a, b) => a.id.localeCompare(b.id));
   return {
     name,
-    email: account.email,
+    email,
     number:
       duplicates.length > 1
         ? duplicates.findIndex((item) => item.id === account.id) + 1

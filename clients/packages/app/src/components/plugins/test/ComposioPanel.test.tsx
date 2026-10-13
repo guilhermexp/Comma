@@ -477,11 +477,11 @@ it("selects the explicitly named connection when two connections share a provide
     }
   );
 
-  await screen.findAllByText(/Casey Example <casey@example.test>/);
+  await screen.findAllByText("casey@example.test");
   await user.click(
     within(
       screen.getByRole("group", {
-        name: "Casey Example <casey@example.test> · Connection 2",
+        name: "Casey Example · casey@example.test · Connection 2",
       })
     ).getByRole("button", { name: "Use this account" })
   );
