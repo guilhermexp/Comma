@@ -11,7 +11,7 @@ afterEach(cleanup);
 it("shows an empty approval state only after successful loading and recovers real requests after an error", async () => {
   initializeCommaI18n(["en"]);
   const user = userEvent.setup();
-  let resolvePage!: (value: unknown) => void;
+  let resolvePage!: (value: Record<string, unknown>) => void;
   const command = vi.fn<CommaApiClient["composioCommand"]>();
   command.mockImplementationOnce(
     () =>
