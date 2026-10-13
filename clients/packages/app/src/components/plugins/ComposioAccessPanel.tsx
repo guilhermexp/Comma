@@ -278,9 +278,9 @@ export function ComposioAccessPanel({
         !error &&
         !cursor &&
         visibleApprovals.length === 0 && (
-          <p role="status" className="m-0 text-sm text-secondary">
+          <output className="m-0 text-sm text-secondary">
             {m.composio_no_pending_actions()}
-          </p>
+          </output>
         )}
       <div className="flex">
         <Button
