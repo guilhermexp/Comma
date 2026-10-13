@@ -42,16 +42,24 @@ function show(
     originalCommand.mockImplementation(async (workspace, action, params, options) => {
       if (action === "consent" && params?.operation === "get")
         return { consent: getConsent() };
-      if (action === "approvals") return { requests: [], next_cursor: null };
-      return implementation ? implementation(workspace, action, params, options) : {};
+      const result = implementation
+        ? await implementation(workspace, action, params, options)
+        : {};
+      return action === "approvals"
+        ? { requests: [], next_cursor: null, ...result }
+        : result;
     });
     composioCommand = originalCommand;
   } else {
     composioCommand = async (workspace, action, params = {}, options) => {
       if (action === "consent" && params.operation === "get")
         return { consent: getConsent() };
-      if (action === "approvals") return { requests: [], next_cursor: null };
-      return originalCommand ? originalCommand(workspace, action, params, options) : {};
+      const result = originalCommand
+        ? await originalCommand(workspace, action, params, options)
+        : {};
+      return action === "approvals"
+        ? { requests: [], next_cursor: null, ...result }
+        : result;
     };
   }
   return render(
