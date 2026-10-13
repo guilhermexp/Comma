@@ -711,7 +711,7 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
     end
   end
 
-  defp gmail_fixture(c, variant \\ :valid) do
+  defp gmail_fixture(c, variant \\ :valid, thread \\ nil) do
     root =
       Path.join(System.tmp_dir!(), "comma-routine-offload-#{System.unique_integer([:positive])}")
 
@@ -737,7 +737,7 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
       }
     }
 
-    thread = %{"messages" => [message]}
+    thread = thread || %{"messages" => [message]}
 
     slug =
       if variant == :wrong_file_slug,
@@ -780,6 +780,90 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
 
     configure(c, "connect", "gmail")
     enable(c)
+  end
+
+  # Complete Composio tool shape observed by the passive v7 boundary capture.
+  # The timestamp fixture uses the timezone-qualified ISO-8601 format in
+  # https://composio.dev/content/ship-gmail-integration-in-minutes.
+  defp composio_gmail_message do
+    %{
+      "messageId" => "message2",
+      "threadId" => "thread1",
+      "messageTimestamp" => "2026-10-13T08:15:28-03:00",
+      "labelIds" => ["INBOX", "IMPORTANT"],
+      "subject" => "Complete normalized review",
+      "sender" => "Colleague <colleague@example.com>",
+      "to" => "member@example.com",
+      "messageText" => "Please review the full proposal and its final acceptance criteria.",
+      "preview" => %{"body" => "PREVIEW MUST NOT APPEAR"},
+      "attachmentList" => [],
+      "payload" => %{
+        "mimeType" => "multipart/alternative",
+        "headers" => [
+          %{"name" => "Subject", "value" => "Complete normalized review"},
+          %{"name" => "From", "value" => "Colleague <colleague@example.com>"},
+          %{"name" => "To", "value" => "member@example.com"},
+          %{"name" => "Date", "value" => "Tue, 13 Oct 2026 08:15:28 -0300"}
+        ],
+        "body" => %{},
+        "parts" => [%{"mimeType" => "text/plain", "body" => %{}}]
+      }
+    }
+  end
+
+  @tag :gmail_normalization
+  test "complete Composio Gmail messages become exact-account facts ordered by parsed timestamp",
+       c do
+    latest = composio_gmail_message()
+
+    older =
+      Map.merge(latest, %{
+        "messageId" => "message1",
+        "messageTimestamp" => "2026-10-13T10:15:28Z",
+        "labelIds" => ["SENT"],
+        "subject" => "Older reply"
+      })
+
+    # Oldest is last and has a lexically later clock time; neither array order
+    # nor string sorting can identify the latest message.
+    thread = %{"threadId" => "thread1", "historyId" => "42", "messages" => [latest, older]}
+
+    for variant <- [:inline, :valid] do
+      profile = gmail_fixture(c, variant, thread)
+
+      assert {:ok, %{facts: [fact], failures: []}} =
+               RecommendationSourceCollector.collect(c.w, profile.sources,
+                 member_user_id: c.user["id"]
+               )
+
+      assert [message] = fact["data"]["messages"]
+      assert message["messageId"] == "message2"
+      assert message["messageTimestamp"] == "2026-10-13T11:15:28.000Z"
+      assert message["subject"] == "Complete normalized review"
+      assert fact["memberSubject"]["connection_id"] == "exact"
+      assert Jason.encode!(fact) =~ "full proposal and its final acceptance criteria"
+      refute Jason.encode!(fact) =~ "PREVIEW MUST NOT APPEAR"
+    end
+  end
+
+  @tag :gmail_normalization
+  test "Composio Gmail refuses ambiguous timestamps, foreign threads and preview-only context",
+       c do
+    for changes <- [
+          %{"messageTimestamp" => "2026-10-13T08:15:28"},
+          %{"messageTimestamp" => "1791890128000"},
+          %{"messageTimestamp" => "invalid"},
+          %{"threadId" => "foreign"},
+          %{"messageText" => nil}
+        ] do
+      message = Map.merge(composio_gmail_message(), changes)
+      profile = gmail_fixture(c, :inline, %{"threadId" => "thread1", "messages" => [message]})
+
+      assert {:ok, %{facts: [], failures: [_]}} =
+               RecommendationSourceCollector.collect(c.w, profile.sources,
+                 member_user_id: c.user["id"]
+               )
+    end
   end
 
   @tag :routine_offload

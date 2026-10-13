@@ -69,7 +69,7 @@ defmodule CommaWeb.RecommendationComposioTransport do
                      byte_size(Jason.encode!(data)) <= Keyword.get(opts, :max_bytes, 512_000) do
                 if thread && data["nextPageToken"] not in [nil, ""],
                   do: {:error, :member_source_context_unavailable},
-                  else: {:ok, if(thread, do: Map.put(data, "id", thread), else: data)}
+                  else: normalize_action_data(slug, data, thread)
               else
                 false -> {:error, :response_too_large}
                 {:error, _} = error -> error
@@ -241,4 +241,62 @@ defmodule CommaWeb.RecommendationComposioTransport do
     do: {:ok, data}
 
   defp action_data(_, _), do: {:error, :member_provider_failed}
+
+  # Connect's Gmail action returns Composio message fields, not native Gmail
+  # messages. Project/native readers keep their existing provider contract.
+  defp normalize_action_data("GMAIL_FETCH_MESSAGE_BY_THREAD_ID", data, thread) do
+    with true <- data["threadId"] in [nil, thread],
+         messages when is_list(messages) <- data["messages"] do
+      Enum.reduce_while(messages, {:ok, []}, fn message, {:ok, acc} ->
+        case gmail_message(message, thread) do
+          {:ok, normalized} -> {:cont, {:ok, [normalized | acc]}}
+          error -> {:halt, error}
+        end
+      end)
+      |> case do
+        {:ok, messages} ->
+          {:ok, data |> Map.put("id", thread) |> Map.put("messages", Enum.reverse(messages))}
+
+        error ->
+          error
+      end
+    else
+      _ -> {:error, :member_source_context_unavailable}
+    end
+  end
+
+  defp normalize_action_data(_slug, data, _thread), do: {:ok, data}
+
+  defp gmail_message(%{"messageId" => id} = message, thread) do
+    # Composio's Gmail example uses timezone-qualified ISO-8601 in
+    # https://composio.dev/content/ship-gmail-integration-in-minutes.
+    # Do not infer epoch units or a timezone from an ambiguous string.
+    with true <- message["threadId"] == thread,
+         timestamp when is_binary(timestamp) <- message["messageTimestamp"],
+         {:ok, at, _offset} <- DateTime.from_iso8601(timestamp),
+         text when is_binary(text) <- message["messageText"],
+         true <- String.trim(text) != "" do
+      {:ok,
+       %{
+         "id" => id,
+         "threadId" => thread,
+         "internalDate" => at |> DateTime.to_unix(:millisecond) |> Integer.to_string(),
+         "labelIds" => message["labelIds"],
+         "payload" => %{
+           "mimeType" => "text/plain",
+           "headers" =>
+             for(
+               {name, key} <- [{"Subject", "subject"}, {"From", "sender"}, {"To", "to"}],
+               do: %{"name" => name, "value" => message[key]}
+             ),
+           "body" => %{"data" => Base.url_encode64(text, padding: false)}
+         }
+       }}
+    else
+      _ -> {:error, :member_source_context_unavailable}
+    end
+  end
+
+  defp gmail_message(%{"id" => _, "internalDate" => _} = message, _thread), do: {:ok, message}
+  defp gmail_message(_message, _thread), do: {:error, :member_source_context_unavailable}
 end

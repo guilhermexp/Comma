@@ -948,6 +948,13 @@ deadline covers the additional request; there is no timeout increase or extra re
 See the official [sandbox files contract](https://docs.composio.dev/docs/sandbox/remote#files-and-mounts),
 [MULTI](https://docs.composio.dev/toolkits/meta-tools/multi_execute_tool) and
 [workbench](https://docs.composio.dev/toolkits/meta-tools/remote_workbench) contracts.
+For complete Connect Gmail thread results, the adapter projects `messageId`,
+`messageTimestamp` and full `messageText` into the existing Google reader contract.
+It checks returned thread IDs against the requested thread and never uses `preview` as context.
+Timestamps must parse as ISO-8601 with an explicit timezone; numeric strings and missing
+timezones fail closed. Composio's [Gmail example](https://composio.dev/content/ship-gmail-integration-in-minutes)
+uses this timestamp format, but does not establish every thread response's format.
+The adapter does not infer epoch units or change native Gmail parsing.
 Project sessions use `comma:<group>:<user>` as the upstream owner and pin the exact account.
 Personal accounts do not create legacy tenant webhook triggers; they use the existing
 15-minute collection chain. Native source preferences do not inherit personal account choices.
