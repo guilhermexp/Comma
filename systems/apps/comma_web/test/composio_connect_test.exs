@@ -12,7 +12,15 @@ defmodule CommaWeb.ComposioConnectTest do
         {:ok, raw, conn} = read_body(conn)
         request = Jason.decode!(raw)
         Agent.update(state, &Map.update!(&1, :rpc_requests, fn calls -> [request | calls] end))
-        result = Agent.get(state, & &1.connect_result)
+
+        result =
+          Agent.get(state, fn fixture ->
+            if fixture[:routine] do
+              routine_response(request["params"], fixture)
+            else
+              fixture.connect_result
+            end
+          end)
 
         if get_in(request, ["params", "arguments", "toolkits"]) == [
              %{"name" => "gmail", "action" => "list"}
@@ -91,6 +99,73 @@ defmodule CommaWeb.ComposioConnectTest do
             send_resp(conn, 404, "")
         end
       end
+    end
+
+    defp routine_response(
+           %{"name" => "COMPOSIO_MANAGE_CONNECTIONS", "arguments" => args},
+           fixture
+         ) do
+      [%{"name" => toolkit, "action" => "list"}] = args["toolkits"]
+      %{"data" => %{"results" => %{toolkit => %{"accounts" => fixture.routine_accounts}}}}
+    end
+
+    defp routine_response(%{"name" => "COMPOSIO_SEARCH_TOOLS"}, _fixture) do
+      %{
+        "data" => %{
+          "toolkit_connection_statuses" => [],
+          "tool_schemas" => %{},
+          "session" => %{"id" => "routine-session"}
+        }
+      }
+    end
+
+    defp routine_response(
+           %{"name" => "COMPOSIO_MULTI_EXECUTE_TOOL", "arguments" => args},
+           fixture
+         ) do
+      [tool] = args["tools"]
+
+      data =
+        case tool["tool_slug"] do
+          "GMAIL_GET_PROFILE" ->
+            %{"emailAddress" => "member@example.com"}
+
+          "GMAIL_LIST_THREADS" ->
+            %{"threads" => [%{"id" => "abc123"}]}
+
+          "GMAIL_FETCH_MESSAGE_BY_THREAD_ID" ->
+            %{
+              "messages" => [
+                %{
+                  "id" => "abc456",
+                  "internalDate" => "1791882000000",
+                  "labelIds" => ~w(INBOX IMPORTANT),
+                  "snippet" => "Please approve the release",
+                  "payload" => %{
+                    "headers" => [
+                      %{"name" => "Subject", "value" => "Release approval"},
+                      %{"name" => "From", "value" => "lead@example.com"}
+                    ],
+                    "mimeType" => "text/plain",
+                    "body" => %{"data" => Base.url_encode64("Please approve the release")}
+                  }
+                }
+              ]
+            }
+        end
+
+      %{
+        "data" => %{
+          "results" => [
+            %{
+              "tool_slug" => tool["tool_slug"],
+              "index" => 0,
+              "response" => %{"successful" => true, "data" => data}
+            }
+          ],
+          "success" => true
+        }
+      }
     end
 
     defp json(conn, value),
@@ -773,5 +848,160 @@ defmodule CommaWeb.ComposioConnectTest do
 
     assert {:error, _} =
              CommaWeb.OAuthCommit.run(auth, fn -> flunk("revoked owner must not commit") end)
+  end
+
+  test "Routine Connect discovery stays opt-in with auto-new on and reads only the exact confirmed account",
+       c do
+    scope = connect_fixture(c)
+
+    Agent.update(
+      c.provider,
+      &Map.merge(&1, %{
+        routine: true,
+        rpc_requests: [],
+        routine_accounts: [
+          %{"id" => "opaque-member-a", "status" => "ACTIVE", "alias" => "member@example.com"},
+          %{"id" => "opaque-member-b", "status" => "ACTIVE", "alias" => "member@example.com"}
+        ]
+      })
+    )
+
+    {:ok, _} = Comma.Recommendations.get(c.user, %{}, c.w["id"], "America/Sao_Paulo")
+    {:ok, profile} = Comma.Recommendations.get_runtime_profile(c.w["id"], scope.user)
+    assert profile.auto_enable_new_sources
+    assert {:ok, []} = CommaWeb.RecommendationSources.discover(c.w, scope.user, "member")
+
+    for id <- ~w(opaque-member-a opaque-member-b) do
+      {:ok, _} =
+        ComposioAccess.put_account(scope.tenant, scope.group, scope.user, id, %{
+          "toolkit" => "gmail",
+          "mode" => "connect",
+          "status" => "ACTIVE",
+          "name" => "member@example.com"
+        })
+    end
+
+    {:ok, _} =
+      ComposioAccess.put_account(scope.tenant, scope.group, scope.user, "unsupported", %{
+        "toolkit" => "jira",
+        "mode" => "connect",
+        "status" => "ACTIVE",
+        "name" => "Jira"
+      })
+
+    assert {:ok, discovered} = CommaWeb.RecommendationSources.discover(c.w, scope.user, "member")
+    assert Enum.map(discovered, & &1["connectionId"]) == ~w(opaque-member-a opaque-member-b)
+    assert length(Enum.uniq(Enum.map(discovered, & &1["label"]))) == 2
+    assert {:ok, _} = Comma.Recommendations.reconcile_discovered_sources(profile.id, discovered)
+    {:ok, profile} = Comma.Recommendations.get_runtime_profile(c.w["id"], scope.user)
+    assert Enum.all?(profile.sources, &(&1["enabled"] == false))
+
+    assert {:ok, %{facts: [], failures: []}} =
+             CommaWeb.RecommendationSourceCollector.collect(c.w, profile.sources,
+               member_user_id: scope.user
+             )
+
+    assert Agent.get(c.provider, & &1.rpc_requests) == []
+
+    assert {:error, :composio_routine_confirmation_required} =
+             Comma.Recommendations.update_settings(c.user, %{}, c.w["id"], %{
+               "autoEnableNewSources" => true,
+               "schedule" => %{
+                 "enabled" => true,
+                 "hour" => 8,
+                 "minute" => 0,
+                 "timezone" => "America/Sao_Paulo"
+               },
+               "sources" => [%{"connectionId" => "opaque-member-a", "enabled" => true}]
+             })
+
+    assert {:ok, identity} =
+             command(c, "routine_source", %{
+               "operation" => "prepare",
+               "account_id" => "opaque-member-a"
+             })
+
+    assert identity["identity"] == "member@example.com"
+
+    reads = fn ->
+      Agent.get(c.provider, fn f ->
+        Enum.filter(
+          f.rpc_requests,
+          &(get_in(&1, ["params", "name"]) == "COMPOSIO_MULTI_EXECUTE_TOOL")
+        )
+      end)
+    end
+
+    assert Enum.all?(
+             reads.(),
+             &(get_in(&1, ["params", "arguments", "tools"]) |> hd() |> Map.get("tool_slug") ==
+                 "GMAIL_GET_PROFILE")
+           )
+
+    assert is_nil(Comma.MemberSourceConsents.binding(c.w["id"], scope.user, "gmail"))
+
+    assert {:ok, _} =
+             command(c, "routine_source", %{
+               "operation" => "enable",
+               "account_id" => "opaque-member-a",
+               "confirmation" => identity
+             })
+
+    {:ok, reloaded} = Comma.Recommendations.get(c.user, %{}, c.w["id"])
+    assert Enum.map(reloaded["settings"]["sources"], & &1["enabled"]) == [true, false]
+    {:ok, profile} = Comma.Recommendations.get_runtime_profile(c.w["id"], scope.user)
+
+    assert {:ok,
+            %{
+              facts: [%{"data" => %{"messages" => [%{"subject" => "Release approval"}]}} = fact],
+              failures: []
+            }} =
+             CommaWeb.RecommendationSourceCollector.collect(c.w, profile.sources,
+               member_user_id: scope.user
+             )
+
+    assert fact["memberSubject"]["connection_id"] == "opaque-member-a"
+
+    assert Enum.all?(
+             reads.(),
+             &(get_in(&1, ["params", "arguments", "tools"]) |> hd() |> Map.get("account") ==
+                 "opaque-member-a")
+           )
+
+    assert Enum.any?(
+             reads.(),
+             &(get_in(&1, ["params", "arguments", "tools"]) |> hd() |> Map.get("tool_slug") ==
+                 "GMAIL_FETCH_MESSAGE_BY_THREAD_ID")
+           )
+
+    assert {:ok, %{"items" => []}} = ComposioAccess.grants(scope.tenant, scope.group, "any-agent")
+
+    before = length(reads.())
+
+    {:ok, _} =
+      ComposioAccess.enable_account(
+        scope.tenant,
+        scope.group,
+        scope.user,
+        "opaque-member-a",
+        false
+      )
+
+    refute CommaWeb.RecommendationComposioMemberSource.current_subject?(
+             c.w,
+             scope.user,
+             hd(profile.sources),
+             fact["memberSubject"]
+           )
+
+    assert {:ok, %{facts: [], failures: [_]}} =
+             CommaWeb.RecommendationSourceCollector.collect(c.w, profile.sources,
+               member_user_id: scope.user
+             )
+
+    assert length(reads.()) == before
+
+    assert {:error, :forbidden} =
+             CommaWeb.RecommendationSources.discover(c.w, "stranger", "member")
   end
 end

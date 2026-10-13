@@ -16,12 +16,51 @@ defmodule CommaWeb.RecommendationSources do
       when mode in ~w(generic member) and is_list(existing_sources) do
     with :ok <- member_scope(workspace, user_id, mode),
          native = discover_oauth(tenant_id, group_id),
-         {:ok, composio} <- discover_composio(workspace, user_id, mode, existing_sources, native) do
+         {:ok, composio} <- discover_composio(workspace, user_id, mode, existing_sources, native),
+         {:ok, personal} <- discover_personal(workspace, user_id) do
       {:ok,
-       (native ++ composio)
+       (native ++ personal ++ composio)
        |> Enum.uniq_by(& &1["connectionId"])
        |> Enum.sort_by(&{&1["appName"], &1["label"], &1["connectionId"]})
        |> Enum.take(12)}
+    end
+  end
+
+  defp discover_personal(_workspace, nil), do: {:ok, []}
+
+  defp discover_personal(workspace, user) do
+    alias SalixStore.ComposioAccess, as: Access
+    alias CommaWeb.RecommendationComposioTransport, as: Transport
+    tenant = workspace["salix_tenant_id"]
+    group = workspace["default_group_id"]
+
+    with true <- workspace["owner_user_id"] == user,
+         {:ok, profile} <- Access.profile(tenant, group, user),
+         {:ok, page} <- Access.accounts(tenant, group, user) do
+      accounts =
+        Enum.filter(page["items"], fn account ->
+          profile["status"] == "connected" and account["mode"] == profile["mode"] and
+            account["status"] == "ACTIVE" and account["enabled"] == true and
+            Transport.supported?(account["toolkit"])
+        end)
+
+      {:ok,
+       Enum.map(accounts, fn account ->
+         # Include the opaque reference even when names match; never choose a
+         # duplicate by date, email, or an inferred callback ID.
+         label = String.slice(account["name"] || account["toolkit"], 0, 70)
+         suffix = " (" <> account["id"] <> ")"
+         label = String.slice(label, 0, max(120 - String.length(suffix), 0)) <> suffix
+
+         source("composio", account["toolkit"], account["id"], String.slice(label, 0, 120), %{
+           "toolkit" => account["toolkit"],
+           "composioMode" => profile["mode"],
+           "composioAuthorization" => Transport.authorization(profile)
+         })
+       end)}
+    else
+      false -> {:error, :forbidden}
+      {:error, reason} -> {:error, {:composio_source_discovery_failed, reason}}
     end
   end
 
@@ -66,7 +105,7 @@ defmodule CommaWeb.RecommendationSources do
       {:ok, accounts} when is_list(accounts) ->
         bindings =
           if mode == "member",
-            do: Comma.MemberSourceConsents.bindings(workspace["id"], user_id),
+            do: legacy_bindings(workspace, user_id),
             else: %{}
 
         bindings =
@@ -85,7 +124,7 @@ defmodule CommaWeb.RecommendationSources do
          |> Enum.map(&composio_source/1)}
 
       {:error, :not_configured} when mode == "member" ->
-        if existing_composio_choice?(workspace["id"], user_id, existing_sources, native),
+        if existing_composio_choice?(workspace, user_id, existing_sources, native),
           do: {:error, {:composio_source_discovery_failed, :not_configured}},
           else: {:ok, []}
 
@@ -100,15 +139,30 @@ defmodule CommaWeb.RecommendationSources do
     end
   end
 
-  defp existing_composio_choice?(workspace_id, user_id, sources, native) do
+  defp existing_composio_choice?(workspace, user_id, sources, native) do
     slack_managed? = Enum.any?(native, &(&1["appId"] == "slack"))
-    bindings = Comma.MemberSourceConsents.bindings(workspace_id, user_id)
+    bindings = legacy_bindings(workspace, user_id)
     bindings = if slack_managed?, do: Map.delete(bindings, "slack"), else: bindings
 
     Enum.any?(sources, fn source ->
-      source["kind"] == "composio" and
+      source["kind"] == "composio" and is_nil(source["composioMode"]) and
         not (slack_managed? and source["appId"] == "slack")
     end) or map_size(bindings) > 0
+  end
+
+  defp legacy_bindings(workspace, user_id) do
+    Comma.MemberSourceConsents.bindings(workspace["id"], user_id)
+    |> Map.reject(fn {_toolkit, id} ->
+      match?(
+        {:ok, _},
+        SalixStore.ComposioAccess.account(
+          workspace["salix_tenant_id"],
+          workspace["default_group_id"],
+          user_id,
+          id
+        )
+      )
+    end)
   end
 
   defp selected_accounts(accounts, _bindings, "generic"),

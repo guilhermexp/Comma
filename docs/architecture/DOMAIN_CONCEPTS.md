@@ -858,7 +858,7 @@ Its key is Workspace, User, and toolkit. Verified installation completion or an 
 It survives multi-step Google setup and the completion of an installation attempt. User or Workspace deletion removes it.
 Its update timestamp fences renewed consent, even when the connected-account ID stays the same. Comma disconnect removes the receipt.
 A receipt does not prove external user identity, current connection status, or read permission. Readers must check these separately.
-Neither Settings nor a source list can create a receipt. For an old Composio connection, the owner can confirm its exact account in Plugins after Comma reads the provider's own identity. The one-time member identity backfill also writes it when the Workspace has only ever had its owner as a member, the toolkit has exactly one active account, and the provider identity read accepts it as a personal account. With more than one account, the owner chooses.
+Discovery and ordinary source flags cannot create a receipt. For an old Composio connection, the owner can confirm its exact account in Plugins after Comma reads the provider's own identity. The one-time member identity backfill also writes it when the Workspace has only ever had its owner as a member, the toolkit has exactly one active account, and the provider identity read accepts it as a personal account. With more than one account, the owner chooses.
 The confirmation attempt stores a generation, owner, account, provider identity, old receipt revision, and expiry in the existing Plugin Install Attempt. Comma checks these values again before it writes the receipt and queues source discovery. Cancellation, expiry, uninstall, or a later operation rejects the old attempt. An OAuth reconnection keeps the old account until the new connection completes. Completion then retires only the account that the old receipt named. Other accounts of the toolkit, such as meeting calendars, remain.
 An installation attempt cannot own this relationship because completion clears its provider state. A Plugin Installation does not exist during partial setup.
 A Recommendation Profile cannot store it without creating default-UTC scheduling state before the first client read. The separate relationship avoids that side effect.
@@ -877,8 +877,8 @@ Every public envelope rechecks those bindings before exposing a member snapshot.
 These checks observe Comma's current consent and connection state, not instantaneous provider-side revocation. Provider errors still fail collection.
 Successful empty member reads skip model generation and publish no recommendation cards. Failed reads retain the existing failure or partial-source warning contract.
 Composio member discovery selects the receipt's exact account. A newer account cannot replace it without confirmation or a completed OAuth reconnection. Composio member reads check the exact account's group, toolkit, and active status, then resolve its provider self identity.
-Identity and member reads call each provider's official versioned API through a proxy session pinned to that account. Composio keeps the credential.
-No Composio tool slug, argument name, or reshaped response is part of these reads. No other path replaces a failed request.
+Legacy and personal project identity and member reads call each provider's official versioned API through a proxy session pinned to that account. Composio keeps the credential.
+Personal Connect reads use the official read tool schemas through MCP, with an explicit opaque account reference on every action. No other transport replaces a failed request.
 Member reads request independent relationships concurrently. Every member request, including GitHub, Linear, and Notion requests, ends by the source deadline.
 A relationship that fails or runs out of time drops only its own items and adds a partial-source warning.
 Only a failed identity read, or a source with nothing readable, fails the source. Comment reads that return 403 or 404 contribute nothing without a warning.
@@ -894,6 +894,56 @@ Calendar uses the primary calendar and keeps the coming week's self-organized or
 Drive requires verified ownership for recently changed files. It does not treat all visible or shared files as personal work.
 It also reads open comments by others that name the member's address on the five most recently changed files. A file without comment access contributes none.
 Composio publication/display fences use the local consent receipt, not a remote provider probe. External account changes are observed at collection or source reconciliation.
+
+Personal Composio Routine sources reuse the existing account references, Member Source Consent,
+and Recommendation Profile. They add no domain entity or Agent grant.
+[Discovery](../../systems/apps/comma_web/lib/comma_web/recommendation_sources.ex) projects enabled ACTIVE
+Gmail, Calendar, Drive, and Slack accounts in the current member, Workspace and credential mode.
+It reads one local account page of at most 50 records and retains the existing 12-source listing bound.
+Native GitHub, Linear, Notion and Slack readers and legacy Group Composio discovery remain separate.
+Duplicate personal accounts remain separate choices; discovery never picks the newest one.
+
+New personal sources always start disabled, including when the legacy automatic-new-source
+preference is on. Settings → Routines shows the account label and reference beside the existing
+switch. The switch first reads only the selected provider's self identity. The member then
+confirms the displayed account and the data that Routine may collect. The
+[account command](../../systems/apps/comma_web/lib/comma_web/composio_connect.ex) verifies that
+identity again and checks the current source revision and previous consent. It writes the
+existing consent receipt and enables only that exact account for its toolkit in one database
+transaction. Cancellation or a failed confirmation does not enable the source.
+Ordinary settings flags cannot enable a disabled personal source.
+
+The Profile source retains private projections `composioMode`, `composioAuthorization`,
+`memberConsent` and `providerSubject`. These do not cross the public source DTO.
+`composioAuthorization` refers to the profile mode, credential connection and
+`authorization_revision`. ComposioAccess increments this revision on a completed login or
+project-key replacement. MCP session recovery does not change it. Rebinding the configuration
+requires new explicit Routine consent even if the provider returns the same account alias.
+No database migration or new provider identity is required. Plugin disable/disconnect, a new login,
+or project-key replacement also revokes the affected personal Routine receipts, disables the
+sources and purges their pooled items. Re-enabling an account in Plugins does not restore Routine
+read consent.
+
+[The personal read adapter](../../systems/apps/comma_web/lib/comma_web/recommendation_composio_transport.ex)
+reuses the bounded Google and Slack member readers in manual, scheduled and background collection.
+Every request rechecks local account state and the exact receipt; collection verifies provider
+identity before content reads and checks it again before returning evidence. Connect uses a
+closed set of official read actions, with one action and one account per MCP execution.
+It grants no remote code, shell, connection management or general Agent execution authority.
+Project sessions use `comma:<group>:<user>` as the upstream owner and pin the exact account.
+Personal accounts do not create legacy tenant webhook triggers; they use the existing
+15-minute collection chain. Native source preferences do not inherit personal account choices.
+Provider revocation is observed at collection. A definitive remote revocation or changed self
+identity revokes only the still-current Routine receipt and purges its pooled items; an old
+in-flight failure cannot revoke a newer confirmation. Local disable, mode change, configuration rebind
+or consent replacement immediately rejects cached subjects; reconciliation removes or disables
+stale sources and purges their pooled items. Generic Routine mode uses the same personal read
+consent and display fences. The legacy generic readers retain their existing behavior.
+
+Official schemas were checked against the Composio toolkit documentation. Mock HTTP tests
+prove request shape, account selection, authorization and normalized evidence. They do not
+prove live provider responses, granted scopes, native appearance or live recommendation quality.
+
 Notion member reads need no configuration. The retired `member_source_rules` column remains stored but unused.
 Notion verifies the token's user owner. It queries at most five task databases, which have a people property and a Notion status property.
 An open item names the member in a people property and has a status outside the Complete group. The property name reaches the Router as the member's role.

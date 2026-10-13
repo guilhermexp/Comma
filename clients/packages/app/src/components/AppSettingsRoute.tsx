@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { useBrowserSettingsCategory } from "./chat/useBrowserSettingsCategory";
 import { useAirDropNameSetting } from "./useAirDropNameSetting";
 import { useProactiveSetting } from "./recommendations/useProactiveSetting";
@@ -212,6 +213,21 @@ function useLinkedSettingsCategory(): string | undefined {
   return category;
 }
 
+const routineSourceConfirmationSchema = z.object({
+  required: z.literal(true),
+  identity: z.string(),
+  account_id: z.string(),
+  source_revision: z.number(),
+  subject: z.record(z.string(), z.string()),
+  configuration: z.object({
+    mode: z.string(),
+    authorization_revision: z.number(),
+  }),
+  consent: z
+    .object({ connection_id: z.string(), consent_revision: z.string() })
+    .nullable(),
+});
+
 export function AppSettingsRoute({
   additionalSystemCategories = [],
 }: {
@@ -309,6 +325,14 @@ export function AppSettingsRoute({
   const [recommendationsPending, setRecommendationsPending] = useState(false);
   const [recommendationsError, setRecommendationsError] = useState(false);
   const [recommendationsSaveError, setRecommendationsSaveError] = useState(false);
+  const [routineConsent, setRoutineConsent] = useState<{
+    workspaceId: string;
+    source: CommaRecommendationEnvelope["settings"]["sources"][number];
+    confirmation: z.infer<typeof routineSourceConfirmationSchema>;
+  }>();
+  const [routineConsentPending, setRoutineConsentPending] = useState(false);
+  const [routineConsentError, setRoutineConsentError] = useState(false);
+  const routineConsentRequest = useRef(0);
   const [telegramWorkspaceId, setTelegramWorkspaceId] = useState<string>();
   const wechatItem = useWeChatIntegration(
     api,
@@ -838,6 +862,87 @@ export function AppSettingsRoute({
       setRecommendationsPending(false);
     }
   };
+
+  // The existing source switch asks for provider self identity first. Only
+  // the confirmation action enables a personal Composio source.
+  const toggleRoutineSource = async (
+    source: CommaRecommendationEnvelope["settings"]["sources"][number],
+    enabled: boolean
+  ) => {
+    if (
+      !recommendations ||
+      !recommendationWorkspaceId ||
+      recommendationsPending ||
+      routineConsentPending
+    )
+      return;
+    const patch = {
+      autoEnableNewSources: recommendations.settings.autoEnableNewSources,
+      schedule: recommendations.settings.schedule,
+      sources: [{ connectionId: source.connectionId, enabled }],
+    };
+    if (!enabled || source.kind !== "composio")
+      return saveRecommendationSettings(patch);
+    const request = ++routineConsentRequest.current;
+    const workspaceId = recommendationWorkspaceId;
+    setRoutineConsentPending(true);
+    setRoutineConsentError(false);
+    try {
+      const confirmation = await api.composioCommand(workspaceId, "routine_source", {
+        operation: "prepare",
+        account_id: source.connectionId,
+      });
+      if (request !== routineConsentRequest.current) return;
+      if (confirmation.required === true && typeof confirmation.identity === "string") {
+        setRoutineConsent({
+          workspaceId,
+          source,
+          confirmation: routineSourceConfirmationSchema.parse(confirmation),
+        });
+      } else if (confirmation.required === false) {
+        await saveRecommendationSettings(patch);
+      } else {
+        setRoutineConsentError(true);
+      }
+    } catch {
+      if (request === routineConsentRequest.current) setRoutineConsentError(true);
+    } finally {
+      if (request === routineConsentRequest.current) setRoutineConsentPending(false);
+    }
+  };
+
+  const enableRoutineSource = async () => {
+    if (!routineConsent || routineConsentPending) return;
+    const request = ++routineConsentRequest.current;
+    const consent = routineConsent;
+    setRoutineConsentPending(true);
+    setRoutineConsentError(false);
+    try {
+      await api.composioCommand(consent.workspaceId, "routine_source", {
+        operation: "enable",
+        account_id: consent.source.connectionId,
+        confirmation: consent.confirmation,
+      });
+      const updated = await api.getRecommendations(consent.workspaceId);
+      if (request !== routineConsentRequest.current) return;
+      setRecommendations(updated);
+      setRoutineConsent(undefined);
+    } catch {
+      if (request === routineConsentRequest.current) setRoutineConsentError(true);
+    } finally {
+      if (request === routineConsentRequest.current) setRoutineConsentPending(false);
+    }
+  };
+
+  useEffect(() => {
+    routineConsentRequest.current += 1;
+    setRoutineConsent(undefined);
+    setRoutineConsentPending(false);
+    setRoutineConsentError(false);
+    return () => {
+      routineConsentRequest.current += 1;
+    };
+  }, [recommendationWorkspaceId, activeCategoryId]);
 
   // Describe source content without promising mode-specific collection filters.
   // Unknown apps show no subtitle.
@@ -2119,28 +2224,38 @@ export function AppSettingsRoute({
                       },
                     },
                   },
+                  ...(routineConsentError && !routineConsent
+                    ? [
+                        {
+                          id: "recommendations.sources.consent-error",
+                          title: m.settings_routine_consent_failed(),
+                        },
+                      ]
+                    : []),
                   ...(recommendations?.settings.sources.length
                     ? recommendations.settings.sources.map((source) => ({
                         id: `recommendations.source.${source.connectionId}`,
                         title: source.appName,
-                        ...recommendationSourceDescription(source.appId),
+                        description: [
+                          source.label !== source.appName &&
+                          source.label !== source.appId
+                            ? source.label
+                            : undefined,
+                          source.kind === "composio" &&
+                          !source.label.includes(source.connectionId)
+                            ? source.connectionId
+                            : undefined,
+                          recommendationSourceDescription(source.appId).description,
+                        ]
+                          .filter(Boolean)
+                          .join(" · "),
                         icon: <LinkProviderIcon source={source} />,
                         control: {
                           type: "toggle" as const,
                           checked: source.enabled,
-                          disabled: recommendationsPending,
+                          disabled: recommendationsPending || routineConsentPending,
                           onChange: (event: { target: { checked: boolean } }) => {
-                            void saveRecommendationSettings({
-                              autoEnableNewSources:
-                                recommendations.settings.autoEnableNewSources,
-                              schedule: recommendations.settings.schedule,
-                              sources: [
-                                {
-                                  connectionId: source.connectionId,
-                                  enabled: event.target.checked,
-                                },
-                              ],
-                            });
+                            void toggleRoutineSource(source, event.target.checked);
                           },
                         },
                       }))
@@ -2387,6 +2502,52 @@ export function AppSettingsRoute({
       >
         {commandPalette?.paletteElement}
       </SettingsDialog>
+      {routineConsent && activeCategoryId === "recommendations" ? (
+        <Dialog
+          isOpen
+          isDismissable={!routineConsentPending}
+          onOpenChange={(open) => {
+            if (!open && !routineConsentPending) setRoutineConsent(undefined);
+          }}
+          title={m.settings_routine_consent_title({
+            app: routineConsent.source.appName,
+          })}
+          description={
+            <>
+              <p>
+                {routineConsent.confirmation.identity} ·{" "}
+                {routineConsent.confirmation.account_id}
+              </p>
+              <p>
+                {
+                  recommendationSourceDescription(routineConsent.source.appId)
+                    .description
+                }
+              </p>
+              <p>{m.settings_routine_consent_description()}</p>
+              {routineConsentError ? (
+                <p role="alert">{m.settings_routine_consent_failed()}</p>
+              ) : null}
+            </>
+          }
+          actions={[
+            {
+              label: m.settings_profile_cancel(),
+              hierarchy: "secondary-gray",
+              disabled: routineConsentPending,
+              onPress: () => setRoutineConsent(undefined),
+            },
+            {
+              label: m.settings_routine_consent_enable(),
+              hierarchy: "primary",
+              disabled: routineConsentPending,
+              onPress: () => {
+                void enableRoutineSource();
+              },
+            },
+          ]}
+        />
+      ) : null}
       {telegramReconnectOpen && activeCategoryId === "channels" ? (
         <Dialog
           isOpen

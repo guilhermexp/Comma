@@ -28,7 +28,19 @@ defmodule CommaWeb.MemberSourceTriggers do
   collection.
   """
   def ensure(workspace, profile_id) do
-    with [_ | _] = states <- MemberSourceItems.untriggered(profile_id, Map.keys(@slugs)),
+    with {:ok, profile} <-
+           Comma.Recommendations.get_runtime_profile(workspace["id"], workspace["owner_user_id"]),
+         legacy_ids =
+           for(
+             source <- profile.sources,
+             is_nil(source["composioMode"]),
+             do: source["connectionId"]
+           ),
+         [_ | _] = states <-
+           Enum.filter(
+             MemberSourceItems.untriggered(profile_id, Map.keys(@slugs)),
+             &(&1.source_id in legacy_ids)
+           ),
          {:ok, %{"webhook_configured" => true} = settings} <-
            settings().get(workspace["salix_tenant_id"]) do
       Enum.each(states, fn state ->

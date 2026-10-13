@@ -31,6 +31,20 @@ defmodule CommaWeb.RecommendationComposioMemberSource do
 
   def identify(_workspace, _toolkit, _id), do: {:error, :member_source_unsupported}
 
+  def identify_source(workspace, user, %{"composioMode" => _} = source) do
+    CommaWeb.RecommendationComposioTransport.with_reader(
+      workspace,
+      user,
+      source,
+      RecommendationMemberRead.deadline(),
+      fn -> :ok end,
+      &identity(source["toolkit"], &1)
+    )
+  end
+
+  def identify_source(workspace, _user, source),
+    do: identify(workspace, source["toolkit"], source["connectionId"])
+
   defp identity("slack", request) do
     case request.("GET", @slack <> "/auth.test", []) do
       {:ok, %{"bot_id" => bot_id}} when is_binary(bot_id) and bot_id != "" ->
@@ -104,6 +118,75 @@ defmodule CommaWeb.RecommendationComposioMemberSource do
 
   def read(workspace, user_id, source, now, deadline \\ RecommendationMemberRead.deadline())
 
+  def read(workspace, user, %{"composioMode" => _, "toolkit" => toolkit} = source, now, deadline) do
+    consent = source["memberConsent"]
+
+    authorize = fn ->
+      if is_map(consent) and consent["connection_id"] == source["connectionId"] and
+           consent == Comma.MemberSourceConsents.binding(workspace["id"], user, toolkit),
+         do: :ok,
+         else: {:error, :member_identity_or_source_unavailable}
+    end
+
+    with :ok <- authorize.(),
+         {:ok, data, identity} <-
+           CommaWeb.RecommendationComposioTransport.with_reader(
+             workspace,
+             user,
+             source,
+             deadline,
+             authorize,
+             fn request ->
+               # Verify before any content call. Collection cannot silently adopt
+               # a changed provider identity under the same opaque alias.
+               with {:ok, actual} <- identity(toolkit, request),
+                    true <- actual["subject"] == source["providerSubject"] do
+                 provider_read(toolkit, request, now)
+               else
+                 {:error, _} = error -> error
+                 _ -> {:error, :member_source_identity_mismatch}
+               end
+             end
+           ),
+         :ok <- authorize.(),
+         true <- CommaWeb.RecommendationComposioTransport.current?(workspace, user, source),
+         true <- identity == source["providerSubject"] do
+      {:ok, data,
+       Map.merge(
+         identity,
+         Map.merge(consent, %{
+           "user_id" => user,
+           "toolkit" => toolkit,
+           "composioAuthorization" => source["composioAuthorization"]
+         })
+       )}
+    else
+      {:error, reason} = error
+      when reason in [
+             :composio_access_denied,
+             :composio_reauthorization_required,
+             :member_source_identity_mismatch
+           ] ->
+        # A definitive remote loss cannot leave cached items or a published
+        # briefing authorized. A stale read must not revoke a newer consent.
+        Comma.Recommendations.revoke_composio_sources(
+          %{"id" => user},
+          %{},
+          workspace["id"],
+          [source["connectionId"]],
+          source
+        )
+
+        error
+
+      {:error, _} = error ->
+        error
+
+      _ ->
+        {:error, :member_identity_or_source_unavailable}
+    end
+  end
+
   def read(
         workspace,
         user_id,
@@ -149,6 +232,19 @@ defmodule CommaWeb.RecommendationComposioMemberSource do
 
   # Display checks local consent, not the external provider. Provider-side
   # revocation is observed during collection; Comma disconnect removes consent.
+  def current_subject?(workspace, user, %{"composioMode" => _} = source, subject)
+      when is_map(subject) do
+    consent = Map.take(subject, ~w(connection_id consent_revision))
+
+    workspace["owner_user_id"] == user and subject["user_id"] == user and
+      source["connectionId"] == subject["connection_id"] and
+      source["toolkit"] == subject["toolkit"] and
+      consent == source["memberConsent"] and
+      consent == Comma.MemberSourceConsents.binding(workspace["id"], user, source["toolkit"]) and
+      subject["composioAuthorization"] == source["composioAuthorization"] and
+      CommaWeb.RecommendationComposioTransport.current?(workspace, user, source)
+  end
+
   def current_subject?(workspace, user_id, source, subject) when is_map(subject) do
     workspace["owner_user_id"] == user_id and
       source["toolkit"] == subject["toolkit"] and

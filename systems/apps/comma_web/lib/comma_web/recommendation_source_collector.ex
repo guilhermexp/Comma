@@ -18,9 +18,10 @@ defmodule CommaWeb.RecommendationSourceCollector do
     now = Keyword.get(opts, :now, DateTime.utc_now())
 
     settings =
-      if is_nil(opts[:member_user_id]) and Enum.any?(selected, &(&1["kind"] == "composio")),
-        do: settings_store().settings(workspace["salix_tenant_id"]),
-        else: {:ok, %{}}
+      if is_nil(opts[:member_user_id]) and
+           Enum.any?(selected, &(&1["kind"] == "composio" and is_nil(&1["composioMode"]))),
+         do: settings_store().settings(workspace["salix_tenant_id"]),
+         else: {:ok, %{}}
 
     with {:ok, collection} <- collect_selected(selected, workspace, settings, now, opts) do
       {:ok, Map.put(collection, :duration_ms, System.monotonic_time(:millisecond) - started)}
@@ -128,6 +129,24 @@ defmodule CommaWeb.RecommendationSourceCollector do
        failures: Enum.sort_by(failures, & &1["sourceId"])
      }}
   end
+
+  defp collect_selected_source(
+         %{"composioMode" => _} = source,
+         workspace,
+         settings,
+         now,
+         nil,
+         deadline
+       ),
+       do:
+         collect_selected_source(
+           source,
+           workspace,
+           settings,
+           now,
+           workspace["owner_user_id"],
+           deadline
+         )
 
   defp collect_selected_source(source, workspace, settings, now, nil, _deadline),
     do: collect_source(source, workspace, settings, now)
@@ -534,6 +553,15 @@ defmodule CommaWeb.RecommendationSourceCollector do
       "sourceId" => source["connectionId"]
     }
   end
+
+  defp failure_class(reason)
+       when reason in [
+              :composio_access_denied,
+              :composio_sign_in_required,
+              :composio_reauthorization_required,
+              :composio_account_not_active
+            ],
+       do: "reconnect"
 
   defp failure_class(reason)
        when reason in [

@@ -75,6 +75,7 @@ defmodule SalixStore.ComposioAccess do
              profile
              |> Map.delete("attempt")
              |> Map.put("status", "connected")
+             |> Map.put("authorization_revision", (profile["authorization_revision"] || 0) + 1)
              |> Map.put("connection_id", connection_id)
              |> Map.delete("mcp_session_headers")}
           else
@@ -111,6 +112,7 @@ defmodule SalixStore.ComposioAccess do
       update_profile(tenant, group, user, fn profile ->
         {:ok,
          profile
+         |> Map.put("authorization_revision", (profile["authorization_revision"] || 0) + 1)
          |> Map.put("project_configuration", sealed)
          |> Map.put("mode", "project")
          |> Map.put("status", "connected")

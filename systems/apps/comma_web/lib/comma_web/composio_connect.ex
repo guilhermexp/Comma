@@ -24,8 +24,67 @@ defmodule CommaWeb.ComposioConnect do
     end
   end
 
+  defp run(s, "routine_source", %{"operation" => operation, "account_id" => id} = params)
+       when operation in ~w(prepare enable) and is_binary(id) do
+    with {:ok, workspace} <- Workspaces.authorize(%{"id" => s.user}, %{}, s.workspace),
+         {:ok, profile} <- Comma.Recommendations.get_runtime_profile(s.workspace, s.user),
+         source when is_map(source) <- Enum.find(profile.sources, &(&1["connectionId"] == id)) do
+      if is_nil(source["composioMode"]) do
+        {:ok, %{"required" => false}}
+      else
+        with {:ok, identity} <-
+               CommaWeb.RecommendationComposioMemberSource.identify_source(
+                 workspace,
+                 s.user,
+                 source
+               ) do
+          confirmation = %{
+            "required" => true,
+            "identity" => identity["display"],
+            "subject" => identity["subject"],
+            "configuration" =>
+              source["composioAuthorization"]
+              |> Map.take(~w(mode authorization_revision))
+              |> Map.put_new("authorization_revision", 0),
+            "account_id" => id,
+            "source_revision" => profile.source_revision,
+            "consent" =>
+              Comma.MemberSourceConsents.binding(s.workspace, s.user, source["toolkit"])
+          }
+
+          case operation do
+            "prepare" ->
+              {:ok, confirmation}
+
+            "enable" ->
+              with true <- params["confirmation"] == confirmation,
+                   true <-
+                     CommaWeb.RecommendationComposioTransport.current?(workspace, s.user, source) do
+                Comma.Recommendations.confirm_composio_source(
+                  %{"id" => s.user},
+                  %{},
+                  s.workspace,
+                  source,
+                  identity,
+                  confirmation["consent"]
+                )
+              else
+                _ -> {:error, :member_identity_or_source_unavailable}
+              end
+          end
+        end
+      end
+    else
+      {:error, _} = error -> error
+      _ -> {:error, :member_identity_or_source_unavailable}
+    end
+  end
+
   defp run(s, "authorize", _) do
-    RemoteMCPOAuth.start_composio_authorization(s.tenant, s.group, s.user, s.workspace)
+    with {:ok, result} <-
+           RemoteMCPOAuth.start_composio_authorization(s.tenant, s.group, s.user, s.workspace),
+         {:ok, :ok} <- revoke_routine_sources(s, :all),
+         do: {:ok, result}
   end
 
   defp run(s, "cancel", _) do
@@ -51,7 +110,8 @@ defmodule CommaWeb.ComposioConnect do
   defp run(s, "project", %{"api_key" => key}) when is_binary(key) and byte_size(key) in 1..4096 do
     # Validate before save. Do not adopt a deployment default on failure.
     with {:ok, _} <- SalixStore.Composio.list_toolkits_page(%{"api_key" => key}, limit: 1),
-         {:ok, _} <- Access.put_project_settings(s.tenant, s.group, s.user, %{"api_key" => key}) do
+         {:ok, _} <- Access.put_project_settings(s.tenant, s.group, s.user, %{"api_key" => key}),
+         {:ok, :ok} <- revoke_routine_sources(s, :all) do
       {:ok, %{"status" => "connected", "mode" => "project"}}
     else
       _ -> {:error, :composio_project_validation_failed}
@@ -110,13 +170,17 @@ defmodule CommaWeb.ComposioConnect do
     with {:ok, account} <- Access.account(s.tenant, s.group, s.user, id) do
       case {op, account["mode"]} do
         {"disable", _} ->
-          Access.enable_account(s.tenant, s.group, s.user, id, false)
+          disable_account(s, id)
 
         {"enable", _} ->
           Access.enable_account(s.tenant, s.group, s.user, id, true)
 
         {"verify", _} ->
-          verify_account(s, account)
+          with {:ok, verified} <- verify_account(s, account) do
+            if verified["status"] == "ACTIVE",
+              do: {:ok, verified},
+              else: with({:ok, :ok} <- revoke_routine_sources(s, [id]), do: {:ok, verified})
+          end
 
         {"reopen", _} ->
           Access.account_authorization(s.tenant, s.group, s.user, id)
@@ -128,7 +192,7 @@ defmodule CommaWeb.ComposioConnect do
           connect_personal(s, account["toolkit"], id)
 
         {"disconnect", "connect"} ->
-          with {:ok, _} <- Access.enable_account(s.tenant, s.group, s.user, id, false),
+          with {:ok, _} <- disable_account(s, id),
                :ok <- Connect.remove_account(s.tenant, s.group, s.user, account["toolkit"], id) do
             Access.put_account(
               s.tenant,
@@ -144,7 +208,7 @@ defmodule CommaWeb.ComposioConnect do
 
         {"disconnect", "project"} ->
           # Disable local effects first. A remote error remains visible and retryable.
-          with {:ok, _} <- Access.enable_account(s.tenant, s.group, s.user, id, false),
+          with {:ok, _} <- disable_account(s, id),
                {:ok, settings} <- Access.project_settings(s.tenant, s.group, s.user),
                {:ok, _} <- owned_project_account(s, settings, id),
                :ok <- SalixStore.Composio.delete_connected_account(settings, id),
@@ -462,12 +526,21 @@ defmodule CommaWeb.ComposioConnect do
   defp retire_replaced(s, local, remote) do
     if remote["status"] == "ACTIVE" and is_binary(local["replaces"]) and
          local["replaces"] != local["id"] do
-      with {:ok, _} <- Access.enable_account(s.tenant, s.group, s.user, local["replaces"], false),
+      with {:ok, _} <- disable_account(s, local["replaces"]),
            do: :ok
     else
       :ok
     end
   end
+
+  defp disable_account(s, id) do
+    with {:ok, account} <- Access.enable_account(s.tenant, s.group, s.user, id, false),
+         {:ok, :ok} <- revoke_routine_sources(s, [id]),
+         do: {:ok, account}
+  end
+
+  defp revoke_routine_sources(s, ids),
+    do: Comma.Recommendations.revoke_composio_sources(%{"id" => s.user}, %{}, s.workspace, ids)
 
   defp owned_project_account(s, settings, id) do
     with {:ok, account} <- SalixStore.Composio.get_connected_account(settings, id),

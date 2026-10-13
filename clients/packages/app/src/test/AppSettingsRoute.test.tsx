@@ -36,6 +36,12 @@ import { legacyCommaSideChatShortcutStorageKey } from "../components/readLegacyC
 import { CommaAppShortcutsProvider } from "../components/shortcuts/commaAppShortcuts";
 import type { AppShortcutPlatform } from "../components/shortcuts/appShortcutRegistry";
 
+const respond = (value: unknown, status = 200) =>
+  new Response(JSON.stringify(value), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+
 const telegramSettings = () => within(screen.getByRole("region", { name: "Telegram" }));
 
 const testSessionTransport = (signal: AbortSignal): CommaApiSessionTransport => ({
@@ -167,6 +173,103 @@ describe("AppSettingsRoute", () => {
     vi.unstubAllGlobals();
     initializeCommaI18n(["en"]);
     localStorage.clear();
+  });
+
+  it("requires explicit account read consent, survives reload and keeps a failed enable off", async () => {
+    const requests: string[] = [];
+    let enabled = false;
+    let rejectEnable = true;
+    const confirmation = {
+      required: true,
+      identity: "member@example.com",
+      account_id: "opaque-member-a",
+      source_revision: 1,
+      subject: { provider_mailbox: "member@example.com" },
+      configuration: { mode: "connect", authorization_revision: 0 },
+      consent: null,
+    };
+    const envelope = () => ({
+      settings: {
+        autoEnableNewSources: true,
+        relevanceMode: "member",
+        sourcesCheckedAt: "2026-10-13T00:00:00Z",
+        sourceRevision: 1,
+        schedule: { enabled: true, hour: 8, minute: 0, timezone: "America/Sao_Paulo" },
+        sources: [
+          {
+            appId: "gmail",
+            appName: "Gmail",
+            connectionId: "opaque-member-a",
+            enabled,
+            kind: "composio",
+            label: "member@example.com (opaque-member-a)",
+          },
+        ],
+      },
+      snapshot: null,
+      state: "empty",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(input.toString(), "https://api.example");
+
+        if (url.pathname === "/v1/comma/workspaces")
+          return respond({
+            data: [{ id: "ws-1", group_id: "grp-1", name: "Workspace" }],
+          });
+        if (url.pathname.endsWith("/recommendations")) return respond(envelope());
+        if (url.pathname.endsWith("/composio/routine_source")) {
+          const params = JSON.parse(String(init?.body));
+          requests.push(params.operation);
+          expect(params.account_id).toBe("opaque-member-a");
+          if (params.operation === "prepare") return respond(confirmation);
+          expect(params.confirmation).toEqual(confirmation);
+          if (rejectEnable)
+            return respond({ error: "member_identity_or_source_unavailable" }, 422);
+          enabled = true;
+          return respond(envelope());
+        }
+        throw new Error(`Unexpected request: ${url.pathname}`);
+      })
+    );
+    const view = renderSettings();
+    await userEvent.click(screen.getByRole("button", { name: "Routines" }));
+    const source = await screen.findByRole("switch", { name: /Gmail/ });
+    expect(source).not.toBeChecked();
+    expect(requests).toEqual([]);
+    await userEvent.click(source);
+    const dialog = await screen.findByRole("dialog", {
+      name: "Allow Routines to read Gmail?",
+    });
+    expect(
+      within(dialog).getByText(/member@example.com.*opaque-member-a/)
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/including message text and sender/)
+    ).toBeInTheDocument();
+    expect(requests).toEqual(["prepare"]);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(requests).toEqual(["prepare"]);
+    expect(source).not.toBeChecked();
+    await userEvent.click(source);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Allow reads and enable" })
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not verify or enable this account"
+    );
+    expect(enabled).toBe(false);
+    rejectEnable = false;
+    await userEvent.click(
+      screen.getByRole("button", { name: "Allow reads and enable" })
+    );
+    await waitFor(() => expect(source).toBeChecked());
+    expect(requests).toEqual(["prepare", "prepare", "enable", "enable"]);
+    view.unmount();
+    renderSettings();
+    await userEvent.click(screen.getByRole("button", { name: "Routines" }));
+    expect(await screen.findByRole("switch", { name: /Gmail/ })).toBeChecked();
   });
 
   it("persists Meeting controls with Reminder, visible recorder and Smart summary defaults", async () => {

@@ -107,6 +107,9 @@ defmodule Comma.Data.RecommendationProfile do
 
   defp remember_native_choices(preferences, sources) when is_list(sources) do
     Enum.reduce(sources, preferences, fn
+      %{"composioMode" => _}, acc ->
+        acc
+
       %{"appId" => app, "kind" => kind, "enabled" => enabled}, acc
       when app in ~w(github linear notion slack) and kind in ~w(composio managed_oauth) and
              is_boolean(enabled) ->

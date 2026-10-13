@@ -422,7 +422,8 @@ defmodule Comma.Recommendations do
         profile = locked_profile(workspace_id, user["id"])
 
         with {:ok, settings} <- normalize_settings(attrs, profile.sources),
-             {:ok, personal} <- normalize_personal_settings(attrs, profile) do
+             {:ok, personal} <- normalize_personal_settings(attrs, profile),
+             :ok <- explicit_composio_enable(profile.sources, settings.sources) do
           sources_changed? =
             selected_source_signature(profile.sources) !=
               selected_source_signature(settings.sources) or
@@ -458,6 +459,119 @@ defmodule Comma.Recommendations do
           {:error, reason} -> Repo.rollback(reason)
         end
       end)
+    end
+  end
+
+  # The web owner verifies provider identity before this transaction. Store
+  # only its projection beside the exact existing Member Source Consent.
+  def confirm_composio_source(user, session, workspace_id, expected, identity, prior_consent) do
+    with {:ok, _} <- Workspaces.authorize(user, session, workspace_id) do
+      Repo.transaction(fn ->
+        profile = locked_profile(workspace_id, user["id"])
+        source = Enum.find(profile.sources, &(&1["connectionId"] == expected["connectionId"]))
+
+        if source != expected or is_nil(source["composioMode"]),
+          do: Repo.rollback(:member_identity_or_source_unavailable)
+
+        if Comma.MemberSourceConsents.binding(workspace_id, user["id"], source["toolkit"]) !=
+             prior_consent,
+           do: Repo.rollback(:member_identity_or_source_unavailable)
+
+        case Comma.MemberSourceConsents.record(
+               user,
+               session,
+               workspace_id,
+               source["toolkit"],
+               source["connectionId"]
+             ) do
+          {:ok, :ok} -> :ok
+          {:error, reason} -> Repo.rollback(reason)
+        end
+
+        consent = Comma.MemberSourceConsents.binding(workspace_id, user["id"], source["toolkit"])
+
+        sources =
+          Enum.map(profile.sources, fn candidate ->
+            cond do
+              candidate["connectionId"] == source["connectionId"] ->
+                candidate
+                |> Map.put("enabled", true)
+                |> Map.put("memberConsent", consent)
+                |> Map.put("providerSubject", identity["subject"])
+
+              candidate["toolkit"] == source["toolkit"] and candidate["kind"] == "composio" ->
+                Map.put(candidate, "enabled", false)
+
+              true ->
+                candidate
+            end
+          end)
+
+        supersede_active_runs(profile.id)
+
+        updated =
+          profile
+          |> Ecto.Changeset.change(%{
+            sources: sources,
+            source_revision: profile.source_revision + 1,
+            snapshot: nil,
+            snapshot_source_revision: nil
+          })
+          |> Repo.update!()
+
+        :ok = retain_member_pool(updated)
+        public_envelope(updated)
+      end)
+    end
+  end
+
+  def revoke_composio_sources(user, session, workspace_id, ids, expected \\ nil) do
+    with {:ok, _} <- Workspaces.authorize(user, session, workspace_id),
+         {:ok, _} <- get_runtime_profile(workspace_id, user["id"]) do
+      Repo.transaction(fn ->
+        profile = locked_profile(workspace_id, user["id"])
+
+        affected =
+          Enum.filter(
+            profile.sources,
+            &(not is_nil(&1["composioMode"]) and
+                (ids == :all or &1["connectionId"] in ids) and
+                (is_nil(expected) or
+                   selected_source_signature([&1]) == selected_source_signature([expected])))
+          )
+
+        if affected != [] do
+          Enum.each(
+            affected,
+            &Comma.MemberSourceConsents.forget_connection(workspace_id, &1["connectionId"])
+          )
+
+          selected = Enum.map(affected, & &1["connectionId"])
+
+          sources =
+            Enum.map(profile.sources, fn source ->
+              if source["connectionId"] in selected,
+                do: Map.put(source, "enabled", false),
+                else: source
+            end)
+
+          supersede_active_runs(profile.id)
+
+          profile
+          |> Ecto.Changeset.change(%{
+            sources: sources,
+            source_revision: profile.source_revision + 1,
+            snapshot: nil,
+            snapshot_source_revision: nil
+          })
+          |> Repo.update!()
+        end
+
+        :ok
+      end)
+    else
+      {:error, :not_found} -> {:ok, :ok}
+      error -> error
     end
   end
 
@@ -877,6 +991,15 @@ defmodule Comma.Recommendations do
       else: {:error, :invalid_recommendation_settings}
   end
 
+  defp explicit_composio_enable(previous, sources) do
+    existing = Map.new(previous, &{&1["connectionId"], &1})
+
+    if Enum.any?(sources, fn source ->
+         not is_nil(source["composioMode"]) and source["enabled"] == true and
+           existing[source["connectionId"]]["enabled"] != true
+       end), do: {:error, :composio_routine_confirmation_required}, else: :ok
+  end
+
   defp requested_source?(source),
     do:
       is_map(source) and is_binary(source["connectionId"]) and
@@ -909,8 +1032,19 @@ defmodule Comma.Recommendations do
 
     Enum.map(discovered, fn source ->
       enabled =
-        case existing[source["connectionId"]] do
-          %{"enabled" => value} when is_boolean(value) ->
+        case {source["composioMode"], existing[source["connectionId"]]} do
+          {mode, previous} when mode in ~w(connect project) ->
+            is_map(previous) and previous["enabled"] == true and
+              previous["composioAuthorization"] == source["composioAuthorization"] and
+              previous["composioMode"] == mode and is_map(previous["memberConsent"]) and
+              previous["memberConsent"] ==
+                Comma.MemberSourceConsents.binding(
+                  profile.workspace_id,
+                  profile.user_id,
+                  source["toolkit"]
+                )
+
+          {_, %{"enabled" => value}} when is_boolean(value) ->
             value
 
           _ ->
@@ -929,11 +1063,25 @@ defmodule Comma.Recommendations do
             end
         end
 
+      retained = existing[source["connectionId"]] || %{}
+
+      personal =
+        if source["composioMode"] &&
+             retained["composioAuthorization"] == source["composioAuthorization"],
+           do: Map.take(retained, ~w(memberConsent providerSubject)),
+           else: %{}
+
       source
-      |> Map.take(~w(appId appName connectionId iconUrl kind label bindingAlias provider toolkit))
+      |> Map.merge(personal)
+      |> Map.take(
+        ~w(appId appName connectionId iconUrl kind label bindingAlias provider toolkit composioMode composioAuthorization memberConsent providerSubject)
+      )
       |> Map.put("enabled", enabled)
     end)
   end
+
+  defp source_app_key(%{"composioMode" => mode, "connectionId" => id}),
+    do: {:personal_composio, mode, id}
 
   defp source_app_key(%{"appId" => app, "kind" => kind})
        when app in ~w(github linear notion slack) and kind in ~w(composio managed_oauth),
@@ -1163,7 +1311,12 @@ defmodule Comma.Recommendations do
   defp selected_source_signature(sources) do
     sources
     |> Enum.filter(&(&1["enabled"] == true))
-    |> Enum.map(&Map.take(&1, ~w(connectionId kind bindingAlias provider toolkit)))
+    |> Enum.map(
+      &Map.take(
+        &1,
+        ~w(connectionId kind bindingAlias provider toolkit composioMode composioAuthorization memberConsent providerSubject)
+      )
+    )
     |> Enum.sort_by(& &1["connectionId"])
   end
 
@@ -1296,7 +1449,19 @@ defmodule Comma.Recommendations do
     |> Repo.update()
   end
 
-  defp member_subjects_valid?(_profile, "generic", _subjects), do: true
+  defp member_subjects_valid?(profile, "generic", subjects) do
+    personal =
+      Enum.filter(profile.sources, &(&1["enabled"] == true and not is_nil(&1["composioMode"])))
+
+    if personal == [],
+      do: true,
+      else:
+        member_subjects_valid?(
+          profile,
+          "member",
+          Map.take(subjects, Enum.map(personal, & &1["connectionId"]))
+        )
+  end
 
   defp member_subjects_valid?(profile, "member", subjects) do
     runtime = Application.get_env(:comma_core, :recommendation_runtime_mod)

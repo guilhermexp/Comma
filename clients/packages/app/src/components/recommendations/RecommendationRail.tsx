@@ -854,16 +854,26 @@ export const RecommendationRail = memo(function RecommendationRail({
                 testId="recommendations-empty"
               >
                 <p className="comma-recommendations-empty-copy">
-                  {messages.recommendations_empty()}
+                  {envelope.settings.sources.length > 0
+                    ? messages.recommendations_choose_sources_help()
+                    : messages.recommendations_empty()}
                 </p>
                 {onConnectApps ? (
                   <Button
                     className="comma-recommendations-empty-action h-7 px-lg"
                     hierarchy="secondary-gray"
-                    onPress={onConnectApps}
+                    onPress={
+                      envelope.settings.sources.length > 0
+                        ? () => {
+                            window.location.hash = "/settings?category=recommendations";
+                          }
+                        : onConnectApps
+                    }
                     size="sm"
                   >
-                    {messages.recommendations_connect_apps()}
+                    {envelope.settings.sources.length > 0
+                      ? messages.recommendations_choose_sources()
+                      : messages.recommendations_connect_apps()}
                   </Button>
                 ) : null}
               </RecommendationsEmptyState>
@@ -909,9 +919,7 @@ function RecommendationsEmptyState({
   sources: readonly RecommendationSource[] | undefined;
   testId: string;
 }) {
-  const connectedSources = (sources ?? [])
-    .filter((source) => source.enabled)
-    .slice(0, maxEmptyStateSourceLogos);
+  const connectedSources = (sources ?? []).slice(0, maxEmptyStateSourceLogos);
   return (
     <div className="comma-recommendations-empty-state" data-testid={testId}>
       <div aria-hidden="true" className="comma-recommendations-empty-logos">

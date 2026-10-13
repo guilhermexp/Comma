@@ -148,6 +148,43 @@ const routinesHeadingFollowsGreeting = () =>
       ) & Node.DOCUMENT_POSITION_FOLLOWING
   );
 
+it("offers Routine settings for connected sources awaiting explicit consent without refreshing", async () => {
+  const client = api(null as unknown as RecommendationSnapshot, [
+    {
+      appId: "gmail",
+      appName: "Gmail",
+      connectionId: "opaque-member-a",
+      enabled: false,
+      kind: "composio",
+      label: "member@example.com (opaque-member-a)",
+    },
+  ]);
+  const previousHash = window.location.hash;
+  render(
+    <RecommendationRail
+      api={client}
+      workspaceId="workspace"
+      onConnectApps={vi.fn()}
+      onOpenTask={vi.fn()}
+      onOpenUrl={vi.fn()}
+      onUsePrompt={vi.fn()}
+    />
+  );
+  const choose = await screen.findByRole("button", { name: "Choose sources" });
+  expect(
+    screen.getByText(
+      "Connected accounts are ready. Choose which sources Routines may read."
+    )
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Connect apps" })
+  ).not.toBeInTheDocument();
+  await userEvent.click(choose);
+  expect(window.location.hash).toBe("#/settings?category=recommendations");
+  expect(client.refreshRecommendations).not.toHaveBeenCalled();
+  window.location.hash = previousHash;
+});
+
 describe("RecommendationRail", () => {
   it("reconciles and reorders current-snapshot routine cards without losing new cards", () => {
     expect(
