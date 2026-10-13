@@ -626,11 +626,11 @@ Historical Composio confirmation requests are never executed by this cutover. Th
 payloads and results remain intact. Exact `(Agent, Session, tool_call_id)` lookup retains
 only the existing cancellation and reconciliation path; there is no approval dispatch route.
 For a saved pending wait, first read that exact execution. From its owning Agent and
-Session, use the existing `tools.cancel_tool_call` with `tool_call_id` and a reason.
+Session, use the existing `tool_call.cancel` with `tool_call_id` and a reason.
 The normal runtime commits its cancellation event and clears only its matching wait;
 `CapabilityRequests.cancel_capability_request/4` retains the historical request.
-Then read the exact terminal execution and reconcile its stored result. Preserve a completed result. Treat a missing result after settlement as
-unknown and inspect the provider before any new action. Do not bulk-cancel or replay requests.
+Then read the exact terminal execution and reconcile its stored result.
+Preserve a completed result. Treat a missing result after settlement as unknown and inspect the provider before any new action. Do not bulk-cancel or replay requests.
 
 ### Miniskill activation
 
