@@ -905,7 +905,9 @@ Duplicate personal accounts remain separate choices; discovery never picks the n
 
 New personal sources always start disabled, including when the legacy automatic-new-source
 preference is on. Settings → Routines shows the account label and reference beside the existing
-switch. The switch first reads only the selected provider's self identity. The member then
+switch. The label projection fits the public contract's 120 UTF-16 units, preserves a complete
+reference suffix when it fits, and shortens only the identity. The exact reference remains
+available separately when it cannot fit in the label. The switch first reads only the selected provider's self identity. The member then
 confirms the displayed account and the data that Routine may collect. The
 [account command](../../systems/apps/comma_web/lib/comma_web/composio_connect.ex) verifies that
 identity again and checks the current source revision and previous consent. It writes the
@@ -929,7 +931,21 @@ reuses the bounded Google and Slack member readers in manual, scheduled and back
 Every request rechecks local account state and the exact receipt; collection verifies provider
 identity before content reads and checks it again before returning evidence. Connect uses a
 closed set of official read actions, with one action and one account per MCP execution.
-It grants no remote code, shell, connection management or general Agent execution authority.
+It grants no shell, connection management or general Agent execution authority. If Composio
+returns an offload descriptor instead of complete data, the Routine transport makes one closed
+workbench read in the same workflow session. It rechecks current source consent and account
+authorization before that request. No Agent or UI accepts workbench code, paths or sessions.
+The fixed [extractor](../../systems/apps/salix_web/priv/composio_routine_result.py) treats the
+sandbox's current directory as its workspace boundary and rejects `/` as that boundary. It
+checks the returned filename against the path, resolves the path beneath that workspace and
+opens each component without following replacement symlinks. It rejects traversal, symlink
+escape, non-regular files, wrong session/tool results, preview data and truncated output.
+The complete JSON is bounded to 512,000 bytes and 1,000 messages; the stored batch envelope
+has a further 16,384-byte allowance. These are read bounds, not truncation rules. Oversize
+results fail. Compressed output is decoded with a bounded inflater. The existing collection
+deadline covers the additional request; there is no timeout increase or extra retry.
+See the official [MULTI](https://docs.composio.dev/toolkits/meta-tools/multi_execute_tool) and
+[workbench](https://docs.composio.dev/toolkits/meta-tools/remote_workbench) contracts.
 Project sessions use `comma:<group>:<user>` as the upstream owner and pin the exact account.
 Personal accounts do not create legacy tenant webhook triggers; they use the existing
 15-minute collection chain. Native source preferences do not inherit personal account choices.
@@ -943,6 +959,8 @@ consent and display fences. The legacy generic readers retain their existing beh
 Official schemas were checked against the Composio toolkit documentation. Mock HTTP tests
 prove request shape, account selection, authorization and normalized evidence. They do not
 prove live provider responses, granted scopes, native appearance or live recommendation quality.
+Local fixture tests also execute the fixed Python extractor against real files. When the first
+refresh fails, the rail shows its existing failure message instead of prompting for a first summary.
 
 Notion member reads need no configuration. The retired `member_source_rules` column remains stored but unused.
 Notion verifies the token's user owner. It queries at most five task databases, which have a people property and a Notion status property.

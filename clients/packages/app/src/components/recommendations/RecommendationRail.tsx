@@ -320,9 +320,8 @@ const maxConsecutivePollFailures = 45;
 // the last generation failed.
 type RailFailure = "unavailable" | "rate_limited" | undefined;
 
-// Routine failures that the member cannot act on stay out of the UI: the rail
-// keeps the last briefing, and the server logs and counts every failed run.
-// Only a refused manual refresh answers the member, because they asked for it.
+// Keep the last briefing on refresh failures. Without a briefing, distinguish
+// a failed generation from first use and leave retry under the member's control.
 
 export const RecommendationRail = memo(function RecommendationRail({
   active = true,
@@ -842,10 +841,20 @@ export const RecommendationRail = memo(function RecommendationRail({
                 sources={envelope?.settings.sources}
                 testId="recommendations-ready"
               >
-                <p className="comma-recommendations-empty-copy">
+                <p
+                  className="comma-recommendations-empty-copy"
+                  role={
+                    envelope.state === "error" &&
+                    envelope.lastError !== "renderer_declined"
+                      ? "alert"
+                      : undefined
+                  }
+                >
                   {envelope.lastError === "renderer_declined"
                     ? messages.recommendations_nothing_new()
-                    : messages.recommendations_ready()}
+                    : envelope.state === "error"
+                      ? messages.plugins_error_generic()
+                      : messages.recommendations_ready()}
                 </p>
               </RecommendationsEmptyState>
             ) : (

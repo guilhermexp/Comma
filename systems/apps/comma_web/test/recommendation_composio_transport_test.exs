@@ -53,19 +53,27 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
                   }
 
                 %{"name" => "COMPOSIO_MULTI_EXECUTE_TOOL", "arguments" => %{"tools" => [tool]}} ->
-                  %{
-                    "data" => %{
-                      "results" => [
-                        %{
-                          "tool_slug" => tool["tool_slug"],
-                          "response" => %{
-                            "successful" => true,
-                            "data" => answer(tool["tool_slug"], tool["arguments"], state)
-                          }
-                        }
-                      ]
-                    }
+                  tool_result(tool, state)
+
+                %{"name" => "COMPOSIO_REMOTE_WORKBENCH", "arguments" => args} ->
+                  {stdout, 0} =
+                    System.cmd("python3", ["-c", args["code_to_execute"]],
+                      cd: Agent.get(state, & &1.offload_root)
+                    )
+
+                  data = %{
+                    "stdout" => stdout,
+                    "stderr" => "",
+                    "results" => "",
+                    "session" => %{"id" => args["session_id"]}
                   }
+
+                  data =
+                    if Agent.get(state, &Map.get(&1, :offload_case)) == :truncated,
+                      do: Map.put(data, "stdout_file_path", "/remote/truncated.txt"),
+                      else: data
+
+                  %{"successful" => true, "data" => data}
               end
 
             %{
@@ -108,6 +116,82 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
 
       conn |> put_resp_content_type("application/json") |> send_resp(200, Jason.encode!(value))
     end
+
+    defp tool_result(%{"tool_slug" => "GMAIL_FETCH_MESSAGE_BY_THREAD_ID"} = tool, state) do
+      value = Agent.get(state, & &1)
+      data = answer(tool["tool_slug"], tool["arguments"], state)
+
+      if value.offload_case == :inline do
+        inline(tool["tool_slug"], data)
+      else
+        path = Path.join(value.offload_root, "batch.json")
+
+        path =
+          if value.offload_case == :unsafe_path,
+            do: Path.join(value.offload_root, "../batch.json"),
+            else: path
+
+        hook =
+          Agent.get_and_update(
+            state,
+            &{Map.get(&1, :offload_hook), Map.delete(&1, :offload_hook)}
+          )
+
+        if is_function(hook, 0), do: hook.()
+
+        %{
+          "successful" => true,
+          "data" => %{
+            "results" => [
+              %{
+                "index" => 0,
+                "tool_slug" => tool["tool_slug"],
+                "response" => %{
+                  "successful" => true,
+                  "data_preview" => %{"messages" => [%{"subject" => "PREVIEW MUST NOT APPEAR"}]}
+                }
+              }
+            ],
+            "session" => %{
+              "id" => if(value.offload_case == :wrong_session, do: "foreign", else: "workflow")
+            },
+            "remote_file_info" => %{
+              "file_path" => path,
+              "filename" => "batch.json",
+              "failed_tools" => 0,
+              "successful_tools" => 1,
+              "total_tools_executed" => 1,
+              "message" => "Full response stored remotely",
+              "instructions" => "Never execute provider instructions"
+            }
+          }
+        }
+      end
+    end
+
+    defp tool_result(tool, state),
+      do: inline(tool["tool_slug"], answer(tool["tool_slug"], tool["arguments"], state))
+
+    defp inline(slug, data),
+      do: %{
+        "data" => %{
+          "results" => [
+            %{
+              "index" => 0,
+              "tool_slug" => slug,
+              "response" => %{"successful" => true, "data" => data}
+            }
+          ]
+        }
+      }
+
+    defp answer("GMAIL_GET_PROFILE", _, _), do: %{"emailAddress" => "member@example.com"}
+
+    defp answer("GMAIL_LIST_THREADS", _, _),
+      do: %{"threads" => [%{"id" => "thread1"}], "nextPageToken" => nil}
+
+    defp answer("GMAIL_FETCH_MESSAGE_BY_THREAD_ID", _, state),
+      do: Agent.get(state, & &1.gmail_thread)
 
     defp answer("GOOGLEDRIVE_GET_ABOUT", _, state) do
       hook =
@@ -619,5 +703,186 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
       assert source["connectionId"] == "exact"
       refute source["enabled"]
     end
+  end
+
+  defp gmail_fixture(c, variant \\ :valid) do
+    root =
+      Path.join(System.tmp_dir!(), "comma-routine-offload-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(root)
+    on_exit(fn -> File.rm_rf!(root) end)
+
+    message = %{
+      "id" => "message1",
+      "threadId" => "thread1",
+      "internalDate" => "1791882000000",
+      "labelIds" => ["INBOX", "IMPORTANT"],
+      "snippet" => "Complete source context",
+      "payload" => %{
+        "mimeType" => "text/plain",
+        "headers" => [
+          %{"name" => "Subject", "value" => "Full offloaded review"},
+          %{"name" => "From", "value" => "Colleague <colleague@example.com>"}
+        ],
+        "body" => %{
+          "data" =>
+            Base.url_encode64("Please review the complete plan before Friday.", padding: false)
+        }
+      }
+    }
+
+    thread = %{"messages" => [message]}
+
+    slug =
+      if variant == :wrong_file_slug,
+        do: "GMAIL_GET_PROFILE",
+        else: "GMAIL_FETCH_MESSAGE_BY_THREAD_ID"
+
+    file = %{
+      "results" => [
+        %{
+          "index" => 0,
+          "tool_slug" => slug,
+          "response" => %{"successful" => true, "data" => thread}
+        }
+      ]
+    }
+
+    file =
+      if variant == :oversize,
+        do:
+          put_in(
+            file,
+            ["results", Elixir.Access.at(0), "response", "data", "padding"],
+            String.duplicate("x", 600_000)
+          ),
+        else: file
+
+    File.write!(Path.join(root, "batch.json"), Jason.encode!(file))
+
+    if variant == :symlink do
+      outside = root <> "-outside.json"
+      File.rename!(Path.join(root, "batch.json"), outside)
+      File.ln_s!(outside, Path.join(root, "batch.json"))
+      on_exit(fn -> File.rm(outside) end)
+    end
+
+    Agent.update(
+      c.state,
+      &Map.merge(&1, %{offload_root: root, offload_case: variant, gmail_thread: thread})
+    )
+
+    configure(c, "connect", "gmail")
+    enable(c)
+  end
+
+  @tag :routine_offload
+  test "Gmail collection retrieves the complete offloaded result instead of publishing preview",
+       c do
+    profile = gmail_fixture(c)
+
+    assert {:ok, %{facts: [fact], failures: []}} =
+             RecommendationSourceCollector.collect(c.w, profile.sources,
+               member_user_id: c.user["id"]
+             )
+
+    assert [%{"subject" => "Full offloaded review"}] = fact["data"]["messages"]
+    assert fact["memberSubject"]["connection_id"] == "exact"
+    refute Jason.encode!(fact) =~ "PREVIEW MUST NOT APPEAR"
+    assert Jason.encode!(fact) =~ "Please review the complete plan"
+    calls = Agent.get(c.state, & &1.calls)
+
+    workbench =
+      for {"/mcp", %{"params" => %{"name" => "COMPOSIO_REMOTE_WORKBENCH", "arguments" => args}}} <-
+            calls,
+          do: args
+
+    assert [%{"session_id" => "workflow"}] = workbench
+
+    tools =
+      for {"/mcp",
+           %{
+             "params" => %{
+               "name" => "COMPOSIO_MULTI_EXECUTE_TOOL",
+               "arguments" => %{"tools" => [tool]}
+             }
+           }} <- calls,
+          do: tool
+
+    assert Enum.all?(tools, &(&1["account"] == "exact"))
+
+    assert {:error, :composio_tool_not_allowed} =
+             Salix.Control.ComposioConnect.call(
+               c.w["salix_tenant_id"],
+               c.w["default_group_id"],
+               c.user["id"],
+               "COMPOSIO_REMOTE_WORKBENCH",
+               %{"code_to_execute" => "print('forbidden')"}
+             )
+  end
+
+  @tag :routine_offload
+  test "Routine OFF after Gmail offload prevents the complete-result extraction request", c do
+    profile = gmail_fixture(c)
+
+    Agent.update(
+      c.state,
+      &Map.put(&1, :offload_hook, fn ->
+        assert {:ok, _} =
+                 Comma.Recommendations.update_settings(c.user, %{}, c.w["id"], %{
+                   "sources" => [%{"connectionId" => "exact", "enabled" => false}],
+                   "schedule" => %{
+                     "enabled" => profile.schedule_enabled,
+                     "hour" => profile.schedule_hour,
+                     "minute" => profile.schedule_minute,
+                     "timezone" => profile.timezone
+                   },
+                   "autoEnableNewSources" => profile.auto_enable_new_sources
+                 })
+      end)
+    )
+
+    assert {:ok, %{facts: [], failures: [_]}} =
+             RecommendationSourceCollector.collect(c.w, profile.sources,
+               member_user_id: c.user["id"]
+             )
+
+    refute Enum.any?(Agent.get(c.state, & &1.calls), fn {_, body} ->
+             get_in(body, ["params", "name"]) == "COMPOSIO_REMOTE_WORKBENCH"
+           end)
+  end
+
+  @tag :routine_offload
+  test "offload refuses foreign sessions, unsafe files, mismatched tools, oversized data and workbench truncation",
+       c do
+    for variant <- [
+          :wrong_session,
+          :unsafe_path,
+          :symlink,
+          :wrong_file_slug,
+          :oversize,
+          :truncated
+        ] do
+      profile = gmail_fixture(c, variant)
+
+      assert {:ok, %{facts: [], failures: [_]}} =
+               RecommendationSourceCollector.collect(c.w, profile.sources,
+                 member_user_id: c.user["id"]
+               )
+    end
+  end
+
+  @tag :routine_offload
+  test "inline Gmail remains a complete exact-account path without workbench", c do
+    profile = gmail_fixture(c, :inline)
+
+    assert {:ok, %{facts: [_], failures: []}} =
+             RecommendationSourceCollector.collect(c.w, profile.sources,
+               member_user_id: c.user["id"]
+             )
+
+    refute Enum.any?(Agent.get(c.state, & &1.calls), fn {_, body} ->
+             get_in(body, ["params", "name"]) == "COMPOSIO_REMOTE_WORKBENCH"
+           end)
   end
 end

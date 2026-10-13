@@ -668,9 +668,58 @@ defmodule Salix.Control.ComposioConnectTest do
                ComposioConnect.call("tenant", "group", "member", "COMPOSIO_SEARCH_TOOLS", %{})
     end
 
-    for tool <- ~w(COMPOSIO_REMOTE_BASH_TOOL COMPOSIO_MULTI_EXECUTE_TOOL) do
+    for tool <-
+          ~w(COMPOSIO_REMOTE_BASH_TOOL COMPOSIO_REMOTE_WORKBENCH COMPOSIO_MULTI_EXECUTE_TOOL) do
       assert {:error, :composio_tool_not_allowed} =
                ComposioConnect.call("tenant", "group", "member", tool, %{})
     end
+  end
+
+  test "Routine complete-result decoding rejects compressed expansion, corruption and partial output" do
+    alias Salix.Control.ComposioRoutineResult, as: Result
+    slug = "GMAIL_FETCH_MESSAGE_BY_THREAD_ID"
+    raw = Jason.encode!(%{"messages" => [%{"snippet" => "完整内容"}]})
+
+    packet = %{
+      "complete" => true,
+      "tool_slug" => slug,
+      "encoding" => "zlib-base64",
+      "raw_bytes" => byte_size(raw),
+      "payload" => Base.encode64(:zlib.compress(raw))
+    }
+
+    envelope = fn packet ->
+      %{
+        "successful" => true,
+        "data" => %{
+          "session" => %{"id" => "workflow"},
+          "stdout" => Jason.encode!(packet),
+          "stderr" => "",
+          "results" => ""
+        }
+      }
+    end
+
+    assert {:ok, _} = Result.complete(envelope.(packet), "workflow", slug, 512_000)
+    huge = Base.encode64(:zlib.compress(String.duplicate("x", 1_000_000)))
+
+    for invalid <- [
+          Map.put(packet, "payload", huge),
+          Map.put(packet, "payload", "!"),
+          Map.put(packet, "payload", nil),
+          Map.put(packet, "payload", Base.encode64(<<120, 156>>)),
+          Map.put(packet, "raw_bytes", 1),
+          Map.put(packet, "complete", false),
+          Map.put(packet, "tool_slug", "OTHER")
+        ] do
+      assert {:error, _} = Result.complete(envelope.(invalid), "workflow", slug, 512_000)
+    end
+
+    for field <- ~w(stdout_file_path stderr_file_path results_file_path error stderr) do
+      partial = put_in(envelope.(packet), ["data", field], "untrusted")
+      assert {:error, _} = Result.complete(partial, "workflow", slug, 512_000)
+    end
+
+    assert {:error, _} = Result.complete(envelope.(packet), "foreign", slug, 512_000)
   end
 end

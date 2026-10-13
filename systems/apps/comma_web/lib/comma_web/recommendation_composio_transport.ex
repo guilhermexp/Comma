@@ -51,17 +51,18 @@ defmodule CommaWeb.RecommendationComposioTransport do
                    {:ok, slug, arguments, thread} <-
                      recipe(account["toolkit"], method, URI.parse(endpoint)),
                    {:ok, envelope} <-
-                     Connect.execute(
+                     Connect.execute_routine_read(
                        w["salix_tenant_id"],
                        w["default_group_id"],
                        user,
                        account,
-                       [%{"tool_slug" => slug, "arguments" => arguments}],
+                       %{"tool_slug" => slug, "arguments" => arguments},
                        fn ->
                          with :ok <- authorize.(),
                               {:ok, _} <- local_account(w, user, source),
                               do: :ok
-                       end
+                       end,
+                       Keyword.get(opts, :max_bytes, 512_000)
                      ),
                    {:ok, data} <- action_data(envelope, slug),
                    true <-

@@ -440,7 +440,7 @@ describe("RecommendationRail", () => {
     expect(await screen.findByText("Generating your briefing…")).toBeInTheDocument();
     expect(
       await screen.findByText(
-        "Refresh to generate your first briefing.",
+        "Something went wrong. Try again.",
         {},
         { timeout: 3_000 }
       )
@@ -476,7 +476,7 @@ describe("RecommendationRail", () => {
     expect(await screen.findByText("Generating your briefing…")).toBeInTheDocument();
     expect(
       await screen.findByText(
-        "Refresh to generate your first briefing.",
+        "Something went wrong. Try again.",
         {},
         { timeout: 6_000 }
       )
@@ -566,19 +566,25 @@ describe("RecommendationRail", () => {
     // The toast surface mounts a raised toast on its next tick.
     await act(async () => vi.advanceTimersByTimeAsync(1));
 
-    expect(
-      screen.getByText("Refresh to generate your first briefing.")
-    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Something went wrong. Try again."
+    );
     expect(manualRefreshApi.getRecommendations).toHaveBeenCalledTimes(3);
     // A failed generation is terminal: no discovery checks keep re-reading it.
     await act(async () => vi.advanceTimersByTimeAsync(60_000));
     expect(manualRefreshApi.getRecommendations).toHaveBeenCalledTimes(3);
   });
 
-  it("keeps a terminal generation error out of the UI", async () => {
+  it("shows a failed Gmail refresh without a snapshot and waits for an explicit retry", async () => {
+    const client = apiWithoutSnapshot(true, "error");
+    const failed = await client.getRecommendations("wsp_1");
+    vi.mocked(client.getRecommendations).mockResolvedValue({
+      ...failed,
+      lastError: "source_collection_failed",
+    });
     const { container } = render(
       <RecommendationRail
-        api={apiWithoutSnapshot(true, "error")}
+        api={client}
         onOpenTask={vi.fn()}
         onOpenUrl={vi.fn()}
         onUsePrompt={vi.fn()}
@@ -587,19 +593,21 @@ describe("RecommendationRail", () => {
     );
 
     const rail = container.querySelector<HTMLElement>(".comma-recommendations")!;
-    expect(
-      await within(rail).findByText("Refresh to generate your first briefing.")
-    ).toBeInTheDocument();
+    expect(await within(rail).findByRole("alert")).toHaveTextContent(
+      "Something went wrong. Try again."
+    );
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+    expect(client.refreshRecommendations).not.toHaveBeenCalled();
     expect(screen.queryByTestId("routine-problem-toast")).not.toBeInTheDocument();
   });
 
   it.each([
     // An empty day is a result, not a failure: the rail says so in place.
     ["renderer_declined", "Nothing new in your apps to brief today."],
-    // The member cannot fix a missing identity stamp; the rail stays neutral.
-    ["member_identity_required", "Refresh to generate your first briefing."],
+    // A failed source is different from a successful empty result.
+    ["member_identity_required", "Something went wrong. Try again."],
   ] as const)(
-    "shows failure class %s as neutral rail copy",
+    "distinguishes successful empty results from failure class %s",
     async (lastError, copy) => {
       const declinedApi = apiWithoutSnapshot(true, "error");
       const declined = await declinedApi.getRecommendations("wsp_1", {
@@ -685,7 +693,7 @@ describe("RecommendationRail", () => {
       />
     );
 
-    await screen.findByText("Refresh to generate your first briefing.");
+    await screen.findByText("Something went wrong. Try again.");
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     // The refresh request is still collecting sources on the server.
     expect(await screen.findByTestId("recommendations-generating")).toBeInTheDocument();
@@ -707,7 +715,7 @@ describe("RecommendationRail", () => {
       />
     );
 
-    await screen.findByText("Refresh to generate your first briefing.");
+    await screen.findByText("Something went wrong. Try again.");
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     // The member asked for this refresh, so its refusal is answered.
     expect(

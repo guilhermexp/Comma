@@ -48,11 +48,7 @@ defmodule CommaWeb.RecommendationSources do
        Enum.map(accounts, fn account ->
          # Include the opaque reference even when names match; never choose a
          # duplicate by date, email, or an inferred callback ID.
-         label = account["name"] || account["toolkit"]
-         suffix = " (" <> account["id"] <> ")"
-         label = if String.ends_with?(label, suffix), do: label, else: label <> suffix
-
-         source("composio", account["toolkit"], account["id"], label, %{
+         source("composio", account["toolkit"], account["id"], personal_label(account), %{
            "toolkit" => account["toolkit"],
            "composioMode" => profile["mode"],
            "composioAuthorization" => Transport.authorization(profile)
@@ -63,6 +59,48 @@ defmodule CommaWeb.RecommendationSources do
       {:error, reason} -> {:error, {:composio_source_discovery_failed, reason}}
     end
   end
+
+  defp personal_label(account) do
+    name = account["name"] || account["toolkit"]
+    suffix = " (" <> account["id"] <> ")"
+
+    identity =
+      if String.ends_with?(name, suffix), do: String.replace_suffix(name, suffix, ""), else: name
+
+    identity = if String.trim(identity) == "", do: account["toolkit"], else: identity
+    available = 120 - utf16_units(suffix)
+
+    # The client bounds label in JavaScript UTF-16 units. Keep the exact
+    # reference intact, or leave it in connectionId for Settings to append.
+    # Never slice the composed suffix or split an identity's grapheme.
+    if available > utf16_units(String.first(identity) || "") do
+      bounded_label(identity, available) <> suffix
+    else
+      bounded_label(identity, 120)
+    end
+  end
+
+  defp bounded_label(value, limit) do
+    if utf16_units(value) <= limit do
+      value
+    else
+      {parts, _} =
+        value
+        |> String.graphemes()
+        |> Enum.reduce_while({[], 0}, fn part, {parts, used} ->
+          size = utf16_units(part)
+
+          if used + size <= limit - 1,
+            do: {:cont, {[part | parts], used + size}},
+            else: {:halt, {parts, used}}
+        end)
+
+      (parts |> Enum.reverse() |> IO.iodata_to_binary()) <> "…"
+    end
+  end
+
+  defp utf16_units(value),
+    do: div(byte_size(:unicode.characters_to_binary(value, :utf8, {:utf16, :big})), 2)
 
   defp member_scope(_, _, "generic"), do: :ok
 

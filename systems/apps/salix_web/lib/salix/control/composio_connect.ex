@@ -277,33 +277,78 @@ defmodule Salix.Control.ComposioConnect do
   end
 
   def execute(tenant, group, user, %{"mode" => "connect"} = local, tools, authorize_effect) do
+    execute_connect(tenant, group, user, local, tools, authorize_effect, fn result, _session ->
+      {:ok, result}
+    end)
+  end
+
+  def execute(_, _, _, _, _, _), do: {:error, :composio_access_denied}
+
+  # A complete-result read for the incumbent Routine recipes only. Unlike the
+  # agent broker this entry accepts no workbench code, file or session input.
+  def execute_routine_read(
+        tenant,
+        group,
+        user,
+        %{"mode" => "connect"} = local,
+        tool,
+        authorize_effect,
+        max_bytes
+      ) do
+    execute_connect(tenant, group, user, local, [tool], authorize_effect, fn result, session ->
+      alias Salix.Control.ComposioRoutineResult
+
+      case ComposioRoutineResult.prepare(result, session, tool["tool_slug"], max_bytes) do
+        {:ok, :inline} ->
+          {:ok, result}
+
+        {:ok, arguments} ->
+          with {:ok, complete} <-
+                 call(
+                   tenant,
+                   group,
+                   user,
+                   "COMPOSIO_REMOTE_WORKBENCH",
+                   arguments,
+                   authorize_effect
+                 ) do
+            ComposioRoutineResult.complete(complete, session, tool["tool_slug"], max_bytes)
+          end
+
+        {:error, _} = error ->
+          error
+      end
+    end)
+  end
+
+  defp execute_connect(tenant, group, user, local, tools, authorize_effect, complete) do
     with {:ok, %{"mode" => "connect", "status" => "connected"}} <-
            Access.profile(tenant, group, user),
          {:ok, %{"status" => "ACTIVE"}} <-
            account(tenant, group, user, local["toolkit"], local["id"]),
          {:ok, workflow} <-
            discover(tenant, group, user, "Use " <> Enum.map_join(tools, ", ", & &1["tool_slug"])),
-         session when is_binary(session) <- workflow["session_id"] do
-      call(
-        tenant,
-        group,
-        user,
-        "COMPOSIO_MULTI_EXECUTE_TOOL",
-        %{
-          "tools" => Enum.map(tools, &Map.put(&1, "account", local["id"])),
-          "sync_response_to_workbench" => false,
-          "session_id" => session,
-          "current_step" => "EXECUTING_APPROVED_ACTION"
-        },
-        authorize_effect
-      )
+         session when is_binary(session) <- workflow["session_id"],
+         {:ok, result} <-
+           call(
+             tenant,
+             group,
+             user,
+             "COMPOSIO_MULTI_EXECUTE_TOOL",
+             %{
+               "tools" => Enum.map(tools, &Map.put(&1, "account", local["id"])),
+               "sync_response_to_workbench" => false,
+               "session_id" => session,
+               "current_step" => "EXECUTING_APPROVED_ACTION"
+             },
+             authorize_effect
+           ) do
+      complete.(result, session)
     else
       {:error, _} = error -> error
       _ -> {:error, :composio_access_denied}
     end
   end
-
-  def execute(_, _, _, _, _, _), do: {:error, :composio_access_denied}
 
   # Bounded MCP exchanges per UI action. No background per-account poller.
   # Session headers are private transport state, never a credential-mode fallback.
@@ -325,7 +370,7 @@ defmodule Salix.Control.ComposioConnect do
   def call(_, _, _, _, _), do: {:error, :composio_tool_not_allowed}
 
   defp call(tenant, group, user, name, arguments, authorize_effect)
-       when name in ~w(COMPOSIO_SEARCH_TOOLS COMPOSIO_GET_TOOL_SCHEMAS COMPOSIO_MANAGE_CONNECTIONS COMPOSIO_WAIT_FOR_CONNECTIONS COMPOSIO_MULTI_EXECUTE_TOOL) do
+       when name in ~w(COMPOSIO_SEARCH_TOOLS COMPOSIO_GET_TOOL_SCHEMAS COMPOSIO_MANAGE_CONNECTIONS COMPOSIO_WAIT_FOR_CONNECTIONS COMPOSIO_MULTI_EXECUTE_TOOL COMPOSIO_REMOTE_WORKBENCH) do
     with {:ok, result} <-
            request(
              tenant,
