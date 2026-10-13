@@ -1,7 +1,7 @@
 defmodule Salix.Control.ComposioRoutineResult do
   @moduledoc false
   # Only the Routine transport supplies this closed recipe. Provider instructions
-  # are never executed. The sandbox CWD is the file authority, not a returned path.
+  # are never executed. The documented /mnt/files mount owns the file boundary.
   @external_resource Path.expand("../../../priv/composio_routine_result.py", __DIR__)
   @extractor File.read!(@external_resource)
   @max_bytes 512_000

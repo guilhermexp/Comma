@@ -936,15 +936,17 @@ returns an offload descriptor instead of complete data, the Routine transport ma
 workbench read in the same workflow session. It rechecks current source consent and account
 authorization before that request. No Agent or UI accepts workbench code, paths or sessions.
 The fixed [extractor](../../systems/apps/salix_web/priv/composio_routine_result.py) treats the
-sandbox's current directory as its workspace boundary and rejects `/` as that boundary. It
-checks the returned filename against the path, resolves the path beneath that workspace and
+sandbox's documented `/mnt/files/` mount as its fixed file boundary. CWD, HOME and returned
+metadata cannot select that boundary. It checks the returned filename against the path,
+resolves the path beneath that mount and
 opens each component without following replacement symlinks. It rejects traversal, symlink
 escape, non-regular files, wrong session/tool results, preview data and truncated output.
 The complete JSON is bounded to 512,000 bytes and 1,000 messages; the stored batch envelope
 has a further 16,384-byte allowance. These are read bounds, not truncation rules. Oversize
 results fail. Compressed output is decoded with a bounded inflater. The existing collection
 deadline covers the additional request; there is no timeout increase or extra retry.
-See the official [MULTI](https://docs.composio.dev/toolkits/meta-tools/multi_execute_tool) and
+See the official [sandbox files contract](https://docs.composio.dev/docs/sandbox/remote#files-and-mounts),
+[MULTI](https://docs.composio.dev/toolkits/meta-tools/multi_execute_tool) and
 [workbench](https://docs.composio.dev/toolkits/meta-tools/remote_workbench) contracts.
 Project sessions use `comma:<group>:<user>` as the upstream owner and pin the exact account.
 Personal accounts do not create legacy tenant webhook triggers; they use the existing

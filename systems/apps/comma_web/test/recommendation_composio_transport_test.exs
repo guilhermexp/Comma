@@ -56,10 +56,16 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
                   tool_result(tool, state)
 
                 %{"name" => "COMPOSIO_REMOTE_WORKBENCH", "arguments" => args} ->
-                  {stdout, 0} =
-                    System.cmd("python3", ["-c", args["code_to_execute"]],
-                      cd: Agent.get(state, & &1.offload_root)
+                  fixture =
+                    Path.expand(
+                      "../../salix_web/test/support/composio_routine_mount_fixture.py",
+                      __DIR__
                     )
+
+                  root = Agent.get(state, & &1.offload_root)
+
+                  {stdout, 0} =
+                    System.cmd("python3", [fixture, args["code_to_execute"], root], cd: root)
 
                   data = %{
                     "stdout" => stdout,

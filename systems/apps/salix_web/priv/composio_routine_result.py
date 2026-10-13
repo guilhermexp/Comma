@@ -10,7 +10,7 @@ def comma_complete_result(encoded):
     try:
         request = json.loads(base64.b64decode(encoded, validate=True))
         path, filename, limit = request['path'], request['filename'], request['limit']
-        root = os.path.realpath(os.getcwd())
+        root = os.path.realpath('/mnt/files')
         resolved = os.path.realpath(path)
         if (root == '/' or not os.path.isabs(path) or '\x00' in path
                 or '\\' in path or '://' in path or '..' in path.split('/')
@@ -19,7 +19,7 @@ def comma_complete_result(encoded):
                 or os.path.commonpath([root, resolved]) != root):
             raise ValueError()
         parts = os.path.relpath(resolved, root).split('/')
-        directory = os.open('.', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        directory = os.open('/mnt/files', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         descriptors.append(directory)
         for part in parts[:-1]:
             directory = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
