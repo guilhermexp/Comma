@@ -52,6 +52,7 @@ export function ComposioAccessPanel({
   const [enabled, setEnabled] = useState(false);
   const [grantLoaded, setGrantLoaded] = useState(false);
   const [approvals, setApprovals] = useState<z.infer<typeof approvalSchema>[]>([]);
+  const [approvalsLoaded, setApprovalsLoaded] = useState(false);
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const [outcome, setOutcome] = useState<string>();
@@ -109,6 +110,7 @@ export function ComposioAccessPanel({
 
   useEffect(() => {
     const controller = new AbortController();
+    setApprovalsLoaded(false);
     void api
       .composioCommand(workspaceId, "approvals", {}, { signal: controller.signal })
       .then((result) => {
@@ -116,6 +118,7 @@ export function ComposioAccessPanel({
         const page = approvalsSchema.parse(result);
         setApprovals(page.requests);
         setCursor(page.next_cursor);
+        setApprovalsLoaded(true);
       })
       .catch(() => {
         if (!controller.signal.aborted) setError(true);
@@ -139,6 +142,7 @@ export function ComposioAccessPanel({
     }
   };
   const loadApprovals = async (next?: string) => {
+    setApprovalsLoaded(false);
     const result = approvalsSchema.parse(
       await api.composioCommand(workspaceId, "approvals", next ? { cursor: next } : {})
     );
@@ -146,7 +150,11 @@ export function ComposioAccessPanel({
       next ? [...current, ...result.requests] : result.requests
     );
     setCursor(result.next_cursor);
+    setApprovalsLoaded(true);
   };
+  const visibleApprovals = approvals.filter((request) =>
+    accounts.some((item) => item.id === request.request_payload.account_id)
+  );
 
   return (
     <section className="flex flex-col gap-lg">
@@ -265,80 +273,82 @@ export function ComposioAccessPanel({
       )}
       {outcome && <output className="text-sm">{outcome}</output>}
       <h2 className="m-0 text-sm font-medium">{m.composio_approvals()}</h2>
-      <div>
+      {approvalsLoaded &&
+        !busy &&
+        !error &&
+        !cursor &&
+        visibleApprovals.length === 0 && (
+          <p role="status" className="m-0 text-sm text-secondary">
+            {m.composio_no_pending_actions()}
+          </p>
+        )}
+      <div className="flex">
         <Button
-          hierarchy="secondary-gray"
+          hierarchy="tertiary-gray"
+          size="sm"
           isDisabled={busy}
           onPress={() => void run(() => loadApprovals())}
         >
           {m.composio_refresh_approvals()}
         </Button>
       </div>
-      {approvals
-        .filter((request) =>
-          accounts.some((item) => item.id === request.request_payload.account_id)
-        )
-        .map((request) => (
-          <div
-            key={request.request_id}
-            className="flex flex-col gap-md border-b border-secondary pb-lg"
-          >
-            <p className="m-0 text-sm">{request.request_payload.account_name}</p>
-            <p className="m-0 text-sm text-secondary">
-              {agents.find((item) => item.id === request.source_agent_id)?.label ??
-                m.composio_agent()}
-            </p>
-            {request.request_payload.tools.map((tool, index) => (
-              <div key={`${index}:${tool.tool_slug}`}>
-                <p className="m-0 text-sm font-medium">{tool.tool_slug}</p>
-                <dl className="m-0 flex flex-col gap-sm text-sm">
-                  {Object.entries(tool.arguments).map(([name, value]) => (
-                    <div key={name}>
-                      <dt className="font-medium">{name.replaceAll("_", " ")}</dt>
-                      <dd className="m-0 break-words text-secondary">
-                        {typeof value === "string" ? value : JSON.stringify(value)}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </div>
-            ))}
-            <div className="flex gap-md">
-              {[true, false].map((approved) => (
-                <Button
-                  key={String(approved)}
-                  hierarchy={approved ? "primary" : "secondary-gray"}
-                  isDisabled={busy}
-                  onPress={() =>
-                    void run(async () => {
-                      const response = await api.composioCommand(
-                        workspaceId,
-                        "decide",
-                        {
-                          request_id: request.request_id,
-                          approved,
-                        }
-                      );
-                      const result = z
-                        .object({ result: z.object({ error: z.boolean() }) })
-                        .parse(response);
-                      setOutcome(
-                        !approved
-                          ? m.composio_deny()
-                          : result.result.error
-                            ? m.composio_uncertain()
-                            : m.composio_action_complete()
-                      );
-                      await loadApprovals();
-                    })
-                  }
-                >
-                  {approved ? m.composio_approve_once() : m.composio_deny()}
-                </Button>
-              ))}
+      {visibleApprovals.map((request) => (
+        <div
+          key={request.request_id}
+          className="flex flex-col gap-md border-b border-secondary pb-lg"
+        >
+          <p className="m-0 text-sm">{request.request_payload.account_name}</p>
+          <p className="m-0 text-sm text-secondary">
+            {agents.find((item) => item.id === request.source_agent_id)?.label ??
+              m.composio_agent()}
+          </p>
+          {request.request_payload.tools.map((tool, index) => (
+            <div key={`${index}:${tool.tool_slug}`}>
+              <p className="m-0 text-sm font-medium">{tool.tool_slug}</p>
+              <dl className="m-0 flex flex-col gap-sm text-sm">
+                {Object.entries(tool.arguments).map(([name, value]) => (
+                  <div key={name}>
+                    <dt className="font-medium">{name.replaceAll("_", " ")}</dt>
+                    <dd className="m-0 break-words text-secondary">
+                      {typeof value === "string" ? value : JSON.stringify(value)}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
             </div>
+          ))}
+          <div className="flex gap-md">
+            {[true, false].map((approved) => (
+              <Button
+                key={String(approved)}
+                hierarchy={approved ? "primary" : "secondary-gray"}
+                isDisabled={busy}
+                onPress={() =>
+                  void run(async () => {
+                    const response = await api.composioCommand(workspaceId, "decide", {
+                      request_id: request.request_id,
+                      approved,
+                    });
+                    const result = z
+                      .object({ result: z.object({ error: z.boolean() }) })
+                      .parse(response);
+                    setOutcome(
+                      !approved
+                        ? m.composio_deny()
+                        : result.result.error
+                          ? m.composio_uncertain()
+                          : m.composio_action_complete()
+                    );
+                    await loadApprovals();
+                  })
+                }
+              >
+                {approved ? m.composio_approve_once() : m.composio_deny()}
+              </Button>
+            ))}
           </div>
-        ))}
+        </div>
+      ))}
       <ScrollAreaLoadMore
         hasMore={Boolean(cursor)}
         loading={busy}
