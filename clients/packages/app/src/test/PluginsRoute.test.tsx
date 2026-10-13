@@ -190,6 +190,32 @@ const availablePlugins = [
   },
 ] satisfies readonly CommaPlugin[];
 
+const connectedAccount = (
+  toolkit: string,
+  id: string,
+  status = "ACTIVE",
+  enabled = true
+) => ({
+  id,
+  toolkit,
+  name: id,
+  status,
+  enabled,
+  mode: "connect" as const,
+});
+const connectedStatus = (
+  accounts: ReturnType<typeof connectedAccount>[],
+  next_cursor: string | null = null
+) => ({
+  mode: "connect",
+  status: "connected",
+  user_id: "member",
+  accounts,
+  next_cursor,
+  expires_at: null,
+  capabilities: { catalog: true, search: true, account_management: true },
+});
+
 describe("PluginsRoute", () => {
   beforeEach(() => {
     harness.composioCommand
@@ -937,42 +963,17 @@ describe("PluginsRoute", () => {
       description: "Files",
       logo: "https://logos.composio.dev/api/googledrive",
     };
-    const account = (
-      toolkit: string,
-      id: string,
-      status = "ACTIVE",
-      enabled = true
-    ) => ({
-      id,
-      toolkit,
-      name: id,
-      status,
-      enabled,
-      mode: "connect" as const,
-    });
-    const status = (
-      accounts: ReturnType<typeof account>[],
-      next_cursor: string | null = null
-    ) => ({
-      mode: "connect",
-      status: "connected",
-      user_id: "member",
-      accounts,
-      next_cursor,
-      expires_at: null,
-      capabilities: { catalog: true, search: true, account_management: true },
-    });
     const metadata = [gmail, drive];
     harness.listWorkspacePlugins.mockResolvedValue([notionPlugin, ...availablePlugins]);
     harness.getComposio.mockResolvedValue(
-      status([
-        account("gmail", "work-mail"),
-        account("googledrive", "drive-one"),
-        account("googledrive", "drive-two"),
-        account("pending", "pending", "INITIALIZING"),
-        account("failed", "failed", "FAILED"),
-        account("disabled", "disabled", "ACTIVE", false),
-        account("disconnected", "disconnected", "DISCONNECTED"),
+      connectedStatus([
+        connectedAccount("gmail", "work-mail"),
+        connectedAccount("googledrive", "drive-one"),
+        connectedAccount("googledrive", "drive-two"),
+        connectedAccount("pending", "pending", "INITIALIZING"),
+        connectedAccount("failed", "failed", "FAILED"),
+        connectedAccount("disabled", "disabled", "ACTIVE", false),
+        connectedAccount("disconnected", "disconnected", "DISCONNECTED"),
       ])
     );
     harness.composioCommand.mockImplementation(async (_workspace, action, params) => {
@@ -989,7 +990,13 @@ describe("PluginsRoute", () => {
       if (action === "accounts") return { items: [], next_cursor: null };
       throw new Error(`Unexpected action ${action}`);
     });
-    return { gmail, drive, account, status, metadata };
+    return {
+      gmail,
+      drive,
+      account: connectedAccount,
+      status: connectedStatus,
+      metadata,
+    };
   }
 
   it("shows connected connectors outside the first page in the collapsed principal list and opens details without consent", async () => {
