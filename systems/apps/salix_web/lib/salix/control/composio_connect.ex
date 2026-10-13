@@ -84,7 +84,7 @@ defmodule Salix.Control.ComposioConnect do
           account = %{
             "id" => id,
             "toolkit" => toolkit,
-            "name" => raw["alias"] || display_name(toolkit),
+            "name" => account_display_name(raw, toolkit),
             "status" => String.upcase(status),
             "mode" => "connect"
           }
@@ -95,8 +95,20 @@ defmodule Salix.Control.ComposioConnect do
         end
       end)
       |> case do
-        {:ok, items} -> {:ok, Enum.reverse(items)}
-        error -> error
+        {:ok, items} ->
+          names = Enum.frequencies_by(items, & &1["name"])
+
+          {:ok,
+           items
+           |> Enum.reverse()
+           |> Enum.map(fn account ->
+             if names[account["name"]] > 1,
+               do: Map.update!(account, "name", &(&1 <> " (" <> account["id"] <> ")")),
+               else: account
+           end)}
+
+        error ->
+          error
       end
     else
       {:error, _} = error -> error
@@ -112,6 +124,35 @@ defmodule Salix.Control.ComposioConnect do
       end
     end
   end
+
+  defp account_display_name(raw, toolkit) do
+    identity =
+      case {toolkit, raw} do
+        {"googledrive", %{"user_info" => %{"user" => user}}} when is_map(user) ->
+          case {account_label(user["displayName"]), account_label(user["emailAddress"])} do
+            {nil, email} -> email
+            {name, nil} -> name
+            {name, email} -> name <> " <" <> email <> ">"
+          end
+
+        _ ->
+          nil
+      end
+
+    case Enum.uniq(Enum.reject([account_label(raw["alias"]), identity], &is_nil/1)) do
+      [] -> display_name(toolkit)
+      labels -> Enum.join(labels, " · ")
+    end
+  end
+
+  defp account_label(value) when is_binary(value) and byte_size(value) <= 512 do
+    case String.trim(value) do
+      "" -> nil
+      label -> label
+    end
+  end
+
+  defp account_label(_), do: nil
 
   def add_account(tenant, group, user, toolkit) do
     with {:ok, response} <-

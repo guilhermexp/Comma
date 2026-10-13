@@ -239,6 +239,131 @@ defmodule CommaWeb.ComposioConnectTest do
   end
 
   @tag :connect_shape
+  @tag :account_identity
+  test "metadata refresh labels duplicate Drive identities without changing account decisions",
+       c do
+    s = connect_fixture(c)
+
+    originals =
+      for {id, status} <- [{"drive-work", "ACTIVE"}, {"drive-other", "CANCELLED"}], into: %{} do
+        {:ok, _} =
+          ComposioAccess.put_account(s.tenant, s.group, s.user, id, %{
+            "toolkit" => "googledrive",
+            "mode" => "connect",
+            "status" => status,
+            "name" => "Googledrive"
+          })
+
+        {:ok, record} = ComposioAccess.enable_account(s.tenant, s.group, s.user, id, false)
+        {id, record}
+      end
+
+    {:ok, attempt} = ComposioAccess.begin_consent(s.tenant, s.group, s.user, "googledrive")
+
+    {:ok, consent} =
+      ComposioAccess.finish_consent(
+        s.tenant,
+        s.group,
+        s.user,
+        "googledrive",
+        attempt["id"],
+        "https://provider.example/consent"
+      )
+
+    {:ok, _} =
+      ComposioAccess.grant(s.tenant, s.group, s.user, "drive-work", c.w["router_agent_id"], [
+        "GOOGLEDRIVE_GET_ABOUT"
+      ])
+
+    {:ok, grants} = ComposioAccess.grants(s.tenant, s.group, c.w["router_agent_id"])
+    {:ok, oauth} = SalixStore.OAuth.get("personal-connect")
+
+    raw =
+      for id <- ~w(drive-work drive-other),
+          do: %{
+            "id" => id,
+            "status" => "active",
+            "user_info" => %{
+              "user" => %{
+                "displayName" => "Casey Example",
+                "emailAddress" => "casey@example.test",
+                "photoLink" => "https://provider.example/private-photo",
+                "permissionId" => "private-permission"
+              }
+            }
+          }
+
+    Agent.update(
+      c.provider,
+      &Map.merge(&1, %{
+        rpc_requests: [],
+        connect_result: %{
+          "successful" => true,
+          "data" => %{
+            "results" => %{
+              "googledrive" => %{
+                "accounts" =>
+                  raw ++
+                    [
+                      %{
+                        "id" => "drive-no-identity",
+                        "status" => "active",
+                        "user_info" => %{"user" => false}
+                      }
+                    ]
+              }
+            }
+          }
+        }
+      })
+    )
+
+    assert {:ok, public} = command(c, "refresh_accounts", %{"toolkit" => "googledrive"})
+
+    for {id, original} <- originals do
+      name = "Casey Example <casey@example.test> (#{id})"
+      assert Enum.find(public["accounts"], &(&1["id"] == id))["name"] == name
+      assert {:ok, stored} = ComposioAccess.account(s.tenant, s.group, s.user, id)
+      assert stored == Map.put(original, "name", name)
+    end
+
+    assert Enum.find(public["accounts"], &(&1["id"] == "drive-no-identity"))["name"] ==
+             "Googledrive"
+
+    for {id, record} <- s.siblings do
+      assert {:ok, ^record} = ComposioAccess.account(s.tenant, s.group, s.user, id)
+    end
+
+    assert {:ok, ^consent} = ComposioAccess.consent(s.tenant, s.group, s.user, "googledrive")
+    assert {:ok, ^grants} = ComposioAccess.grants(s.tenant, s.group, c.w["router_agent_id"])
+    assert {:ok, ^oauth} = SalixStore.OAuth.get("personal-connect")
+    refute inspect(public) =~ "private-photo"
+    refute inspect(S3.Fake.dump()) =~ "private-permission"
+
+    label = %{"name" => "Casey Example", "toolkit" => "googledrive", "mode" => "connect"}
+
+    assert {:error, :not_found} =
+             ComposioAccess.update_account_name(s.tenant, s.group, s.user, "missing", label)
+
+    assert {:error, :not_found} = ComposioAccess.account(s.tenant, s.group, s.user, "missing")
+
+    assert {:error, :composio_account_not_owned} =
+             ComposioAccess.update_account_name(s.tenant, s.group, s.user, "pending-a", label)
+
+    assert {:ok, unchanged} = ComposioAccess.account(s.tenant, s.group, s.user, "pending-a")
+    assert {"pending-a", ^unchanged} = List.keyfind(s.siblings, "pending-a", 0)
+
+    assert [
+             %{
+               "params" => %{
+                 "name" => "COMPOSIO_MANAGE_CONNECTIONS",
+                 "arguments" => %{"toolkits" => [%{"name" => "googledrive", "action" => "list"}]}
+               }
+             }
+           ] = Agent.get(c.provider, & &1.rpc_requests)
+  end
+
+  @tag :connect_shape
   test "Connect HTTP add retains unidentified consent without selecting any pending account", c do
     s = connect_fixture(c)
 

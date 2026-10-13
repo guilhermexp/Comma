@@ -516,8 +516,14 @@ requires the workspace owner. Plugins → Integrations uses the incumbent catalo
 and detail components for native and Composio connectors. Name search and paginated
 Show all browse the full catalog. Connect uses public metadata; explicit project mode
 uses the project-authenticated REST catalog and tool pages. Setup, account controls, and named
-permission choices stay inside the selected connector's detail flow. Exact IDs remain
-internal. Catalog metadata and provider instructions do not grant execution permission.
+permission choices stay inside the selected connector's detail flow. Tool and Agent IDs
+remain internal. Connect account labels use allowlisted provider identity metadata when
+available. When labels collide, the UI includes the public MCP connection reference to
+distinguish connections, including connections to the same provider identity. This reference
+does not establish a mapping to an OAuth callback account ID. Existing account label refresh
+changes only the name under the same member, toolkit, and mode; it preserves account status,
+enabled state, consent, and grants. Catalog metadata and provider instructions do not grant
+execution permission.
 
 [ComposioCatalog](../../systems/apps/salix_web/lib/salix/control/composio_catalog.ex)
 reads the official public `https://composio.dev/toolkits` metadata. Connect OAuth does

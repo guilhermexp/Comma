@@ -1,6 +1,6 @@
 import { CommaI18nProvider } from "@comma/i18n/react";
 import { initializeCommaI18n } from "@comma/i18n";
-import { render, screen, waitFor, cleanup } from "@comma/test-utils/render";
+import { render, screen, waitFor, cleanup, within } from "@comma/test-utils/render";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CommaApiClient, ComposioStatus } from "../../../api";
@@ -408,7 +408,7 @@ it("reopens and cancels the pending consent by its ID without profile login acti
   );
 });
 
-it("lets the user explicitly select the exact visible account for pending consent", async () => {
+it("selects the explicitly named connection when two connections share a provider identity", async () => {
   const user = userEvent.setup();
   const composioCommand = vi.fn().mockResolvedValue({});
   show(
@@ -419,7 +419,7 @@ it("lets the user explicitly select the exact visible account for pending consen
         accounts: [
           {
             id: "verified-account-one",
-            name: "Work GitHub",
+            name: "Casey Example <casey@example.test> (verified-account-one)",
             toolkit: "github",
             mode: "connect",
             status: "ACTIVE",
@@ -427,7 +427,7 @@ it("lets the user explicitly select the exact visible account for pending consen
           },
           {
             id: "verified-account-two",
-            name: "Personal GitHub",
+            name: "Casey Example <casey@example.test> (verified-account-two)",
             toolkit: "github",
             mode: "connect",
             status: "ACTIVE",
@@ -449,11 +449,13 @@ it("lets the user explicitly select the exact visible account for pending consen
     }
   );
 
-  const useAccountButtons = await screen.findAllByRole("button", {
-    name: "Use this account",
-  });
-  expect(useAccountButtons).toHaveLength(2);
-  await user.click(useAccountButtons[1]!);
+  const label = await screen.findByText(
+    /Casey Example <casey@example.test> \(verified-account-two\)/,
+    { selector: "p" }
+  );
+  await user.click(
+    within(label.parentElement!).getByRole("button", { name: "Use this account" })
+  );
   await waitFor(() =>
     expect(composioCommand).toHaveBeenCalledWith("workspace", "consent", {
       toolkit: "github",

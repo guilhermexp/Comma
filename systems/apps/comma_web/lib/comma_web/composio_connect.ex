@@ -281,7 +281,7 @@ defmodule CommaWeb.ComposioConnect do
             Access.put_account(s.tenant, s.group, s.user, account["id"], account)
 
           {:ok, _} ->
-            {:ok, :already_known}
+            Access.update_account_name(s.tenant, s.group, s.user, account["id"], account)
 
           error ->
             error

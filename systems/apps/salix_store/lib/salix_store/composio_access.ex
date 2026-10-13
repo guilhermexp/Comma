@@ -368,6 +368,24 @@ defmodule SalixStore.ComposioAccess do
     end
   end
 
+  def update_account_name(tenant, group, user, id, %{
+        "toolkit" => toolkit,
+        "mode" => mode,
+        "name" => name
+      })
+      when is_binary(name) do
+    update(account_key(tenant, group, user, id), fn
+      nil ->
+        {:error, :not_found}
+
+      %{"toolkit" => ^toolkit, "mode" => ^mode} = account ->
+        {:ok, Map.put(account, "name", name)}
+
+      _ ->
+        {:error, :composio_account_not_owned}
+    end)
+  end
+
   def enable_account(tenant, group, user, id, enabled) when is_boolean(enabled) do
     update(account_key(tenant, group, user, id), fn
       nil -> {:error, :not_found}
