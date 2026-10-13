@@ -3105,7 +3105,7 @@
   "composio_enable": "Enable in Comma",
   "composio_disconnect": "Disconnect this account",
   "composio_error": "Could not complete the action. Check your connection and retry; sign in again if needed.",
-  "composio_expired": "Authorization expired. Sign in again to continue.",
+  "composio_expired": "This app connection attempt expired. This expiry does not affect existing connections. Select “Connect app” to start a new attempt.",
   "composio_next": "Load more",
   "composio_agent_access": "Agent access",
   "composio_grant_hint": "Choose the actions this agent may use with this account. Each action requires your confirmation before it runs.",

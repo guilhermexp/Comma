@@ -3105,7 +3105,7 @@
   "composio_enable": "在 Comma 中启用",
   "composio_disconnect": "断开此账户",
   "composio_error": "无法完成操作。请检查网络并重试；必要时重新登录。",
-  "composio_expired": "授权已过期。请重新登录以继续。",
+  "composio_expired": "本次应用连接尝试已过期。此次过期不会影响现有连接。选择“连接应用”可发起新的连接尝试。",
   "composio_next": "加载更多",
   "composio_agent_access": "智能体访问权限",
   "composio_grant_hint": "选择此智能体可使用的账户操作。每个操作在执行前均需您确认。",

@@ -536,6 +536,72 @@ it("allows cancellation while consent is starting and hides reopen", async () =>
   );
 });
 
+it("explains expired app consent without requiring a working account to sign in again", async () => {
+  const user = userEvent.setup();
+  const composioCommand = vi.fn(async (_workspace, action) =>
+    action === "connect"
+      ? {
+          consent_id: "new-github-attempt",
+          authorization_url: "https://provider.example/consent",
+          status: "pending",
+        }
+      : { tools: [] }
+  );
+  show(
+    {
+      getComposio: async () => ({
+        ...signedOut,
+        status: "connected",
+        accounts: [
+          {
+            id: "working-account",
+            name: "Work GitHub",
+            toolkit: "github",
+            mode: "connect",
+            status: "ACTIVE",
+            enabled: true,
+          },
+        ],
+      }),
+      getAgentModels: vi.fn().mockResolvedValue({
+        agents: { router: { agent_id: "router", name: "Router" } },
+        workers: { items: [], next_cursor: null },
+      }),
+      composioCommand,
+    },
+    {
+      id: "old-github-attempt",
+      toolkit: "github",
+      status: "expired",
+      expires_at: Date.now() - 60_000,
+    }
+  );
+
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("Connected")
+  );
+  const expiry = await screen.findByText(/app connection attempt expired/i);
+  expect(expiry).toHaveTextContent(/does not affect existing connections/i);
+  expect(expiry).toHaveTextContent(/Connect app.*new attempt/i);
+  expect(screen.queryByRole("button", { name: "Sign in with Composio" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Cancel authorization" })).toBeNull();
+  expect(composioCommand).not.toHaveBeenCalledWith(
+    "workspace",
+    "connect",
+    expect.anything()
+  );
+
+  await user.click(screen.getByRole("button", { name: "Connect app GitHub" }));
+  expect(composioCommand).toHaveBeenCalledWith("workspace", "connect", {
+    toolkit: "github",
+  });
+  expect(composioCommand).not.toHaveBeenCalledWith(
+    "workspace",
+    "authorize",
+    expect.anything()
+  );
+});
+
 it("does not offer automatic recovery actions while consent is selecting", async () => {
   const composioCommand = vi.fn().mockResolvedValue({});
   show(
