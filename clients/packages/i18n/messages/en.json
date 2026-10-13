@@ -3115,7 +3115,7 @@
   "composio_revoke": "Revoke access",
   "composio_approvals": "Pending actions",
   "composio_refresh_approvals": "Refresh pending actions",
-  "composio_no_pending_actions": "No actions are waiting for your confirmation.",
+  "composio_no_pending_actions": "No actions for these accounts are waiting for confirmation.",
   "composio_approve_once": "Approve this action once",
   "composio_deny": "Deny",
   "composio_reconnect": "Reconnect selected account",

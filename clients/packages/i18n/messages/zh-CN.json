@@ -3115,7 +3115,7 @@
   "composio_revoke": "撤销权限",
   "composio_approvals": "待确认操作",
   "composio_refresh_approvals": "刷新待确认操作",
-  "composio_no_pending_actions": "暂无待您确认的操作。",
+  "composio_no_pending_actions": "这些账户暂无待确认的操作。",
   "composio_approve_once": "仅批准本次操作",
   "composio_deny": "拒绝",
   "composio_reconnect": "重新连接所选账户",

@@ -3115,7 +3115,7 @@
   "composio_revoke": "Revogar acesso",
   "composio_approvals": "Ações pendentes",
   "composio_refresh_approvals": "Atualizar ações pendentes",
-  "composio_no_pending_actions": "Nenhuma ação pendente de confirmação.",
+  "composio_no_pending_actions": "Nenhuma ação destas contas aguarda confirmação.",
   "composio_approve_once": "Aprovar esta ação uma vez",
   "composio_deny": "Recusar",
   "composio_reconnect": "Reconectar a conta selecionada",
