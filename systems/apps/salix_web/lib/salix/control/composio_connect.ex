@@ -120,10 +120,12 @@ defmodule Salix.Control.ComposioConnect do
            }),
          %{"data" => %{"results" => results}} <- response,
          result when is_map(result) <- results[toolkit],
-         url when is_binary(url) <- result["redirect_url"],
-         id when is_binary(id) <-
-           result["connected_account_id"] || result["account_id"] || result["id"] do
-      {:ok, %{"account_id" => id, "authorization_url" => url}}
+         true <- result["status"] in [nil, "initiated"],
+         url when is_binary(url) and byte_size(url) > 0 <- result["redirect_url"] do
+      # Connect returns account summaries beside a consent link, not an
+      # authoritative link-to-account binding. Account selection happens only
+      # after the member explicitly chooses an account and we verify that ID.
+      {:ok, %{"authorization_url" => url}}
     else
       {:error, _} = error -> error
       _ -> {:error, :invalid_composio_response}

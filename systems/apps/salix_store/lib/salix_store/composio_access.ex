@@ -181,6 +181,176 @@ defmodule SalixStore.ComposioAccess do
     end
   end
 
+  def begin_consent(tenant, group, user, toolkit, replaces \\ nil) do
+    key = consent_key(tenant, group, user, toolkit)
+    id = Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
+
+    new_record = fn ->
+      %{
+        "id" => id,
+        "toolkit" => toolkit,
+        "status" => "starting",
+        "expires_at" => System.system_time(:millisecond) + 600_000,
+        "replaces" => replaces
+      }
+    end
+
+    update(key, fn
+      nil ->
+        {:ok, new_record.()}
+
+      %{"status" => status, "expires_at" => expiry}
+      when status in ["starting", "pending"] and is_integer(expiry) ->
+        if expiry > System.system_time(:millisecond),
+          do: {:error, :composio_consent_pending},
+          else: {:ok, new_record.()}
+
+      %{"status" => status} when status in ["starting", "pending"] ->
+        {:error, :invalid_composio_consent}
+
+      %{"status" => "selecting"} ->
+        {:error, :composio_consent_pending}
+
+      %{"status" => status} when status in ["cancelled", "completed"] ->
+        {:ok, new_record.()}
+
+      _ ->
+        {:error, :invalid_composio_consent}
+    end)
+  end
+
+  def consent(tenant, group, user, toolkit) do
+    case read(consent_key(tenant, group, user, toolkit)) do
+      {:ok, record, _} -> {:ok, record}
+      error -> error
+    end
+  end
+
+  def finish_consent(tenant, group, user, toolkit, attempt_id, authorization_url)
+      when is_binary(attempt_id) and is_binary(authorization_url) do
+    key = consent_key(tenant, group, user, toolkit)
+    cipher_context = consent_cipher_context(key, attempt_id)
+
+    with {:ok, sealed} <-
+           CredentialCipher.seal(tenant, cipher_context, %{
+             "authorization_url" => authorization_url
+           }) do
+      update(key, fn
+        %{"id" => ^attempt_id, "status" => "starting", "expires_at" => expiry} = record
+        when is_integer(expiry) ->
+          if expiry > System.system_time(:millisecond) do
+            {:ok, record |> Map.put("status", "pending") |> Map.put("authorization", sealed)}
+          else
+            {:error, :composio_attempt_not_pending}
+          end
+
+        _ ->
+          {:error, :composio_attempt_not_pending}
+      end)
+    end
+  end
+
+  def finish_consent(_, _, _, _, _, _), do: {:error, :composio_attempt_not_pending}
+
+  def consent_authorization(tenant, group, user, toolkit, attempt_id)
+      when is_binary(attempt_id) do
+    key = consent_key(tenant, group, user, toolkit)
+
+    with {:ok,
+          %{
+            "id" => ^attempt_id,
+            "status" => "pending",
+            "expires_at" => expiry,
+            "authorization" => sealed
+          }} <- consent(tenant, group, user, toolkit),
+         true <- is_integer(expiry) and expiry > System.system_time(:millisecond),
+         {:ok, %{"authorization_url" => url}} <-
+           CredentialCipher.open(tenant, consent_cipher_context(key, attempt_id), sealed) do
+      {:ok, %{"authorization_url" => url, "consent_id" => attempt_id}}
+    else
+      {:error, :not_found} -> {:error, :composio_attempt_not_pending}
+      {:error, _} = error -> error
+      _ -> {:error, :composio_attempt_not_pending}
+    end
+  end
+
+  def consent_authorization(_, _, _, _, _), do: {:error, :composio_attempt_not_pending}
+
+  def cancel_consent(tenant, group, user, toolkit, attempt_id) when is_binary(attempt_id) do
+    update(consent_key(tenant, group, user, toolkit), fn
+      %{"id" => ^attempt_id, "status" => status} = record
+      when status in ["starting", "pending"] ->
+        {:ok, record |> Map.delete("authorization") |> Map.put("status", "cancelled")}
+
+      _ ->
+        {:error, :composio_attempt_not_pending}
+    end)
+  end
+
+  def cancel_consent(_, _, _, _, _), do: {:error, :composio_attempt_not_pending}
+
+  def complete_consent(tenant, group, user, toolkit, attempt_id, account_id)
+      when is_binary(attempt_id) and is_binary(account_id) and byte_size(account_id) > 0 do
+    update(consent_key(tenant, group, user, toolkit), fn
+      %{
+        "id" => ^attempt_id,
+        "status" => "pending",
+        "expires_at" => expiry
+      } = record
+      when is_integer(expiry) ->
+        if expiry > System.system_time(:millisecond) do
+          {:ok,
+           record |> Map.put("status", "selecting") |> Map.put("selected_account_id", account_id)}
+        else
+          {:error, :composio_attempt_not_pending}
+        end
+
+      %{
+        "id" => ^attempt_id,
+        "status" => "selecting",
+        "selected_account_id" => ^account_id
+      } ->
+        {:error, :composio_consent_in_progress}
+
+      %{
+        "id" => ^attempt_id,
+        "status" => status,
+        "selected_account_id" => ^account_id
+      } = record
+      when status == "completed" ->
+        {:ok, record}
+
+      _ ->
+        {:error, :composio_attempt_not_pending}
+    end)
+  end
+
+  def complete_consent(_, _, _, _, _, _), do: {:error, :composio_attempt_not_pending}
+
+  def settle_consent(tenant, group, user, toolkit, attempt_id, account_id)
+      when is_binary(attempt_id) and is_binary(account_id) and byte_size(account_id) > 0 do
+    update(consent_key(tenant, group, user, toolkit), fn
+      %{
+        "id" => ^attempt_id,
+        "status" => "selecting",
+        "selected_account_id" => ^account_id
+      } = record ->
+        {:ok, Map.put(record, "status", "completed")}
+
+      %{
+        "id" => ^attempt_id,
+        "status" => "completed",
+        "selected_account_id" => ^account_id
+      } = record ->
+        {:ok, record}
+
+      _ ->
+        {:error, :composio_attempt_not_pending}
+    end)
+  end
+
+  def settle_consent(_, _, _, _, _, _), do: {:error, :composio_attempt_not_pending}
+
   def account_authorization(tenant, group, user, id) do
     with {:ok, account} <- account(tenant, group, user, id),
          true <-
@@ -291,6 +461,11 @@ defmodule SalixStore.ComposioAccess do
   defp profile_key(t, g, u), do: prefix(t, g) <> "members/" <> segment(u) <> "/settings.json"
   defp account_prefix(t, g, u), do: prefix(t, g) <> "members/" <> segment(u) <> "/accounts/"
   defp account_key(t, g, u, id), do: account_prefix(t, g, u) <> segment(id) <> ".json"
+
+  defp consent_key(t, g, u, toolkit),
+    do: prefix(t, g) <> "members/" <> segment(u) <> "/consents/" <> segment(toolkit) <> ".json"
+
+  defp consent_cipher_context(key, attempt_id), do: key <> ":" <> attempt_id
 
   defp registration_key(t, p),
     do: "ctl/tenants/" <> segment(t) <> "/composio/registrations/" <> segment(p) <> ".json"

@@ -172,6 +172,34 @@ defmodule CommaWeb.ComposioConnect do
     end
   end
 
+  defp run(s, "consent", %{"toolkit" => toolkit, "operation" => "get"})
+       when is_binary(toolkit) and byte_size(toolkit) in 1..100 do
+    case Access.consent(s.tenant, s.group, s.user, toolkit) do
+      {:ok, consent} -> {:ok, %{"consent" => public_consent(consent)}}
+      {:error, :not_found} -> {:ok, %{"consent" => nil}}
+      error -> error
+    end
+  end
+
+  defp run(s, "consent", %{"toolkit" => toolkit, "consent_id" => id, "operation" => op} = params)
+       when is_binary(toolkit) and byte_size(toolkit) in 1..100 and is_binary(id) and
+              byte_size(id) in 1..128 do
+    case op do
+      "reopen" ->
+        Access.consent_authorization(s.tenant, s.group, s.user, toolkit, id)
+
+      "cancel" ->
+        with {:ok, consent} <- Access.cancel_consent(s.tenant, s.group, s.user, toolkit, id),
+             do: {:ok, %{"consent" => public_consent(consent)}}
+
+      "select" ->
+        select_consent_account(s, toolkit, id, params["account_id"])
+
+      _ ->
+        {:error, :unsupported_composio_operation}
+    end
+  end
+
   defp run(s, "refresh_accounts", %{"toolkit" => toolkit}) when is_binary(toolkit) do
     with {:ok, profile} <- Access.profile(s.tenant, s.group, s.user),
          true <- profile["mode"] == "connect",
@@ -267,25 +295,88 @@ defmodule CommaWeb.ComposioConnect do
   end
 
   defp connect_personal(s, toolkit, replaces \\ nil) do
-    with {:ok, link} <- Connect.add_account(s.tenant, s.group, s.user, toolkit),
+    with {:ok, %{"mode" => "connect", "status" => "connected"}} <-
+           Access.profile(s.tenant, s.group, s.user),
+         {:ok, consent} <- Access.begin_consent(s.tenant, s.group, s.user, toolkit, replaces),
+         {:ok, link} <- Connect.add_account(s.tenant, s.group, s.user, toolkit),
          {:ok, _} <-
-           Access.put_account(s.tenant, s.group, s.user, link["account_id"], %{
-             "toolkit" => toolkit,
-             "name" => toolkit,
-             "status" => "INITIATED",
-             "mode" => "connect"
-           }),
-         {:ok, _} <-
-           Access.begin_account(
+           Access.finish_consent(
              s.tenant,
              s.group,
              s.user,
-             link["account_id"],
-             link["authorization_url"],
-             replaces
+             toolkit,
+             consent["id"],
+             link["authorization_url"]
            ) do
-      {:ok, Map.put(link, "status", "pending")}
+      {:ok, Map.merge(link, %{"consent_id" => consent["id"], "status" => "pending"})}
+    else
+      {:error, _} = error -> error
+      _ -> {:error, :composio_sign_in_required}
     end
+  end
+
+  defp select_consent_account(s, toolkit, id, account_id)
+       when is_binary(account_id) and byte_size(account_id) in 1..256 do
+    with {:ok, %{"mode" => "connect", "status" => "connected"}} <-
+           Access.profile(s.tenant, s.group, s.user),
+         {:ok, consent} <- Access.consent(s.tenant, s.group, s.user, toolkit),
+         :ok <- selectable_consent(consent, id, account_id) do
+      if consent["status"] == "completed" do
+        Access.account(s.tenant, s.group, s.user, account_id)
+      else
+        complete_consent_account(s, toolkit, id, account_id)
+      end
+    else
+      {:error, _} = error -> error
+      _ -> {:error, :composio_access_denied}
+    end
+  end
+
+  defp select_consent_account(_, _, _, _), do: {:error, :invalid_composio_account}
+
+  defp complete_consent_account(s, toolkit, id, account_id) do
+    with {:ok, remote} <- Connect.account(s.tenant, s.group, s.user, toolkit, account_id),
+         true <- remote["status"] == "ACTIVE",
+         {:ok, completed} <-
+           Access.complete_consent(s.tenant, s.group, s.user, toolkit, id, account_id),
+         true <- completed["status"] == "selecting",
+         {:ok, selected} <- Access.put_account(s.tenant, s.group, s.user, account_id, remote),
+         :ok <- retire_replaced(s, Map.put(completed, "id", account_id), remote),
+         {:ok, _} <- Access.settle_consent(s.tenant, s.group, s.user, toolkit, id, account_id) do
+      {:ok, selected}
+    else
+      false -> {:error, :composio_account_not_active}
+      {:error, _} = error -> error
+      _ -> {:error, :composio_access_denied}
+    end
+  end
+
+  defp selectable_consent(
+         %{"id" => id, "status" => "completed", "selected_account_id" => selected},
+         id,
+         selected
+       ),
+       do: :ok
+
+  defp selectable_consent(%{"id" => id, "status" => "selecting"}, id, _),
+    do: {:error, :composio_consent_in_progress}
+
+  defp selectable_consent(%{"id" => id, "status" => "pending", "expires_at" => expiry}, id, _)
+       when is_integer(expiry) do
+    if expiry > System.system_time(:millisecond),
+      do: :ok,
+      else: {:error, :composio_attempt_not_pending}
+  end
+
+  defp selectable_consent(_, _, _), do: {:error, :composio_attempt_not_pending}
+
+  defp public_consent(consent) do
+    public = Map.take(consent, ~w(id toolkit status expires_at))
+
+    if consent["status"] in ["starting", "pending"] and
+         consent["expires_at"] <= System.system_time(:millisecond),
+       do: Map.put(public, "status", "expired"),
+       else: public
   end
 
   defp connect_project(s, toolkit, replaces \\ nil) do

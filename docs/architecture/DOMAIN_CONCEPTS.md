@@ -531,8 +531,25 @@ public logo endpoint. Custom OAuth application setup stays at Composio. This flo
 not add triggers or replace existing trigger authorization.
 
 Provider account IDs are external references within the member relationship.
-Opening a consent URL leaves the account pending. Explicit verification confirms its
-remote state. Cancel prevents a late verification from restoring the local attempt.
+Connect can return a consent URL beside several account summaries without binding
+the URL to an account ID. Their order and statuses do not establish that binding.
+ComposioAccess retains an encrypted toolkit consent value under the same member
+owner, separately from the Connect OAuth attempt and provider account records.
+Its key is the member and toolkit; its attempt ID fences cancellation and late
+responses. This value cannot reuse an account record because the provider account
+identity is not yet known. It introduces no second credential or access owner.
+Each detail reads only its selected toolkit's consent. A live attempt blocks another
+Add for that toolkit. Expiry or explicit cancellation permits a new attempt.
+Opening its URL does not select, enable, or grant an account. The member explicitly
+selects an account; the backend reads that exact ID from the member's toolkit and
+requires ACTIVE before completing the consent and saving the selected reference.
+Only that selection can retire a recorded reconnect target. Other accounts remain
+unchanged. Only the winning selection claim can write accounts. A completed selection
+replay only reads the saved account. An interrupted selection remains stored and
+fails closed for coordinated repair; no automatic recovery or progress is claimed.
+Project-mode links retain their explicit provider account binding.
+Explicit verification confirms the remote account state. Cancel prevents a late
+verification from restoring the local attempt.
 Reopen uses the encrypted, unexpired link. Reconnect preserves the selected old account
 until the replacement verifies as active, then disables only the old local reference.
 Disable blocks Comma execution and does not revoke the remote connection. Confirmed

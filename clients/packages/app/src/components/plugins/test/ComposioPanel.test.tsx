@@ -23,15 +23,55 @@ const signedOut: ComposioStatus = {
   capabilities: { catalog: false, search: true, account_management: false },
   expires_at: null,
 };
-function show(api: Partial<CommaApiClient>) {
+type Consent = {
+  id: string;
+  toolkit: string;
+  status:
+    | "starting"
+    | "pending"
+    | "selecting"
+    | "completed"
+    | "cancelled"
+    | "expired";
+  expires_at: number;
+};
+function show(
+  api: Partial<CommaApiClient>,
+  consent: Consent | null | (() => Consent | null) = null,
+  startConnecting = false
+) {
+  const originalCommand = api.composioCommand;
+  const getConsent = () =>
+    typeof consent === "function" ? consent() : consent;
+  let composioCommand: CommaApiClient["composioCommand"];
+  if (originalCommand && vi.isMockFunction(originalCommand)) {
+    const implementation = originalCommand.getMockImplementation();
+    originalCommand.mockImplementation(async (workspace, action, params, options) => {
+      if (action === "consent" && params?.operation === "get")
+        return { consent: getConsent() };
+      return implementation
+        ? implementation(workspace, action, params, options)
+        : {};
+    });
+    composioCommand = originalCommand;
+  } else {
+    composioCommand = async (workspace, action, params = {}, options) => {
+      if (action === "consent" && params.operation === "get")
+        return { consent: getConsent() };
+      return originalCommand
+        ? originalCommand(workspace, action, params, options)
+        : {};
+    };
+  }
   return render(
     <CommaI18nProvider locale="en">
       <ComposioConnectorDetail
         plugin={{ id: "composio:github", name: "GitHub", summary: "Code hosting" }}
         toolkit="github"
-        api={api as CommaApiClient}
+        api={{ ...api, composioCommand } as CommaApiClient}
         workspaceId="workspace"
         onBack={() => {}}
+        startConnecting={startConnecting}
       />
     </CommaI18nProvider>
   );
@@ -55,7 +95,7 @@ it("opening consent stays pending until server verification and supports cancell
   expect(screen.queryByText("Connected", { exact: true })).toBeNull();
   await user.click(await screen.findByRole("button", { name: "Cancel authorization" }));
   await waitFor(() =>
-    expect(composioCommand).toHaveBeenLastCalledWith("workspace", "cancel", {})
+    expect(composioCommand).toHaveBeenCalledWith("workspace", "cancel", {})
   );
   expect(screen.queryByRole("button", { name: "Reopen authorization" })).toBeNull();
 });
@@ -119,9 +159,23 @@ it("app consent reopen and cancel address the selected account, not the Composio
 
 it("connects the selected connector from its existing detail flow", async () => {
   const user = userEvent.setup();
-  const composioCommand = vi
-    .fn()
-    .mockResolvedValue({ authorization_url: "https://provider.example/consent" });
+  let consent: Consent | null = null;
+  const composioCommand = vi.fn(async (_workspace, action) => {
+    if (action === "connect") {
+      consent = {
+        id: "github-connect-flow-consent",
+        toolkit: "github",
+        status: "pending",
+        expires_at: Date.now() + 60_000,
+      };
+      return {
+        consent_id: "github-connect-flow-consent",
+        authorization_url: "https://provider.example/consent",
+        status: "pending",
+      };
+    }
+    return {};
+  });
   show({
     getComposio: async () => ({ ...signedOut, status: "connected" }),
     composioCommand,
@@ -129,13 +183,386 @@ it("connects the selected connector from its existing detail flow", async () => 
       agents: { router: { agent_id: "router", name: "Router" } },
       workers: { items: [], next_cursor: null },
     }),
-  });
+  }, () => consent);
   await user.click(await screen.findByRole("button", { name: "Connect app GitHub" }));
   expect(composioCommand).toHaveBeenCalledWith("workspace", "connect", {
     toolkit: "github",
   });
   expect(openNativePlatformExternalUrl).toHaveBeenCalledWith(
     "https://provider.example/consent"
+  );
+});
+
+it("keeps project-mode connector authorization separate from Connect consent", async () => {
+  const user = userEvent.setup();
+  const composioCommand = vi.fn().mockResolvedValue({
+    account_id: "project-account",
+    authorization_url: "https://provider.example/project-consent",
+    status: "pending",
+  });
+  show({
+    getComposio: async () => ({
+      ...signedOut,
+      mode: "project",
+      status: "connected",
+    }),
+    composioCommand,
+  });
+
+  await user.click(await screen.findByRole("button", { name: "Connect app GitHub" }));
+  await waitFor(() => expect(openNativePlatformExternalUrl).toHaveBeenCalledOnce());
+  expect(openNativePlatformExternalUrl).toHaveBeenCalledWith(
+    "https://provider.example/project-consent"
+  );
+  expect(composioCommand).toHaveBeenCalledWith("workspace", "connect", {
+    toolkit: "github",
+  });
+  expect(composioCommand).not.toHaveBeenCalledWith(
+    "workspace",
+    "consent",
+    expect.anything()
+  );
+  expect(screen.queryByText(/choose which account to use/)).toBeNull();
+});
+
+it("keeps a single initiated account unselected until the user chooses it", async () => {
+  const composioCommand = vi.fn().mockResolvedValue({});
+  show(
+    {
+      getComposio: async () => ({
+        ...signedOut,
+        status: "connected",
+        accounts: [
+          {
+            id: "only-initiated-account",
+            name: "Personal GitHub",
+            toolkit: "github",
+            mode: "connect",
+            status: "INITIATED",
+            enabled: false,
+          },
+        ],
+      }),
+      composioCommand,
+      getAgentModels: vi.fn().mockResolvedValue({
+        agents: { router: { agent_id: "router", name: "Router" } },
+        workers: { items: [], next_cursor: null },
+      }),
+    },
+    {
+      id: "github-consent-1",
+      toolkit: "github",
+      status: "pending",
+      expires_at: Date.now() + 60_000,
+    }
+  );
+
+  expect(
+    await screen.findByText(
+      "Complete authorization in your browser. Then show accounts and choose which account to use."
+    )
+  ).toBeInTheDocument();
+  expect(
+    await screen.findByRole("button", { name: "Use this account" })
+  ).toBeInTheDocument();
+  expect(composioCommand).not.toHaveBeenCalledWith(
+    "workspace",
+    "consent",
+    expect.objectContaining({ operation: "select" })
+  );
+});
+
+it("does not start another Add after cancelling consent on an auto-connect detail", async () => {
+  const user = userEvent.setup();
+  let consent: Consent | null = {
+    id: "github-auto-consent",
+    toolkit: "github",
+    status: "pending",
+    expires_at: Date.now() + 60_000,
+  };
+  const composioCommand = vi.fn(async (_workspace, action, params) => {
+    if (action === "consent" && params?.operation === "cancel") {
+      consent = { ...consent!, status: "cancelled" };
+      return { status: "cancelled" };
+    }
+    if (action === "connect")
+      return {
+        consent_id: "unexpected-consent",
+        authorization_url: "https://provider.example/unexpected-consent",
+        status: "pending",
+      };
+    return {};
+  });
+  show(
+    {
+      getComposio: async () => ({ ...signedOut, status: "connected" }),
+      composioCommand,
+    },
+    () => consent,
+    true
+  );
+
+  expect(await screen.findByRole("button", { name: "Cancel authorization" })).toBeInTheDocument();
+  expect(composioCommand).not.toHaveBeenCalledWith(
+    "workspace",
+    "connect",
+    expect.anything()
+  );
+  await user.click(screen.getByRole("button", { name: "Cancel authorization" }));
+  await waitFor(() =>
+    expect(composioCommand).toHaveBeenCalledWith("workspace", "consent", {
+      toolkit: "github",
+      consent_id: "github-auto-consent",
+      operation: "cancel",
+    })
+  );
+  expect(composioCommand).not.toHaveBeenCalledWith(
+    "workspace",
+    "connect",
+    expect.anything()
+  );
+});
+
+it("refreshes consent after a failed Connect request so starting can be cancelled", async () => {
+  const user = userEvent.setup();
+  let consent: Consent | null = null;
+  const composioCommand = vi.fn(async (_workspace, action) => {
+    if (action === "connect") {
+      consent = {
+        id: "github-uncertain-consent",
+        toolkit: "github",
+        status: "starting",
+        expires_at: Date.now() + 60_000,
+      };
+      throw new Error("connection result was lost");
+    }
+    return {};
+  });
+  show(
+    {
+      getComposio: async () => ({ ...signedOut, status: "connected" }),
+      composioCommand,
+    },
+    () => consent
+  );
+
+  await user.click(await screen.findByRole("button", { name: "Connect app GitHub" }));
+  expect(await screen.findByRole("button", { name: "Cancel authorization" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Reopen authorization" })).toBeNull();
+  expect(composioCommand).toHaveBeenNthCalledWith(
+    3,
+    "workspace",
+    "consent",
+    { toolkit: "github", operation: "get" },
+    {}
+  );
+});
+
+it("reopens and cancels the pending consent by its ID without profile login actions", async () => {
+  const user = userEvent.setup();
+  let consent: Consent | null = {
+    id: "github-consent-2",
+    toolkit: "github",
+    status: "pending",
+    expires_at: Date.now() + 60_000,
+  };
+  const composioCommand = vi.fn(async (_workspace, action, params) => {
+    if (action === "consent" && params?.operation === "reopen")
+      return { authorization_url: "https://provider.example/private-consent" };
+    if (action === "consent" && params?.operation === "cancel") {
+      consent = { ...consent!, status: "cancelled" };
+      return { status: "cancelled" };
+    }
+    return {};
+  });
+  show(
+    { getComposio: async () => ({ ...signedOut, status: "connected" }), composioCommand },
+    () => consent
+  );
+
+  await user.click(await screen.findByRole("button", { name: "Reopen authorization" }));
+  await waitFor(() => expect(openNativePlatformExternalUrl).toHaveBeenCalledOnce());
+  expect(composioCommand).toHaveBeenCalledWith("workspace", "consent", {
+    toolkit: "github",
+    consent_id: "github-consent-2",
+    operation: "reopen",
+  });
+
+  await user.click(await screen.findByRole("button", { name: "Cancel authorization" }));
+  await waitFor(() =>
+    expect(composioCommand).toHaveBeenCalledWith("workspace", "consent", {
+      toolkit: "github",
+      consent_id: "github-consent-2",
+      operation: "cancel",
+    })
+  );
+  expect(composioCommand).not.toHaveBeenCalledWith(
+    "workspace",
+    "authorize",
+    expect.anything()
+  );
+  expect(composioCommand).not.toHaveBeenCalledWith(
+    "workspace",
+    "cancel",
+    expect.anything()
+  );
+});
+
+it("lets the user explicitly select the exact visible account for pending consent", async () => {
+  const user = userEvent.setup();
+  const composioCommand = vi.fn().mockResolvedValue({});
+  show(
+    {
+      getComposio: async () => ({
+        ...signedOut,
+        status: "connected",
+        accounts: [
+          {
+            id: "verified-account-one",
+            name: "Work GitHub",
+            toolkit: "github",
+            mode: "connect",
+            status: "ACTIVE",
+            enabled: true,
+          },
+          {
+            id: "verified-account-two",
+            name: "Personal GitHub",
+            toolkit: "github",
+            mode: "connect",
+            status: "ACTIVE",
+            enabled: true,
+          },
+        ],
+      }),
+      composioCommand,
+      getAgentModels: vi.fn().mockResolvedValue({
+        agents: { router: { agent_id: "router", name: "Router" } },
+        workers: { items: [], next_cursor: null },
+      }),
+    },
+    {
+      id: "github-consent-3",
+      toolkit: "github",
+      status: "pending",
+      expires_at: Date.now() + 60_000,
+    }
+  );
+
+  const useAccountButtons = await screen.findAllByRole("button", {
+    name: "Use this account",
+  });
+  expect(useAccountButtons).toHaveLength(2);
+  await user.click(useAccountButtons[1]!);
+  await waitFor(() =>
+    expect(composioCommand).toHaveBeenCalledWith("workspace", "consent", {
+      toolkit: "github",
+      consent_id: "github-consent-3",
+      operation: "select",
+      account_id: "verified-account-two",
+    })
+  );
+});
+
+it("does not treat a consent URL as a connected account", async () => {
+  const user = userEvent.setup();
+  let consent: Consent | null = null;
+  const composioCommand = vi.fn(async (_workspace, action) => {
+    if (action === "connect") {
+      consent = {
+        id: "github-consent-4",
+        toolkit: "github",
+        status: "pending",
+        expires_at: Date.now() + 60_000,
+      };
+      return {
+        consent_id: "github-consent-4",
+        authorization_url: "https://provider.example/private-consent",
+        status: "pending",
+      };
+    }
+    return {};
+  });
+  show(
+    {
+      getComposio: async () => ({ ...signedOut, status: "connected" }),
+      composioCommand,
+      getAgentModels: vi.fn().mockResolvedValue({
+        agents: { router: { agent_id: "router", name: "Router" } },
+        workers: { items: [], next_cursor: null },
+      }),
+    },
+    () => consent
+  );
+
+  await user.click(await screen.findByRole("button", { name: "Connect app GitHub" }));
+  expect(
+    await screen.findByText(
+      "Complete authorization in your browser. Then show accounts and choose which account to use."
+    )
+  ).toBeInTheDocument();
+  expect(openNativePlatformExternalUrl).toHaveBeenCalledWith(
+    "https://provider.example/private-consent"
+  );
+  expect(await screen.findByText("No verified accounts for this app. Connect an account to continue.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Use this account" })).toBeNull();
+});
+
+it("allows cancellation while consent is starting and hides reopen", async () => {
+  const user = userEvent.setup();
+  const composioCommand = vi.fn().mockResolvedValue({ status: "cancelled" });
+  show(
+    {
+      getComposio: async () => ({ ...signedOut, status: "connected" }),
+      composioCommand,
+    },
+    {
+      id: "github-consent-starting",
+      toolkit: "github",
+      status: "starting",
+      expires_at: Date.now() + 60_000,
+    }
+  );
+
+  expect(await screen.findByRole("button", { name: "Cancel authorization" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Reopen authorization" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Cancel authorization" }));
+  await waitFor(() =>
+    expect(composioCommand).toHaveBeenCalledWith("workspace", "consent", {
+      toolkit: "github",
+      consent_id: "github-consent-starting",
+      operation: "cancel",
+    })
+  );
+});
+
+it("does not offer automatic recovery actions while consent is selecting", async () => {
+  const composioCommand = vi.fn().mockResolvedValue({});
+  show(
+    {
+      getComposio: async () => ({ ...signedOut, status: "connected" }),
+      composioCommand,
+    },
+    {
+      id: "github-consent-selecting",
+      toolkit: "github",
+      status: "selecting",
+      expires_at: Date.now() + 60_000,
+    }
+  );
+
+  expect(
+    await screen.findByText(
+      "Account selection is in progress. If this status remains, contact support."
+    )
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Reopen authorization" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Cancel authorization" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Use this account" })).toBeNull();
+  expect(composioCommand).not.toHaveBeenCalledWith(
+    "workspace",
+    "consent",
+    expect.objectContaining({ operation: expect.anything() })
   );
 });
 

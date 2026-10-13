@@ -16,6 +16,29 @@ import { openNativePlatformExternalUrl } from "../../runtime-chat/nativePlatform
 
 import { ComposioAccessPanel } from "./ComposioAccessPanel";
 
+const consentSchema = z.object({
+  id: z.string().min(1),
+  toolkit: z.string().min(1),
+  status: z.enum([
+    "starting",
+    "pending",
+    "selecting",
+    "completed",
+    "cancelled",
+    "expired",
+  ]),
+  expires_at: z.number(),
+});
+const consentResponseSchema = z.object({ consent: consentSchema.nullable() });
+const connectConsentResponseSchema = z.object({
+  consent_id: z.string().min(1),
+  authorization_url: z.string().min(1),
+  status: z.literal("pending"),
+});
+type Consent = Omit<z.infer<typeof consentSchema>, "expires_at"> & {
+  expires_at?: number;
+};
+
 export function ComposioConnectorDetail({
   api,
   workspaceId,
@@ -33,6 +56,7 @@ export function ComposioConnectorDetail({
 }) {
   const m = useCommaMessages();
   const [status, setStatus] = useState<ComposioStatus>();
+  const [consent, setConsent] = useState<Consent | null>();
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [advanced, setAdvanced] = useState(false);
@@ -44,13 +68,33 @@ export function ComposioConnectorDetail({
   const inFlight = useRef(false);
   const connectionStarted = useRef(false);
   const signInStarted = useRef(false);
+  const consentInProgress =
+    consent?.toolkit === toolkit &&
+    (consent.status === "starting" ||
+      consent.status === "pending" ||
+      consent.status === "selecting");
   const load = useCallback(
     async (signal?: AbortSignal) => {
       const next = await api.getComposio(workspaceId, signal ? { signal } : {});
-      if (mounted.current && !signal?.aborted) setStatus(next);
+      let nextConsent: Consent | null = null;
+      if (next.mode === "connect") {
+        const result = await api.composioCommand(
+          workspaceId,
+          "consent",
+          { toolkit, operation: "get" },
+          signal ? { signal } : {}
+        );
+        nextConsent = consentResponseSchema.parse(result).consent;
+        if (nextConsent && nextConsent.toolkit !== toolkit)
+          throw new Error("Composio consent toolkit mismatch");
+      }
+      if (mounted.current && !signal?.aborted) {
+        setStatus(next);
+        setConsent(nextConsent);
+      }
       return next;
     },
-    [api, workspaceId]
+    [api, toolkit, workspaceId]
   );
 
   useEffect(() => {
@@ -115,10 +159,19 @@ export function ComposioConnectorDetail({
     inFlight.current = true;
     setBusy(true);
     setError(false);
+    let loadedAfterAction = false;
     try {
       const result = await api.composioCommand(workspaceId, action, params);
       if (!mounted.current) return;
-      if (typeof result.authorization_url === "string") {
+      if (action === "connect" && status?.mode === "connect") {
+        const started = connectConsentResponseSchema.parse(result);
+        setConsent({
+          id: started.consent_id,
+          toolkit,
+          status: "pending",
+        });
+        await openNativePlatformExternalUrl(started.authorization_url);
+      } else if (typeof result.authorization_url === "string") {
         if (action === "authorize") setAuthorization(result.authorization_url);
         await openNativePlatformExternalUrl(result.authorization_url);
       }
@@ -141,9 +194,22 @@ export function ComposioConnectorDetail({
         );
         return;
       }
+      loadedAfterAction = true;
       await load();
     } catch {
       if (mounted.current) setError(true);
+      if (
+        (action === "connect" ||
+          (action === "account" && params.operation === "reconnect")) &&
+        status?.mode === "connect" &&
+        !loadedAfterAction
+      ) {
+        try {
+          await load();
+        } catch {
+          if (mounted.current) setError(true);
+        }
+      }
     } finally {
       inFlight.current = false;
       if (mounted.current) setBusy(false);
@@ -152,6 +218,10 @@ export function ComposioConnectorDetail({
 
   useEffect(() => {
     if (!startConnecting || !status) return;
+    if (status.mode === "connect" && consentInProgress) {
+      connectionStarted.current = true;
+      return;
+    }
     if (status.status === "connected" && !connectionStarted.current) {
       connectionStarted.current = true;
       void act("connect", { toolkit });
@@ -173,7 +243,7 @@ export function ComposioConnectorDetail({
       backLabel={m.plugins_back()}
       installLabel={m.composio_connect()}
       installPending={busy}
-      {...(status?.status === "connected"
+      {...(status?.status === "connected" && !consentInProgress
         ? { onInstall: () => void act("connect", { toolkit }) }
         : {})}
     >
@@ -266,6 +336,71 @@ export function ComposioConnectorDetail({
             </Button>
           </div>
         )}
+        {consent?.status === "pending" && consent.toolkit === toolkit && (
+          <div className="flex flex-col gap-md">
+            <p className="m-0 text-sm text-secondary">
+              {m.composio_consent_pending()}
+            </p>
+            <div className="flex flex-wrap gap-md">
+              <Button
+                hierarchy="secondary-gray"
+                isDisabled={busy}
+                onPress={() =>
+                  void act("consent", {
+                    toolkit,
+                    consent_id: consent.id,
+                    operation: "reopen",
+                  })
+                }
+              >
+                {m.composio_reopen()}
+              </Button>
+              <Button
+                hierarchy="secondary-gray"
+                isDisabled={busy}
+                onPress={() =>
+                  void act("consent", {
+                    toolkit,
+                    consent_id: consent.id,
+                    operation: "cancel",
+                  })
+                }
+              >
+                {m.composio_cancel()}
+              </Button>
+            </div>
+          </div>
+        )}
+        {consent?.status === "starting" && consent.toolkit === toolkit && (
+          <div className="flex flex-col gap-md">
+            <p className="m-0 text-sm text-secondary">
+              {m.composio_consent_starting()}
+            </p>
+            <div>
+              <Button
+                hierarchy="secondary-gray"
+                isDisabled={busy}
+                onPress={() =>
+                  void act("consent", {
+                    toolkit,
+                    consent_id: consent.id,
+                    operation: "cancel",
+                  })
+                }
+              >
+                {m.composio_cancel()}
+              </Button>
+            </div>
+          </div>
+        )}
+        {consent?.status === "selecting" && consent.toolkit === toolkit && (
+          <p className="m-0 text-sm text-secondary">
+            {m.composio_consent_selecting()}
+          </p>
+        )}
+        {consent?.status === "expired" && consent.toolkit === toolkit && (
+          <p className="m-0 text-sm text-secondary">{m.composio_expired()}</p>
+        )}
         {status?.status === "connected" && (
           <>
             {status.mode === "connect" && (
@@ -338,6 +473,24 @@ export function ComposioConnectorDetail({
                                     : m.composio_disconnect()}
                       </Button>
                     ))}
+                    {consent?.status === "pending" &&
+                      consent.toolkit === toolkit && (
+                        <Button
+                          hierarchy="secondary-gray"
+                          size="sm"
+                          isDisabled={busy}
+                          onPress={() =>
+                            void act("consent", {
+                              toolkit,
+                              consent_id: consent.id,
+                              operation: "select",
+                              account_id: account.id,
+                            })
+                          }
+                        >
+                          {m.composio_use_account()}
+                        </Button>
+                      )}
                   </div>
                 </div>
               ))}

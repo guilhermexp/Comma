@@ -7,6 +7,26 @@ defmodule CommaWeb.ComposioConnectTest do
     import Plug.Conn
     def init(state), do: state
 
+    def call(%{request_path: "/mcp"} = conn, state) do
+      if get_req_header(conn, "authorization") == ["Bearer private-connect-token"] do
+        {:ok, raw, conn} = read_body(conn)
+        request = Jason.decode!(raw)
+        Agent.update(state, &Map.update!(&1, :rpc_requests, fn calls -> [request | calls] end))
+        result = Agent.get(state, & &1.connect_result)
+
+        json(conn, %{
+          "jsonrpc" => "2.0",
+          "id" => request["id"],
+          "result" => %{
+            "isError" => false,
+            "content" => [%{"type" => "text", "text" => Jason.encode!(result)}]
+          }
+        })
+      else
+        send_resp(conn, 401, "invalid bearer")
+      end
+    end
+
     def call(conn, state) do
       if get_req_header(conn, "x-api-key") != ["test-project-key"] do
         send_resp(conn, 401, "invalid key")
@@ -71,7 +91,9 @@ defmodule CommaWeb.ComposioConnectTest do
     entries = [
       {:salix_store, :s3_backend},
       {:salix_agent, :subscription_storage_key},
-      {:salix_store, :composio_base_url_override}
+      {:salix_store, :composio_base_url_override},
+      {:salix_web, :composio_connect_endpoint},
+      {:salix_mcp, :allow_private_http_targets}
     ]
 
     previous = Enum.map(entries, fn {a, k} -> {a, k, Application.get_env(a, k)} end)
@@ -87,6 +109,8 @@ defmodule CommaWeb.ComposioConnectTest do
 
     {:ok, {_, port}} = ThousandIsland.listener_info(server)
     Application.put_env(:salix_store, :composio_base_url_override, "http://127.0.0.1:#{port}")
+    Application.put_env(:salix_web, :composio_connect_endpoint, "http://127.0.0.1:#{port}/mcp")
+    Application.put_env(:salix_mcp, :allow_private_http_targets, true)
 
     {:ok, user} =
       Comma.Accounts.create_user(%{
@@ -119,6 +143,281 @@ defmodule CommaWeb.ComposioConnectTest do
     |> Plug.Conn.put_req_header("x-comma-session-transport", "bearer")
     |> Plug.Conn.put_req_header("authorization", "Bearer " <> token)
     |> CommaWeb.Router.call(CommaWeb.Router.init([]))
+  end
+
+  defp connect_fixture(c) do
+    tenant = c.w["salix_tenant_id"]
+    group = c.w["default_group_id"]
+    user = c.user["id"]
+
+    :ok =
+      SalixStore.OAuth.put("personal-connect", %{
+        "tenant" => tenant,
+        "group_id" => group,
+        "composio_user_id" => user,
+        "credential_protection" => "composio_connect",
+        "access_token" => "private-connect-token",
+        "expires_at" => System.system_time(:millisecond) + 600_000
+      })
+
+    {:ok, _} =
+      ComposioAccess.update_profile(tenant, group, user, fn profile ->
+        {:ok,
+         Map.merge(profile, %{
+           "mode" => "connect",
+           "status" => "connected",
+           "connection_id" => "personal-connect",
+           "mcp_session_headers" => %{"mcp-session-id" => "fixture-session"}
+         })}
+      end)
+
+    # Include a local pending sibling omitted by the provider response.
+    siblings =
+      for id <- ~w(pending-a pending-b pending-c) do
+        {:ok, record} =
+          ComposioAccess.put_account(tenant, group, user, id, %{
+            "toolkit" => "gmail",
+            "status" => "INITIALIZING",
+            "mode" => "connect"
+          })
+
+        {id, record}
+      end
+
+    {:ok, session} = Comma.Accounts.create_session(user)
+    %{tenant: tenant, group: group, user: user, siblings: siblings, token: session["token"]}
+  end
+
+  defp add_response(c, result) do
+    Agent.update(
+      c.provider,
+      &Map.merge(&1, %{
+        rpc_requests: [],
+        connect_result: %{
+          "successful" => true,
+          "error" => nil,
+          "data" => %{"results" => %{"gmail" => result}}
+        }
+      })
+    )
+  end
+
+  defp initiated_result(accounts) do
+    %{
+      "toolkit" => "gmail",
+      "status" => "initiated",
+      "redirect_url" => "https://provider.example/authorize?state=private-fixture-state",
+      "instruction" => "Complete consent",
+      "accounts" => accounts
+    }
+  end
+
+  defp assert_one_add(c) do
+    assert [
+             %{
+               "method" => "tools/call",
+               "params" => %{
+                 "name" => "COMPOSIO_MANAGE_CONNECTIONS",
+                 "arguments" => %{"toolkits" => [%{"name" => "gmail", "action" => "add"}]}
+               }
+             }
+           ] = Agent.get(c.provider, & &1.rpc_requests)
+  end
+
+  @tag :connect_shape
+  test "Connect HTTP add retains unidentified consent without selecting any pending account", c do
+    s = connect_fixture(c)
+
+    result =
+      initiated_result([
+        %{
+          "id" => "pending-a",
+          "status" => "initializing",
+          "is_default" => false,
+          "account_type" => "PRIVATE"
+        },
+        %{
+          "id" => "pending-b",
+          "status" => "initializing",
+          "is_default" => false,
+          "account_type" => "PRIVATE"
+        },
+        %{
+          "id" => "pending-c",
+          "status" => "initiated",
+          "is_default" => false,
+          "account_type" => "PRIVATE"
+        }
+      ])
+
+    {:ok, oauth_before} = SalixStore.OAuth.get("personal-connect")
+    add_response(c, result)
+    response = post_command(s.token, c.w["id"], "connect", %{"toolkit" => "gmail"})
+    assert response.status == 200
+    link = Jason.decode!(response.resp_body)
+    refute Map.has_key?(link, "account_id")
+    assert is_binary(link["consent_id"])
+    assert link["authorization_url"] == result["redirect_url"]
+    assert link["status"] == "pending"
+
+    for {id, record} <- s.siblings do
+      assert {:ok, ^record} = ComposioAccess.account(s.tenant, s.group, s.user, id)
+    end
+
+    assert {:ok, ^oauth_before} = SalixStore.OAuth.get("personal-connect")
+
+    assert {:ok, %{"items" => []}} =
+             ComposioAccess.grants(s.tenant, s.group, c.w["router_agent_id"])
+
+    assert_one_add(c)
+    refute inspect(S3.Fake.dump()) =~ result["redirect_url"]
+    {:ok, public} = command(c, "consent", %{"toolkit" => "gmail", "operation" => "get"})
+    assert public["consent"]["id"] == link["consent_id"]
+    refute inspect(public) =~ result["redirect_url"]
+
+    assert {:ok, reopened} =
+             command(c, "consent", %{
+               "toolkit" => "gmail",
+               "operation" => "reopen",
+               "consent_id" => link["consent_id"]
+             })
+
+    assert reopened["authorization_url"] == result["redirect_url"]
+    assert_one_add(c)
+    assert {:error, :composio_consent_pending} = command(c, "connect", %{"toolkit" => "gmail"})
+    assert_one_add(c)
+  end
+
+  @tag :connect_shape
+  test "only an explicit exact ACTIVE account selection completes unidentified consent", c do
+    s = connect_fixture(c)
+
+    add_response(
+      c,
+      initiated_result([
+        %{"id" => "pending-a", "status" => "initiated"},
+        %{"id" => "pending-b", "status" => "initiated"}
+      ])
+    )
+
+    assert {:ok, link} = command(c, "connect", %{"toolkit" => "gmail"})
+    refute Map.has_key?(link, "account_id")
+
+    params = %{
+      "toolkit" => "gmail",
+      "operation" => "select",
+      "consent_id" => link["consent_id"],
+      "account_id" => "pending-b"
+    }
+
+    assert {:error, :composio_account_not_active} = command(c, "consent", params)
+
+    for {id, record} <- s.siblings do
+      assert {:ok, ^record} = ComposioAccess.account(s.tenant, s.group, s.user, id)
+    end
+
+    Agent.update(c.provider, fn state ->
+      put_in(state, [:connect_result, "data", "results", "gmail", "accounts"], [
+        %{"id" => "unselected-active", "status" => "active"},
+        %{"id" => "pending-b", "status" => "active"}
+      ])
+    end)
+
+    assert {:error, :composio_account_not_owned} =
+             command(c, "consent", Map.put(params, "account_id", "not-owned"))
+
+    assert {:ok, selected} = command(c, "consent", params)
+    assert selected["id"] == "pending-b"
+    assert selected["status"] == "ACTIVE"
+
+    for {id, record} <- s.siblings, id != "pending-b" do
+      assert {:ok, ^record} = ComposioAccess.account(s.tenant, s.group, s.user, id)
+    end
+
+    assert {:error, :not_found} =
+             ComposioAccess.account(s.tenant, s.group, s.user, "unselected-active")
+
+    assert {:ok, %{"items" => []}} =
+             ComposioAccess.grants(s.tenant, s.group, c.w["router_agent_id"])
+
+    assert Enum.count(
+             Agent.get(c.provider, & &1.rpc_requests),
+             &(get_in(&1, ["params", "arguments", "toolkits"]) == [
+                 %{"name" => "gmail", "action" => "add"}
+               ])
+           ) == 1
+  end
+
+  @tag :connect_shape
+  test "cancelled unidentified consent cannot select a late active account or change siblings",
+       c do
+    s = connect_fixture(c)
+    add_response(c, initiated_result([]))
+    assert {:ok, link} = command(c, "connect", %{"toolkit" => "gmail"})
+    params = %{"toolkit" => "gmail", "consent_id" => link["consent_id"]}
+    assert {:ok, _} = command(c, "consent", Map.put(params, "operation", "cancel"))
+
+    assert {:error, :composio_attempt_not_pending} =
+             command(
+               c,
+               "consent",
+               Map.merge(params, %{"operation" => "select", "account_id" => "pending-c"})
+             )
+
+    for {id, record} <- s.siblings do
+      assert {:ok, ^record} = ComposioAccess.account(s.tenant, s.group, s.user, id)
+    end
+
+    assert_one_add(c)
+  end
+
+  @tag :connect_shape
+  test "reconnect retires only its named target and settled selection replay has no effects", c do
+    s = connect_fixture(c)
+    add_response(c, initiated_result([]))
+
+    assert {:ok, link} =
+             command(c, "account", %{"operation" => "reconnect", "account_id" => "pending-a"})
+
+    for {id, record} <- s.siblings do
+      assert {:ok, ^record} = ComposioAccess.account(s.tenant, s.group, s.user, id)
+    end
+
+    Agent.update(c.provider, fn state ->
+      put_in(state, [:connect_result, "data", "results", "gmail", "accounts"], [
+        %{"id" => "replacement", "status" => "active"}
+      ])
+    end)
+
+    params = %{
+      "toolkit" => "gmail",
+      "operation" => "select",
+      "consent_id" => link["consent_id"],
+      "account_id" => "replacement"
+    }
+
+    assert {:ok, %{"id" => "replacement"}} = command(c, "consent", params)
+
+    assert {:ok, %{"enabled" => false}} =
+             ComposioAccess.account(s.tenant, s.group, s.user, "pending-a")
+
+    for {id, record} <- s.siblings, id != "pending-a" do
+      assert {:ok, ^record} = ComposioAccess.account(s.tenant, s.group, s.user, id)
+    end
+
+    # A late HTTP replay must not undo a later owner decision.
+    assert {:ok, _} = ComposioAccess.enable_account(s.tenant, s.group, s.user, "pending-a", true)
+
+    assert {:ok, _} =
+             ComposioAccess.enable_account(s.tenant, s.group, s.user, "replacement", false)
+
+    requests = Agent.get(c.provider, & &1.rpc_requests)
+    assert {:ok, %{"enabled" => false}} = command(c, "consent", params)
+
+    assert {:ok, %{"enabled" => true}} =
+             ComposioAccess.account(s.tenant, s.group, s.user, "pending-a")
+
+    assert Agent.get(c.provider, & &1.rpc_requests) == requests
   end
 
   test "HTTP commands preserve forbidden and missing workspace semantics", c do
