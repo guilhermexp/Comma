@@ -109,13 +109,21 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
       conn |> put_resp_content_type("application/json") |> send_resp(200, Jason.encode!(value))
     end
 
-    defp answer("GOOGLEDRIVE_GET_ABOUT", _, state),
-      do: %{
+    defp answer("GOOGLEDRIVE_GET_ABOUT", _, state) do
+      hook =
+        Agent.get_and_update(state, fn value ->
+          {Map.get(value, :identity_hook), Map.delete(value, :identity_hook)}
+        end)
+
+      if is_function(hook, 0), do: hook.()
+
+      %{
         "user" => %{
           "permissionId" => Agent.get(state, & &1.subject),
           "emailAddress" => "member@example.com"
         }
       }
+    end
 
     defp answer("GOOGLEDRIVE_FIND_FILE", args, _) do
       if args["q"] =~ "'me' in owners",
@@ -533,5 +541,83 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
     refute hd(reconciled.sources)["enabled"]
     assert {:ok, _} = CommaWeb.MemberSourceIngest.ingest(c.w, c.user["id"])
     assert Agent.get(c.state, &length(&1.calls)) == before
+  end
+
+  @tag :routine_correction
+  test "Routine OFF during identity response prevents subsequent Connect and project content requests",
+       c do
+    for mode <- ~w(connect project) do
+      configure(c, mode, "googledrive")
+      profile = enable(c)
+
+      Agent.update(c.state, fn state ->
+        state
+        |> Map.put(:calls, [])
+        |> Map.put(:identity_hook, fn ->
+          assert {:ok, _} =
+                   Comma.Recommendations.update_settings(c.user, %{}, c.w["id"], %{
+                     "sources" => [%{"connectionId" => "exact", "enabled" => false}],
+                     "schedule" => %{
+                       "enabled" => profile.schedule_enabled,
+                       "hour" => profile.schedule_hour,
+                       "minute" => profile.schedule_minute,
+                       "timezone" => profile.timezone
+                     },
+                     "autoEnableNewSources" => profile.auto_enable_new_sources
+                   })
+        end)
+      end)
+
+      result =
+        RecommendationSourceCollector.collect(c.w, profile.sources, member_user_id: c.user["id"])
+
+      {:ok, current} = Comma.Recommendations.get_runtime_profile(c.w["id"], c.user["id"])
+      refute hd(current.sources)["enabled"]
+      calls = Agent.get(c.state, & &1.calls)
+
+      content_requests =
+        Enum.filter(calls, fn
+          {"/mcp",
+           %{
+             "params" => %{
+               "name" => "COMPOSIO_MULTI_EXECUTE_TOOL",
+               "arguments" => %{"tools" => [%{"tool_slug" => "GOOGLEDRIVE_FIND_FILE"}]}
+             }
+           }} ->
+            true
+
+          {"/api/v3.1/tool_router/session/pinned/proxy_execute", %{"endpoint" => endpoint}} ->
+            URI.parse(endpoint).path == "/drive/v3/files"
+
+          _ ->
+            false
+        end)
+
+      assert content_requests == []
+      assert {:ok, %{facts: [], failures: [_]}} = result
+    end
+  end
+
+  @tag :routine_correction
+  test "Routine discovery preserves the Plugins identity and full account reference exactly once",
+       c do
+    configure(c, "connect", "googledrive")
+    identity = "Casey Alexandra Example <casey.alexandra.work.identity@example.test>"
+
+    for name <- [identity <> " (exact)", identity] do
+      {:ok, _} =
+        Access.update_account_name(
+          c.w["salix_tenant_id"],
+          c.w["default_group_id"],
+          c.user["id"],
+          "exact",
+          %{"toolkit" => "googledrive", "mode" => "connect", "name" => name}
+        )
+
+      assert {:ok, [source]} = RecommendationSources.discover(c.w, c.user["id"], "member")
+      assert source["label"] == identity <> " (exact)"
+      assert source["connectionId"] == "exact"
+      refute source["enabled"]
+    end
   end
 end

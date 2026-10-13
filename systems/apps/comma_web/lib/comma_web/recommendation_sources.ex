@@ -48,11 +48,11 @@ defmodule CommaWeb.RecommendationSources do
        Enum.map(accounts, fn account ->
          # Include the opaque reference even when names match; never choose a
          # duplicate by date, email, or an inferred callback ID.
-         label = String.slice(account["name"] || account["toolkit"], 0, 70)
+         label = account["name"] || account["toolkit"]
          suffix = " (" <> account["id"] <> ")"
-         label = String.slice(label, 0, max(120 - String.length(suffix), 0)) <> suffix
+         label = if String.ends_with?(label, suffix), do: label, else: label <> suffix
 
-         source("composio", account["toolkit"], account["id"], String.slice(label, 0, 120), %{
+         source("composio", account["toolkit"], account["id"], label, %{
            "toolkit" => account["toolkit"],
            "composioMode" => profile["mode"],
            "composioAuthorization" => Transport.authorization(profile)

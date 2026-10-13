@@ -123,7 +123,8 @@ defmodule CommaWeb.RecommendationComposioMemberSource do
 
     authorize = fn ->
       if is_map(consent) and consent["connection_id"] == source["connectionId"] and
-           consent == Comma.MemberSourceConsents.binding(workspace["id"], user, toolkit),
+           consent == Comma.MemberSourceConsents.binding(workspace["id"], user, toolkit) and
+           current_routine_source?(workspace, user, source),
          do: :ok,
          else: {:error, :member_identity_or_source_unavailable}
     end
@@ -223,6 +224,22 @@ defmodule CommaWeb.RecommendationComposioMemberSource do
 
   def read(_workspace, _user_id, _source, _now, _deadline),
     do: {:error, :member_source_unsupported}
+
+  # Consent survives OFF so the owner can choose the same account again. It is
+  # not sufficient authority for an in-flight read: every request must still
+  # match the currently enabled Routine selection and its authorization.
+  defp current_routine_source?(workspace, user, source) do
+    binding =
+      ~w(kind appId connectionId toolkit composioMode composioAuthorization memberConsent providerSubject)
+
+    with {:ok, profile} <- Comma.Recommendations.get_runtime_profile(workspace["id"], user) do
+      Enum.any?(profile.sources, fn current ->
+        current["enabled"] == true and Map.take(current, binding) == Map.take(source, binding)
+      end)
+    else
+      _ -> false
+    end
+  end
 
   defp provider_read("slack", request, now),
     do: CommaWeb.RecommendationSlackMemberSource.read(request, now)
