@@ -611,9 +611,9 @@ defmodule Salix.Control.ComposioConnectTest do
            ) == 1
   end
 
-  test "authorized account search, schema, exact confirmation and HTTP dispatch preserve isolation and revocation",
+  test "authorized account search, schema and direct HTTP dispatch preserve isolation and revocation",
        c do
-    alias SalixAgent.{ComposioBroker, CapabilityRequests}
+    alias SalixAgent.ComposioBroker
     alias SalixStore.Ids
     tenant = SalixAgent.TestSupport.new_tenant_id()
     group = Ids.new_group_id(tenant)
@@ -715,19 +715,8 @@ defmodule Salix.Control.ComposioConnectTest do
       "tools" => [%{"tool_slug" => "GMAIL_LIST_LABELS", "arguments" => %{"limit" => 1}}]
     }
 
-    {pending, _} = ComposioBroker.execute(action, ctx)
-    id = Jason.decode!(pending)["request_id"]
-
-    assert Enum.all?(
-             Agent.get(c.state, & &1.calls),
-             &(&1["name"] != "COMPOSIO_MULTI_EXECUTE_TOOL")
-           )
-
-    assert {:error, :not_found} =
-             CapabilityRequests.decide_composio(group, id, tenant, "other-member", true)
-
-    assert {:ok, done} = CapabilityRequests.decide_composio(group, id, tenant, "member", true)
-    refute done["result"]["error"]
+    assert %{"successful" => true, "data" => %{"results" => [%{"successful" => true}]}} =
+             ComposioBroker.execute(action, ctx) |> Jason.decode!()
 
     [execution] =
       Agent.get(
@@ -739,45 +728,21 @@ defmodule Salix.Control.ComposioConnectTest do
              Map.put(hd(action["tools"]), "account", "selected")
            ]
 
-    assert {:error, {:conflict, :already_settled}} =
-             CapabilityRequests.decide_composio(group, id, tenant, "member", true)
-
-    {pending, _} = ComposioBroker.execute(action, %{ctx | tool_call_id: "revoked-action"})
     {:ok, _} = ComposioAccess.grant(tenant, group, "member", "selected", ctx.agent_id, false)
-
-    assert {:ok, denied} =
-             CapabilityRequests.decide_composio(
-               group,
-               Jason.decode!(pending)["request_id"],
-               tenant,
-               "member",
-               true
-             )
-
-    assert denied["result"]["error"]
+    assert {:tool_failure, _, _, _, _, []} = ComposioBroker.execute(action, ctx)
 
     assert_raise RuntimeError, fn ->
       ComposioBroker.search(%{"account_id" => "selected", "query" => "list"}, ctx)
     end
 
     {:ok, _} = ComposioAccess.grant(tenant, group, "member", "selected", ctx.agent_id, true)
-    {mode_pending, _} = ComposioBroker.execute(action, %{ctx | tool_call_id: "mode-change"})
 
     {:ok, _} =
       ComposioAccess.put_project_settings(tenant, group, "member", %{
         "api_key" => "fixture-project-key"
       })
 
-    assert {:ok, mode_denied} =
-             CapabilityRequests.decide_composio(
-               group,
-               Jason.decode!(mode_pending)["request_id"],
-               tenant,
-               "member",
-               true
-             )
-
-    assert mode_denied["result"]["error"]
+    assert {:tool_failure, _, _, _, _, []} = ComposioBroker.execute(action, ctx)
 
     {:ok, _} =
       ComposioAccess.update_profile(
@@ -805,25 +770,23 @@ defmodule Salix.Control.ComposioConnectTest do
         &(&1 ++ [%{"tool_slug" => "GMAIL_SPOOFED", "arguments" => %{}}])
       )
 
-    assert_raise RuntimeError, fn -> ComposioBroker.execute(mixed, ctx) end
+    assert {:tool_failure, _, _, _, _, []} = ComposioBroker.execute(mixed, ctx)
 
     assert_raise RuntimeError, fn ->
       ComposioBroker.schema(%{"account_id" => "selected", "tool_slugs" => ["GMAIL_SPOOFED"]}, ctx)
     end
 
-    assert_raise RuntimeError, fn ->
-      ComposioBroker.execute(%{action | "account_id" => "sibling"}, ctx)
-    end
+    assert {:tool_failure, _, _, _, _, []} =
+             ComposioBroker.execute(%{action | "account_id" => "sibling"}, ctx)
 
-    assert_raise RuntimeError, fn ->
-      ComposioBroker.execute(
-        %{
-          action
-          | "tools" => [%{"tool_slug" => "COMPOSIO_REMOTE_WORKBENCH", "arguments" => %{}}]
-        },
-        ctx
-      )
-    end
+    assert {:tool_failure, _, _, _, _, []} =
+             ComposioBroker.execute(
+               %{
+                 action
+                 | "tools" => [%{"tool_slug" => "COMPOSIO_REMOTE_WORKBENCH", "arguments" => %{}}]
+               },
+               ctx
+             )
 
     assert Enum.count(
              Agent.get(c.state, & &1.calls),

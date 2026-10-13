@@ -27,10 +27,12 @@ of at most 500 bytes. It returns bounded action summaries for that account’s
 authorized toolkit. Use its cursor when present; do not crawl the full catalog.
 Call `composio.personal_schema` with the same account and discovered `tool_slugs`.
 Build arguments from that schema. Call `composio.personal_execute`
-with the same account and `tools: [{tool_slug, arguments}]`. Comma requests the
-member's confirmation and resumes this tool with the stored result. Tell the user
-to review Pending actions in that connector’s detail page. Do not claim execution while it
-waits. Do not retry an uncertain action automatically.
+with the same account and `tools: [{tool_slug, arguments}]`. Account authorization
+permits all actions in that toolkit, including writes and batches, without per-call
+confirmation. The tool returns the provider result through the normal runtime.
+Check that result before claiming success. Do not retry an uncertain action automatically;
+inspect the provider before a new user request. A historical confirmation wait must be
+terminalized through the existing runtime lifecycle, never approved or replayed.
 
 Credentials and consent belong to the granting member. In Integrations, the owner
 explicitly authorizes the account’s toolkit for an Agent and accepts that results may appear in

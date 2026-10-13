@@ -4,6 +4,8 @@ defmodule SalixAgent.ComposioBrokerTest do
   alias SalixStore.{ComposioAccess, Ids, S3}
 
   defmodule Scope do
+    def provider_app(_, _), do: {:error, :not_configured}
+
     def agent_oauth_context(agent) do
       with {:ok, a} <- SalixAgent.Control.get(agent),
            do: {:ok, %{tenant: a["tenant_id"], group_id: a["group_id"]}}
@@ -20,6 +22,8 @@ defmodule SalixAgent.ComposioBrokerTest do
     def search(_, _, _, _, _, _), do: {:ok, %{"tools" => [], "next_cursor" => nil}}
 
     def schema(_, _, _, _, tools) do
+      Application.get_env(:salix_agent, :composio_schema_hook, fn -> :ok end).()
+
       if Enum.all?(tools, &(&1 in ~w(GMAIL_FETCH_EMAILS GMAIL_SEND_EMAIL))),
         do: {:ok, %{"tools" => tools}},
         else: {:error, :wrong_toolkit}
@@ -34,7 +38,11 @@ defmodule SalixAgent.ComposioBrokerTest do
           {:effect, tenant, group, user, account["id"], tools}
         )
 
-        {:ok, %{"data" => "provider result"}}
+        Application.get_env(
+          :salix_agent,
+          :composio_effect_result,
+          {:ok, %{"data" => "provider result"}}
+        )
       end
     end
   end
@@ -46,7 +54,9 @@ defmodule SalixAgent.ComposioBrokerTest do
       {:salix_agent, :personal_composio_transport},
       {:salix_agent, :composio_effect_test_pid},
       {:salix_agent, :composio_member_revoked},
-      {:salix_agent, :composio_prepare_hook}
+      {:salix_agent, :composio_prepare_hook},
+      {:salix_agent, :composio_schema_hook},
+      {:salix_agent, :composio_effect_result}
     ]
 
     previous = Enum.map(entries, fn {app, key} -> {app, key, Application.get_env(app, key)} end)
@@ -102,36 +112,53 @@ defmodule SalixAgent.ComposioBrokerTest do
       "tools" => [
         %{
           "tool_slug" => "GMAIL_SEND_EMAIL",
-          "arguments" => %{"subject" => "exact reviewed subject"}
+          "arguments" => %{"subject" => "fixture subject"}
         }
       ]
     }
 
-  defp pending(c) do
-    {content, _} = ComposioBroker.execute(args(), c.ctx)
-    Jason.decode!(content)["request_id"]
+  defp denied(args, ctx) do
+    assert {:tool_failure, _, "composio_execution_unconfirmed", "user_reportable", _, []} =
+             ComposioBroker.execute(args, ctx)
+
+    refute_received {:effect, _, _, _, _, _}
   end
 
-  defp decide(c, id, approved),
-    do: CapabilityRequests.decide_composio(c.group, id, c.tenant, "member", approved)
+  defp runtime_context(c) do
+    ctx =
+      c.ctx
+      |> Map.merge(%{
+        tenant_id: c.tenant,
+        group_id: c.group,
+        role: "router",
+        runtime_kind: :internal
+      })
+      |> SalixAgent.TestSupport.with_plugin_projection()
 
-  test "an exact action waits for the member, executes once, and persists the provider result",
-       c do
-    id = pending(c)
-    refute_received {:effect, _, _, _, _, _}
+    Map.put(
+      ctx,
+      :tool_disclosure,
+      SalixAgent.ToolDisclosure.materialize_static("router", :internal, ctx)
+    )
+  end
 
-    assert {:error, :not_found} =
-             CapabilityRequests.decide_composio(c.group, id, c.tenant, "other-member", true)
+  test "an authorized write returns the provider result through normal tool execution", c do
+    [result] =
+      SalixAgent.Tools.execute(
+        [
+          %{id: c.ctx.tool_call_id, name: "composio.personal_execute", args: args()}
+        ],
+        runtime_context(c)
+      )
 
-    assert {:ok, done} = decide(c, id, true)
-    assert done["result"]["content"] =~ "provider result"
+    refute result.error
+    assert Jason.decode!(result.content) == %{"data" => "provider result"}
     assert_received {:effect, _, _, "member", "account-a", tools}
     assert tools == args()["tools"]
-    assert {:error, {:conflict, :already_settled}} = decide(c, id, true)
     refute_received {:effect, _, _, _, _, _}
   end
 
-  test "explicitly shared account metadata and provider results retain the trusted Group audience",
+  test "account metadata and direct provider results retain the trusted Group audience on recovery",
        c do
     ctx = c.ctx |> Map.put(:ifc, %{}) |> Map.put(:group_id, "untrusted-group")
     {:ok, group_label} = SalixIFC.Codec.encode_atom({:group, c.group})
@@ -150,25 +177,23 @@ defmodule SalixAgent.ComposioBrokerTest do
     assert {:tool_ifc, _, [], %{"label" => [^group_label]}} =
              ComposioBroker.search(%{"account_id" => "account-a", "query" => "find email"}, ctx)
 
-    {pending, _} = ComposioBroker.execute(args(), ctx)
-    id = Jason.decode!(pending)["request_id"]
-    assert {:ok, done} = decide(c, id, true)
-    assert done["result"]["ifc"] == %{"label" => [group_label]}
-    assert {:ok, recovered} = CapabilityRequests.get(c.group, id, c.tenant)
-    assert recovered["result"]["ifc"] == done["result"]["ifc"]
+    assert {:tool_ifc, content, [], label} = ComposioBroker.execute(args(), ctx)
+    assert label == %{"label" => [group_label]}
 
-    assert SalixAgent.AsyncToolResults.stored_result(recovered["result"])["ifc"] ==
-             done["result"]["ifc"]
-
-    stored =
-      done["result"]
-      |> Map.put("id", c.ctx.tool_call_id)
-      |> Map.put("name", "composio.personal_execute")
+    stored = %{
+      "id" => ctx.tool_call_id,
+      "name" => "composio.personal_execute",
+      "content" => content,
+      "status" => "completed",
+      "error" => false,
+      "events" => [],
+      "ifc" => label
+    }
 
     assert {:ok, _} =
              SalixAgent.WorkspaceEvents.commit_result(
-               c.ctx.agent_id,
-               c.ctx.session_id,
+               ctx.agent_id,
+               ctx.session_id,
                stored,
                SalixAgent.AsyncToolResults.operation_source(:internal),
                store_result: true
@@ -176,47 +201,50 @@ defmodule SalixAgent.ComposioBrokerTest do
 
     assert {:ok, restored} =
              SalixAgent.Runtime.get_async_tool_setup_result(
-               c.ctx.agent_id,
-               c.ctx.session_id,
-               c.ctx.tool_call_id
+               ctx.agent_id,
+               ctx.session_id,
+               ctx.tool_call_id
              )
 
-    assert restored["ifc"] == done["result"]["ifc"]
+    assert restored["ifc"] == label
+    assert Jason.decode!(restored["content"]) == %{"data" => "provider result"}
   end
 
-  test "revocation after discovery and approval request blocks dispatch", c do
-    id = pending(c)
-
-    {:ok, _} =
+  test "revocation during schema discovery blocks dispatch", c do
+    Application.put_env(:salix_agent, :composio_schema_hook, fn ->
       ComposioAccess.grant(c.tenant, c.group, "member", "account-a", c.ctx.agent_id, false)
+    end)
 
-    assert {:ok, done} = decide(c, id, true)
-    assert done["result"]["error"]
-    refute_received {:effect, _, _, _, _, _}
+    denied(args(), c.ctx)
   end
 
   test "grant revocation during provider preparation blocks the actual effect", c do
-    id = pending(c)
-
     Application.put_env(:salix_agent, :composio_prepare_hook, fn ->
       ComposioAccess.grant(c.tenant, c.group, "member", "account-a", c.ctx.agent_id, false)
     end)
 
-    assert {:ok, done} = decide(c, id, true)
-    assert done["result"]["error"]
-    refute_received {:effect, _, _, _, _, _}
+    denied(args(), c.ctx)
   end
 
   test "membership loss during provider preparation blocks the actual effect", c do
-    id = pending(c)
-
     Application.put_env(:salix_agent, :composio_prepare_hook, fn ->
       Application.put_env(:salix_agent, :composio_member_revoked, true)
     end)
 
-    assert {:ok, done} = decide(c, id, true)
-    assert done["result"]["error"]
-    refute_received {:effect, _, _, _, _, _}
+    denied(args(), c.ctx)
+  end
+
+  test "mode changes during provider preparation block the actual effect", c do
+    Application.put_env(:salix_agent, :composio_prepare_hook, fn ->
+      ComposioAccess.update_profile(
+        c.tenant,
+        c.group,
+        "member",
+        &{:ok, Map.put(&1, "mode", "project")}
+      )
+    end)
+
+    denied(args(), c.ctx)
   end
 
   test "connected alone reveals no account and grants no schema or execution", c do
@@ -232,12 +260,10 @@ defmodule SalixAgent.ComposioBrokerTest do
       )
     end
 
-    assert_raise RuntimeError, fn -> ComposioBroker.execute(args(), c.ctx) end
-    refute_received {:effect, _, _, _, _, _}
+    denied(args(), c.ctx)
   end
 
-  test "membership loss removes the projection and blocks a previously approved action", c do
-    id = pending(c)
+  test "membership loss removes projections and blocks execution", c do
     Application.put_env(:salix_agent, :composio_member_revoked, true)
     assert Jason.decode!(ComposioBroker.accounts(%{}, c.ctx))["accounts"] == []
 
@@ -248,53 +274,176 @@ defmodule SalixAgent.ComposioBrokerTest do
       )
     end
 
-    assert {:ok, done} = decide(c, id, true)
-    assert done["result"]["error"]
-    refute_received {:effect, _, _, _, _, _}
+    denied(args(), c.ctx)
   end
 
-  test "a disallowed inner action rejects the entire batch before an effect", c do
-    mixed =
-      Map.update!(
-        args(),
-        "tools",
-        &(&1 ++ [%{"tool_slug" => "COMPOSIO_REMOTE_BASH_TOOL", "arguments" => %{}}])
-      )
-
-    assert_raise RuntimeError, fn -> ComposioBroker.execute(mixed, c.ctx) end
-    refute_received {:effect, _, _, _, _, _}
+  test "meta-tools and authoritative toolkit mismatch reject the whole batch", c do
+    for slug <- ~w(COMPOSIO_REMOTE_BASH_TOOL GITHUB_CREATE_ISSUE) do
+      mixed = Map.update!(args(), "tools", &(&1 ++ [%{"tool_slug" => slug, "arguments" => %{}}]))
+      denied(mixed, c.ctx)
+    end
   end
 
-  test "disable and cross-scope account selection cannot reuse a grant", c do
+  test "disabled, inactive, foreign member, Agent and Group accounts cannot reuse a grant", c do
     {:ok, _} = ComposioAccess.enable_account(c.tenant, c.group, "member", "account-a", false)
-    assert_raise RuntimeError, fn -> ComposioBroker.execute(args(), c.ctx) end
+    denied(args(), c.ctx)
     {:ok, _} = ComposioAccess.enable_account(c.tenant, c.group, "member", "account-a", true)
 
-    assert {:error, :composio_access_denied} =
-             ComposioAccess.authorize(
-               c.tenant,
-               c.group <> "other",
-               c.ctx.agent_id,
-               "member",
-               "account-a"
-             )
+    {:ok, _} =
+      ComposioAccess.put_account(c.tenant, c.group, "member", "account-a", %{
+        "mode" => "connect",
+        "toolkit" => "gmail",
+        "status" => "EXPIRED"
+      })
 
-    assert {:error, :composio_access_denied} =
-             ComposioAccess.authorize(
-               c.tenant,
-               c.group,
-               c.ctx.agent_id,
-               "other",
-               "account-a"
-             )
+    denied(args(), c.ctx)
+
+    {:ok, _} =
+      ComposioAccess.put_account(c.tenant, c.group, "member", "account-a", %{
+        "mode" => "connect",
+        "toolkit" => "gmail",
+        "status" => "ACTIVE"
+      })
+
+    for {group, agent, user} <- [
+          {c.group <> "other", c.ctx.agent_id, "member"},
+          {c.group, c.ctx.agent_id, "other"},
+          {c.group, "other-agent", "member"}
+        ] do
+      assert {:error, :composio_access_denied} =
+               ComposioAccess.authorize(c.tenant, group, agent, user, "account-a")
+    end
 
     refute_received {:effect, _, _, _, _, _}
   end
 
-  test "denial cannot be turned into approval", c do
-    id = pending(c)
-    assert {:ok, _} = decide(c, id, false)
-    assert {:error, {:conflict, :already_settled}} = decide(c, id, true)
+  test "an uncertain mutation returns a failure through Tools without automatic replay", c do
+    Application.put_env(:salix_agent, :composio_effect_result, {:error, :timeout})
+
+    [result] =
+      SalixAgent.Tools.execute(
+        [
+          %{id: c.ctx.tool_call_id, name: "composio.personal_execute", args: args()}
+        ],
+        runtime_context(c)
+      )
+
+    assert result.error
+    assert result.error_class == "composio_execution_unconfirmed"
+    assert_received {:effect, _, _, _, _, _}
+    refute_received {:effect, _, _, _, _, _}
+  end
+
+  defp historical_request(c, status, extra \\ %{}) do
+    # A persisted pre-cutover fixture, not a new request through the retired API.
+    identity =
+      Enum.join(
+        [c.ctx.agent_id, c.ctx.session_id, c.ctx.tool_call_id, "composio_execution"],
+        "\u001F"
+      )
+
+    id = "cap-" <> Base.url_encode64(:crypto.hash(:sha256, identity), padding: false)
+
+    record =
+      Map.merge(
+        %{
+          "request_id" => id,
+          "group_id" => c.group,
+          "tenant_id" => c.tenant,
+          "source_agent_id" => c.ctx.agent_id,
+          "source_session_id" => c.ctx.session_id,
+          "tool_call_id" => c.ctx.tool_call_id,
+          "request_type" => "composio_execution",
+          "status" => status,
+          "request_payload" => %{"user_id" => "member", "tools" => args()["tools"]},
+          "expires_at" => System.system_time(:second) + 600
+        },
+        extra
+      )
+
+    {:ok, _} = S3.put(SalixStore.Keys.ctl_capability_request(c.group, id), Jason.encode!(record))
+    id
+  end
+
+  test "a historical pending wait can be cancelled and reconciled without executing or erasing it",
+       c do
+    id = historical_request(c, "pending")
+
+    assert {:ok, preserved} =
+             CapabilityRequests.create_capability_request(%{
+               "request_id" => id,
+               "source_agent_id" => c.ctx.agent_id,
+               "source_session_id" => c.ctx.session_id,
+               "tool_call_id" => c.ctx.tool_call_id,
+               "request_type" => "host_access",
+               "request_payload" => %{}
+             })
+
+    assert preserved["request_payload"]["tools"] == args()["tools"]
+
+    assert CapabilityRequests.pending_capability_request?(
+             c.ctx.agent_id,
+             c.ctx.session_id,
+             c.ctx.tool_call_id
+           )
+
+    assert {:ok, cancelled} =
+             CapabilityRequests.cancel_capability_request(
+               c.ctx.agent_id,
+               c.ctx.session_id,
+               c.ctx.tool_call_id,
+               "Per-call confirmation retired"
+             )
+
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["result"]["error"]
+
+    assert {:ok, reconciled} =
+             CapabilityRequests.reconcile_capability_request(
+               c.ctx.agent_id,
+               c.ctx.session_id,
+               c.ctx.tool_call_id
+             )
+
+    assert reconciled["result"] == cancelled["result"]
+    assert {:ok, saved} = CapabilityRequests.get(c.group, id, c.tenant)
+    assert saved["request_payload"]["tools"] == args()["tools"]
+
+    refute CapabilityRequests.pending_capability_request?(
+             c.ctx.agent_id,
+             c.ctx.session_id,
+             c.ctx.tool_call_id
+           )
+
+    refute_received {:effect, _, _, _, _, _}
+    assert is_binary(ComposioBroker.execute(args(), %{c.ctx | tool_call_id: "current-request"}))
+    assert_received {:effect, _, _, _, _, _}
+  end
+
+  test "historical unknown settlement fails closed and stored results survive reconciliation",
+       c do
+    historical_request(c, "completed")
+
+    assert {:ok, unknown} =
+             CapabilityRequests.reconcile_capability_request(
+               c.ctx.agent_id,
+               c.ctx.session_id,
+               c.ctx.tool_call_id
+             )
+
+    assert unknown["result"]["error_class"] == "composio_execution_unconfirmed"
+    c = put_in(c.ctx.tool_call_id, "known-result")
+    result = %{"status" => "completed", "error" => false, "content" => "saved provider result"}
+    historical_request(c, "completed", %{"result" => result})
+
+    assert {:ok, known} =
+             CapabilityRequests.reconcile_capability_request(
+               c.ctx.agent_id,
+               c.ctx.session_id,
+               c.ctx.tool_call_id
+             )
+
+    assert known["result"] == result
     refute_received {:effect, _, _, _, _, _}
   end
 end

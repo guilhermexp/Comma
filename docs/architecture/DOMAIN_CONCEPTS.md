@@ -448,7 +448,7 @@ It does not create another tenant or credential identity. See [storage and recov
 
 | Concept | Meaning and boundary |
 | --- | --- |
-| Capability Request | An existing durable permission, location, OAuth, runtime-auth, IFC, or Composio action request. Its owner stores expiry and the winning result; the Session separately owns execution and result publication. |
+| Capability Request | An existing durable permission, location, OAuth, runtime-auth, or IFC request. Historical Composio action requests remain readable for terminal reconciliation only. Its owner stores expiry and the winning result; the Session separately owns execution and result publication. |
 | Tool / Provider Operation | An operation available to an Agent. An invocation is not a durable capability definition. |
 | Skill | Instructions and resources projected into runtime files. Packaged built-ins belong to the running node. Stored user skills overlay them. Regular skills preload catalog entries. Miniskills use per-message selection. |
 | Plugin Definition | A capability package with metadata and references. Referenced domains still own their resources. |
@@ -484,7 +484,7 @@ Plugin visibility, write authorization, and user-skill ownership remain unchange
 ### Composio Connect access
 
 Composio Connect reuses OAuth credentials, provider account references, Agent grants,
-and Capability Requests. It adds no independent identity or lifecycle owner.
+and the normal tool execution lifecycle. It adds no independent identity or lifecycle owner.
 [ComposioAccess](../../systems/apps/salix_store/lib/salix_store/composio_access.ex)
 owns the relationship for one Tenant, Group, and authenticated Comma member.
 A tenant-wide Composio setting cannot represent this member boundary. The private
@@ -526,8 +526,7 @@ connector details or changing workspace reloads the projection; old-scope respon
 cannot publish rows. Opening a connected row does not start consent.
 Connect uses public metadata; explicit project mode
 uses the project-authenticated REST catalog and tool pages. Setup, account controls,
-and account authorization stay inside the selected connector’s detail flow. Agent IDs remain internal. Execution review shows the exact public tool slugs
-and arguments. Connect account labels use allowlisted provider identity metadata when
+and account authorization stay inside the selected connector’s detail flow. Agent IDs remain internal. Authorized actions execute directly through the normal tool runtime. Connect account labels use allowlisted provider identity metadata when
 available. Names and email addresses remain separate from technical references.
 When identities collide, the UI shows a short connection number. Account details expose the exact
 public MCP connection reference. This reference does not establish a mapping to an OAuth callback account ID. Existing account label refresh
@@ -583,11 +582,12 @@ and has no catalog cursor. Project search uses bounded provider pages. Schemas l
 on demand, for at most 50 exact action IDs and 512,000 encoded bytes. Search never returns
 the full catalog or schemas. Account selection names one exact provider account.
 The broker checks the authoritative provider tool-to-toolkit relationship for every
-inner action before it creates a Capability Request, and rechecks current workspace membership and the grant immediately
-before dispatch. The transport checks the provider tool-to-toolkit relationship again
+inner action before dispatch, and rechecks current workspace membership and the grant immediately
+before dispatch and the actual provider effect. The transport checks the provider tool-to-toolkit relationship again
 before execution. Slug prefixes and provider descriptions cannot establish this relationship.
 Membership loss also removes account and schema projections.
-Each action or batch requires the member's confirmation of the exact arguments.
+The member's account authorization permits all legitimate actions in that toolkit,
+including writes and batches. No per-call confirmation is required.
 Existing nonempty, enabled tool grants with Group audience provenance evolve once by CAS
 into authorization for that exact account, mode, and toolkit. The bounded point or grant-page
 read performs the durable transformation and removes the old tool list. Empty, revoked,
@@ -596,13 +596,14 @@ decision. No tool checklist or tools-based execution path remains. Account state
 consent attempts, and Routine opt-ins are not changed by this transformation.
 Connection status alone grants nothing. Remote bash, workbench, proxy tools, and remote
 skills cannot substitute for a grant. All provider instructions remain untrusted data.
-The existing request settlement CAS selects one decision winner. It stores the provider
-result before asynchronous Session delivery. Recovery never repeats execution.
-An uncertain result requires inspection at the provider before a new user decision.
-Dispatch has a 90-second total deadline; settlement reserves 120 seconds. A local
-timeout cannot prove that a remote effect stopped. After the explicit workspace grant,
-account projections, schemas, and successful results use the existing Group IFC audience
-from trusted Agent scope. Persisted asynchronous results retain that label on recovery.
+The normal tool runtime owns execution, result publication, recovery and encrypted archival.
+The broker returns the real provider result directly. It does not create a Composio
+Capability Request or a confirmation wait. An uncertain result fails the current call;
+inspect the provider before a new user request. Recovery must not repeat an unknown effect.
+One 90-second deadline covers account selection, schema validation, provider preparation
+and execution. A local timeout cannot prove that a remote effect stopped.
+Account projections, schemas and successful results use the existing Group IFC audience
+from trusted Agent scope. Persisted tool results retain that label on recovery.
 No unshared personal record receives a Group label. Local account discovery and public
 schema lookup are reads. Task search sends a free-text query and retains the existing IFC
 public-egress check. Execution remains public egress: workspace-sourced arguments
@@ -610,17 +611,26 @@ still need the existing IFC declassification approval. A connector grant does no
 that rule. No new audience entity or label is introduced.
 
 Requests have at most 50 inner tools and 64 KiB of encoded arguments. Catalog pages,
-account pages, grant pages, and approval pages are bounded; no full member/account scan
+account pages and grant pages are bounded; no full member/account scan
 runs on render. Login polls once every two seconds for at most ten minutes, with one
-request in flight per window. Account verification is explicit. Pending actions load once when connector details
-open and remain accessible beside the account list. Further approval refresh is explicit.
-Account authorization is available through Manage.
+request in flight per window. Account verification is explicit. Account authorization
+and revocation remain available through Manage.
 There is no timer per account. Connect uses existing MCP transport and Platform uses
 the existing REST adapter; neither mode falls back to another credential type.
 An MCP session 404 clears only the matching cached transport session. Discovery reads
 may initialize a new session and retry once. Account add, remove, rename, reconnect,
 and tool execution never retry automatically. Session expiry does not require a new
 OAuth consent. A concurrent connection or newer cached session is not cleared.
+
+Historical Composio confirmation requests are never executed by this cutover. Their stored
+payloads and results remain intact. Exact `(Agent, Session, tool_call_id)` lookup retains
+only the existing cancellation and reconciliation path; there is no approval dispatch route.
+For a saved pending wait, first read that exact execution. From its owning Agent and
+Session, use the existing `tools.cancel_tool_call` with `tool_call_id` and a reason.
+The normal runtime commits its cancellation event and clears only its matching wait;
+`CapabilityRequests.cancel_capability_request/4` retains the historical request.
+Then read the exact terminal execution and reconcile its stored result. Preserve a completed result. Treat a missing result after settlement as
+unknown and inspect the provider before any new action. Do not bulk-cancel or replay requests.
 
 ### Miniskill activation
 

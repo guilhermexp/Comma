@@ -785,32 +785,6 @@ defmodule CommaWeb.ComposioConnectTest do
     end
   end
 
-  test "HTTP commands report invalid cursors as a bad request", c do
-    {:ok, session} = Comma.Accounts.create_session(c.user["id"])
-    assert post_command(session["token"], c.w["id"], "approvals", %{"cursor" => 1}).status == 400
-  end
-
-  test "HTTP commands reject replay of a settled decision as a conflict", c do
-    {:ok, session} = Comma.Accounts.create_session(c.user["id"])
-
-    {:ok, request} =
-      SalixAgent.CapabilityRequests.create_capability_request(%{
-        "source_agent_id" => c.w["router_agent_id"],
-        "source_session_id" => SalixStore.Ids.new_session_id(),
-        "tool_call_id" => "review-#{System.unique_integer([:positive])}",
-        "request_type" => "composio_execution",
-        "request_payload" => %{"user_id" => c.user["id"]}
-      })
-
-    params = %{"request_id" => request["request_id"], "approved" => false}
-    assert post_command(session["token"], c.w["id"], "decide", params).status == 200
-
-    assert post_command(session["token"], c.w["id"], "decide", Map.put(params, "approved", true)).status ==
-             409
-
-    assert Agent.get(c.provider, & &1.deleted) == []
-  end
-
   test "explicit project mode browses its authenticated catalog with display fields", c do
     assert {:ok, _} = command(c, "project", %{"api_key" => "test-project-key"})
 

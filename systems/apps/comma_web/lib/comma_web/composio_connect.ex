@@ -306,17 +306,6 @@ defmodule CommaWeb.ComposioConnect do
     end
   end
 
-  defp run(s, "approvals", params) do
-    SalixAgent.CapabilityRequests.list_composio_page(s.group, s.tenant, s.user,
-      cursor: params["cursor"]
-    )
-  end
-
-  defp run(s, "decide", %{"request_id" => id, "approved" => approved})
-       when is_binary(id) and is_boolean(approved) do
-    SalixAgent.CapabilityRequests.decide_composio(s.group, id, s.tenant, s.user, approved)
-  end
-
   defp run(_, _, _), do: {:error, :invalid_composio_request}
 
   defp remember_accounts(s, remote) do

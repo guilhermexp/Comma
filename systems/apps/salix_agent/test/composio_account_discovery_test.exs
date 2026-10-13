@@ -1,6 +1,6 @@
 defmodule SalixAgent.ComposioAccountDiscoveryTest do
   use ExUnit.Case, async: false
-  alias SalixAgent.{CapabilityRequests, ComposioBroker}
+  alias SalixAgent.ComposioBroker
   alias SalixStore.{ComposioAccess, Ids, S3}
 
   defmodule Scope do
@@ -18,11 +18,19 @@ defmodule SalixAgent.ComposioAccountDiscoveryTest do
     end
 
     def search(_, _, _, account, query, _cursor),
-      do: {:ok, %{"tools" => [%{"slug" => "GMAIL_LIST_LABELS", "toolkit" => account["toolkit"], "name" => query}], "next_cursor" => nil}}
+      do:
+        {:ok,
+         %{
+           "tools" => [
+             %{"slug" => "GMAIL_LIST_LABELS", "toolkit" => account["toolkit"], "name" => query}
+           ],
+           "next_cursor" => nil
+         }}
 
     def schema(_, _, _, _, tools) do
       if Enum.all?(tools, &(&1 in ~w(GMAIL_FETCH_EMAILS GMAIL_SEND_EMAIL GMAIL_LIST_LABELS))),
-        do: {:ok, %{"tools" => tools}}, else: {:error, :wrong_toolkit}
+        do: {:ok, %{"tools" => tools}},
+        else: {:error, :wrong_toolkit}
     end
 
     def execute(tenant, group, user, account, tools, authorize_effect) do
@@ -93,43 +101,51 @@ defmodule SalixAgent.ComposioAccountDiscoveryTest do
     # Persist the actual legacy record. The release must evolve this grant once,
     # preserving its member/account/audience and explicit enabled decision.
     segment = &Base.url_encode64(&1, padding: false)
-    grant_key = "ctl/tenants/#{segment.(tenant)}/composio/groups/#{segment.(group)}/agents/#{segment.(ctx.agent_id)}/grants/#{segment.("account-a")}.json"
-    {:ok, _} = S3.put(grant_key, Jason.encode!(%{"user_id" => "member", "account_id" => "account-a", "agent_id" => ctx.agent_id, "tools" => ["GMAIL_FETCH_EMAILS"], "audience" => "group", "enabled" => true}))
+
+    grant_key =
+      "ctl/tenants/#{segment.(tenant)}/composio/groups/#{segment.(group)}/agents/#{segment.(ctx.agent_id)}/grants/#{segment.("account-a")}.json"
+
+    {:ok, _} =
+      S3.put(
+        grant_key,
+        Jason.encode!(%{
+          "user_id" => "member",
+          "account_id" => "account-a",
+          "agent_id" => ctx.agent_id,
+          "tools" => ["GMAIL_FETCH_EMAILS"],
+          "audience" => "group",
+          "enabled" => true
+        })
+      )
 
     %{tenant: tenant, group: group, ctx: ctx}
   end
 
-  defp args,
-    do: %{
+  test "account authorization discovers and executes a new toolkit action without a manual tool grant",
+       c do
+    assert %{"tools" => ["GMAIL_LIST_LABELS"]} =
+             ComposioBroker.schema(
+               %{"account_id" => "account-a", "tool_slugs" => ["GMAIL_LIST_LABELS"]},
+               c.ctx
+             )
+             |> Jason.decode!()
+
+    assert %{"tools" => [%{"slug" => "GMAIL_LIST_LABELS"}]} =
+             ComposioBroker.search(
+               %{"account_id" => "account-a", "query" => "list labels"},
+               c.ctx
+             )
+             |> Jason.decode!()
+
+    action = %{
       "account_id" => "account-a",
-      "tools" => [
-        %{
-          "tool_slug" => "GMAIL_SEND_EMAIL",
-          "arguments" => %{"subject" => "exact reviewed subject"}
-        }
-      ]
+      "tools" => [%{"tool_slug" => "GMAIL_LIST_LABELS", "arguments" => %{"limit" => 1}}]
     }
 
-  defp pending(c) do
-    {content, _} = ComposioBroker.execute(args(), c.ctx)
-    Jason.decode!(content)["request_id"]
-  end
+    assert %{"data" => "provider result"} =
+             ComposioBroker.execute(action, c.ctx) |> Jason.decode!()
 
-  defp decide(c, id, approved),
-    do: CapabilityRequests.decide_composio(c.group, id, c.tenant, "member", approved)
-
-  test "account authorization discovers and confirms a new toolkit action without a manual tool grant", c do
-    assert %{"tools" => ["GMAIL_LIST_LABELS"]} =
-      ComposioBroker.schema(%{"account_id" => "account-a", "tool_slugs" => ["GMAIL_LIST_LABELS"]}, c.ctx) |> Jason.decode!()
-    assert %{"tools" => [%{"slug" => "GMAIL_LIST_LABELS"}]} =
-      ComposioBroker.search(%{"account_id" => "account-a", "query" => "list labels"}, c.ctx) |> Jason.decode!()
-    action = %{"account_id" => "account-a", "tools" => [%{"tool_slug" => "GMAIL_LIST_LABELS", "arguments" => %{"limit" => 1}}]}
-    {content, _} = ComposioBroker.execute(action, c.ctx)
-    refute_received {:effect, _, _, _, _, _}
-    assert {:ok, done} = decide(c, Jason.decode!(content)["request_id"], true)
-    refute done["result"]["error"]
     assert_received {:effect, _, _, "member", "account-a", tools}
     assert tools == action["tools"]
   end
-
 end

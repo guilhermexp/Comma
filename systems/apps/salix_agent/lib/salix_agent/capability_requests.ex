@@ -17,7 +17,7 @@ defmodule SalixAgent.CapabilityRequests do
   @list_read_concurrency 8
   @default_request_ttl_seconds 120
   @receipt_result_budget_ms 30_000
-  @composio_result_budget_ms 120_000
+  # Include the retired Composio type only to locate and terminalize saved waits.
   @request_types ~w(host_access computer_use_start location oauth_authorization runtime_auth ifc_declassify composio_execution)
 
   # How long one confirmed information-flow transfer stays confirmed. Long
@@ -35,6 +35,7 @@ defmodule SalixAgent.CapabilityRequests do
          true <- Ids.valid_session_id?(source_session_id),
          {:ok, tool_call_id} <- required_string(attrs, "tool_call_id"),
          {:ok, request_type} <- required_string(attrs, "request_type"),
+         :ok <- current_request_type(request_type),
          {:ok, request_payload} <- object(attrs["request_payload"], "request_payload"),
          {:ok, response_payload} <- optional_object(attrs["response_payload"], "response_payload"),
          {:ok, surface_ref} <- optional_object(attrs["surface_ref"], "surface_ref"),
@@ -77,6 +78,7 @@ defmodule SalixAgent.CapabilityRequests do
              Keys.ctl_capability_request(scope.group_id, request_id),
              record,
              fn current ->
+               # Historical pending Composio payloads are immutable too.
                if terminal?(current) or current["request_type"] == "composio_execution" do
                  current
                else
@@ -351,74 +353,6 @@ defmodule SalixAgent.CapabilityRequests do
     end
   end
 
-  def list_composio_page(group_id, tenant_id, user_id, opts \\ []) do
-    with {:ok, _} <- GroupContext.get(group_id, tenant_id),
-         {:ok, cursor} <- list_cursor(Keyword.get(opts, :cursor)),
-         {:ok, page} <-
-           S3.list(
-             Keys.ctl_capability_requests_prefix(group_id),
-             [max_keys: 50] ++ if(cursor, do: [continuation_token: cursor], else: [])
-           ) do
-      requests =
-        page.objects
-        |> read_records()
-        |> Enum.filter(fn r ->
-          r["tenant_id"] == tenant_id and r["request_type"] == "composio_execution" and
-            get_in(r, ["request_payload", "user_id"]) == user_id and
-            visible_for_status?(r, "pending")
-        end)
-
-      {:ok, %{"requests" => requests, "next_cursor" => page.next}}
-    end
-  end
-
-  def decide_composio(group_id, request_id, tenant_id, user_id, approved)
-      when is_boolean(approved) do
-    with {:ok, request} <- find(group_id, request_id, tenant_id),
-         :ok <- require_type(request, "composio_execution"),
-         true <- get_in(request, ["request_payload", "user_id"]) == user_id,
-         {:ok, settled} <- settle(request, %{"approved" => approved, "actor_id" => user_id}) do
-      result =
-        cond do
-          settled["status"] == "expired" ->
-            settled["result"]
-
-          not approved ->
-            failed_result(
-              "permission_denied",
-              "Composio action denied",
-              %{},
-              "The action was denied."
-            )
-
-          true ->
-            case SalixAgent.ComposioBroker.dispatch(settled) do
-              {:ok, value} ->
-                completed_result(value)
-                |> composio_result_label(settled)
-
-              _ ->
-                failed_result(
-                  "composio_execution_unconfirmed",
-                  "Composio execution denied or outcome uncertain; do not retry automatically",
-                  %{},
-                  "The action could not be confirmed. Check the provider before retrying."
-                )
-            end
-        end
-
-      with {:ok, completed} <- settle_receipt_result(settled, result) do
-        # A delivery failure must not permit executing the action again.
-        _ = deliver_stored_result(completed)
-        notify(completed)
-        {:ok, completed}
-      end
-    else
-      false -> {:error, :not_found}
-      error -> error
-    end
-  end
-
   def decide_host_access(group_id, request_id, attrs, tenant_id) do
     decide_permission(group_id, request_id, attrs, tenant_id, "host_access")
   end
@@ -501,7 +435,7 @@ defmodule SalixAgent.CapabilityRequests do
                |> Map.put("completed_at", now)
                |> Map.put(
                  "settlement_deadline_ms",
-                 System.system_time(:millisecond) + settlement_budget(current)
+                 System.system_time(:millisecond) + @receipt_result_budget_ms
                )}
             end
 
@@ -517,27 +451,6 @@ defmodule SalixAgent.CapabilityRequests do
 
       {:error, _reason} = err ->
         err
-    end
-  end
-
-  defp settlement_budget(%{"request_type" => "composio_execution"}),
-    do: @composio_result_budget_ms
-
-  defp settlement_budget(_), do: @receipt_result_budget_ms
-
-  defp composio_result_label(result, request) do
-    if get_in(request, ["request_payload", "ifc_enabled"]) == true do
-      # The broker derived this Group from the current Agent, and dispatch
-      # rechecked the owner's membership and exact grant before the effect.
-      {:tool_ifc, _, [], label} =
-        SalixAgent.IFC.ConnectorLabels.group_audience("", %{
-          ifc: %{},
-          group_id: request["group_id"]
-        })
-
-      Map.put(result, "ifc", label)
-    else
-      result
     end
   end
 
@@ -591,6 +504,11 @@ defmodule SalixAgent.CapabilityRequests do
       {:error, _reason} = err -> err
     end
   end
+
+  defp current_request_type("composio_execution"),
+    do: {:error, {:bad_request, "Composio execution uses direct tools"}}
+
+  defp current_request_type(_), do: :ok
 
   defp required_string(attrs, key) do
     case nonblank(attrs[key]) do
@@ -894,8 +812,22 @@ defmodule SalixAgent.CapabilityRequests do
 
   defp reconcile_terminal_result(%{"result" => result} = request) when is_map(result), do: request
 
-  defp reconcile_terminal_result(%{"request_type" => type, "status" => "completed"} = request)
-       when type in ["ifc_declassify", "composio_execution"] do
+  defp reconcile_terminal_result(%{"request_type" => "composio_execution"} = request) do
+    Map.put(
+      request,
+      "result",
+      failed_result(
+        "composio_execution_unconfirmed",
+        "Historical Composio outcome is unknown; inspect the provider before a new request. Do not replay automatically.",
+        %{"status" => "failed"},
+        "The previous action could not be confirmed. Check the provider before retrying."
+      )
+    )
+  end
+
+  defp reconcile_terminal_result(
+         %{"request_type" => "ifc_declassify", "status" => "completed"} = request
+       ) do
     if receipt_result_due?(request),
       do: Map.put(request, "result", receipt_incomplete_result()),
       else: request

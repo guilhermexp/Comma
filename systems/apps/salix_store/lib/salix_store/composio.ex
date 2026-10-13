@@ -453,7 +453,7 @@ defmodule SalixStore.Composio do
     )
   end
 
-  @doc "Create a Tool Router session restricted to one account and the locally approved tool set."
+  @doc "Create a Tool Router session restricted to one account and the locally authorized tool set."
   def create_action_session(settings, user_id, account_id, toolkit, tools) do
     body = %{
       "user_id" => user_id,
@@ -480,7 +480,7 @@ defmodule SalixStore.Composio do
   def execute_action_session(settings, session_id, account_id, slug, arguments) do
     request(settings, :post, "/api/v3.1/tool_router/session/#{URI.encode(session_id)}/execute",
       json: %{"tool_slug" => slug, "arguments" => arguments, "account" => account_id},
-      label: "execute approved action",
+      label: "execute authorized action",
       error_mode: :structured
     )
   end
@@ -490,12 +490,12 @@ defmodule SalixStore.Composio do
       "tools" => Enum.map(tools, &Map.put(&1, "account", account_id)),
       "sync_response_to_workbench" => false,
       "session_id" => session_id,
-      "current_step" => "EXECUTING_APPROVED_ACTION"
+      "current_step" => "EXECUTING_AUTHORIZED_ACTION"
     }
 
     request(settings, :post, "/api/v3.1/tool_router/session/#{URI.encode(session_id)}/execute",
       json: %{"tool_slug" => "COMPOSIO_MULTI_EXECUTE_TOOL", "arguments" => arguments},
-      label: "execute approved batch",
+      label: "execute authorized batch",
       error_mode: :structured
     )
   end

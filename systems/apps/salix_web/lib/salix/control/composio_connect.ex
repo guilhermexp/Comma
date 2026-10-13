@@ -428,7 +428,7 @@ defmodule Salix.Control.ComposioConnect do
                "tools" => Enum.map(tools, &Map.put(&1, "account", local["id"])),
                "sync_response_to_workbench" => false,
                "session_id" => session,
-               "current_step" => "EXECUTING_APPROVED_ACTION"
+               "current_step" => "EXECUTING_AUTHORIZED_ACTION"
              },
              authorize_effect
            ) do

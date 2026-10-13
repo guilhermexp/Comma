@@ -579,12 +579,13 @@ export function ComposioConnectorDetail({
                   void act("accounts", { cursor: status.next_cursor });
               }}
             />
-            <ComposioAccessPanel
-              api={api}
-              workspaceId={workspaceId}
-              accounts={accounts}
-              manageAccess={configuring}
-            />
+            {configuring && (
+              <ComposioAccessPanel
+                api={api}
+                workspaceId={workspaceId}
+                accounts={accounts}
+              />
+            )}
           </>
         )}
       </section>

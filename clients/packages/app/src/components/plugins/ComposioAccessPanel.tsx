@@ -1,36 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
-import { Button, Dropdown, Checkbox, ScrollAreaLoadMore } from "@comma/ui";
+import { Button, Dropdown, Checkbox } from "@comma/ui";
 import { useCommaMessages } from "@comma/i18n/react";
 import { composioAccountPresentation } from "./composioAccountPresentation";
 import type { CommaApiClient, ComposioAccount } from "../../api";
-
-const approvalSchema = z.object({
-  request_id: z.string(),
-  source_agent_id: z.string(),
-  request_payload: z.object({
-    account_name: z.string(),
-    account_id: z.string(),
-    tools: z.array(
-      z.object({ tool_slug: z.string(), arguments: z.record(z.string(), z.unknown()) })
-    ),
-  }),
-});
-const approvalsSchema = z.object({
-  requests: z.array(approvalSchema),
-  next_cursor: z.string().nullable(),
-});
 
 export function ComposioAccessPanel({
   api,
   workspaceId,
   accounts,
-  manageAccess = false,
 }: {
   api: CommaApiClient;
   workspaceId: string;
   accounts: ComposioAccount[];
-  manageAccess?: boolean;
 }) {
   const m = useCommaMessages();
   const [agents, setAgents] = useState<{ id: string; label: string }[]>([]);
@@ -51,11 +33,7 @@ export function ComposioAccessPanel({
   }, [accounts, account]);
   const [enabled, setEnabled] = useState(false);
   const [grantLoaded, setGrantLoaded] = useState(false);
-  const [approvals, setApprovals] = useState<z.infer<typeof approvalSchema>[]>([]);
-  const [approvalsLoaded, setApprovalsLoaded] = useState(false);
-  const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState(false);
-  const [outcome, setOutcome] = useState<string>();
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
@@ -87,7 +65,7 @@ export function ComposioAccessPanel({
     setGrantLoaded(false);
     setSharingAccepted(false);
     setSaved(false);
-    if (!manageAccess || !agent || !account) return;
+    if (!agent || !account) return;
     const controller = new AbortController();
     void api
       .composioCommand(
@@ -106,25 +84,7 @@ export function ComposioAccessPanel({
         if (!controller.signal.aborted) setError(true);
       });
     return () => controller.abort();
-  }, [api, workspaceId, agent, account, manageAccess]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    setApprovalsLoaded(false);
-    void api
-      .composioCommand(workspaceId, "approvals", {}, { signal: controller.signal })
-      .then((result) => {
-        if (controller.signal.aborted) return;
-        const page = approvalsSchema.parse(result);
-        setApprovals(page.requests);
-        setCursor(page.next_cursor);
-        setApprovalsLoaded(true);
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setError(true);
-      });
-    return () => controller.abort();
-  }, [api, workspaceId]);
+  }, [api, workspaceId, agent, account]);
 
   const run = async (operation: () => Promise<void>) => {
     if (inFlight.current) return;
@@ -141,222 +101,112 @@ export function ComposioAccessPanel({
       setBusy(false);
     }
   };
-  const loadApprovals = async (next?: string) => {
-    setApprovalsLoaded(false);
-    const result = approvalsSchema.parse(
-      await api.composioCommand(workspaceId, "approvals", next ? { cursor: next } : {})
-    );
-    setApprovals((current) =>
-      next ? [...current, ...result.requests] : result.requests
-    );
-    setCursor(result.next_cursor);
-    setApprovalsLoaded(true);
-  };
-  const visibleApprovals = approvals.filter((request) =>
-    accounts.some((item) => item.id === request.request_payload.account_id)
-  );
-
   return (
     <section className="flex flex-col gap-lg">
-      {manageAccess && (
-        <>
-          <h2 className="m-0 text-sm font-medium">{m.composio_agent_access()}</h2>
-          <p className="m-0 text-sm text-secondary">{m.composio_grant_hint()}</p>
-          {saved && <output>{m.composio_grant_saved()}</output>}
-          <Dropdown
-            label={m.composio_agent()}
-            items={agents}
-            value={agent}
-            onChange={setAgent}
-            disabled={busy}
-          />
-          {workerCursor && (
-            <Button
-              hierarchy="tertiary-gray"
-              isDisabled={busy}
-              onPress={() =>
-                void run(async () => {
-                  const page = await api.getWorkerModels(workspaceId, workerCursor);
-                  setAgents((current) => [
-                    ...current,
-                    ...page.items.map((item) => ({
-                      id: item.agent_id,
-                      label: item.name,
-                    })),
-                  ]);
-                  setWorkerCursor(page.next_cursor);
-                })
-              }
-            >
-              {m.composio_next()}
-            </Button>
-          )}
-          <Dropdown
-            label={m.composio_accounts()}
-            items={accounts
-              .filter((item) => item.status === "ACTIVE" && item.enabled)
-              .map((item) => {
-                const { name, email, number } = composioAccountPresentation(
-                  item,
-                  accounts
-                );
-                return {
-                  id: item.id,
-                  label: [
-                    name,
-                    email !== name ? email : null,
-                    number ? m.composio_connection_number({ number }) : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · "),
-                };
-              })}
-            value={account}
-            onChange={setAccount}
-            disabled={busy}
-          />
-          <output className="text-sm text-secondary">
-            {enabled ? m.composio_access_allowed() : m.composio_access_not_allowed()}
-          </output>
-          <Checkbox
-            label={m.composio_share_confirmation()}
-            checked={sharingAccepted}
-            disabled={busy || !account}
-            onChange={(event) => setSharingAccepted(event.target.checked)}
-          />
-          <div className="flex gap-md">
-            <Button
-              isDisabled={
-                busy || !agent || !account || !grantLoaded || !sharingAccepted
-              }
-              onPress={() =>
-                void run(async () => {
-                  await api.composioCommand(workspaceId, "account", {
-                    operation: "grant",
-                    account_id: account,
-                    agent_id: agent,
-                    enabled: true,
-                    share_with_workspace: true,
-                  });
-                  setEnabled(true);
-                  setSaved(true);
-                })
-              }
-            >
-              {m.composio_grant()}
-            </Button>
-            <Button
-              hierarchy="secondary-gray"
-              isDisabled={busy || !agent || !account}
-              onPress={() =>
-                void run(async () => {
-                  await api.composioCommand(workspaceId, "account", {
-                    operation: "grant",
-                    account_id: account,
-                    agent_id: agent,
-                    enabled: false,
-                  });
-                  setEnabled(false);
-                  setSaved(true);
-                })
-              }
-            >
-              {m.composio_revoke()}
-            </Button>
-          </div>
-        </>
+      <h2 className="m-0 text-sm font-medium">{m.composio_agent_access()}</h2>
+      <p className="m-0 text-sm text-secondary">{m.composio_grant_hint()}</p>
+      {saved && <output>{m.composio_grant_saved()}</output>}
+      <Dropdown
+        label={m.composio_agent()}
+        items={agents}
+        value={agent}
+        onChange={setAgent}
+        disabled={busy}
+      />
+      {workerCursor && (
+        <Button
+          hierarchy="tertiary-gray"
+          isDisabled={busy}
+          onPress={() =>
+            void run(async () => {
+              const page = await api.getWorkerModels(workspaceId, workerCursor);
+              setAgents((current) => [
+                ...current,
+                ...page.items.map((item) => ({
+                  id: item.agent_id,
+                  label: item.name,
+                })),
+              ]);
+              setWorkerCursor(page.next_cursor);
+            })
+          }
+        >
+          {m.composio_next()}
+        </Button>
       )}
+      <Dropdown
+        label={m.composio_accounts()}
+        items={accounts
+          .filter((item) => item.status === "ACTIVE" && item.enabled)
+          .map((item) => {
+            const { name, email, number } = composioAccountPresentation(item, accounts);
+            return {
+              id: item.id,
+              label: [
+                name,
+                email !== name ? email : null,
+                number ? m.composio_connection_number({ number }) : null,
+              ]
+                .filter(Boolean)
+                .join(" · "),
+            };
+          })}
+        value={account}
+        onChange={setAccount}
+        disabled={busy}
+      />
+      <output className="text-sm text-secondary">
+        {enabled ? m.composio_access_allowed() : m.composio_access_not_allowed()}
+      </output>
+      <Checkbox
+        label={m.composio_share_confirmation()}
+        checked={sharingAccepted}
+        disabled={busy || !account}
+        onChange={(event) => setSharingAccepted(event.target.checked)}
+      />
+      <div className="flex gap-md">
+        <Button
+          isDisabled={busy || !agent || !account || !grantLoaded || !sharingAccepted}
+          onPress={() =>
+            void run(async () => {
+              await api.composioCommand(workspaceId, "account", {
+                operation: "grant",
+                account_id: account,
+                agent_id: agent,
+                enabled: true,
+                share_with_workspace: true,
+              });
+              setEnabled(true);
+              setSaved(true);
+            })
+          }
+        >
+          {m.composio_grant()}
+        </Button>
+        <Button
+          hierarchy="secondary-gray"
+          isDisabled={busy || !agent || !account}
+          onPress={() =>
+            void run(async () => {
+              await api.composioCommand(workspaceId, "account", {
+                operation: "grant",
+                account_id: account,
+                agent_id: agent,
+                enabled: false,
+              });
+              setEnabled(false);
+              setSaved(true);
+            })
+          }
+        >
+          {m.composio_revoke()}
+        </Button>
+      </div>
       {error && (
         <p role="alert" className="text-sm text-secondary">
           {m.composio_error()}
         </p>
       )}
-      {outcome && <output className="text-sm">{outcome}</output>}
-      <h2 className="m-0 text-sm font-medium">{m.composio_approvals()}</h2>
-      {approvalsLoaded &&
-        !busy &&
-        !error &&
-        !cursor &&
-        visibleApprovals.length === 0 && (
-          <output className="m-0 text-sm text-secondary">
-            {m.composio_no_pending_actions()}
-          </output>
-        )}
-      <div className="flex">
-        <Button
-          hierarchy="tertiary-gray"
-          size="sm"
-          isDisabled={busy}
-          onPress={() => void run(() => loadApprovals())}
-        >
-          {m.composio_refresh_approvals()}
-        </Button>
-      </div>
-      {visibleApprovals.map((request) => (
-        <div
-          key={request.request_id}
-          className="flex flex-col gap-md border-b border-secondary pb-lg"
-        >
-          <p className="m-0 text-sm">{request.request_payload.account_name}</p>
-          <p className="m-0 text-sm text-secondary">
-            {agents.find((item) => item.id === request.source_agent_id)?.label ??
-              m.composio_agent()}
-          </p>
-          {request.request_payload.tools.map((tool, index) => (
-            <div key={`${index}:${tool.tool_slug}`}>
-              <p className="m-0 text-sm font-medium">{tool.tool_slug}</p>
-              <dl className="m-0 flex flex-col gap-sm text-sm">
-                {Object.entries(tool.arguments).map(([name, value]) => (
-                  <div key={name}>
-                    <dt className="font-medium">{name.replaceAll("_", " ")}</dt>
-                    <dd className="m-0 break-words text-secondary">
-                      {typeof value === "string" ? value : JSON.stringify(value)}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-          ))}
-          <div className="flex gap-md">
-            {[true, false].map((approved) => (
-              <Button
-                key={String(approved)}
-                hierarchy={approved ? "primary" : "secondary-gray"}
-                isDisabled={busy}
-                onPress={() =>
-                  void run(async () => {
-                    const response = await api.composioCommand(workspaceId, "decide", {
-                      request_id: request.request_id,
-                      approved,
-                    });
-                    const result = z
-                      .object({ result: z.object({ error: z.boolean() }) })
-                      .parse(response);
-                    setOutcome(
-                      !approved
-                        ? m.composio_deny()
-                        : result.result.error
-                          ? m.composio_uncertain()
-                          : m.composio_action_complete()
-                    );
-                    await loadApprovals();
-                  })
-                }
-              >
-                {approved ? m.composio_approve_once() : m.composio_deny()}
-              </Button>
-            ))}
-          </div>
-        </div>
-      ))}
-      <ScrollAreaLoadMore
-        hasMore={Boolean(cursor)}
-        loading={busy}
-        failed={error}
-        onLoadMore={() => {
-          if (cursor) void run(() => loadApprovals(cursor));
-        }}
-      />
     </section>
   );
 }
