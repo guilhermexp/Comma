@@ -526,8 +526,8 @@ connector details or changing workspace reloads the projection; old-scope respon
 cannot publish rows. Opening a connected row does not start consent.
 Connect uses public metadata; explicit project mode
 uses the project-authenticated REST catalog and tool pages. Setup, account controls,
-and account authorization stay inside the selected connector’s detail flow. Tool and
-Agent IDs remain internal. Connect account labels use allowlisted provider identity metadata when
+and account authorization stay inside the selected connector’s detail flow. Agent IDs remain internal. Execution review shows the exact public tool slugs
+and arguments. Connect account labels use allowlisted provider identity metadata when
 available. Names and email addresses remain separate from technical references.
 When identities collide, the UI shows a short connection number. Account details expose the exact
 public MCP connection reference. This reference does not establish a mapping to an OAuth callback account ID. Existing account label refresh

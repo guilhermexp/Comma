@@ -766,3 +766,68 @@ it("authorizes the exact account for an agent with explicit workspace audience c
   );
   expect(composioCommand.mock.calls.some((call) => call[1] === "tools")).toBe(false);
 });
+
+it("keeps exact pending execution confirmation reachable for a disabled account", async () => {
+  const user = userEvent.setup();
+  let pending = true;
+  const composioCommand = vi.fn(async (_workspace, action, params) => {
+    if (action === "approvals")
+      return {
+        requests: pending
+          ? [
+              {
+                request_id: "exact-request",
+                source_agent_id: "router",
+                request_payload: {
+                  account_id: "selected-account",
+                  account_name: "Work GitHub",
+                  tools: [
+                    {
+                      tool_slug: "GITHUB_CREATE_AN_ISSUE",
+                      arguments: {
+                        title: "exact reviewed title",
+                        body: "exact reviewed body",
+                      },
+                    },
+                  ],
+                },
+              },
+            ]
+          : [],
+        next_cursor: null,
+      };
+    if (action === "decide") {
+      expect(params).toEqual({ request_id: "exact-request", approved: true });
+      pending = false;
+      return { result: { error: true } };
+    }
+    return {};
+  });
+  show({
+    getComposio: async () => ({
+      ...signedOut,
+      status: "connected",
+      accounts: [
+        {
+          id: "selected-account",
+          name: "Work GitHub",
+          toolkit: "github",
+          mode: "connect",
+          status: "ACTIVE",
+          enabled: false,
+        },
+      ],
+    }),
+    composioCommand,
+  });
+  expect(await screen.findByText("GITHUB_CREATE_AN_ISSUE")).toBeInTheDocument();
+  expect(screen.getByText("exact reviewed title")).toBeInTheDocument();
+  expect(screen.getByText("exact reviewed body")).toBeInTheDocument();
+  expect(composioCommand.mock.calls.some((call) => call[1] === "decide")).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Approve this action once" }));
+  await screen.findByText(/outcome is uncertain/);
+  expect(screen.queryByRole("button", { name: "Approve this action once" })).toBeNull();
+  expect(
+    composioCommand.mock.calls.filter((call) => call[1] === "decide")
+  ).toHaveLength(1);
+});
