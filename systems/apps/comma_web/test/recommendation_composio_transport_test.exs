@@ -15,13 +15,50 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
 
     def call(conn, state) do
       {:ok, raw, conn} = read_body(conn)
-      body = if raw == "", do: %{}, else: Jason.decode!(raw)
 
-      Agent.update(
-        state,
-        &Map.update!(&1, :calls, fn calls -> [{conn.request_path, body} | calls] end)
-      )
+      body =
+        case Jason.decode(raw) do
+          {:ok, value} -> value
+          _ -> if raw == "", do: %{}, else: %{"malformed_json" => true}
+        end
 
+      request = %{
+        method: conn.method,
+        path: conn.request_path,
+        body: body,
+        authorization_present: get_req_header(conn, "authorization") != [],
+        api_key_present: get_req_header(conn, "x-api-key") != []
+      }
+
+      root_probe =
+        conn.method == "GET" and conn.request_path == "/" and
+          conn.query_string == "" and raw == "" and not request.authorization_present and
+          not request.api_key_present
+
+      Agent.update(state, fn fixture ->
+        Map.update(fixture, :requests, [request], &[request | &1])
+      end)
+
+      if root_probe do
+        # Listener traffic is wider than provider operations. Keep root probes
+        # diagnostic; every authenticated/nonempty/MCP/REST attempt is counted.
+        Agent.update(
+          state,
+          &Map.update(&1, :root_requests, [request], fn requests -> [request | requests] end)
+        )
+
+        send_resp(conn, 404, "")
+      else
+        Agent.update(
+          state,
+          &Map.update!(&1, :calls, fn calls -> [{conn.request_path, body} | calls] end)
+        )
+
+        dispatch(conn, state, body)
+      end
+    end
+
+    defp dispatch(conn, state, body) do
       value =
         case conn.request_path do
           "/mcp" ->
@@ -599,6 +636,39 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
              RecommendationSources.discover(c.w, c.user["id"], "member", profile.sources)
   end
 
+  test "the HTTP fixture separates empty root probes while retaining every provider attempt", c do
+    base =
+      Application.fetch_env!(:salix_web, :composio_connect_endpoint)
+      |> URI.merge("/")
+      |> URI.to_string()
+
+    assert {:ok, %{status: 404}} = Req.get(base, retry: false)
+    assert Agent.get(c.state, & &1.calls) == []
+
+    assert Enum.any?(
+             Agent.get(c.state, & &1.root_requests),
+             &(&1.method == "GET" and &1.path == "/")
+           )
+
+    for opts <- [
+          [method: :get, url: base, headers: [{"authorization", "Bearer fixture"}]],
+          [method: :get, url: base, body: "{}"],
+          [method: :post, url: base <> "mcp", body: "malformed JSON"],
+          [
+            method: :post,
+            url: base <> "api/v3.1/tool_router/session/pinned/proxy_execute",
+            json: %{"endpoint" => "https://provider.invalid/not-handled"}
+          ]
+        ] do
+      before = Agent.get(c.state, & &1.calls)
+      assert {:ok, %{status: 500}} = Req.request(Keyword.put(opts, :retry, false))
+      assert [_attempt | ^before] = Agent.get(c.state, & &1.calls)
+    end
+
+    assert Enum.any?(Agent.get(c.state, & &1.requests), & &1.authorization_present)
+    assert Enum.any?(Agent.get(c.state, & &1.requests), &(&1.body == %{"malformed_json" => true}))
+  end
+
   test "background ingest remains idle before opt-in and disabling in Plugins purges already collected work",
        c do
     configure(c, "connect", "googledrive")
@@ -608,9 +678,9 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
     assert {:ok, _} = CommaWeb.MemberSourceIngest.ingest(c.w, c.user["id"])
     assert [%{collected: true, items: [item]}] = Comma.MemberSourceItems.current(profile.id)
     assert item.title == "Review plan"
-    before = Agent.get(c.state, &length(&1.calls))
+    before = Agent.get(c.state, & &1.calls)
     assert :ok = CommaWeb.MemberSourceTriggers.ensure(c.w, profile.id)
-    assert Agent.get(c.state, &length(&1.calls)) == before
+    assert Agent.get(c.state, & &1.calls) == before
 
     assert {:ok, _} =
              ComposioConnect.command(c.user, %{}, c.w["id"], "account", %{
@@ -633,7 +703,7 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
     {:ok, reconciled} = Comma.Recommendations.reconcile_discovered_sources(profile.id, sources)
     refute hd(reconciled.sources)["enabled"]
     assert {:ok, _} = CommaWeb.MemberSourceIngest.ingest(c.w, c.user["id"])
-    assert Agent.get(c.state, &length(&1.calls)) == before
+    assert Agent.get(c.state, & &1.calls) == before
   end
 
   @tag :routine_correction
