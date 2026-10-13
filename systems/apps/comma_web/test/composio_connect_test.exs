@@ -14,6 +14,20 @@ defmodule CommaWeb.ComposioConnectTest do
         Agent.update(state, &Map.update!(&1, :rpc_requests, fn calls -> [request | calls] end))
         result = Agent.get(state, & &1.connect_result)
 
+        if get_in(request, ["params", "arguments", "toolkits"]) == [
+             %{"name" => "gmail", "action" => "list"}
+           ] do
+          if owner = Agent.get_and_update(state, &Map.pop(&1, :hold_next_list)) do
+            send(owner, {:held_account_list, self()})
+
+            receive do
+              :release_account_list -> :ok
+            after
+              5_000 -> raise "account-list fixture was not released"
+            end
+          end
+        end
+
         json(conn, %{
           "jsonrpc" => "2.0",
           "id" => request["id"],
@@ -372,7 +386,9 @@ defmodule CommaWeb.ComposioConnectTest do
   end
 
   @tag :connect_shape
-  test "reconnect retires only its named target and settled selection replay has no effects", c do
+  @tag :consent_replay_race
+  test "reconnect replay racing settlement reads the saved account without repeating effects",
+       c do
     s = connect_fixture(c)
     add_response(c, initiated_result([]))
 
@@ -396,6 +412,13 @@ defmodule CommaWeb.ComposioConnectTest do
       "account_id" => "replacement"
     }
 
+    owner = self()
+    Agent.update(c.provider, &Map.put(&1, :hold_next_list, owner))
+    replay = Task.async(fn -> post_command(s.token, c.w["id"], "consent", params) end)
+    assert_receive {:held_account_list, provider_request}, 2_000
+
+    # The replay has read pending consent but its provider read is still in flight.
+    # Another request settles the same selection before that read returns.
     assert {:ok, %{"id" => "replacement"}} = command(c, "consent", params)
 
     assert {:ok, %{"enabled" => false}} =
@@ -410,6 +433,11 @@ defmodule CommaWeb.ComposioConnectTest do
 
     assert {:ok, _} =
              ComposioAccess.enable_account(s.tenant, s.group, s.user, "replacement", false)
+
+    send(provider_request, :release_account_list)
+    response = Task.await(replay, 5_000)
+    assert response.status == 200
+    assert %{"id" => "replacement", "enabled" => false} = Jason.decode!(response.resp_body)
 
     requests = Agent.get(c.provider, & &1.rpc_requests)
     assert {:ok, %{"enabled" => false}} = command(c, "consent", params)

@@ -40,6 +40,10 @@ const harness = vi.hoisted(() => {
     composioCommand,
     getComposio,
     api: {
+      getAgentModels: vi.fn().mockResolvedValue({
+        agents: { router: { agent_id: "router", name: "Router" } },
+        workers: { items: [], next_cursor: null },
+      }),
       composioCommand,
       getComposio,
       getWorkspaceSkill,
@@ -937,6 +941,8 @@ describe("PluginsRoute", () => {
         };
       if (action === "authorize")
         return { authorization_url: "https://connect.composio.dev/authorize" };
+      if (action === "consent" && params.operation === "get")
+        return { consent: null };
       throw new Error(`Unexpected action ${action} ${JSON.stringify(params)}`);
     });
     render(<PluginsRoute />);
@@ -962,6 +968,115 @@ describe("PluginsRoute", () => {
     );
     expect(harness.installWorkspacePlugin).not.toHaveBeenCalled();
   });
+
+  it.each(["completed", "response lost"])(
+    "consumes catalog Add before a connector remounts (%s)",
+    async (outcome) => {
+      const user = userEvent.setup();
+      harness.listWorkspacePlugins.mockResolvedValue(availablePlugins);
+      const account = {
+        id: "gmail-selected",
+        name: "Work Gmail",
+        toolkit: "gmail",
+        mode: "connect",
+        status: "ACTIVE",
+        enabled: true,
+      };
+      let consent: {
+        id: string;
+        toolkit: string;
+        status: string;
+        expires_at: number;
+      } | null = null;
+      harness.getComposio.mockResolvedValue({
+        mode: "connect",
+        status: "connected",
+        user_id: "member",
+        accounts: [account],
+        next_cursor: null,
+        expires_at: null,
+        capabilities: { catalog: true, search: true, account_management: true },
+      });
+      harness.composioCommand.mockImplementation(async (_workspace, action, params) => {
+        if (action === "catalog")
+          return {
+            items: [
+              {
+                slug: "gmail",
+                name: "Gmail",
+                description: "Mail",
+                logo: "https://logos.composio.dev/api/gmail",
+              },
+            ],
+            next_cursor: null,
+          };
+        if (action === "connect") {
+          if (outcome === "response lost") throw new Error("Connection response lost");
+          consent = {
+            id: "gmail-consent",
+            toolkit: "gmail",
+            status: "pending",
+            expires_at: Date.now() + 600_000,
+          };
+          return {
+            consent_id: consent.id,
+            status: "pending",
+            authorization_url: "https://provider.example/consent",
+          };
+        }
+        if (action === "consent" && params.operation === "get") return { consent };
+        if (action === "consent" && params.operation === "select") {
+          consent = { ...consent!, status: "completed" };
+          return { account };
+        }
+        throw new Error(`Unexpected action ${action}`);
+      });
+      const view = () => (
+        <PluginInstallProvider api={harness.api as unknown as CommaApiClient}>
+          <CommaI18nProvider locale="en">
+            <PluginsRoute />
+          </CommaI18nProvider>
+        </PluginInstallProvider>
+      );
+      const page = renderUI(view());
+      await user.click(
+        await screen.findByRole("button", { name: "Show all Integrations plugins" })
+      );
+      await user.click(await screen.findByRole("button", { name: "Add Gmail" }));
+      if (outcome === "completed") {
+        await user.click(
+          await screen.findByRole("button", { name: "Use this account" })
+        );
+        await waitFor(() =>
+          expect(screen.queryByRole("button", { name: "Use this account" })).toBeNull()
+        );
+      } else {
+        await screen.findAllByRole("alert");
+      }
+      const reads = harness.getComposio.mock.calls.length;
+
+      // A catalog refresh remounts the detail while the route retains its selection.
+      harness.api = { ...harness.api };
+      page.rerender(view());
+      await waitFor(() =>
+        expect(harness.getComposio.mock.calls.length).toBeGreaterThan(reads)
+      );
+      await screen.findAllByText("Work Gmail");
+      expect(
+        harness.composioCommand.mock.calls.filter(([, action]) => action === "connect")
+      ).toHaveLength(1);
+      expect(screen.queryByRole("button", { name: "Use this account" })).toBeNull();
+
+      await user.click(screen.getByRole("button", { name: "Connect app Gmail" }));
+      await waitFor(() =>
+        expect(
+          harness.composioCommand.mock.calls.filter(
+            ([, action]) => action === "connect"
+          )
+        ).toHaveLength(2)
+      );
+    }
+  );
 
   it("a remote catalog outage keeps native integrations usable", async () => {
     const user = userEvent.setup();

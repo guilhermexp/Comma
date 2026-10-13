@@ -338,12 +338,22 @@ defmodule CommaWeb.ComposioConnect do
     with {:ok, remote} <- Connect.account(s.tenant, s.group, s.user, toolkit, account_id),
          true <- remote["status"] == "ACTIVE",
          {:ok, completed} <-
-           Access.complete_consent(s.tenant, s.group, s.user, toolkit, id, account_id),
-         true <- completed["status"] == "selecting",
-         {:ok, selected} <- Access.put_account(s.tenant, s.group, s.user, account_id, remote),
-         :ok <- retire_replaced(s, Map.put(completed, "id", account_id), remote),
-         {:ok, _} <- Access.settle_consent(s.tenant, s.group, s.user, toolkit, id, account_id) do
-      {:ok, selected}
+           Access.complete_consent(s.tenant, s.group, s.user, toolkit, id, account_id) do
+      case completed["status"] do
+        "completed" ->
+          Access.account(s.tenant, s.group, s.user, account_id)
+
+        "selecting" ->
+          with {:ok, selected} <-
+                 Access.put_account(s.tenant, s.group, s.user, account_id, remote),
+               :ok <- retire_replaced(s, Map.put(completed, "id", account_id), remote),
+               {:ok, _} <-
+                 Access.settle_consent(s.tenant, s.group, s.user, toolkit, id, account_id),
+               do: {:ok, selected}
+
+        _ ->
+          {:error, :composio_access_denied}
+      end
     else
       false -> {:error, :composio_account_not_active}
       {:error, _} = error -> error

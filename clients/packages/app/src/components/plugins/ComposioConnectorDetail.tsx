@@ -46,6 +46,7 @@ export function ComposioConnectorDetail({
   plugin,
   toolkit,
   startConnecting = false,
+  onStartConnectingConsumed,
 }: {
   api: CommaApiClient;
   workspaceId: string;
@@ -53,6 +54,7 @@ export function ComposioConnectorDetail({
   plugin: PluginDefinition;
   toolkit: string;
   startConnecting?: boolean;
+  onStartConnectingConsumed?: () => void;
 }) {
   const m = useCommaMessages();
   const [status, setStatus] = useState<ComposioStatus>();
@@ -157,6 +159,9 @@ export function ComposioConnectorDetail({
   ) => {
     if (inFlight.current) return;
     inFlight.current = true;
+    // The route owns this one-shot intent across detail remounts. Consume it
+    // before dispatch, including when the response is lost or rejected.
+    if (action === "connect") onStartConnectingConsumed?.();
     setBusy(true);
     setError(false);
     let loadedAfterAction = false;
@@ -220,6 +225,7 @@ export function ComposioConnectorDetail({
     if (!startConnecting || !status) return;
     if (status.mode === "connect" && consentInProgress) {
       connectionStarted.current = true;
+      onStartConnectingConsumed?.();
       return;
     }
     if (status.status === "connected" && !connectionStarted.current) {

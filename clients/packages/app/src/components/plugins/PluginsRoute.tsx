@@ -319,6 +319,7 @@ export function PluginsRoute() {
         workspaceId={state.workspaceId}
         toolkit={selectedConnector.slug}
         startConnecting={startConnecting}
+        onStartConnectingConsumed={() => setStartConnecting(false)}
         plugin={composioDefinition(
           selectedConnector,
           messages.composio_via(),
