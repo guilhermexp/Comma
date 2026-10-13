@@ -185,6 +185,17 @@ defmodule SalixAgent.IFCCheckTest do
     assert {:blocked, _} =
              authorize(
                call(
+                 "composio.personal_search",
+                 %{"account_id" => "account-a", "query" => "workspace content"},
+                 declaration
+               ),
+               ctx(),
+               facts(destination(["public"]))
+             )
+
+    assert {:blocked, _} =
+             authorize(
+               call(
                  "composio.personal_execute",
                  %{
                    "account_id" => "account-a",

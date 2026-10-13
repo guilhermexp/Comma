@@ -347,9 +347,7 @@ defmodule CommaWeb.ComposioConnectTest do
       )
 
     {:ok, _} =
-      ComposioAccess.grant(s.tenant, s.group, s.user, "drive-work", c.w["router_agent_id"], [
-        "GOOGLEDRIVE_GET_ABOUT"
-      ])
+      ComposioAccess.grant(s.tenant, s.group, s.user, "drive-work", c.w["router_agent_id"], true)
 
     {:ok, grants} = ComposioAccess.grants(s.tenant, s.group, c.w["router_agent_id"])
     {:ok, oauth} = SalixStore.OAuth.get("personal-connect")
@@ -397,10 +395,11 @@ defmodule CommaWeb.ComposioConnectTest do
     assert {:ok, public} = command(c, "refresh_accounts", %{"toolkit" => "googledrive"})
 
     for {id, original} <- originals do
-      name = "Casey Example <casey@example.test> (#{id})"
+      name = "Casey Example"
       assert Enum.find(public["accounts"], &(&1["id"] == id))["name"] == name
       assert {:ok, stored} = ComposioAccess.account(s.tenant, s.group, s.user, id)
-      assert stored == Map.put(original, "name", name)
+      assert stored == Map.merge(original, %{"name" => name, "email" => "casey@example.test"})
+      assert Enum.find(public["accounts"], &(&1["id"] == id))["email"] == "casey@example.test"
     end
 
     assert Enum.find(public["accounts"], &(&1["id"] == "drive-no-identity"))["name"] ==
@@ -416,6 +415,21 @@ defmodule CommaWeb.ComposioConnectTest do
     refute inspect(public) =~ "private-photo"
     refute inspect(S3.Fake.dump()) =~ "private-permission"
 
+    Agent.update(c.provider, fn state ->
+      put_in(state, [:connect_result, "data", "results", "googledrive", "accounts"], [
+        %{"id" => "drive-work", "status" => "active"}
+      ])
+    end)
+
+    assert {:ok, refreshed} = command(c, "refresh_accounts", %{"toolkit" => "googledrive"})
+
+    assert Enum.find(refreshed["accounts"], &(&1["id"] == "drive-work"))["email"] ==
+             "casey@example.test"
+
+    assert {:ok, preserved} = ComposioAccess.account(s.tenant, s.group, s.user, "drive-work")
+    assert preserved["name"] == "Casey Example"
+    refute preserved["enabled"]
+
     label = %{"name" => "Casey Example", "toolkit" => "googledrive", "mode" => "connect"}
 
     assert {:error, :not_found} =
@@ -429,14 +443,17 @@ defmodule CommaWeb.ComposioConnectTest do
     assert {:ok, unchanged} = ComposioAccess.account(s.tenant, s.group, s.user, "pending-a")
     assert {"pending-a", ^unchanged} = List.keyfind(s.siblings, "pending-a", 0)
 
-    assert [
-             %{
+    requests = Agent.get(c.provider, & &1.rpc_requests)
+    assert length(requests) == 2
+
+    for request <- requests do
+      assert %{
                "params" => %{
                  "name" => "COMPOSIO_MANAGE_CONNECTIONS",
                  "arguments" => %{"toolkits" => [%{"name" => "googledrive", "action" => "list"}]}
                }
-             }
-           ] = Agent.get(c.provider, & &1.rpc_requests)
+             } = request
+    end
   end
 
   @tag :connect_shape
@@ -647,6 +664,98 @@ defmodule CommaWeb.ComposioConnectTest do
              ComposioAccess.account(s.tenant, s.group, s.user, "pending-a")
 
     assert Agent.get(c.provider, & &1.rpc_requests) == requests
+  end
+
+  test "HTTP account authorization requires the exact member account, workspace agent and audience consent",
+       c do
+    s = connect_fixture(c)
+
+    agent =
+      SalixAgent.TestSupport.create_control_agent_in_group!(s.tenant, s.group, %{
+        "role" => "router",
+        "runtime_config" => %{"kind" => "internal"}
+      })
+
+    {:ok, _} =
+      ComposioAccess.put_account(s.tenant, s.group, s.user, "grant-account", %{
+        "toolkit" => "gmail",
+        "mode" => "connect",
+        "status" => "ACTIVE",
+        "name" => "Work"
+      })
+
+    params = %{
+      "operation" => "grant",
+      "account_id" => "grant-account",
+      "agent_id" => agent["agent_id"],
+      "enabled" => true
+    }
+
+    assert post_command(s.token, c.w["id"], "account", params).status == 422
+
+    assert {:error, :not_found} =
+             ComposioAccess.agent_account_grant(
+               s.tenant,
+               s.group,
+               agent["agent_id"],
+               "grant-account"
+             )
+
+    allowed = Map.put(params, "share_with_workspace", true)
+    response = post_command(s.token, c.w["id"], "account", allowed)
+    assert response.status == 200
+    assert %{"enabled" => true, "toolkit" => "gmail"} = Jason.decode!(response.resp_body)
+
+    assert {:ok, _} =
+             ComposioAccess.authorize(
+               s.tenant,
+               s.group,
+               agent["agent_id"],
+               s.user,
+               "grant-account"
+             )
+
+    {:ok, _} =
+      ComposioAccess.put_account(s.tenant, s.group, "other-member", "foreign-account", %{
+        "toolkit" => "gmail",
+        "mode" => "connect",
+        "status" => "ACTIVE",
+        "name" => "Private"
+      })
+
+    foreign_group = SalixStore.Ids.new_group_id(s.tenant)
+
+    foreign_agent =
+      SalixAgent.TestSupport.create_control_agent_in_group!(s.tenant, foreign_group, %{
+        "role" => "router",
+        "runtime_config" => %{"kind" => "internal"}
+      })
+
+    assert post_command(
+             s.token,
+             c.w["id"],
+             "account",
+             Map.put(allowed, "account_id", "foreign-account")
+           ).status == 404
+
+    assert post_command(
+             s.token,
+             c.w["id"],
+             "account",
+             Map.put(allowed, "agent_id", foreign_agent["agent_id"])
+           ).status == 422
+
+    assert post_command(s.token, c.w["id"], "account", Map.put(params, "enabled", false)).status ==
+             200
+
+    assert {:error, :composio_access_denied} =
+             ComposioAccess.authorize(
+               s.tenant,
+               s.group,
+               agent["agent_id"],
+               s.user,
+               "grant-account"
+             )
   end
 
   test "HTTP commands preserve forbidden and missing workspace semantics", c do

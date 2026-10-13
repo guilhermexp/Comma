@@ -85,6 +85,12 @@ defmodule Salix.Control.ComposioConnect do
             "id" => id,
             "toolkit" => toolkit,
             "name" => account_display_name(raw, toolkit),
+            "email" => account_email(raw, toolkit),
+            "identity_available" =>
+              not is_nil(
+                account_label(raw["alias"]) || account_identity_name(raw, toolkit) ||
+                  account_email(raw, toolkit)
+              ),
             "status" => String.upcase(status),
             "mode" => "connect"
           }
@@ -96,16 +102,7 @@ defmodule Salix.Control.ComposioConnect do
       end)
       |> case do
         {:ok, items} ->
-          names = Enum.frequencies_by(items, & &1["name"])
-
-          {:ok,
-           items
-           |> Enum.reverse()
-           |> Enum.map(fn account ->
-             if names[account["name"]] > 1,
-               do: Map.update!(account, "name", &(&1 <> " (" <> account["id"] <> ")")),
-               else: account
-           end)}
+          {:ok, Enum.reverse(items)}
 
         error ->
           error
@@ -125,24 +122,25 @@ defmodule Salix.Control.ComposioConnect do
     end
   end
 
+  defp account_email(%{"user_info" => %{"user" => %{"emailAddress" => email}}}, "googledrive"),
+    do: account_label(email)
+
+  defp account_email(%{"user_info" => %{"emailAddress" => email}}, "gmail"),
+    do: account_label(email)
+
+  defp account_email(_, _), do: nil
+
+  defp account_identity_name(
+         %{"user_info" => %{"user" => %{"displayName" => name}}},
+         "googledrive"
+       ),
+       do: account_label(name)
+
+  defp account_identity_name(_, _), do: nil
+
   defp account_display_name(raw, toolkit) do
-    identity =
-      case {toolkit, raw} do
-        {"googledrive", %{"user_info" => %{"user" => user}}} when is_map(user) ->
-          case {account_label(user["displayName"]), account_label(user["emailAddress"])} do
-            {nil, email} -> email
-            {name, nil} -> name
-            {name, email} -> name <> " <" <> email <> ">"
-          end
-
-        _ ->
-          nil
-      end
-
-    case Enum.uniq(Enum.reject([account_label(raw["alias"]), identity], &is_nil/1)) do
-      [] -> display_name(toolkit)
-      labels -> Enum.join(labels, " · ")
-    end
+    account_label(raw["alias"]) || account_identity_name(raw, toolkit) ||
+      account_email(raw, toolkit) || display_name(toolkit)
   end
 
   defp account_label(value) when is_binary(value) and byte_size(value) <= 512 do
@@ -212,36 +210,125 @@ defmodule Salix.Control.ComposioConnect do
   end
 
   @impl true
-  def schema(tenant, group, user, account, tools) do
+  def search(tenant, group, user, account, query, cursor)
+      when is_binary(query) and byte_size(query) in 1..500 and
+             (is_nil(cursor) or (is_binary(cursor) and byte_size(cursor) <= 4096)) do
     with {:ok, profile} <- Access.profile(tenant, group, user),
-         true <- profile["mode"] == account["mode"] do
+         true <- profile["mode"] == account["mode"] and profile["status"] == "connected" do
       case account["mode"] do
         "project" ->
           with {:ok, settings} <- Access.project_settings(tenant, group, user),
-               {:ok, items} <-
-                 SalixStore.Composio.list_tools(settings,
-                   tool_slugs: Enum.join(tools, ","),
-                   limit: 50
+               {:ok, page} <-
+                 SalixStore.Composio.list_tools_page(settings,
+                   toolkit: account["toolkit"],
+                   query: query,
+                   cursor: cursor,
+                   limit: 20
                  ),
-               true <- MapSet.new(Enum.map(items, & &1["slug"])) == MapSet.new(tools),
-               do: {:ok, %{"tools" => items}}
+               true <- length(page["items"]) <= 20 do
+            {:ok,
+             %{
+               "tools" =>
+                 page["items"]
+                 |> Enum.filter(&(toolkit_slug(&1) == account["toolkit"] and action?(&1["slug"])))
+                 |> Enum.map(&summary/1),
+               "next_cursor" => page["next_cursor"]
+             }}
+          else
+            _ -> {:error, :invalid_composio_response}
+          end
 
         "connect" ->
-          call(tenant, group, user, "COMPOSIO_GET_TOOL_SCHEMAS", %{"tool_slugs" => tools})
+          # Connect search is a bounded task query, not a pageable full catalog.
+          with true <- is_nil(cursor),
+               {:ok, result} <- discover(tenant, group, user, account["toolkit"] <> ": " <> query) do
+            {:ok,
+             %{
+               "tools" =>
+                 result["tools"]
+                 |> Enum.filter(&(&1["toolkit"] == account["toolkit"] and action?(&1["slug"])))
+                 |> Enum.take(20),
+               "next_cursor" => nil
+             }}
+          else
+            _ -> {:error, :invalid_composio_response}
+          end
       end
     else
       _ -> {:error, :composio_access_denied}
     end
   end
 
+  def search(_, _, _, _, _, _), do: {:error, :invalid_composio_request}
+
+  @impl true
+  def schema(tenant, group, user, account, tools)
+      when is_list(tools) and length(tools) in 1..50 do
+    with true <- Enum.all?(tools, &action?/1),
+         {:ok, profile} <- Access.profile(tenant, group, user),
+         true <- profile["mode"] == account["mode"] and profile["status"] == "connected",
+         {:ok, items} <- fetch_schemas(tenant, group, user, account, tools),
+         true <- length(items) <= 50,
+         true <- MapSet.new(Enum.map(items, & &1["slug"])) == MapSet.new(tools),
+         true <- Enum.all?(items, &(toolkit_slug(&1) == account["toolkit"])),
+         true <- byte_size(Jason.encode!(items)) <= 512_000 do
+      {:ok, %{"tools" => items}}
+    else
+      _ -> {:error, :composio_access_denied}
+    end
+  end
+
+  def schema(_, _, _, _, _), do: {:error, :composio_access_denied}
+
+  defp fetch_schemas(tenant, group, user, %{"mode" => "project"}, tools) do
+    with {:ok, settings} <- Access.project_settings(tenant, group, user),
+         do:
+           SalixStore.Composio.list_tools(settings, tool_slugs: Enum.join(tools, ","), limit: 50)
+  end
+
+  defp fetch_schemas(tenant, group, user, %{"mode" => "connect"}, tools) do
+    with {:ok, %{"data" => %{"tool_schemas" => schemas}}} <-
+           call(tenant, group, user, "COMPOSIO_GET_TOOL_SCHEMAS", %{"tool_slugs" => tools}),
+         true <- is_map(schemas) and map_size(schemas) <= 50,
+         true <-
+           Enum.all?(schemas, fn {slug, tool} ->
+             valid_tool?({slug, tool}) and tool["tool_slug"] == slug
+           end) do
+      {:ok, Enum.map(schemas, fn {slug, tool} -> Map.put(tool, "slug", slug) end)}
+    else
+      _ -> {:error, :invalid_composio_response}
+    end
+  end
+
+  defp toolkit_slug(%{"toolkit" => %{"slug" => slug}}) when is_binary(slug),
+    do: String.downcase(slug)
+
+  defp toolkit_slug(%{"toolkit" => slug}) when is_binary(slug), do: String.downcase(slug)
+  defp toolkit_slug(_), do: nil
+
+  defp action?(slug) when is_binary(slug),
+    do: String.match?(slug, ~r/^[A-Z0-9_]{1,180}$/) and not String.starts_with?(slug, "COMPOSIO_")
+
+  defp action?(_), do: false
+
+  defp summary(tool),
+    do: %{
+      "slug" => tool["slug"],
+      "toolkit" => toolkit_slug(tool),
+      "name" => String.slice(tool["name"] || tool["slug"], 0, 180),
+      "description" => String.slice(tool["description"] || "", 0, 600)
+    }
+
   @impl true
   def execute(tenant, group, user, %{"mode" => "project"} = account, tools, authorize_effect) do
-    with {:ok, %{"mode" => "project", "status" => "connected"}} <-
+    with {:ok, _} <- schema(tenant, group, user, account, Enum.map(tools, & &1["tool_slug"])),
+         {:ok, %{"mode" => "project", "status" => "connected"}} <-
            Access.profile(tenant, group, user),
          {:ok, settings} <- Access.project_settings(tenant, group, user),
          {:ok, remote} <- SalixStore.Composio.get_connected_account(settings, account["id"]),
          true <-
-           remote["user_id"] == "comma:" <> group <> ":" <> user and remote["status"] == "ACTIVE",
+           remote["user_id"] == "comma:" <> group <> ":" <> user and remote["status"] == "ACTIVE" and
+             toolkit_slug(remote) == account["toolkit"],
          {:ok, session} <-
            SalixStore.Composio.create_action_session(
              settings,
@@ -277,9 +364,11 @@ defmodule Salix.Control.ComposioConnect do
   end
 
   def execute(tenant, group, user, %{"mode" => "connect"} = local, tools, authorize_effect) do
-    execute_connect(tenant, group, user, local, tools, authorize_effect, fn result, _session ->
-      {:ok, result}
-    end)
+    with {:ok, _} <- schema(tenant, group, user, local, Enum.map(tools, & &1["tool_slug"])) do
+      execute_connect(tenant, group, user, local, tools, authorize_effect, fn result, _session ->
+        {:ok, result}
+      end)
+    end
   end
 
   def execute(_, _, _, _, _, _), do: {:error, :composio_access_denied}

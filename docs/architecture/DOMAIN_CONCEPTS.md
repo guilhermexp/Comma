@@ -493,7 +493,7 @@ Changing mode does not copy credentials or grant access to accounts in the other
 The existing Group Composio configuration and native plugin connections stay separate.
 Credentials and consent remain member-owned. An explicit Agent grant records the Group
 as the result audience. Before saving it, the owner confirms that the selected Agent
-may use these actions and that results may appear in workspace conversations. Login
+may use this account’s toolkit and that results may appear in workspace conversations. Login
 alone does not share an account. A grant without this audience provenance cannot execute.
 
 [RemoteMCPOAuth](../../systems/apps/salix_web/lib/salix/control/remote_mcp_oauth.ex)
@@ -525,13 +525,14 @@ Missing account state or metadata produces a visible retry error. Returning from
 connector details or changing workspace reloads the projection; old-scope responses
 cannot publish rows. Opening a connected row does not start consent.
 Connect uses public metadata; explicit project mode
-uses the project-authenticated REST catalog and tool pages. Setup, account controls, and named
-permission choices stay inside the selected connector's detail flow. Tool and Agent IDs
-remain internal. Connect account labels use allowlisted provider identity metadata when
-available. When labels collide, the UI includes the public MCP connection reference to
-distinguish connections, including connections to the same provider identity. This reference
-does not establish a mapping to an OAuth callback account ID. Existing account label refresh
-changes only the name under the same member, toolkit, and mode; it preserves account status,
+uses the project-authenticated REST catalog and tool pages. Setup, account controls,
+and account authorization stay inside the selected connector’s detail flow. Tool and
+Agent IDs remain internal. Connect account labels use allowlisted provider identity metadata when
+available. Names and email addresses remain separate from technical references.
+When identities collide, the UI shows a short connection number. Account details expose the exact
+public MCP connection reference. This reference does not establish a mapping to an OAuth callback account ID. Existing account label refresh
+changes only allowlisted name and email metadata under the same member, toolkit,
+and mode; it preserves account status,
 enabled state, consent, and grants. Catalog metadata and provider instructions do not grant
 execution permission.
 
@@ -539,7 +540,8 @@ execution permission.
 reads the official public `https://composio.dev/toolkits` metadata. Connect OAuth does
 not imply Platform REST rights. The public page's structured hydration data is not a
 versioned API: format drift produces a visible retry error, while native integrations
-remain usable. Tool names come from the selected connector's official Markdown page.
+remain usable. Agent tool schemas come from the authenticated provider’s exact schema lookup.
+The retired manual checklist no longer fetches or parses toolkit Markdown pages.
 A node-local cache serializes misses, bounds each fetch to 15 seconds and 8 MiB, and
 retains projections for 15 minutes within a shared 16 MiB budget. Pages contain at most
 20 items. No per-connector catalog fanout runs on render. Provider logos use Composio's
@@ -575,11 +577,23 @@ and sibling accounts are outside these operations.
 
 [ComposioBroker](../../systems/apps/salix_agent/lib/salix_agent/composio_broker.ex)
 resolves Tenant and Group from the authenticated Agent. It lists only that Agent's
-current grants and serves schemas only for granted tool IDs. Account selection names
-one exact provider account. The broker checks every inner action before it creates a
-Capability Request, and rechecks current workspace membership and the grant immediately
-before dispatch. Membership loss also removes account and schema projections.
+current account grants. `composio.personal_search` discovers at most 20 action summaries
+for one authorized account, with a query of at most 500 bytes. Connect search is task-scoped
+and has no catalog cursor. Project search uses bounded provider pages. Schemas load only
+on demand, for at most 50 exact action IDs and 512,000 encoded bytes. Search never returns
+the full catalog or schemas. Account selection names one exact provider account.
+The broker checks the authoritative provider tool-to-toolkit relationship for every
+inner action before it creates a Capability Request, and rechecks current workspace membership and the grant immediately
+before dispatch. The transport checks the provider tool-to-toolkit relationship again
+before execution. Slug prefixes and provider descriptions cannot establish this relationship.
+Membership loss also removes account and schema projections.
 Each action or batch requires the member's confirmation of the exact arguments.
+Existing nonempty, enabled tool grants with Group audience provenance evolve once by CAS
+into authorization for that exact account, mode, and toolkit. The bounded point or grant-page
+read performs the durable transformation and removes the old tool list. Empty, revoked,
+disabled, or unshared grants remain inactive. New grants carry an explicit boolean account
+decision. No tool checklist or tools-based execution path remains. Account state, credentials,
+consent attempts, and Routine opt-ins are not changed by this transformation.
 Connection status alone grants nothing. Remote bash, workbench, proxy tools, and remote
 skills cannot substitute for a grant. All provider instructions remain untrusted data.
 The existing request settlement CAS selects one decision winner. It stores the provider
@@ -590,14 +604,17 @@ timeout cannot prove that a remote effect stopped. After the explicit workspace 
 account projections, schemas, and successful results use the existing Group IFC audience
 from trusted Agent scope. Persisted asynchronous results retain that label on recovery.
 No unshared personal record receives a Group label. Local account discovery and public
-schema lookup are reads. Execution remains public egress: workspace-sourced arguments
+schema lookup are reads. Task search sends a free-text query and retains the existing IFC
+public-egress check. Execution remains public egress: workspace-sourced arguments
 still need the existing IFC declassification approval. A connector grant does not bypass
 that rule. No new audience entity or label is introduced.
 
 Requests have at most 50 inner tools and 64 KiB of encoded arguments. Catalog pages,
 account pages, grant pages, and approval pages are bounded; no full member/account scan
 runs on render. Login polls once every two seconds for at most ten minutes, with one
-request in flight per window. Account verification and approval refresh are explicit.
+request in flight per window. Account verification is explicit. Pending actions load once when connector details
+open and remain accessible beside the account list. Further approval refresh is explicit.
+Account authorization is available through Manage.
 There is no timer per account. Connect uses existing MCP transport and Platform uses
 the existing REST adapter; neither mode falls back to another credential type.
 An MCP session 404 clears only the matching cached transport session. Discovery reads

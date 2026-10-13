@@ -17,6 +17,65 @@ defmodule SalixStore.ComposioCredentialsTest do
     :ok
   end
 
+  test "legacy account grants transform once without reviving revoked or unshared access" do
+    tenant = "grant-evolution-#{System.unique_integer([:positive])}"
+    segment = &Base.url_encode64(&1, padding: false)
+
+    for {id, enabled, tools, audience} <- [
+          {"active", true, ["GMAIL_FETCH_EMAILS"], "group"},
+          {"revoked", false, ["GMAIL_FETCH_EMAILS"], "group"},
+          {"empty", true, [], "group"},
+          {"unshared", true, ["GMAIL_FETCH_EMAILS"], nil}
+        ] do
+      {:ok, _} =
+        ComposioAccess.put_account(tenant, "group", "member", id, %{
+          "toolkit" => "gmail",
+          "mode" => "connect",
+          "status" => "ACTIVE",
+          "name" => id
+        })
+
+      key =
+        "ctl/tenants/#{segment.(tenant)}/composio/groups/#{segment.("group")}/agents/#{segment.("agent")}/grants/#{segment.(id)}.json"
+
+      {:ok, _} =
+        S3.put(
+          key,
+          Jason.encode!(%{
+            "user_id" => "member",
+            "account_id" => id,
+            "agent_id" => "agent",
+            "tools" => tools,
+            "enabled" => enabled,
+            "audience" => audience
+          })
+        )
+
+      assert {:ok, grant} = ComposioAccess.agent_account_grant(tenant, "group", "agent", id)
+      assert grant["enabled"] == (id == "active")
+      refute Map.has_key?(grant, "tools")
+      assert {:ok, %{etag: etag}} = S3.get(key)
+      assert {:ok, ^grant} = ComposioAccess.agent_account_grant(tenant, "group", "agent", id)
+      assert {:ok, %{etag: ^etag}} = S3.get(key)
+
+      if id == "active" do
+        assert {:ok, _} = ComposioAccess.authorize(tenant, "group", "agent", "member", id)
+      else
+        assert {:error, :composio_access_denied} =
+                 ComposioAccess.authorize(tenant, "group", "agent", "member", id)
+      end
+
+      assert {:error, :composio_access_denied} =
+               ComposioAccess.authorize(tenant, "group", "other-agent", "member", id)
+
+      assert {:error, :composio_access_denied} =
+               ComposioAccess.authorize(tenant, "other-group", "agent", "member", id)
+
+      assert {:error, :composio_access_denied} =
+               ComposioAccess.authorize(tenant <> "other", "group", "agent", "member", id)
+    end
+  end
+
   test "Connect credentials remain encrypted through storage, refresh and disable" do
     id = "connect-credentials-#{System.unique_integer([:positive])}"
 

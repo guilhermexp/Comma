@@ -3,7 +3,17 @@ defmodule Salix.Control.ComposioConnectTest do
   alias Salix.Control.{RemoteMCPOAuth, ComposioConnect}
   alias SalixStore.{ComposioAccess, OAuth, S3}
 
+  defmodule Scope do
+    def agent_oauth_context(agent) do
+      with {:ok, a} <- SalixAgent.Control.get(agent),
+           do: {:ok, %{tenant: a["tenant_id"], group_id: a["group_id"]}}
+    end
+  end
+
   defmodule Guard do
+    def authorize_composio_member(_, _, "member"), do: :ok
+    def authorize_composio_member(_, _, _), do: {:error, :denied}
+
     def run(
           %{"comma_operation" => %{"workspace_id" => "workspace", "user_id" => "member"}},
           write
@@ -71,10 +81,22 @@ defmodule Salix.Control.ComposioConnectTest do
           )
 
           case {conn.method, conn.request_path} do
+            {"GET", "/api/v3/tools"} ->
+              json(conn, %{
+                "items" => [
+                  %{
+                    "slug" => "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER",
+                    "name" => "List repositories",
+                    "toolkit" => %{"slug" => "github"}
+                  }
+                ]
+              })
+
             {"GET", "/api/v3/connected_accounts/selected"} ->
               json(conn, %{
                 "id" => "selected",
                 "user_id" => "comma:group:member",
+                "toolkit" => %{"slug" => "github"},
                 "status" => "ACTIVE"
               })
 
@@ -187,6 +209,8 @@ defmodule Salix.Control.ComposioConnectTest do
 
   setup do
     entries = [
+      {:salix_agent, :oauth_store_mod},
+      {:salix_agent, :personal_composio_transport},
       {:salix_store, :s3_backend},
       {:salix_store, :composio_base_url_override},
       {:salix_agent, :subscription_storage_key},
@@ -370,6 +394,7 @@ defmodule Salix.Control.ComposioConnectTest do
              end)
 
     assert Enum.reverse(Agent.get(c.state, & &1.calls)) == [
+             {"GET", "/api/v3/tools"},
              {"GET", "/api/v3/connected_accounts/selected"},
              {"POST", "/api/v3.1/tool_router/session"},
              {"DELETE", "/api/v3.1/tool_router/session/prepared"}
@@ -502,6 +527,19 @@ defmodule Salix.Control.ComposioConnectTest do
         &1
         | responses: %{
             "COMPOSIO_SEARCH_TOOLS" => discovery,
+            "COMPOSIO_GET_TOOL_SCHEMAS" => %{
+              "successful" => true,
+              "data" => %{
+                "success" => true,
+                "tool_schemas" => %{
+                  "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER" => %{
+                    "toolkit" => "github",
+                    "tool_slug" => "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER",
+                    "input_schema" => %{"type" => "object"}
+                  }
+                }
+              }
+            },
             "COMPOSIO_MANAGE_CONNECTIONS" => account_list,
             "COMPOSIO_MULTI_EXECUTE_TOOL" => %{"successful" => true, "data" => %{"results" => []}}
           }
@@ -570,6 +608,226 @@ defmodule Salix.Control.ComposioConnectTest do
                c.state,
                &Enum.filter(&1.calls, fn call -> call["name"] == "COMPOSIO_MULTI_EXECUTE_TOOL" end)
              )
+           ) == 1
+  end
+
+  test "authorized account search, schema, exact confirmation and HTTP dispatch preserve isolation and revocation",
+       c do
+    alias SalixAgent.{ComposioBroker, CapabilityRequests}
+    alias SalixStore.Ids
+    tenant = SalixAgent.TestSupport.new_tenant_id()
+    group = Ids.new_group_id(tenant)
+
+    agent =
+      SalixAgent.TestSupport.create_control_agent_in_group!(tenant, group, %{
+        "role" => "router",
+        "runtime_config" => %{"kind" => "internal"}
+      })
+
+    Application.put_env(:salix_agent, :oauth_store_mod, Scope)
+    Application.put_env(:salix_agent, :personal_composio_transport, ComposioConnect)
+
+    {:ok, auth} =
+      RemoteMCPOAuth.start_composio_authorization(tenant, group, "member", "workspace")
+
+    assert {:page, 200, _} = callback(auth)
+
+    ctx = %{
+      agent_id: agent["agent_id"],
+      session_id: Ids.new_session_id(),
+      tool_call_id: "new-action"
+    }
+
+    account = %{
+      "id" => "selected",
+      "toolkit" => "gmail",
+      "mode" => "connect",
+      "status" => "ACTIVE",
+      "name" => "Work"
+    }
+
+    {:ok, _} = ComposioAccess.put_account(tenant, group, "member", "selected", account)
+    {:ok, _} = ComposioAccess.grant(tenant, group, "member", "selected", ctx.agent_id, true)
+
+    definition = %{
+      "toolkit" => "gmail",
+      "tool_slug" => "GMAIL_LIST_LABELS",
+      "input_schema" => %{"type" => "object"}
+    }
+
+    schemas = %{"GMAIL_LIST_LABELS" => definition}
+
+    search_schemas =
+      Map.merge(schemas, %{
+        "GMAIL_SPOOFED" => %{"toolkit" => "github", "tool_slug" => "GMAIL_SPOOFED"},
+        "COMPOSIO_REMOTE_BASH_TOOL" => %{
+          "toolkit" => "gmail",
+          "tool_slug" => "COMPOSIO_REMOTE_BASH_TOOL"
+        }
+      })
+
+    Agent.update(
+      c.state,
+      &%{
+        &1
+        | responses: %{
+            "COMPOSIO_SEARCH_TOOLS" => %{
+              "successful" => true,
+              "data" => %{
+                "toolkit_connection_statuses" => [%{"toolkit" => "gmail"}],
+                "tool_schemas" => search_schemas,
+                "session" => %{"id" => "workflow"}
+              }
+            },
+            "COMPOSIO_GET_TOOL_SCHEMAS" => %{
+              "successful" => true,
+              "data" => %{"success" => true, "tool_schemas" => schemas}
+            },
+            "COMPOSIO_MANAGE_CONNECTIONS" => %{
+              "successful" => true,
+              "data" => %{
+                "results" => %{
+                  "gmail" => %{"accounts" => [%{"id" => "selected", "status" => "ACTIVE"}]}
+                }
+              }
+            },
+            "COMPOSIO_MULTI_EXECUTE_TOOL" => %{
+              "successful" => true,
+              "data" => %{"results" => [%{"successful" => true}]}
+            }
+          }
+      }
+    )
+
+    assert %{"tools" => [%{"slug" => "GMAIL_LIST_LABELS"}], "next_cursor" => nil} =
+             ComposioBroker.search(%{"account_id" => "selected", "query" => "list labels"}, ctx)
+             |> Jason.decode!()
+
+    assert %{"tools" => [%{"input_schema" => _}]} =
+             ComposioBroker.schema(
+               %{"account_id" => "selected", "tool_slugs" => ["GMAIL_LIST_LABELS"]},
+               ctx
+             )
+             |> Jason.decode!()
+
+    action = %{
+      "account_id" => "selected",
+      "tools" => [%{"tool_slug" => "GMAIL_LIST_LABELS", "arguments" => %{"limit" => 1}}]
+    }
+
+    {pending, _} = ComposioBroker.execute(action, ctx)
+    id = Jason.decode!(pending)["request_id"]
+
+    assert Enum.all?(
+             Agent.get(c.state, & &1.calls),
+             &(&1["name"] != "COMPOSIO_MULTI_EXECUTE_TOOL")
+           )
+
+    assert {:error, :not_found} =
+             CapabilityRequests.decide_composio(group, id, tenant, "other-member", true)
+
+    assert {:ok, done} = CapabilityRequests.decide_composio(group, id, tenant, "member", true)
+    refute done["result"]["error"]
+
+    [execution] =
+      Agent.get(
+        c.state,
+        &Enum.filter(&1.calls, fn call -> call["name"] == "COMPOSIO_MULTI_EXECUTE_TOOL" end)
+      )
+
+    assert execution["arguments"]["tools"] == [
+             Map.put(hd(action["tools"]), "account", "selected")
+           ]
+
+    assert {:error, {:conflict, :already_settled}} =
+             CapabilityRequests.decide_composio(group, id, tenant, "member", true)
+
+    {pending, _} = ComposioBroker.execute(action, %{ctx | tool_call_id: "revoked-action"})
+    {:ok, _} = ComposioAccess.grant(tenant, group, "member", "selected", ctx.agent_id, false)
+
+    assert {:ok, denied} =
+             CapabilityRequests.decide_composio(
+               group,
+               Jason.decode!(pending)["request_id"],
+               tenant,
+               "member",
+               true
+             )
+
+    assert denied["result"]["error"]
+
+    assert_raise RuntimeError, fn ->
+      ComposioBroker.search(%{"account_id" => "selected", "query" => "list"}, ctx)
+    end
+
+    {:ok, _} = ComposioAccess.grant(tenant, group, "member", "selected", ctx.agent_id, true)
+    {mode_pending, _} = ComposioBroker.execute(action, %{ctx | tool_call_id: "mode-change"})
+
+    {:ok, _} =
+      ComposioAccess.put_project_settings(tenant, group, "member", %{
+        "api_key" => "fixture-project-key"
+      })
+
+    assert {:ok, mode_denied} =
+             CapabilityRequests.decide_composio(
+               group,
+               Jason.decode!(mode_pending)["request_id"],
+               tenant,
+               "member",
+               true
+             )
+
+    assert mode_denied["result"]["error"]
+
+    {:ok, _} =
+      ComposioAccess.update_profile(
+        tenant,
+        group,
+        "member",
+        &{:ok, Map.put(&1, "mode", "connect")}
+      )
+
+    # A Gmail-looking slug authoritatively owned by GitHub cannot cross toolkits.
+    foreign = %{"toolkit" => "github", "tool_slug" => "GMAIL_SPOOFED", "input_schema" => %{}}
+
+    Agent.update(c.state, fn state ->
+      put_in(
+        state,
+        [:responses, "COMPOSIO_GET_TOOL_SCHEMAS", "data", "tool_schemas"],
+        Map.put(schemas, "GMAIL_SPOOFED", foreign)
+      )
+    end)
+
+    mixed =
+      Map.update!(
+        action,
+        "tools",
+        &(&1 ++ [%{"tool_slug" => "GMAIL_SPOOFED", "arguments" => %{}}])
+      )
+
+    assert_raise RuntimeError, fn -> ComposioBroker.execute(mixed, ctx) end
+
+    assert_raise RuntimeError, fn ->
+      ComposioBroker.schema(%{"account_id" => "selected", "tool_slugs" => ["GMAIL_SPOOFED"]}, ctx)
+    end
+
+    assert_raise RuntimeError, fn ->
+      ComposioBroker.execute(%{action | "account_id" => "sibling"}, ctx)
+    end
+
+    assert_raise RuntimeError, fn ->
+      ComposioBroker.execute(
+        %{
+          action
+          | "tools" => [%{"tool_slug" => "COMPOSIO_REMOTE_WORKBENCH", "arguments" => %{}}]
+        },
+        ctx
+      )
+    end
+
+    assert Enum.count(
+             Agent.get(c.state, & &1.calls),
+             &(&1["name"] == "COMPOSIO_MULTI_EXECUTE_TOOL")
            ) == 1
   end
 

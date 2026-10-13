@@ -1280,7 +1280,7 @@ describe("PluginsRoute", () => {
       ).toHaveLength(1);
       expect(screen.queryByRole("button", { name: "Use this account" })).toBeNull();
 
-      await user.click(screen.getByRole("button", { name: "Connect app Gmail" }));
+      await user.click(screen.getByRole("button", { name: "Connect another account" }));
       await waitFor(() =>
         expect(
           harness.composioCommand.mock.calls.filter(

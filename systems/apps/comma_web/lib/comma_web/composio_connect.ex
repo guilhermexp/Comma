@@ -224,13 +224,14 @@ defmodule CommaWeb.ComposioConnect do
         {"grant", _} ->
           agent_id = params["agent_id"]
 
-          tools = params["tools"] || []
+          enabled = params["enabled"]
 
           with true <- is_binary(agent_id),
-               true <- tools == [] or params["share_with_workspace"] == true,
+               true <- is_boolean(enabled),
+               true <- not enabled or params["share_with_workspace"] == true,
                {:ok, agent} <- SalixAgent.Control.get(agent_id),
                true <- agent["group_id"] == s.group and agent["tenant_id"] == s.tenant do
-            Access.grant(s.tenant, s.group, s.user, id, agent_id, tools)
+            Access.grant(s.tenant, s.group, s.user, id, agent_id, enabled)
           else
             _ -> {:error, :composio_access_denied}
           end
@@ -282,29 +283,6 @@ defmodule CommaWeb.ComposioConnect do
     end
   end
 
-  defp run(s, "tools", %{"account_id" => id} = params) when is_binary(id) do
-    with {:ok, account} <- Access.account(s.tenant, s.group, s.user, id) do
-      if account["mode"] == "project" do
-        with {:ok, settings} <- Access.project_settings(s.tenant, s.group, s.user),
-             {:ok, page} <-
-               SalixStore.Composio.list_tools_page(settings,
-                 toolkit: account["toolkit"],
-                 query: params["query"],
-                 cursor: params["cursor"]
-               ) do
-          {:ok,
-           Map.update!(
-             page,
-             "items",
-             &Enum.filter(&1, fn tool -> tool["toolkit"] == account["toolkit"] end)
-           )}
-        end
-      else
-        Salix.Control.ComposioCatalog.tools(account["toolkit"], params)
-      end
-    end
-  end
-
   defp run(s, "accounts", params) do
     with {:ok, page} <- Access.accounts(s.tenant, s.group, s.user, params["cursor"]),
          do:
@@ -317,10 +295,10 @@ defmodule CommaWeb.ComposioConnect do
     with {:ok, _} <- Access.account(s.tenant, s.group, s.user, id) do
       case Access.agent_account_grant(s.tenant, s.group, agent, id) do
         {:ok, %{"user_id" => user} = grant} when user == s.user ->
-          {:ok, Map.take(grant, ~w(tools enabled))}
+          {:ok, Map.take(grant, ~w(enabled toolkit))}
 
         {:error, :not_found} ->
-          {:ok, %{"tools" => [], "enabled" => false}}
+          {:ok, %{"enabled" => false}}
 
         _ ->
           {:error, :composio_access_denied}
@@ -572,7 +550,7 @@ defmodule CommaWeb.ComposioConnect do
 
   defp public_accounts(accounts) do
     Enum.map(accounts, fn account ->
-      public = Map.take(account, ~w(id toolkit name status mode enabled))
+      public = Map.take(account, ~w(id toolkit name email status mode enabled))
 
       if account_attempt_current(account) == :ok,
         do: public,

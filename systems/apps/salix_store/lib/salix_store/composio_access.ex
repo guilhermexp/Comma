@@ -158,8 +158,8 @@ defmodule SalixStore.ComposioAccess do
     update(account_key(tenant, group, user, id), fn current ->
       {:ok,
        Map.merge(
-         current || %{"enabled" => true},
-         Map.take(account, ~w(id toolkit name status mode))
+         current || %{"enabled" => true, "name" => account["name"]},
+         Map.merge(Map.take(account, ~w(id toolkit status mode)), account_identity(account))
        )
        |> Map.put("id", id)
        |> Map.put("user_id", user)}
@@ -370,23 +370,34 @@ defmodule SalixStore.ComposioAccess do
     end
   end
 
-  def update_account_name(tenant, group, user, id, %{
-        "toolkit" => toolkit,
-        "mode" => mode,
-        "name" => name
-      })
+  def update_account_name(
+        tenant,
+        group,
+        user,
+        id,
+        %{
+          "toolkit" => toolkit,
+          "mode" => mode,
+          "name" => name
+        } = identity
+      )
       when is_binary(name) do
     update(account_key(tenant, group, user, id), fn
       nil ->
         {:error, :not_found}
 
       %{"toolkit" => ^toolkit, "mode" => ^mode} = account ->
-        {:ok, Map.put(account, "name", name)}
+        {:ok, Map.merge(account, account_identity(identity))}
 
       _ ->
         {:error, :composio_account_not_owned}
     end)
   end
+
+  defp account_identity(%{"identity_available" => false}), do: %{}
+
+  defp account_identity(record),
+    do: record |> Map.take(~w(name email)) |> Map.reject(fn {_, value} -> is_nil(value) end)
 
   def enable_account(tenant, group, user, id, enabled) when is_boolean(enabled) do
     update(account_key(tenant, group, user, id), fn
@@ -421,7 +432,8 @@ defmodule SalixStore.ComposioAccess do
             {:error, :composio_account_not_owned}
 
           true ->
-            {:ok, Map.merge(account, Map.take(remote, ~w(name status)))}
+            {:ok,
+             Map.merge(account, Map.merge(Map.take(remote, ~w(status)), account_identity(remote)))}
         end
     end)
   end
@@ -430,48 +442,88 @@ defmodule SalixStore.ComposioAccess do
     page(account_prefix(tenant, group, user), cursor)
   end
 
-  def grant(tenant, group, user, account, agent, tools)
-      when is_list(tools) and length(tools) <= 50 do
-    if Enum.all?(
-         tools,
-         &(is_binary(&1) and String.match?(&1, ~r/^[A-Z0-9_]{1,180}$/) and
-             not String.starts_with?(&1, "COMPOSIO_"))
-       ) do
-      update(grant_key(tenant, group, agent, user, account), fn _ ->
+  # Account/toolkit authority, never an allowlist of action names.
+  def grant(tenant, group, user, id, agent, enabled) when is_boolean(enabled) do
+    with {:ok, account} <- account(tenant, group, user, id) do
+      update(grant_key(tenant, group, agent, user, id), fn _ ->
         {:ok,
          %{
            "user_id" => user,
-           "account_id" => account,
+           "account_id" => id,
            "agent_id" => agent,
-           "tools" => Enum.uniq(tools),
+           "toolkit" => account["toolkit"],
+           "mode" => account["mode"],
+           "access" => "toolkit",
            "audience" => "group",
-           "enabled" => tools != []
+           "enabled" => enabled
          }}
       end)
-    else
-      {:error, :invalid_tools}
     end
   end
 
-  def grant(_, _, _, _, _, _), do: {:error, :invalid_tools}
+  def grant(_, _, _, _, _, _), do: {:error, :invalid_grant}
 
-  def grants(tenant, group, agent, cursor \\ nil),
-    do: page(grant_prefix(tenant, group, agent), cursor)
+  def grants(tenant, group, agent, cursor \\ nil) do
+    with {:ok, page} <- page(grant_prefix(tenant, group, agent), cursor) do
+      Enum.reduce_while(page["items"], {:ok, []}, fn grant, {:ok, items} ->
+        case agent_account_grant(tenant, group, agent, grant["account_id"]) do
+          {:ok, migrated} -> {:cont, {:ok, [migrated | items]}}
+          error -> {:halt, error}
+        end
+      end)
+      |> case do
+        {:ok, items} -> {:ok, Map.put(page, "items", Enum.reverse(items))}
+        error -> error
+      end
+    end
+  end
 
   def agent_account_grant(tenant, group, agent, id) do
-    case read(grant_key(tenant, group, agent, nil, id)) do
-      {:ok, grant, _} -> {:ok, grant}
-      error -> error
+    key = grant_key(tenant, group, agent, nil, id)
+
+    with {:ok, grant, _} <- read(key) do
+      if grant["access"] == "toolkit" do
+        {:ok, grant}
+      else
+        # One durable CAS transformation at the bounded point/page read. Only
+        # explicit active legacy grants evolve; revoked/empty/missing-audience
+        # records remain inactive. No tools-based execution path survives.
+        update(key, fn current ->
+          if current["access"] == "toolkit" do
+            {:ok, current}
+          else
+            with {:ok, account} <- account(tenant, group, current["user_id"], id) do
+              enabled =
+                current["enabled"] == true and current["audience"] == "group" and
+                  is_list(current["tools"]) and current["tools"] != []
+
+              {:ok,
+               current
+               |> Map.delete("tools")
+               |> Map.merge(%{
+                 "access" => "toolkit",
+                 "toolkit" => account["toolkit"],
+                 "mode" => account["mode"],
+                 "enabled" => enabled
+               })}
+            end
+          end
+        end)
+      end
     end
   end
 
-  def authorize(tenant, group, agent, user, id, tool) do
+  def authorize(tenant, group, agent, user, id) do
     with {:ok, account} <- account(tenant, group, user, id),
+         {:ok, profile} <- profile(tenant, group, user),
+         true <- profile["mode"] == account["mode"],
          true <- account["enabled"] == true and account["status"] == "ACTIVE",
-         {:ok, grant, _} <- read(grant_key(tenant, group, agent, user, id)),
+         {:ok, grant} <- agent_account_grant(tenant, group, agent, id),
          true <-
-           grant["user_id"] == user and grant["enabled"] == true and grant["audience"] == "group" and
-             tool in grant["tools"] do
+           grant["user_id"] == user and grant["agent_id"] == agent and
+             grant["account_id"] == id and grant["enabled"] == true and
+             grant["audience"] == "group" and grant["access"] == "toolkit" and
+             grant["toolkit"] == account["toolkit"] and grant["mode"] == account["mode"] do
       {:ok, account}
     else
       _ -> {:error, :composio_access_denied}

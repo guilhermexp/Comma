@@ -26,13 +26,7 @@ const signedOut: ComposioStatus = {
 type Consent = {
   id: string;
   toolkit: string;
-  status:
-    | "starting"
-    | "pending"
-    | "selecting"
-    | "completed"
-    | "cancelled"
-    | "expired";
+  status: "starting" | "pending" | "selecting" | "completed" | "cancelled" | "expired";
   expires_at: number;
 };
 function show(
@@ -41,26 +35,23 @@ function show(
   startConnecting = false
 ) {
   const originalCommand = api.composioCommand;
-  const getConsent = () =>
-    typeof consent === "function" ? consent() : consent;
+  const getConsent = () => (typeof consent === "function" ? consent() : consent);
   let composioCommand: CommaApiClient["composioCommand"];
   if (originalCommand && vi.isMockFunction(originalCommand)) {
     const implementation = originalCommand.getMockImplementation();
     originalCommand.mockImplementation(async (workspace, action, params, options) => {
       if (action === "consent" && params?.operation === "get")
         return { consent: getConsent() };
-      return implementation
-        ? implementation(workspace, action, params, options)
-        : {};
+      if (action === "approvals") return { requests: [], next_cursor: null };
+      return implementation ? implementation(workspace, action, params, options) : {};
     });
     composioCommand = originalCommand;
   } else {
     composioCommand = async (workspace, action, params = {}, options) => {
       if (action === "consent" && params.operation === "get")
         return { consent: getConsent() };
-      return originalCommand
-        ? originalCommand(workspace, action, params, options)
-        : {};
+      if (action === "approvals") return { requests: [], next_cursor: null };
+      return originalCommand ? originalCommand(workspace, action, params, options) : {};
     };
   }
   return render(
@@ -68,7 +59,16 @@ function show(
       <ComposioConnectorDetail
         plugin={{ id: "composio:github", name: "GitHub", summary: "Code hosting" }}
         toolkit="github"
-        api={{ ...api, composioCommand } as CommaApiClient}
+        api={
+          {
+            getAgentModels: async () => ({
+              agents: { router: { agent_id: "router", name: "Router" } },
+              workers: { items: [], next_cursor: null },
+            }),
+            ...api,
+            composioCommand,
+          } as CommaApiClient
+        }
         workspaceId="workspace"
         onBack={() => {}}
         startConnecting={startConnecting}
@@ -143,12 +143,17 @@ it("app consent reopen and cancel address the selected account, not the Composio
     }),
     composioCommand,
   });
-  await user.click(await screen.findByRole("button", { name: "Reopen authorization" }));
-  await waitFor(() => expect(openNativePlatformExternalUrl).toHaveBeenCalledOnce());
-  expect(screen.getAllByRole("button", { name: "Cancel authorization" })).toHaveLength(
-    1
+  await screen.findByText("Inactive accounts and past attempts");
+  await user.click(screen.getByText("Inactive accounts and past attempts"));
+  await user.click(screen.getByRole("button", { name: "Account options for Linear" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Reopen authorization" })
   );
-  await user.click(screen.getByRole("button", { name: "Cancel authorization" }));
+  await waitFor(() => expect(openNativePlatformExternalUrl).toHaveBeenCalledOnce());
+  await user.click(screen.getByRole("button", { name: "Account options for Linear" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Cancel authorization" })
+  );
   await waitFor(() =>
     expect(composioCommand).toHaveBeenLastCalledWith("workspace", "account", {
       account_id: "selected-account",
@@ -176,15 +181,20 @@ it("connects the selected connector from its existing detail flow", async () => 
     }
     return {};
   });
-  show({
-    getComposio: async () => ({ ...signedOut, status: "connected" }),
-    composioCommand,
-    getAgentModels: vi.fn().mockResolvedValue({
-      agents: { router: { agent_id: "router", name: "Router" } },
-      workers: { items: [], next_cursor: null },
-    }),
-  }, () => consent);
-  await user.click(await screen.findByRole("button", { name: "Connect app GitHub" }));
+  show(
+    {
+      getComposio: async () => ({ ...signedOut, status: "connected" }),
+      composioCommand,
+      getAgentModels: vi.fn().mockResolvedValue({
+        agents: { router: { agent_id: "router", name: "Router" } },
+        workers: { items: [], next_cursor: null },
+      }),
+    },
+    () => consent
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Connect another account" })
+  );
   expect(composioCommand).toHaveBeenCalledWith("workspace", "connect", {
     toolkit: "github",
   });
@@ -209,7 +219,9 @@ it("keeps project-mode connector authorization separate from Connect consent", a
     composioCommand,
   });
 
-  await user.click(await screen.findByRole("button", { name: "Connect app GitHub" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Connect another account" })
+  );
   await waitFor(() => expect(openNativePlatformExternalUrl).toHaveBeenCalledOnce());
   expect(openNativePlatformExternalUrl).toHaveBeenCalledWith(
     "https://provider.example/project-consent"
@@ -302,7 +314,9 @@ it("does not start another Add after cancelling consent on an auto-connect detai
     true
   );
 
-  expect(await screen.findByRole("button", { name: "Cancel authorization" })).toBeInTheDocument();
+  expect(
+    await screen.findByRole("button", { name: "Cancel authorization" })
+  ).toBeInTheDocument();
   expect(composioCommand).not.toHaveBeenCalledWith(
     "workspace",
     "connect",
@@ -346,11 +360,14 @@ it("refreshes consent after a failed Connect request so starting can be cancelle
     () => consent
   );
 
-  await user.click(await screen.findByRole("button", { name: "Connect app GitHub" }));
-  expect(await screen.findByRole("button", { name: "Cancel authorization" })).toBeInTheDocument();
+  await user.click(
+    await screen.findByRole("button", { name: "Connect another account" })
+  );
+  expect(
+    await screen.findByRole("button", { name: "Cancel authorization" })
+  ).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Reopen authorization" })).toBeNull();
-  expect(composioCommand).toHaveBeenNthCalledWith(
-    3,
+  expect(composioCommand).toHaveBeenCalledWith(
     "workspace",
     "consent",
     { toolkit: "github", operation: "get" },
@@ -376,7 +393,10 @@ it("reopens and cancels the pending consent by its ID without profile login acti
     return {};
   });
   show(
-    { getComposio: async () => ({ ...signedOut, status: "connected" }), composioCommand },
+    {
+      getComposio: async () => ({ ...signedOut, status: "connected" }),
+      composioCommand,
+    },
     () => consent
   );
 
@@ -449,12 +469,13 @@ it("selects the explicitly named connection when two connections share a provide
     }
   );
 
-  const label = await screen.findByText(
-    /Casey Example <casey@example.test> \(verified-account-two\)/,
-    { selector: "p" }
-  );
+  await screen.findAllByText(/Casey Example <casey@example.test>/);
   await user.click(
-    within(label.parentElement!).getByRole("button", { name: "Use this account" })
+    within(
+      screen.getByRole("group", {
+        name: "Casey Example <casey@example.test> · Connection 2",
+      })
+    ).getByRole("button", { name: "Use this account" })
   );
   await waitFor(() =>
     expect(composioCommand).toHaveBeenCalledWith("workspace", "consent", {
@@ -497,7 +518,9 @@ it("does not treat a consent URL as a connected account", async () => {
     () => consent
   );
 
-  await user.click(await screen.findByRole("button", { name: "Connect app GitHub" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Connect another account" })
+  );
   expect(
     await screen.findByText(
       "Complete authorization in your browser. Then show accounts and choose which account to use."
@@ -506,7 +529,11 @@ it("does not treat a consent URL as a connected account", async () => {
   expect(openNativePlatformExternalUrl).toHaveBeenCalledWith(
     "https://provider.example/private-consent"
   );
-  expect(await screen.findByText("No verified accounts for this app. Connect an account to continue.")).toBeInTheDocument();
+  expect(
+    await screen.findByText(
+      "No verified accounts for this app. Connect an account to continue."
+    )
+  ).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Use this account" })).toBeNull();
 });
 
@@ -526,7 +553,9 @@ it("allows cancellation while consent is starting and hides reopen", async () =>
     }
   );
 
-  expect(await screen.findByRole("button", { name: "Cancel authorization" })).toBeInTheDocument();
+  expect(
+    await screen.findByRole("button", { name: "Cancel authorization" })
+  ).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Reopen authorization" })).toBeNull();
   await user.click(screen.getByRole("button", { name: "Cancel authorization" }));
   await waitFor(() =>
@@ -547,7 +576,7 @@ it("explains expired app consent without requiring a working account to sign in 
           authorization_url: "https://provider.example/consent",
           status: "pending",
         }
-      : { tools: [] }
+      : { enabled: false }
   );
   show(
     {
@@ -579,12 +608,11 @@ it("explains expired app consent without requiring a working account to sign in 
     }
   );
 
-  await waitFor(() =>
-    expect(screen.getByRole("status")).toHaveTextContent("Connected")
-  );
-  const expiry = await screen.findByText(/app connection attempt expired/i);
-  expect(expiry).toHaveTextContent(/does not affect existing connections/i);
-  expect(expiry).toHaveTextContent(/Connect app.*new attempt/i);
+  await screen.findByText("Connected", { selector: "span" });
+  await user.click(screen.getByText("Inactive accounts and past attempts"));
+  const expiry = screen.getByText(/past attempt expired/i);
+  expect(expiry).toHaveTextContent(/Existing connections are unaffected/i);
+  expect(expiry).toHaveTextContent(/Connect another account/i);
   expect(screen.queryByRole("button", { name: "Sign in with Composio" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Cancel authorization" })).toBeNull();
   expect(composioCommand).not.toHaveBeenCalledWith(
@@ -593,7 +621,7 @@ it("explains expired app consent without requiring a working account to sign in 
     expect.anything()
   );
 
-  await user.click(screen.getByRole("button", { name: "Connect app GitHub" }));
+  await user.click(screen.getByRole("button", { name: "Connect another account" }));
   expect(composioCommand).toHaveBeenCalledWith("workspace", "connect", {
     toolkit: "github",
   });
@@ -659,7 +687,10 @@ it("disconnect requires confirmation for the selected account", async () => {
     composioCommand,
   });
   await user.click(
-    await screen.findByRole("button", { name: "Disconnect this account" })
+    await screen.findByRole("button", { name: "Account options for Work GitHub" })
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Disconnect this account" })
   );
   expect(composioCommand).not.toHaveBeenCalledWith(
     "workspace",
@@ -672,9 +703,13 @@ it("disconnect requires confirmation for the selected account", async () => {
     "account",
     expect.objectContaining({ operation: "disconnect" })
   );
+  await user.click(
+    screen.getByRole("button", { name: "Account options for Work GitHub" })
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Disconnect this account" })
+  );
   await user.click(screen.getByRole("button", { name: "Disconnect this account" }));
-  const buttons = screen.getAllByRole("button", { name: "Disconnect this account" });
-  await user.click(buttons[buttons.length - 1]!);
   await waitFor(() =>
     expect(composioCommand).toHaveBeenCalledWith("workspace", "account", {
       account_id: "selected-account",
@@ -683,21 +718,11 @@ it("disconnect requires confirmation for the selected account", async () => {
   );
 });
 
-it("selects discovered actions by label and saves their exact IDs for the chosen account", async () => {
+it("authorizes the exact account for an agent with explicit workspace audience consent", async () => {
   const user = userEvent.setup();
   const composioCommand = vi.fn(async (_workspace, action) => {
-    if (action === "grant") return { tools: [] };
-    if (action === "tools")
-      return {
-        items: [
-          {
-            slug: "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER",
-            name: "List repositories",
-            description: "Read repository names",
-          },
-        ],
-        next_cursor: null,
-      };
+    if (action === "grant") return { enabled: false };
+    if (action === "approvals") return { requests: [], next_cursor: null };
     return {};
   });
   show({
@@ -721,16 +746,9 @@ it("selects discovered actions by label and saves their exact IDs for the chosen
     }),
     composioCommand,
   });
-  await user.click(await screen.findByRole("button", { name: /Connected accounts/ }));
-  await user.click(await screen.findByRole("option", { name: /Work GitHub/ }));
-  await user.type(
-    await screen.findByRole("textbox", { name: /Search actions by name/ }),
-    "List repositories"
-  );
-  const searches = screen.getAllByRole("button", { name: "Search" });
-  await user.click(searches[searches.length - 1]!);
-  await user.click(await screen.findByRole("checkbox", { name: /List repositories/ }));
-  expect(screen.getByRole("button", { name: "Save access" })).toBeDisabled();
+  await user.click(await screen.findByRole("button", { name: "Manage" }));
+  expect(await screen.findByRole("button", { name: "Save access" })).toBeDisabled();
+  await screen.findByText("This account is not authorized for this agent.");
   await user.click(
     screen.getByRole("checkbox", {
       name: /Results may appear in workspace conversations/,
@@ -742,8 +760,9 @@ it("selects discovered actions by label and saves their exact IDs for the chosen
       operation: "grant",
       account_id: "selected-account",
       agent_id: "router",
-      tools: ["GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER"],
+      enabled: true,
       share_with_workspace: true,
     })
   );
+  expect(composioCommand.mock.calls.some((call) => call[1] === "tools")).toBe(false);
 });

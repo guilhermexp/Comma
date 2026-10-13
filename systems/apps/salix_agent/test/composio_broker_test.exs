@@ -17,7 +17,13 @@ defmodule SalixAgent.ComposioBrokerTest do
         else: :ok
     end
 
-    def schema(_, _, _, _, tools), do: {:ok, %{"tools" => tools}}
+    def search(_, _, _, _, _, _), do: {:ok, %{"tools" => [], "next_cursor" => nil}}
+
+    def schema(_, _, _, _, tools) do
+      if Enum.all?(tools, &(&1 in ~w(GMAIL_FETCH_EMAILS GMAIL_SEND_EMAIL))),
+        do: {:ok, %{"tools" => tools}},
+        else: {:error, :wrong_toolkit}
+    end
 
     def execute(tenant, group, user, account, tools, authorize_effect) do
       Application.get_env(:salix_agent, :composio_prepare_hook, fn -> :ok end).()
@@ -85,10 +91,7 @@ defmodule SalixAgent.ComposioBrokerTest do
       })
 
     {:ok, _} =
-      ComposioAccess.grant(tenant, group, "member", "account-a", ctx.agent_id, [
-        "GMAIL_FETCH_EMAILS",
-        "GMAIL_SEND_EMAIL"
-      ])
+      ComposioAccess.grant(tenant, group, "member", "account-a", ctx.agent_id, true)
 
     %{tenant: tenant, group: group, ctx: ctx}
   end
@@ -144,6 +147,9 @@ defmodule SalixAgent.ComposioBrokerTest do
                ctx
              )
 
+    assert {:tool_ifc, _, [], %{"label" => [^group_label]}} =
+             ComposioBroker.search(%{"account_id" => "account-a", "query" => "find email"}, ctx)
+
     {pending, _} = ComposioBroker.execute(args(), ctx)
     id = Jason.decode!(pending)["request_id"]
     assert {:ok, done} = decide(c, id, true)
@@ -180,7 +186,10 @@ defmodule SalixAgent.ComposioBrokerTest do
 
   test "revocation after discovery and approval request blocks dispatch", c do
     id = pending(c)
-    {:ok, _} = ComposioAccess.grant(c.tenant, c.group, "member", "account-a", c.ctx.agent_id, [])
+
+    {:ok, _} =
+      ComposioAccess.grant(c.tenant, c.group, "member", "account-a", c.ctx.agent_id, false)
+
     assert {:ok, done} = decide(c, id, true)
     assert done["result"]["error"]
     refute_received {:effect, _, _, _, _, _}
@@ -190,7 +199,7 @@ defmodule SalixAgent.ComposioBrokerTest do
     id = pending(c)
 
     Application.put_env(:salix_agent, :composio_prepare_hook, fn ->
-      ComposioAccess.grant(c.tenant, c.group, "member", "account-a", c.ctx.agent_id, [])
+      ComposioAccess.grant(c.tenant, c.group, "member", "account-a", c.ctx.agent_id, false)
     end)
 
     assert {:ok, done} = decide(c, id, true)
@@ -211,7 +220,9 @@ defmodule SalixAgent.ComposioBrokerTest do
   end
 
   test "connected alone reveals no account and grants no schema or execution", c do
-    {:ok, _} = ComposioAccess.grant(c.tenant, c.group, "member", "account-a", c.ctx.agent_id, [])
+    {:ok, _} =
+      ComposioAccess.grant(c.tenant, c.group, "member", "account-a", c.ctx.agent_id, false)
+
     assert Jason.decode!(ComposioBroker.accounts(%{}, c.ctx))["accounts"] == []
 
     assert_raise RuntimeError, fn ->
@@ -265,8 +276,7 @@ defmodule SalixAgent.ComposioBrokerTest do
                c.group <> "other",
                c.ctx.agent_id,
                "member",
-               "account-a",
-               "GMAIL_FETCH_EMAILS"
+               "account-a"
              )
 
     assert {:error, :composio_access_denied} =
@@ -275,8 +285,7 @@ defmodule SalixAgent.ComposioBrokerTest do
                c.group,
                c.ctx.agent_id,
                "other",
-               "account-a",
-               "GMAIL_FETCH_EMAILS"
+               "account-a"
              )
 
     refute_received {:effect, _, _, _, _, _}

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
-import { Button, Dropdown, InputField, Checkbox, ScrollAreaLoadMore } from "@comma/ui";
+import { Button, Dropdown, Checkbox, ScrollAreaLoadMore } from "@comma/ui";
 import { useCommaMessages } from "@comma/i18n/react";
+import { composioAccountPresentation } from "./composioAccountPresentation";
 import type { CommaApiClient, ComposioAccount } from "../../api";
 
 const approvalSchema = z.object({
@@ -20,25 +21,16 @@ const approvalsSchema = z.object({
   next_cursor: z.string().nullable(),
 });
 
-const toolPageSchema = z.object({
-  items: z.array(
-    z.object({
-      slug: z.string(),
-      name: z.string(),
-      description: z.string().nullable().optional(),
-    })
-  ),
-  next_cursor: z.string().nullable(),
-});
-
 export function ComposioAccessPanel({
   api,
   workspaceId,
   accounts,
+  manageAccess = false,
 }: {
   api: CommaApiClient;
   workspaceId: string;
   accounts: ComposioAccount[];
+  manageAccess?: boolean;
 }) {
   const m = useCommaMessages();
   const [agents, setAgents] = useState<{ id: string; label: string }[]>([]);
@@ -57,12 +49,8 @@ export function ComposioAccessPanel({
       );
     }
   }, [accounts, account]);
-  const [tools, setTools] = useState<string[]>([]);
-  const [toolQuery, setToolQuery] = useState("");
-  const [availableTools, setAvailableTools] = useState<
-    { slug: string; name: string; description?: string | null | undefined }[]
-  >([]);
-  const [toolCursor, setToolCursor] = useState<string | null>(null);
+  const [enabled, setEnabled] = useState(false);
+  const [grantLoaded, setGrantLoaded] = useState(false);
   const [approvals, setApprovals] = useState<z.infer<typeof approvalSchema>[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState(false);
@@ -94,10 +82,11 @@ export function ComposioAccessPanel({
   }, [api, workspaceId]);
 
   useEffect(() => {
-    setTools([]);
+    setEnabled(false);
+    setGrantLoaded(false);
     setSharingAccepted(false);
     setSaved(false);
-    if (!agent || !account) return;
+    if (!manageAccess || !agent || !account) return;
     const controller = new AbortController();
     void api
       .composioCommand(
@@ -107,38 +96,32 @@ export function ComposioAccessPanel({
         { signal: controller.signal }
       )
       .then((result) => {
-        if (!controller.signal.aborted)
-          setTools(z.object({ tools: z.array(z.string()) }).parse(result).tools);
+        if (!controller.signal.aborted) {
+          setEnabled(z.object({ enabled: z.boolean() }).parse(result).enabled);
+          setGrantLoaded(true);
+        }
       })
       .catch(() => {
         if (!controller.signal.aborted) setError(true);
       });
     return () => controller.abort();
-  }, [api, workspaceId, agent, account]);
+  }, [api, workspaceId, agent, account, manageAccess]);
 
   useEffect(() => {
-    setAvailableTools([]);
-    setToolCursor(null);
-    if (!account) return;
     const controller = new AbortController();
     void api
-      .composioCommand(
-        workspaceId,
-        "tools",
-        { account_id: account, query: "" },
-        { signal: controller.signal }
-      )
+      .composioCommand(workspaceId, "approvals", {}, { signal: controller.signal })
       .then((result) => {
         if (controller.signal.aborted) return;
-        const page = toolPageSchema.parse(result);
-        setAvailableTools(page.items);
-        setToolCursor(page.next_cursor);
+        const page = approvalsSchema.parse(result);
+        setApprovals(page.requests);
+        setCursor(page.next_cursor);
       })
       .catch(() => {
         if (!controller.signal.aborted) setError(true);
       });
     return () => controller.abort();
-  }, [api, workspaceId, account]);
+  }, [api, workspaceId]);
 
   const run = async (operation: () => Promise<void>) => {
     if (inFlight.current) return;
@@ -155,16 +138,6 @@ export function ComposioAccessPanel({
       setBusy(false);
     }
   };
-  const searchTools = async (next?: string) => {
-    const response = await api.composioCommand(workspaceId, "tools", {
-      account_id: account,
-      query: toolQuery,
-      ...(next ? { cursor: next } : {}),
-    });
-    const page = toolPageSchema.parse(response);
-    setAvailableTools((current) => (next ? [...current, ...page.items] : page.items));
-    setToolCursor(page.next_cursor);
-  };
   const loadApprovals = async (next?: string) => {
     const result = approvalsSchema.parse(
       await api.composioCommand(workspaceId, "approvals", next ? { cursor: next } : {})
@@ -177,151 +150,121 @@ export function ComposioAccessPanel({
 
   return (
     <section className="flex flex-col gap-lg">
-      <h2 className="m-0 text-lg font-medium">{m.composio_agent_access()}</h2>
-      <p className="m-0 text-sm text-secondary">{m.composio_grant_hint()}</p>
-      {error && <p role="alert">{m.composio_error()}</p>}
-      {outcome && <output>{outcome}</output>}
-      {saved && <output>{m.composio_grant_saved()}</output>}
-      <Dropdown
-        label={m.composio_agent()}
-        items={agents}
-        value={agent}
-        onChange={setAgent}
-        disabled={busy}
-      />
-      {workerCursor && (
-        <Button
-          hierarchy="tertiary-gray"
-          isDisabled={busy}
-          onPress={() =>
-            void run(async () => {
-              const page = await api.getWorkerModels(workspaceId, workerCursor);
-              setAgents((current) => [
-                ...current,
-                ...page.items.map((item) => ({ id: item.agent_id, label: item.name })),
-              ]);
-              setWorkerCursor(page.next_cursor);
-            })
-          }
-        >
-          {m.composio_next()}
-        </Button>
-      )}
-      <Dropdown
-        label={m.composio_accounts()}
-        items={accounts
-          .filter((item) => item.status === "ACTIVE" && item.enabled)
-          .map((item) => ({ id: item.id, label: item.name }))}
-        value={account}
-        onChange={setAccount}
-        disabled={busy}
-      />
-      {account && (
+      {manageAccess && (
         <>
-          <form
-            className="flex items-end gap-md"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void run(() => searchTools());
-            }}
-          >
-            <InputField
-              className="flex-1"
-              label={m.composio_tools()}
-              value={toolQuery}
-              maxLength={500}
-              onChange={(event) => setToolQuery(event.target.value)}
-            />
-            <Button type="submit" isDisabled={busy}>
-              {m.composio_search_action()}
-            </Button>
-          </form>
-          {[
-            ...availableTools,
-            ...tools
-              .filter((slug) => !availableTools.some((tool) => tool.slug === slug))
-              .map((slug) => ({
-                slug,
-                name: slug
-                  .split("_")
-                  .slice(1)
-                  .map((word) => word.toLowerCase())
-                  .join(" "),
-                description: null,
-              })),
-          ].map((tool) => (
-            <Checkbox
-              key={tool.slug}
-              label={tool.name}
-              {...(tool.description ? { hint: tool.description } : {})}
-              checked={tools.includes(tool.slug)}
-              disabled={busy}
-              onChange={(event) => {
-                setSaved(false);
-                setTools((current) =>
-                  event.target.checked
-                    ? [...current, tool.slug]
-                    : current.filter((slug) => slug !== tool.slug)
-                );
-              }}
-            />
-          ))}
-          <ScrollAreaLoadMore
-            hasMore={Boolean(toolCursor)}
-            loading={busy}
-            failed={error}
-            onLoadMore={() => {
-              if (toolCursor) void run(() => searchTools(toolCursor));
-            }}
+          <h2 className="m-0 text-sm font-medium">{m.composio_agent_access()}</h2>
+          <p className="m-0 text-sm text-secondary">{m.composio_grant_hint()}</p>
+          {saved && <output>{m.composio_grant_saved()}</output>}
+          <Dropdown
+            label={m.composio_agent()}
+            items={agents}
+            value={agent}
+            onChange={setAgent}
+            disabled={busy}
           />
+          {workerCursor && (
+            <Button
+              hierarchy="tertiary-gray"
+              isDisabled={busy}
+              onPress={() =>
+                void run(async () => {
+                  const page = await api.getWorkerModels(workspaceId, workerCursor);
+                  setAgents((current) => [
+                    ...current,
+                    ...page.items.map((item) => ({
+                      id: item.agent_id,
+                      label: item.name,
+                    })),
+                  ]);
+                  setWorkerCursor(page.next_cursor);
+                })
+              }
+            >
+              {m.composio_next()}
+            </Button>
+          )}
+          <Dropdown
+            label={m.composio_accounts()}
+            items={accounts
+              .filter((item) => item.status === "ACTIVE" && item.enabled)
+              .map((item) => {
+                const { name, email, number } = composioAccountPresentation(
+                  item,
+                  accounts
+                );
+                return {
+                  id: item.id,
+                  label: [
+                    name,
+                    email !== name ? email : null,
+                    number ? m.composio_connection_number({ number }) : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · "),
+                };
+              })}
+            value={account}
+            onChange={setAccount}
+            disabled={busy}
+          />
+          <output className="text-sm text-secondary">
+            {enabled ? m.composio_access_allowed() : m.composio_access_not_allowed()}
+          </output>
+          <Checkbox
+            label={m.composio_share_confirmation()}
+            checked={sharingAccepted}
+            disabled={busy || !account}
+            onChange={(event) => setSharingAccepted(event.target.checked)}
+          />
+          <div className="flex gap-md">
+            <Button
+              isDisabled={
+                busy || !agent || !account || !grantLoaded || !sharingAccepted
+              }
+              onPress={() =>
+                void run(async () => {
+                  await api.composioCommand(workspaceId, "account", {
+                    operation: "grant",
+                    account_id: account,
+                    agent_id: agent,
+                    enabled: true,
+                    share_with_workspace: true,
+                  });
+                  setEnabled(true);
+                  setSaved(true);
+                })
+              }
+            >
+              {m.composio_grant()}
+            </Button>
+            <Button
+              hierarchy="secondary-gray"
+              isDisabled={busy || !agent || !account}
+              onPress={() =>
+                void run(async () => {
+                  await api.composioCommand(workspaceId, "account", {
+                    operation: "grant",
+                    account_id: account,
+                    agent_id: agent,
+                    enabled: false,
+                  });
+                  setEnabled(false);
+                  setSaved(true);
+                })
+              }
+            >
+              {m.composio_revoke()}
+            </Button>
+          </div>
         </>
       )}
-      <Checkbox
-        label={m.composio_share_confirmation()}
-        checked={sharingAccepted}
-        disabled={busy || !account}
-        onChange={(event) => setSharingAccepted(event.target.checked)}
-      />
-      <div className="flex gap-md">
-        <Button
-          isDisabled={
-            busy || !agent || !account || tools.length === 0 || !sharingAccepted
-          }
-          onPress={() =>
-            void run(async () => {
-              await api.composioCommand(workspaceId, "account", {
-                operation: "grant",
-                account_id: account,
-                agent_id: agent,
-                tools,
-                share_with_workspace: true,
-              });
-              setSaved(true);
-            })
-          }
-        >
-          {m.composio_grant()}
-        </Button>
-        <Button
-          hierarchy="secondary-gray"
-          isDisabled={busy || !agent || !account}
-          onPress={() =>
-            void run(async () => {
-              await api.composioCommand(workspaceId, "account", {
-                operation: "grant",
-                account_id: account,
-                agent_id: agent,
-                tools: [],
-              });
-              setTools([]);
-              setSaved(true);
-            })
-          }
-        >
-          {m.composio_revoke()}
-        </Button>
-      </div>
-      <h2 className="m-0 text-lg font-medium">{m.composio_approvals()}</h2>
+      {error && (
+        <p role="alert" className="text-sm text-secondary">
+          {m.composio_error()}
+        </p>
+      )}
+      {outcome && <output className="text-sm">{outcome}</output>}
+      <h2 className="m-0 text-sm font-medium">{m.composio_approvals()}</h2>
       <div>
         <Button
           hierarchy="secondary-gray"
@@ -347,10 +290,7 @@ export function ComposioAccessPanel({
             </p>
             {request.request_payload.tools.map((tool, index) => (
               <div key={`${index}:${tool.tool_slug}`}>
-                <p className="m-0 text-sm font-medium">
-                  {availableTools.find((item) => item.slug === tool.tool_slug)?.name ??
-                    tool.tool_slug.split("_").slice(1).join(" ").toLowerCase()}
-                </p>
+                <p className="m-0 text-sm font-medium">{tool.tool_slug}</p>
                 <dl className="m-0 flex flex-col gap-sm text-sm">
                   {Object.entries(tool.arguments).map(([name, value]) => (
                     <div key={name}>

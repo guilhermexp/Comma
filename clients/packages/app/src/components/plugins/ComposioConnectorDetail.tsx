@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useCommaMessages } from "@comma/i18n/react";
 import {
+  Avatar,
+  Menu,
+  MenuItem,
+  MenuPopover,
+  MenuTrigger,
+  MoreHorizontalIcon,
   Button,
   InputField,
   ScrollAreaLoadMore,
@@ -9,11 +15,12 @@ import {
   PluginDetail,
   type PluginDefinition,
 } from "@comma/ui";
-import type { CommaApiClient, ComposioStatus } from "../../api";
+import type { CommaApiClient, ComposioStatus, ComposioAccount } from "../../api";
 import { composioAccountSchema } from "../../api";
 import { z } from "zod";
 import { openNativePlatformExternalUrl } from "../../runtime-chat/nativePlatformActions";
 
+import { composioAccountPresentation } from "./composioAccountPresentation";
 import { ComposioAccessPanel } from "./ComposioAccessPanel";
 
 const consentSchema = z.object({
@@ -62,8 +69,10 @@ export function ComposioConnectorDetail({
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [advanced, setAdvanced] = useState(false);
+  const [inactiveOpen, setInactiveOpen] = useState(false);
   const [configuring, setConfiguring] = useState(false);
   const [key, setKey] = useState("");
+  const [details, setDetails] = useState<ComposioAccount>();
   const [disconnect, setDisconnect] = useState<{ id: string; name: string }>();
   const [authorization, setAuthorization] = useState<string>();
   const mounted = useRef(true);
@@ -242,19 +251,141 @@ export function ComposioConnectorDetail({
     }
   });
 
+  const accounts =
+    status?.accounts.filter(
+      (account) => account.toolkit === toolkit && account.mode === status.mode
+    ) ?? [];
+  const connected = accounts.filter(
+    (account) => account.status === "ACTIVE" && account.enabled
+  );
+  const inactive = accounts.filter(
+    (account) => account.status !== "ACTIVE" || !account.enabled
+  );
+  const accountRows = (items: ComposioAccount[]) =>
+    items.map((account) => {
+      const { name, number } = composioAccountPresentation(account, accounts);
+      const discriminator = number ? m.composio_connection_number({ number }) : "";
+      return (
+        <fieldset
+          key={account.id}
+          aria-label={discriminator ? `${name} · ${discriminator}` : name}
+          className="m-0 flex min-w-0 items-center gap-lg border-0 border-b border-solid border-secondary px-xl py-lg last:border-b-0"
+        >
+          <Avatar name={name} size="sm" />
+          <div className="flex min-w-0 flex-1 flex-col gap-xxs text-sm">
+            <span className="break-words font-medium">{name}</span>
+            {account.email && account.email !== name && (
+              <span className="break-all text-secondary">{account.email}</span>
+            )}
+            <span className="text-xs text-secondary">
+              {!account.enabled
+                ? m.composio_disabled()
+                : account.status === "ACTIVE"
+                  ? m.composio_connected()
+                  : account.status === "INITIATED"
+                    ? m.composio_pending_account()
+                    : account.status === "EXPIRED"
+                      ? m.composio_expired_account()
+                      : m.composio_unavailable()}
+              {discriminator && ` · ${discriminator}`}
+            </span>
+          </div>
+          <MenuTrigger>
+            <Button
+              aria-label={m.composio_account_options({ account: name })}
+              hierarchy="tertiary-gray"
+              size="sm"
+              iconLeading={<MoreHorizontalIcon />}
+              isDisabled={busy}
+            />
+            <MenuPopover>
+              <Menu aria-label={m.composio_account_options({ account: name })}>
+                <MenuItem onAction={() => setDetails(account)}>
+                  {m.composio_account_details()}
+                </MenuItem>
+                {(account.status === "INITIATED"
+                  ? ["verify", "reopen", "cancel", "reconnect"]
+                  : [
+                      "verify",
+                      account.enabled ? "disable" : "enable",
+                      "reconnect",
+                      "disconnect",
+                    ]
+                ).map((operation) => (
+                  <MenuItem
+                    key={operation}
+                    tone={operation === "disconnect" ? "destructive" : "default"}
+                    onAction={() => {
+                      if (operation === "disconnect") setDisconnect(account);
+                      else void act("account", { account_id: account.id, operation });
+                    }}
+                  >
+                    {operation === "verify"
+                      ? m.composio_verify()
+                      : operation === "disable"
+                        ? m.composio_disable()
+                        : operation === "enable"
+                          ? m.composio_enable()
+                          : operation === "reopen"
+                            ? m.composio_reopen()
+                            : operation === "cancel"
+                              ? m.composio_cancel()
+                              : operation === "reconnect"
+                                ? m.composio_reconnect()
+                                : m.composio_disconnect()}
+                  </MenuItem>
+                ))}
+              </Menu>
+            </MenuPopover>
+          </MenuTrigger>
+          {consent?.status === "pending" && consent.toolkit === toolkit && (
+            <Button
+              hierarchy="secondary-gray"
+              size="sm"
+              isDisabled={busy}
+              onPress={() =>
+                void act("consent", {
+                  toolkit,
+                  consent_id: consent.id,
+                  operation: "select",
+                  account_id: account.id,
+                })
+              }
+            >
+              {m.composio_use_account()}
+            </Button>
+          )}
+        </fieldset>
+      );
+    });
+
   return (
     <PluginDetail
-      plugin={plugin}
+      plugin={{
+        ...plugin,
+        description: "",
+        summary:
+          toolkit === "gmail"
+            ? m.composio_gmail_summary()
+            : toolkit === "googledrive"
+              ? m.composio_drive_summary()
+              : m.composio_app_summary({ app: plugin.name }),
+      }}
       onBack={onBack}
       backLabel={m.plugins_back()}
-      installLabel={m.composio_connect()}
-      installPending={busy}
-      {...(status?.status === "connected" && !consentInProgress
-        ? { onInstall: () => void act("connect", { toolkit }) }
-        : {})}
+      installed
+      headerActions={
+        <Button
+          hierarchy="secondary-gray"
+          size="sm"
+          aria-expanded={configuring}
+          onPress={() => setConfiguring(!configuring)}
+        >
+          {m.composio_manage()}
+        </Button>
+      }
     >
       <section className="flex flex-col gap-lg px-md">
-        <h2 className="m-0 text-sm font-medium">{m.composio_via()}</h2>
         {error && (
           <div role="alert" className="text-sm text-secondary">
             {m.composio_error()}
@@ -299,7 +430,7 @@ export function ComposioConnectorDetail({
             </div>
           </form>
         )}
-        {status && (
+        {status && (configuring || status.status !== "connected") && (
           <output className="m-0 text-sm text-secondary">
             {status.status === "pending"
               ? m.composio_pending()
@@ -311,17 +442,6 @@ export function ComposioConnectorDetail({
               ? m.composio_personal()
               : m.composio_project_scope()}
           </output>
-        )}
-        {status?.status === "connected" && (
-          <div>
-            <Button
-              hierarchy="tertiary-gray"
-              size="sm"
-              onPress={() => setConfiguring(!configuring)}
-            >
-              {m.composio_connection_settings()}
-            </Button>
-          </div>
         )}
         {(authorization || status?.status === "pending") && (
           <div className="flex flex-wrap gap-md">
@@ -344,9 +464,7 @@ export function ComposioConnectorDetail({
         )}
         {consent?.status === "pending" && consent.toolkit === toolkit && (
           <div className="flex flex-col gap-md">
-            <p className="m-0 text-sm text-secondary">
-              {m.composio_consent_pending()}
-            </p>
+            <p className="m-0 text-sm text-secondary">{m.composio_consent_pending()}</p>
             <div className="flex flex-wrap gap-md">
               <Button
                 hierarchy="secondary-gray"
@@ -400,19 +518,49 @@ export function ComposioConnectorDetail({
           </div>
         )}
         {consent?.status === "selecting" && consent.toolkit === toolkit && (
-          <p className="m-0 text-sm text-secondary">
-            {m.composio_consent_selecting()}
-          </p>
-        )}
-        {consent?.status === "expired" && consent.toolkit === toolkit && (
-          <p className="m-0 text-sm text-secondary">{m.composio_expired()}</p>
+          <p className="m-0 text-sm text-secondary">{m.composio_consent_selecting()}</p>
         )}
         {status?.status === "connected" && (
           <>
-            {status.mode === "connect" && (
+            <h2 className="m-0 text-sm font-medium">{m.composio_accounts()}</h2>
+            <div className="rounded-xl border border-secondary bg-secondary">
+              {connected.length === 0 && (
+                <p className="m-0 px-xl py-lg text-sm text-secondary">
+                  {m.composio_empty()}
+                </p>
+              )}
+              {accountRows(connected)}
+              <div className="px-xl py-lg">
+                <Button
+                  hierarchy="tertiary-gray"
+                  size="sm"
+                  isDisabled={busy || consentInProgress}
+                  onPress={() => void act("connect", { toolkit })}
+                >
+                  {m.composio_connect_another()}
+                </Button>
+              </div>
+            </div>
+            {(inactive.length > 0 || consent?.status === "expired") && (
+              <details
+                className="text-sm"
+                open={Boolean(consentInProgress) || inactiveOpen}
+                onToggle={(event) => setInactiveOpen(event.currentTarget.open)}
+              >
+                <summary className="cursor-pointer text-secondary">
+                  {m.composio_other_connections()}
+                </summary>
+                {consent?.status === "expired" && (
+                  <p className="text-secondary">{m.composio_expired()}</p>
+                )}
+                {(inactiveOpen || consentInProgress) && accountRows(inactive)}
+              </details>
+            )}
+            {status.mode === "connect" && (configuring || consentInProgress) && (
               <div>
                 <Button
                   hierarchy="secondary-gray"
+                  size="sm"
                   isDisabled={busy}
                   onPress={() => void act("refresh_accounts", { toolkit })}
                 >
@@ -420,86 +568,6 @@ export function ComposioConnectorDetail({
                 </Button>
               </div>
             )}
-            <h2 className="m-0 text-lg font-medium">{m.composio_accounts()}</h2>
-            {status.accounts.filter(
-              (account) => account.toolkit === toolkit && account.mode === status.mode
-            ).length === 0 && (
-              <p className="m-0 text-sm text-secondary">{m.composio_empty()}</p>
-            )}
-            {status.accounts
-              .filter(
-                (account) => account.mode === status.mode && account.toolkit === toolkit
-              )
-              .map((account) => (
-                <div
-                  key={account.id}
-                  className="flex flex-col gap-md border-b border-secondary pb-lg"
-                >
-                  <p className="m-0 text-sm">
-                    {account.name} ·{" "}
-                    {account.status === "ACTIVE"
-                      ? m.composio_connected()
-                      : account.status === "INITIATED"
-                        ? m.composio_pending()
-                        : m.composio_unavailable()}
-                  </p>
-                  <div className="flex flex-wrap gap-md">
-                    {(account.status === "INITIATED"
-                      ? ["verify", "reopen", "cancel"]
-                      : [
-                          "verify",
-                          account.enabled ? "disable" : "enable",
-                          "reconnect",
-                          "disconnect",
-                        ]
-                    ).map((operation) => (
-                      <Button
-                        key={operation}
-                        hierarchy="secondary-gray"
-                        size="sm"
-                        isDisabled={busy}
-                        onPress={() => {
-                          if (operation === "disconnect") setDisconnect(account);
-                          else
-                            void act("account", { account_id: account.id, operation });
-                        }}
-                      >
-                        {operation === "verify"
-                          ? m.composio_verify()
-                          : operation === "disable"
-                            ? m.composio_disable()
-                            : operation === "enable"
-                              ? m.composio_enable()
-                              : operation === "reopen"
-                                ? m.composio_reopen()
-                                : operation === "cancel"
-                                  ? m.composio_cancel()
-                                  : operation === "reconnect"
-                                    ? m.composio_reconnect()
-                                    : m.composio_disconnect()}
-                      </Button>
-                    ))}
-                    {consent?.status === "pending" &&
-                      consent.toolkit === toolkit && (
-                        <Button
-                          hierarchy="secondary-gray"
-                          size="sm"
-                          isDisabled={busy}
-                          onPress={() =>
-                            void act("consent", {
-                              toolkit,
-                              consent_id: consent.id,
-                              operation: "select",
-                              account_id: account.id,
-                            })
-                          }
-                        >
-                          {m.composio_use_account()}
-                        </Button>
-                      )}
-                  </div>
-                </div>
-              ))}
             <ScrollAreaLoadMore
               hasMore={Boolean(status.next_cursor)}
               loading={busy}
@@ -509,25 +577,27 @@ export function ComposioConnectorDetail({
                   void act("accounts", { cursor: status.next_cursor });
               }}
             />
-            {status.accounts.some(
-              (account) =>
-                account.toolkit === toolkit &&
-                account.mode === status.mode &&
-                account.status === "ACTIVE" &&
-                account.enabled
-            ) && (
-              <ComposioAccessPanel
-                api={api}
-                workspaceId={workspaceId}
-                accounts={status.accounts.filter(
-                  (account) =>
-                    account.mode === status.mode && account.toolkit === toolkit
-                )}
-              />
-            )}
+            <ComposioAccessPanel
+              api={api}
+              workspaceId={workspaceId}
+              accounts={accounts}
+              manageAccess={configuring}
+            />
           </>
         )}
       </section>
+      <Dialog
+        isOpen={Boolean(details)}
+        onOpenChange={(open) => {
+          if (!open) setDetails(undefined);
+        }}
+        title={m.composio_account_details()}
+      >
+        <dl className="m-0 flex min-w-0 flex-col gap-md text-sm">
+          <dt>{m.composio_account_reference()}</dt>
+          <dd className="m-0 break-all select-text">{details?.id}</dd>
+        </dl>
+      </Dialog>
       <Dialog
         isOpen={Boolean(disconnect)}
         onOpenChange={(open) => {

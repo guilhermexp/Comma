@@ -331,6 +331,7 @@ defmodule SalixAgent.ToolDisclosureGatingTest do
     refute ToolDisclosure.helpable?(ctx, "composio.execute")
     assert ToolDisclosure.callable?(ctx, "composio.personal_accounts")
     assert ToolDisclosure.helpable?(ctx, "composio.personal_schema")
+    assert ToolDisclosure.callable?(ctx, "composio.personal_search")
     assert ToolDisclosure.callable?(ctx, "composio.personal_execute")
     assert ToolDisclosure.callable?(ctx, "fs.read_file")
   end

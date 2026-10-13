@@ -40,9 +40,6 @@ defmodule Salix.Control.ComposioCatalogTest do
 
             "<script>self.__next_f.push([1," <> Jason.encode!(flight) <> "])</script>"
 
-          "/toolkits/app_1.md" ->
-            "# App 1\n\nApp description\n\n## Tools\n\n### List tasks\n\n**Slug:** `APP_1_LIST_TASKS`\n\nRead the task list.\n\n#### Input Parameters\n\n### Complete a task\n\n**Slug:** `APP_1_COMPLETE_TASK`\n\nMark a task complete.\n\n#### Input Parameters\n"
-
           _ ->
             "upstream format changed"
         end
@@ -63,11 +60,9 @@ defmodule Salix.Control.ComposioCatalogTest do
     base = "http://127.0.0.1:#{port}"
 
     cache =
-      start_supervised!(
-        {ComposioCatalog, name: nil, catalog_url: base <> "/toolkits", docs_url: base}
-      )
+      start_supervised!({ComposioCatalog, name: nil, catalog_url: base <> "/toolkits"})
 
-    %{cache: cache, state: state}
+    %{cache: cache, state: state, base: base}
   end
 
   test "browses every catalog page and searches names from one public cached fetch", c do
@@ -87,37 +82,29 @@ defmodule Salix.Control.ComposioCatalogTest do
     assert Agent.get(c.state, & &1) == [{"/toolkits", [], []}]
   end
 
-  test "looks up exact connected toolkits beyond the first page from the same cached catalog", c do
+  test "looks up exact connected toolkits beyond the first page from the same cached catalog",
+       c do
     assert {:ok, %{"items" => first}} = ComposioCatalog.page(%{}, c.cache)
     refute Enum.any?(first, &(&1["slug"] == "app_43"))
+
     assert {:ok, [%{"slug" => "app_43", "name" => "App 43"}]} =
              ComposioCatalog.lookup(["app_43", "app_43"], c.cache)
+
     assert Agent.get(c.state, & &1) == [{"/toolkits", [], []}]
     assert {:error, :composio_catalog_unavailable} = ComposioCatalog.lookup(["missing"], c.cache)
-    assert {:error, :invalid_toolkits} = ComposioCatalog.lookup(List.duplicate("app_1", 21), c.cache)
+
+    assert {:error, :invalid_toolkits} =
+             ComposioCatalog.lookup(List.duplicate("app_1", 21), c.cache)
+
     assert {:error, :invalid_toolkits} = ComposioCatalog.lookup(["../private"], c.cache)
   end
 
-  test "lists human-readable permissions within a connector and rejects path injection", c do
-    assert {:ok, %{"items" => [tool]}} =
-             ComposioCatalog.tools("app_1", %{"query" => "List"}, c.cache)
-
-    assert tool == %{
-             "slug" => "APP_1_LIST_TASKS",
-             "name" => "List tasks",
-             "description" => "Read the task list.",
-             "toolkit" => "app_1"
-           }
-
-    assert {:error, :invalid_toolkit} = ComposioCatalog.tools("../private", %{}, c.cache)
-
-    assert {:ok, %{"items" => []}} =
-             ComposioCatalog.tools("app_1", %{"query" => "unknown"}, c.cache)
-
-    assert Agent.get(c.state, & &1) == [{"/toolkits/app_1.md", [], []}]
-  end
-
   test "an upstream format failure is not an empty catalog", c do
-    assert {:error, :composio_catalog_unavailable} = ComposioCatalog.tools("broken", %{}, c.cache)
+    broken =
+      start_supervised!({ComposioCatalog, name: nil, catalog_url: c.base <> "/broken"},
+        id: :broken_catalog
+      )
+
+    assert {:error, :composio_catalog_unavailable} = ComposioCatalog.page(%{}, broken)
   end
 end

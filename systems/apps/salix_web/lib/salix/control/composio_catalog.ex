@@ -3,8 +3,8 @@ defmodule Salix.Control.ComposioCatalog do
   Public provider metadata projection, independent of connection credentials.
 
   Composio Connect has no complete catalog API. The official public catalog
-  publishes structured hydration data; the official Markdown pages publish tool
-  names. Neither source grants execution authority. This adapter validates that
+  publishes structured hydration data. Public metadata grants no execution
+  authority. This adapter validates that
   public format and fails explicitly on drift. There is no Elixir SDK for it.
 
   One node-local owner serializes misses. Fetches have a 15-second deadline and
@@ -53,12 +53,6 @@ defmodule Salix.Control.ComposioCatalog do
 
   def lookup(_, _), do: {:error, :invalid_toolkits}
 
-  def tools(toolkit, params, server \\ __MODULE__) do
-    if is_binary(toolkit) and Regex.match?(~r/^[a-z0-9_]{1,100}$/, toolkit),
-      do: read(server, {:tools, toolkit}, params),
-      else: {:error, :invalid_toolkit}
-  end
-
   defp read(server, key, params) do
     with {:ok, query, offset} <- query(params),
          {:ok, items} <- GenServer.call(server, {:get, key}, 30_000) do
@@ -100,8 +94,7 @@ defmodule Salix.Control.ComposioCatalog do
       {:ok,
        %{
          entries: %{},
-         catalog_url: opts[:catalog_url] || "https://composio.dev/toolkits",
-         docs_url: opts[:docs_url] || "https://docs.composio.dev"
+         catalog_url: opts[:catalog_url] || "https://composio.dev/toolkits"
        }}
 
   @impl true
@@ -142,12 +135,6 @@ defmodule Salix.Control.ComposioCatalog do
   defp load(:catalog, state) do
     with {:ok, body} <- fetch(state.catalog_url),
          {:ok, items} <- parse_catalog(body),
-         do: {:ok, items}
-  end
-
-  defp load({:tools, toolkit}, state) do
-    with {:ok, body} <- fetch(state.docs_url <> "/toolkits/" <> toolkit <> ".md"),
-         {:ok, items} <- parse_tools(body, toolkit),
          do: {:ok, items}
   end
 
@@ -253,31 +240,5 @@ defmodule Salix.Control.ComposioCatalog do
         end
       end
     end)
-  end
-
-  defp parse_tools(body, toolkit) do
-    with [_, tools_body] <- String.split(body, "\n## Tools\n", parts: 2) do
-      items =
-        Regex.scan(
-          ~r/^### ([^\n]+)\n+\*\*Slug:\*\* `([A-Z0-9_]+)`\n+([^\n]+(?:\n(?!#)[^\n]+)*)/m,
-          tools_body,
-          capture: :all_but_first
-        )
-        |> Enum.map(fn [name, slug, description] ->
-          %{
-            "slug" => slug,
-            "name" => name,
-            "description" => String.slice(String.trim(description), 0, 600),
-            "toolkit" => toolkit
-          }
-        end)
-
-      if items != [] and
-           Enum.all?(items, &String.starts_with?(&1["slug"], String.upcase(toolkit) <> "_")),
-         do: {:ok, items},
-         else: {:error, :composio_catalog_unavailable}
-    else
-      _ -> {:error, :composio_catalog_unavailable}
-    end
   end
 end

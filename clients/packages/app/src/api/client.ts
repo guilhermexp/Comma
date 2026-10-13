@@ -228,6 +228,7 @@ const proactiveSettingsSchema = z.object({ enabled: z.boolean() });
 export type CommaProactiveSettings = z.infer<typeof proactiveSettingsSchema>;
 
 export const composioAccountSchema = z.object({
+  email: z.string().nullable().optional(),
   id: z.string(),
   toolkit: z.string(),
   name: z.string(),
