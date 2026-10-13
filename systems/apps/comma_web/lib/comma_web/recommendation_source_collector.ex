@@ -38,11 +38,6 @@ defmodule CommaWeb.RecommendationSourceCollector do
       |> positive_integer(RecommendationBudgets.max_source_concurrency())
       |> min(RecommendationBudgets.max_source_concurrency())
 
-    source_timeout_ms =
-      opts
-      |> Keyword.get(:source_timeout_ms, RecommendationBudgets.source_read_timeout_ms())
-      |> positive_integer(RecommendationBudgets.source_read_timeout_ms())
-
     collection_timeout_ms =
       opts
       |> Keyword.get(
@@ -53,8 +48,22 @@ defmodule CommaWeb.RecommendationSourceCollector do
 
     waves = ceil_div(length(sources), max_concurrency)
     wave_timeout_ms = max(div(collection_timeout_ms, waves), 1)
-    effective_timeout_ms = min(source_timeout_ms, wave_timeout_ms)
-    collection_limited? = effective_timeout_ms < source_timeout_ms
+
+    source_reads =
+      Enum.map(sources, fn source ->
+        default_timeout_ms = RecommendationBudgets.source_read_timeout_ms(source)
+
+        source_timeout_ms =
+          opts
+          |> Keyword.get(:source_timeout_ms, default_timeout_ms)
+          |> positive_integer(default_timeout_ms)
+
+        {source, min(source_timeout_ms, wave_timeout_ms), wave_timeout_ms < source_timeout_ms}
+      end)
+
+    # The shared wrapper wait accommodates Connect without extending another
+    # source's DependencyJob timer or member request deadline.
+    wrapper_timeout_ms = source_reads |> Enum.map(&elem(&1, 1)) |> Enum.max()
 
     # Bounded fan-out: the product limits the number of selected sources and
     # concurrent reads. Dividing the collection deadline across the required
@@ -62,9 +71,9 @@ defmodule CommaWeb.RecommendationSourceCollector do
     # Linked wrappers own tool DependencyJobs. A provider crash returns a result;
     # wrapper cancellation makes admission stop the provider and release its slot.
     results =
-      sources
+      source_reads
       |> Task.async_stream(
-        fn source ->
+        fn {source, effective_timeout_ms, collection_limited?} ->
           # Member reads return what they read before the job is stopped.
           deadline = RecommendationMemberRead.deadline(effective_timeout_ms)
 
@@ -99,27 +108,27 @@ defmodule CommaWeb.RecommendationSourceCollector do
         max_concurrency: max_concurrency,
         ordered: true,
         on_timeout: :kill_task,
-        timeout: effective_timeout_ms
+        timeout: wrapper_timeout_ms
       )
       |> Enum.to_list()
 
     {facts, failures} =
-      sources
+      source_reads
       |> Enum.zip(results)
       |> Enum.reduce({[], []}, fn
-        {source, {:ok, {:ok, fact, warnings}}}, {facts, failures} ->
+        {{source, _, _}, {:ok, {:ok, fact, warnings}}}, {facts, failures} ->
           {[fact | facts], Enum.map(warnings, &failure(source, &1)) ++ failures}
 
-        {_source, {:ok, {:ok, fact}}}, {facts, failures} ->
+        {{_source, _, _}, {:ok, {:ok, fact}}}, {facts, failures} ->
           {[fact | facts], failures}
 
-        {source, {:ok, {:error, reason}}}, {facts, failures} ->
+        {{source, _, _}, {:ok, {:error, reason}}}, {facts, failures} ->
           {facts, [failure(source, reason) | failures]}
 
-        {source, {:exit, :timeout}}, {facts, failures} when collection_limited? ->
+        {{source, _, true}, {:exit, :timeout}}, {facts, failures} ->
           {facts, [failure(source, :collection_deadline_exceeded) | failures]}
 
-        {source, {:exit, reason}}, {facts, failures} ->
+        {{source, _, _}, {:exit, reason}}, {facts, failures} ->
           {facts, [failure(source, {:collector_exit, reason}) | failures]}
       end)
 

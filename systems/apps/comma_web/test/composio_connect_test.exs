@@ -138,6 +138,7 @@ defmodule CommaWeb.ComposioConnectTest do
               "messages" => [
                 %{
                   "id" => "abc456",
+                  "threadId" => "abc123",
                   "internalDate" => "1791882000000",
                   "labelIds" => ~w(INBOX IMPORTANT),
                   "snippet" => "Please approve the release",

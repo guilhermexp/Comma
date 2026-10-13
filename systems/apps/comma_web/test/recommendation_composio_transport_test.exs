@@ -56,6 +56,8 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
                   tool_result(tool, state)
 
                 %{"name" => "COMPOSIO_REMOTE_WORKBENCH", "arguments" => args} ->
+                  Process.sleep(Agent.get(state, &Map.get(&1, :workbench_delay_ms, 0)))
+
                   fixture =
                     Path.expand(
                       "../../salix_web/test/support/composio_routine_mount_fixture.py",
@@ -274,7 +276,8 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
       {:salix_agent, :subscription_storage_key},
       {:salix_store, :composio_base_url_override},
       {:salix_web, :composio_connect_endpoint},
-      {:salix_mcp, :allow_private_http_targets}
+      {:salix_mcp, :allow_private_http_targets},
+      {:comma_web, :recommendation_oauth_http_options}
     ]
 
     previous = Enum.map(entries, fn {a, k} -> {a, k, Application.get_env(a, k)} end)
@@ -974,5 +977,119 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
     refute Enum.any?(Agent.get(c.state, & &1.calls), fn {_, body} ->
              get_in(body, ["params", "name"]) == "COMPOSIO_REMOTE_WORKBENCH"
            end)
+  end
+
+  @tag :routine_budget_thread
+  test "native-shaped Connect messages cannot attribute a foreign or missing thread to the request",
+       c do
+    profile = gmail_fixture(c, :inline)
+    original = Agent.get(c.state, & &1.gmail_thread)
+
+    for thread_id <- ["foreignthread", nil] do
+      thread = put_in(original, ["messages", Elixir.Access.at(0), "threadId"], thread_id)
+      Agent.update(c.state, &Map.put(&1, :gmail_thread, thread))
+
+      assert {:ok, %{facts: [], failures: [_]}} =
+               RecommendationSourceCollector.collect(c.w, profile.sources,
+                 member_user_id: c.user["id"]
+               )
+    end
+  end
+
+  defp stalled_native_source(c, owner) do
+    Req.Test.set_req_test_to_shared()
+
+    Application.put_env(:comma_web, :recommendation_oauth_http_options,
+      plug: {Req.Test, __MODULE__}
+    )
+
+    Req.Test.stub(__MODULE__, fn _conn ->
+      send(owner, {:native_request_started, self(), System.monotonic_time(:millisecond)})
+      Process.sleep(30_000)
+      raise "native request outlived its source budget"
+    end)
+
+    :ok =
+      SalixStore.OAuth.put("native-budget", %{
+        "connection_id" => "native-budget",
+        "tenant" => c.w["salix_tenant_id"],
+        "provider" => "slack",
+        "status" => "active",
+        "access_token" => "fixture-native",
+        "scopes" => ["search:read"],
+        "comma_member" => %{"user_id" => c.user["id"], "workspace_id" => c.w["id"]},
+        "metadata" => %{
+          "metadata" => %{"authed_user_id" => "UMEMBER", "team_id" => "TWORKSPACE"}
+        }
+      })
+
+    {:ok, binding, nil} =
+      Salix.Control.OAuthBindings.put(
+        c.w["salix_tenant_id"],
+        c.w["default_group_id"],
+        "slack",
+        "slack",
+        "native-budget"
+      )
+
+    %{
+      "appId" => "slack",
+      "appName" => "Slack",
+      "kind" => "managed_oauth",
+      "connectionId" => binding["binding_id"],
+      "enabled" => true
+    }
+  end
+
+  @tag :routine_budget_thread
+  test "delayed Connect offload succeeds while native reads keep their own default cancellation",
+       c do
+    profile = gmail_fixture(c)
+    native = stalled_native_source(c, self())
+    Agent.update(c.state, &Map.put(&1, :workbench_delay_ms, 11_000))
+
+    # The same mixed collection exercises the member deadline and the native
+    # non-member DependencyJob timer. Neither may inherit Connect's longer wait.
+    for member_opts <- [[member_user_id: c.user["id"]], []] do
+      task =
+        Task.async(fn ->
+          RecommendationSourceCollector.collect(c.w, profile.sources ++ [native], member_opts)
+        end)
+
+      assert_receive {:native_request_started, native_pid, started}, 2_000
+      monitor = Process.monitor(native_pid)
+      assert_receive {:DOWN, ^monitor, :process, ^native_pid, _}, 10_800
+      elapsed = System.monotonic_time(:millisecond) - started
+      assert elapsed >= if(member_opts == [], do: 9_500, else: 8_500)
+      assert elapsed < 10_800
+
+      assert {:ok, %{facts: [fact], failures: [failure]}} = Task.await(task, 12_000)
+      assert fact["sourceId"] == "exact"
+      assert failure["sourceId"] == native["connectionId"]
+      refute failure["message"] =~ "collection_deadline_exceeded"
+      refute Process.alive?(native_pid)
+    end
+  end
+
+  @tag :routine_budget_thread
+  test "Connect honors explicit source overrides and the existing multi-wave collection cap", c do
+    profile = gmail_fixture(c)
+    Agent.update(c.state, &Map.put(&1, :workbench_delay_ms, 1_000))
+
+    for {sources, opts} <- [
+          {profile.sources, [source_timeout_ms: 200]},
+          {List.duplicate(hd(profile.sources), 3),
+           [collection_timeout_ms: 600, max_concurrency: 1]}
+        ] do
+      assert {:ok, %{facts: [], failures: failures, duration_ms: duration}} =
+               RecommendationSourceCollector.collect(
+                 c.w,
+                 sources,
+                 [member_user_id: c.user["id"]] ++ opts
+               )
+
+      assert length(failures) == length(sources)
+      assert duration < 1_000
+    end
   end
 end

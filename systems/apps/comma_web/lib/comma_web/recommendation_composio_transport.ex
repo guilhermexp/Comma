@@ -297,6 +297,8 @@ defmodule CommaWeb.RecommendationComposioTransport do
     end
   end
 
-  defp gmail_message(%{"id" => _, "internalDate" => _} = message, _thread), do: {:ok, message}
+  defp gmail_message(%{"id" => _, "internalDate" => _, "threadId" => thread} = message, thread),
+    do: {:ok, message}
+
   defp gmail_message(_message, _thread), do: {:error, :member_source_context_unavailable}
 end

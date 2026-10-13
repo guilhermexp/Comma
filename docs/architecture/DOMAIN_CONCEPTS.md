@@ -943,8 +943,15 @@ opens each component without following replacement symlinks. It rejects traversa
 escape, non-regular files, wrong session/tool results, preview data and truncated output.
 The complete JSON is bounded to 512,000 bytes and 1,000 messages; the stored batch envelope
 has a further 16,384-byte allowance. These are read bounds, not truncation rules. Oversize
-results fail. Compressed output is decoded with a bounded inflater. The existing collection
-deadline covers the additional request; there is no timeout increase or extra retry.
+results fail. Compressed output is decoded with a bounded inflater. Connect sources have a
+20-second read budget, including metadata and offload requests. Member reads reserve its last
+tenth for assembly, so their request deadline is 18 seconds. Native and project sources keep
+their 10-second budget and 9-second member request deadline. Each source has its own
+DependencyJob timer; a longer outer wrapper wait does not extend another source's budget.
+The 30-second collection budget, source limit and concurrency remain unchanged. The collector
+caps each source by the collection budget divided across its required waves, and preserves
+source-timeout versus collection-timeout classification. Explicit caller timeout options still
+apply. This adds no retries, caching or workflow-session reuse.
 See the official [sandbox files contract](https://docs.composio.dev/docs/sandbox/remote#files-and-mounts),
 [MULTI](https://docs.composio.dev/toolkits/meta-tools/multi_execute_tool) and
 [workbench](https://docs.composio.dev/toolkits/meta-tools/remote_workbench) contracts.

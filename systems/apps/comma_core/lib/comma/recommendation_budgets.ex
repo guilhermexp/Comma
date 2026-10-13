@@ -4,6 +4,7 @@ defmodule Comma.RecommendationBudgets do
   @max_sources 12
   @max_source_concurrency 4
   @source_read_timeout_ms 10_000
+  @connect_source_read_timeout_ms 20_000
   @source_collection_timeout_ms 30_000
   # One wall-clock budget covers queue wait, source reads and model completion.
   @run_hard_cap_seconds 480
@@ -11,6 +12,14 @@ defmodule Comma.RecommendationBudgets do
   def max_sources, do: @max_sources
   def max_source_concurrency, do: @max_source_concurrency
   def source_read_timeout_ms, do: @source_read_timeout_ms
+
+  # Connect reads also resolve exact-account metadata and may retrieve a complete
+  # offloaded result. The collector still caps every source by its wave budget.
+  def source_read_timeout_ms(%{"kind" => "composio", "composioMode" => "connect"}),
+    do: @connect_source_read_timeout_ms
+
+  def source_read_timeout_ms(_source), do: @source_read_timeout_ms
+
   def source_collection_timeout_ms, do: @source_collection_timeout_ms
   def run_hard_cap_seconds, do: @run_hard_cap_seconds
 
