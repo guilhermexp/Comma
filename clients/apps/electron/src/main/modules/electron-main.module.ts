@@ -1260,14 +1260,16 @@ export async function createElectronMainContext(
   browserSidebarService = deps.createBrowserSidebarView
     ? new NativeBrowserSidebarService({
         openExternal: deps.openExternalUrl,
-        createView: (windowId, profile) =>
-          deps.createBrowserSidebarView!(
+        createView: (windowId, profile) => {
+          const radius =
             webContentsRegistry.getWindowRegistration(windowId)?.role ===
-              "side-chat-test-window"
+            "side-chat-test-window"
               ? 20
-              : 0,
-            profile
-          ),
+              : 0;
+          return profile
+            ? deps.createBrowserSidebarView!(radius, profile)
+            : deps.createBrowserSidebarView!(radius);
+        },
         locale: currentMainLocale,
         sitePermissions: deps.browserSitePermissionPlatform
           ? new BrowserSitePermissions(
