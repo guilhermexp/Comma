@@ -241,11 +241,24 @@ export function ComposioConnectorDetail({
             account.toolkit === toolkit &&
             account.status === "ACTIVE"
         );
-        setCandidates(active);
+        const available = active.filter(
+          (account) =>
+            !discovery.accounts.some(
+              (local) =>
+                local.id === account.id &&
+                local.mode === account.mode &&
+                local.toolkit === account.toolkit &&
+                local.status === "ACTIVE" &&
+                local.enabled
+            )
+        );
+        setCandidates(available);
         // Missing historical baselines require a human choice. All IDs that
         // existed at start (including inactive accounts) are excluded from auto selection.
         const fresh = next.baseline_account_ids
-          ? active.filter((account) => !next.baseline_account_ids!.includes(account.id))
+          ? available.filter(
+              (account) => !next.baseline_account_ids!.includes(account.id)
+            )
           : [];
         if (fresh.length === 1) {
           selecting = true;
@@ -485,6 +498,7 @@ export function ComposioConnectorDetail({
             </MenuTrigger>
           )}
           {account.status === "ACTIVE" &&
+            !account.enabled &&
             consent?.status === "pending" &&
             consent.toolkit === toolkit && (
               <Button
@@ -685,12 +699,7 @@ export function ComposioConnectorDetail({
                   {m.composio_empty()}
                 </p>
               )}
-              {accountRows(
-                connected.filter(
-                  (account) =>
-                    !candidates.some((candidate) => candidate.id === account.id)
-                )
-              )}
+              {accountRows(connected)}
               <div className="px-xl py-lg">
                 <Button
                   hierarchy="tertiary-gray"

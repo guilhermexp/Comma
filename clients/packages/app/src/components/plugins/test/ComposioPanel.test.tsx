@@ -445,7 +445,7 @@ it("selects the explicitly named connection when two connections share a provide
             toolkit: "github",
             mode: "connect",
             status: "ACTIVE",
-            enabled: true,
+            enabled: false,
           },
           {
             id: "verified-account-two",
@@ -453,7 +453,7 @@ it("selects the explicitly named connection when two connections share a provide
             toolkit: "github",
             mode: "connect",
             status: "ACTIVE",
-            enabled: true,
+            enabled: false,
           },
         ],
       }),

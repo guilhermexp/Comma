@@ -1,6 +1,13 @@
 import { CommaI18nProvider } from "@comma/i18n/react";
 import { initializeCommaI18n } from "@comma/i18n";
-import { act, cleanup, fireEvent, render, screen } from "@comma/test-utils/render";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@comma/test-utils/render";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CommaApiClient, ComposioAccount, ComposioStatus } from "../../../api";
 import { ComposioConnectorDetail } from "../ComposioConnectorDetail";
@@ -32,11 +39,12 @@ async function tick(ms = 0) {
 async function fixture(
   baseline: string[] | null = [],
   expiresIn = 10_000,
-  start = true
+  start = true,
+  initialAccounts: ComposioAccount[] = []
 ) {
   let consent: Record<string, unknown> | null = null;
   let remote: ComposioAccount[] = [];
-  let selected: ComposioAccount[] = [];
+  let selected: ComposioAccount[] = initialAccounts;
   let hold: Promise<void> | undefined;
   const status = (): ComposioStatus => ({
     mode: "connect",
@@ -128,6 +136,35 @@ it("detects one newly ACTIVE account after browser authorization and reaches Con
   const count = reads(f.command);
   await tick(6000);
   expect(reads(f.command)).toBe(count);
+});
+
+it("keeps an existing connected account and its actions while consent discovery offers only unconnected candidates", async () => {
+  const f = await fixture(["connected", "available"], 10_000, true, [
+    { ...account("connected"), enabled: true },
+  ]);
+  expect(
+    within(screen.getByRole("group", { name: "connected" })).getByText("Connected")
+  ).toBeVisible();
+  f.remote([account("connected"), account("available")]);
+  await tick(2000);
+  const connected = within(screen.getByRole("group", { name: "connected" }));
+  expect(connected.getByText("Connected")).toBeVisible();
+  expect(connected.queryByRole("button", { name: "Use this account" })).toBeNull();
+  expect(
+    within(screen.getByRole("group", { name: "available" })).getByRole("button", {
+      name: "Use this account",
+    })
+  ).toBeVisible();
+  expect(selections(f.command)).toHaveLength(0);
+  fireEvent.click(
+    connected.getByRole("button", { name: "Account options for connected" })
+  );
+  await tick();
+  expect(screen.getByRole("menuitem", { name: "Verify connection" })).toBeVisible();
+  expect(screen.getByRole("menuitem", { name: "Disable in Comma" })).toBeVisible();
+  expect(
+    screen.getByRole("menuitem", { name: "Disconnect this account" })
+  ).toBeVisible();
 });
 
 it.each([["existing"], null])(
