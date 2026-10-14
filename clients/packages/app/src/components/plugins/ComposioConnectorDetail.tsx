@@ -47,6 +47,43 @@ type Consent = Omit<z.infer<typeof consentSchema>, "expires_at"> & {
   expires_at?: number;
 };
 
+const reconciliationSchema = composioStatusSchema.extend({
+  consent: consentSchema.nullable(),
+  remote_accounts: z.array(composioAccountSchema),
+});
+function reconciliationCandidates(
+  status: ComposioStatus,
+  consent: Consent | null,
+  remote: ComposioAccount[],
+  toolkit: string
+) {
+  if (
+    status.mode !== "connect" ||
+    (consent?.status !== "pending" &&
+      status.accounts.some(
+        (account) =>
+          account.mode === "connect" &&
+          account.toolkit === toolkit &&
+          account.status === "ACTIVE" &&
+          account.enabled
+      ))
+  )
+    return [];
+  return remote.filter(
+    (account) =>
+      account.mode === "connect" &&
+      account.toolkit === toolkit &&
+      account.status === "ACTIVE" &&
+      !status.accounts.some(
+        (local) =>
+          local.mode === "connect" &&
+          local.id === account.id &&
+          local.status === "ACTIVE" &&
+          local.enabled
+      )
+  );
+}
+
 export function ComposioConnectorDetail({
   api,
   workspaceId,
@@ -88,7 +125,8 @@ export function ComposioConnectorDetail({
       consent.status === "selecting");
   const load = useCallback(
     async (signal?: AbortSignal) => {
-      const next = await api.getComposio(workspaceId, signal ? { signal } : {});
+      let next = await api.getComposio(workspaceId, signal ? { signal } : {});
+      if (signal?.aborted) return next;
       let nextConsent: Consent | null = null;
       if (next.mode === "connect") {
         const result = await api.composioCommand(
@@ -101,9 +139,36 @@ export function ComposioConnectorDetail({
         if (nextConsent && nextConsent.toolkit !== toolkit)
           throw new Error("Composio consent toolkit mismatch");
       }
+      if (signal?.aborted) return next;
+      let remote: ComposioAccount[] = [];
+      if (
+        next.mode === "connect" &&
+        next.status === "connected" &&
+        (!next.accounts.some(
+          (account) =>
+            account.mode === "connect" &&
+            account.toolkit === toolkit &&
+            account.status === "ACTIVE" &&
+            account.enabled
+        ) ||
+          nextConsent?.status === "pending" ||
+          nextConsent?.status === "selecting")
+      ) {
+        const result = await api.composioCommand(
+          workspaceId,
+          "reconcile_accounts",
+          { toolkit },
+          signal ? { signal } : {}
+        );
+        const reconciled = reconciliationSchema.parse(result);
+        next = reconciled;
+        nextConsent = reconciled.consent;
+        remote = reconciled.remote_accounts;
+      }
       if (mounted.current && !signal?.aborted) {
         setStatus(next);
         setConsent(nextConsent);
+        setCandidates(reconciliationCandidates(next, nextConsent, remote, toolkit));
       }
       return next;
     },
@@ -168,7 +233,6 @@ export function ComposioConnectorDetail({
   // Timer reads are at least 2 s apart for at most the ten-minute consent.
   // Focus/visibility checks share that same request and rate bound.
   useEffect(() => {
-    setCandidates([]);
     if (
       status?.mode !== "connect" ||
       consent?.status !== "pending" ||
@@ -183,7 +247,6 @@ export function ComposioConnectorDetail({
     let timer: ReturnType<typeof setTimeout>;
     let lastRead = -Infinity;
     let checking = false;
-    let selecting = false;
     const expire = () => {
       controller.abort();
       clearTimeout(timer);
@@ -213,75 +276,32 @@ export function ComposioConnectorDetail({
       }
       checking = true;
       inFlight.current = true;
+      setBusy(true);
       lastRead = Date.now();
       clearTimeout(timer);
       try {
         const result = await api.composioCommand(
           workspaceId,
-          "refresh_accounts",
+          "reconcile_accounts",
           { toolkit, consent_id: id },
           options
         );
         if (controller.signal.aborted) return;
-        const discovery = composioStatusSchema
-          .extend({
-            consent: consentSchema,
-            remote_accounts: z.array(composioAccountSchema),
-          })
-          .parse(result);
+        const discovery = reconciliationSchema.parse(result);
         const next = discovery.consent;
-        if (next.id !== id || next.toolkit !== toolkit)
+        if (next && (next.id !== id || next.toolkit !== toolkit))
           throw new Error("Stale consent discovery");
         setStatus(discovery);
         setConsent(next);
-        if (next.status !== "pending") return;
-        const active = discovery.remote_accounts.filter(
-          (account) =>
-            account.mode === "connect" &&
-            account.toolkit === toolkit &&
-            account.status === "ACTIVE"
+        setCandidates(
+          reconciliationCandidates(discovery, next, discovery.remote_accounts, toolkit)
         );
-        const available = active.filter(
-          (account) =>
-            !discovery.accounts.some(
-              (local) =>
-                local.id === account.id &&
-                local.mode === account.mode &&
-                local.toolkit === account.toolkit &&
-                local.status === "ACTIVE" &&
-                local.enabled
-            )
-        );
-        setCandidates(available);
-        // Missing historical baselines require a human choice. All IDs that
-        // existed at start (including inactive accounts) are excluded from auto selection.
-        const fresh = next.baseline_account_ids
-          ? available.filter(
-              (account) => !next.baseline_account_ids!.includes(account.id)
-            )
-          : [];
-        if (fresh.length === 1) {
-          selecting = true;
-          setBusy(true);
-          await api.composioCommand(
-            workspaceId,
-            "consent",
-            {
-              toolkit,
-              consent_id: id,
-              operation: "select",
-              account_id: fresh[0]!.id,
-            },
-            options
-          );
-          if (!controller.signal.aborted) await load(controller.signal);
-        }
       } catch {
         if (!controller.signal.aborted) setError(true);
       } finally {
         checking = false;
         inFlight.current = false;
-        if (selecting && mounted.current) setBusy(false);
+        if (mounted.current) setBusy(false);
         schedule();
       }
     };
@@ -309,6 +329,47 @@ export function ComposioConnectorDetail({
     status?.mode,
     load,
   ]);
+
+  useEffect(() => {
+    if (
+      status?.mode !== "connect" ||
+      status.status !== "connected" ||
+      consent?.status === "pending" ||
+      (consent?.status !== "selecting" &&
+        status.accounts.some(
+          (account) =>
+            account.toolkit === toolkit &&
+            account.mode === "connect" &&
+            account.status === "ACTIVE" &&
+            account.enabled
+        ))
+    )
+      return;
+    const controller = new AbortController();
+    const check = async () => {
+      if (
+        document.visibilityState === "hidden" ||
+        inFlight.current ||
+        controller.signal.aborted
+      )
+        return;
+      inFlight.current = true;
+      try {
+        await load(controller.signal);
+      } catch {
+        if (!controller.signal.aborted) setError(true);
+      } finally {
+        inFlight.current = false;
+      }
+    };
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      controller.abort();
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [status, consent?.status, toolkit, load]);
 
   const act = async (
     action: string,
@@ -338,6 +399,15 @@ export function ComposioConnectorDetail({
         await openNativePlatformExternalUrl(result.authorization_url);
       }
       if (action === "cancel") setAuthorization(undefined);
+      if (action === "reconcile_accounts") {
+        const next = reconciliationSchema.parse(result);
+        setStatus(next);
+        setConsent(next.consent);
+        setCandidates(
+          reconciliationCandidates(next, next.consent, next.remote_accounts, toolkit)
+        );
+        return;
+      }
       if (action === "accounts") {
         const page = z
           .object({
@@ -349,7 +419,14 @@ export function ComposioConnectorDetail({
           current
             ? {
                 ...current,
-                accounts: [...current.accounts, ...page.items],
+                accounts: [
+                  ...new Map(
+                    [...current.accounts, ...page.items].map((account) => [
+                      account.id,
+                      account,
+                    ])
+                  ).values(),
+                ],
                 next_cursor: page.next_cursor,
               }
             : current
@@ -380,6 +457,22 @@ export function ComposioConnectorDetail({
 
   useEffect(() => {
     if (!startConnecting || !status) return;
+    if (
+      status.mode === "connect" &&
+      !consentInProgress &&
+      status.accounts.some(
+        (account) =>
+          account.mode === "connect" &&
+          account.toolkit === toolkit &&
+          account.status === "ACTIVE" &&
+          account.enabled
+      ) &&
+      !connectionStarted.current
+    ) {
+      connectionStarted.current = true;
+      onStartConnectingConsumed?.();
+      return;
+    }
     if (status.mode === "connect" && consentInProgress) {
       connectionStarted.current = true;
       onStartConnectingConsumed?.();
@@ -497,26 +590,25 @@ export function ComposioConnectorDetail({
               </MenuPopover>
             </MenuTrigger>
           )}
-          {account.status === "ACTIVE" &&
-            !account.enabled &&
-            consent?.status === "pending" &&
-            consent.toolkit === toolkit && (
-              <Button
-                hierarchy="secondary-gray"
-                size="sm"
-                isDisabled={busy}
-                onPress={() =>
-                  void act("consent", {
-                    toolkit,
-                    consent_id: consent.id,
-                    operation: "select",
-                    account_id: account.id,
-                  })
-                }
-              >
-                {m.composio_use_account()}
-              </Button>
-            )}
+          {account.status === "ACTIVE" && !account.enabled && selectionCandidates && (
+            <Button
+              hierarchy="secondary-gray"
+              size="sm"
+              isDisabled={busy}
+              onPress={() =>
+                void (consent?.status === "pending"
+                  ? act("consent", {
+                      toolkit,
+                      consent_id: consent.id,
+                      operation: "select",
+                      account_id: account.id,
+                    })
+                  : act("reconcile_accounts", { toolkit, account_id: account.id }))
+              }
+            >
+              {m.composio_use_account()}
+            </Button>
+          )}
         </fieldset>
       );
     });
@@ -684,10 +776,10 @@ export function ComposioConnectorDetail({
         )}
         {status?.status === "connected" && (
           <>
-            {consent?.status === "expired" && (
+            {consent?.status === "expired" && connected.length === 0 && (
               <p className="text-sm text-secondary">{m.composio_expired()}</p>
             )}
-            {consent?.status === "pending" && candidates.length > 0 && (
+            {candidates.length > 0 && (
               <div className="rounded-xl border border-secondary">
                 {accountRows(candidates, true)}
               </div>
@@ -735,7 +827,7 @@ export function ComposioConnectorDetail({
                   hierarchy="secondary-gray"
                   size="sm"
                   isDisabled={busy}
-                  onPress={() => void act("refresh_accounts", { toolkit })}
+                  onPress={() => void act("reconcile_accounts", { toolkit })}
                 >
                   {m.composio_show_accounts()}
                 </Button>

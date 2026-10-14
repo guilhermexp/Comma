@@ -77,7 +77,14 @@ defmodule CommaWeb.GoogleDriveBrowserTest do
               end
             end
 
-            %{"data" => %{"results" => %{"googledrive" => %{"accounts" => fixture.accounts}}}}
+            %{
+              "data" => %{
+                "results" =>
+                  Map.get(fixture, :toolkit_accounts, %{
+                    "googledrive" => %{"accounts" => fixture.accounts}
+                  })
+              }
+            }
 
           "COMPOSIO_SEARCH_TOOLS" ->
             %{
@@ -258,6 +265,397 @@ defmodule CommaWeb.GoogleDriveBrowserTest do
       |> hd()
       |> Map.fetch!("arguments")
 
+  defp reconcile(c, params \\ %{}) do
+    Plug.Test.conn(
+      :post,
+      "/v1/comma/workspaces/#{c.w["id"]}/composio/reconcile_accounts",
+      Jason.encode!(params)
+    )
+    |> Plug.Conn.put_req_header("content-type", "application/json")
+    |> Plug.Conn.put_req_header("x-comma-session-transport", "bearer")
+    |> Plug.Conn.put_req_header("authorization", "Bearer " <> c.token)
+    |> CommaWeb.Router.call(CommaWeb.Router.init([]))
+  end
+
+  defp expired_drive_consent(c, baseline) do
+    {:ok, started} =
+      ComposioAccess.begin_consent(c.tenant, c.group, c.uid, "googledrive", nil, baseline)
+
+    {:ok, _} =
+      ComposioAccess.finish_consent(
+        c.tenant,
+        c.group,
+        c.uid,
+        "googledrive",
+        started["id"],
+        "https://provider.example/drive"
+      )
+
+    key =
+      "ctl/tenants/" <>
+        Base.url_encode64(c.tenant, padding: false) <>
+        "/composio/groups/" <>
+        Base.url_encode64(c.group, padding: false) <>
+        "/members/" <>
+        Base.url_encode64(c.uid, padding: false) <>
+        "/consents/" <> Base.url_encode64("googledrive", padding: false) <> ".json"
+
+    {:ok, %{body: body, etag: etag}} = S3.get(key)
+
+    {:ok, _} =
+      S3.put(key, Jason.encode!(Map.put(Jason.decode!(body), "expires_at", 1)), if_match: etag)
+  end
+
+  @tag :account_adoption
+  test "catalog reconciliation reads its known toolkits in one batch and adopts each without grants",
+       c do
+    {:ok, _} = ComposioAccess.enable_account(c.tenant, c.group, c.uid, "owned", false)
+
+    Agent.update(
+      c.provider,
+      &Map.put(&1, :toolkit_accounts, %{
+        "googledrive" => %{"accounts" => [%{"id" => "drive-new", "status" => "ACTIVE"}]},
+        "gmail" => %{"accounts" => [%{"id" => "mail-new", "status" => "ACTIVE"}]}
+      })
+    )
+
+    conn = reconcile(c, %{"toolkits" => ["gmail"]})
+    assert conn.status == 200
+    active = Jason.decode!(conn.resp_body)["accounts"] |> Enum.filter(& &1["enabled"])
+    assert Enum.sort(Enum.map(active, & &1["toolkit"])) == ["gmail", "googledrive"]
+
+    assert [%{"params" => %{"name" => "COMPOSIO_MANAGE_CONNECTIONS"}}] =
+             Agent.get(c.provider, & &1.requests)
+
+    assert {:ok, %{"items" => []}} =
+             ComposioAccess.grants(c.tenant, c.group, c.w["router_agent_id"])
+  end
+
+  @tag :account_adoption
+  test "expired consent adopts one of the same-identity baseline Drive accounts and lists real provider-stub files",
+       c do
+    {:ok, preserved} = ComposioAccess.enable_account(c.tenant, c.group, c.uid, "owned", false)
+    ids = ["googledrive_sandix-pudge", "googledrive_frisky-devout"]
+    expired_drive_consent(c, ids)
+
+    accounts =
+      Enum.map(
+        ids,
+        &%{
+          "id" => &1,
+          "status" => "ACTIVE",
+          "user_info" => %{
+            "user" => %{"emailAddress" => "member@example.test", "displayName" => "Member"}
+          }
+        }
+      )
+
+    Agent.update(c.provider, &%{&1 | accounts: accounts})
+    # The catalog trigger has no toolkit or active consent parameter.
+    conn = reconcile(c)
+    assert conn.status == 200
+    result = Jason.decode!(conn.resp_body)
+
+    connected =
+      Enum.filter(
+        result["accounts"],
+        &(&1["toolkit"] == "googledrive" and &1["status"] == "ACTIVE" and &1["enabled"])
+      )
+
+    assert [%{"id" => "googledrive_frisky-devout"}] = connected
+
+    assert {:error, :not_found} =
+             ComposioAccess.account(c.tenant, c.group, c.uid, "googledrive_sandix-pudge")
+
+    assert {:ok, ^preserved} = ComposioAccess.account(c.tenant, c.group, c.uid, "owned")
+
+    assert {:ok, %{"items" => []}} =
+             ComposioAccess.grants(c.tenant, c.group, c.w["router_agent_id"])
+
+    reads =
+      Agent.get(c.provider, & &1.requests)
+      |> Enum.filter(&(get_in(&1, ["params", "name"]) == "COMPOSIO_MANAGE_CONNECTIONS"))
+
+    assert length(reads) == 1
+    files = browse(c, %{"account_id" => "googledrive_frisky-devout"})
+    assert files.status == 200
+    assert [%{"name" => "Budget"}] = Jason.decode!(files.resp_body)["files"]
+  end
+
+  @tag :account_adoption
+  test "automatic discovery preserves explicit disable and does not offer registered accounts as candidates",
+       c do
+    {:ok, disabled} = ComposioAccess.enable_account(c.tenant, c.group, c.uid, "owned", false)
+    Agent.update(c.provider, &%{&1 | accounts: [%{"id" => "owned", "status" => "ACTIVE"}]})
+    conn = reconcile(c, %{"toolkit" => "googledrive"})
+    assert conn.status == 200
+    assert {:ok, ^disabled} = ComposioAccess.account(c.tenant, c.group, c.uid, "owned")
+    assert Jason.decode!(conn.resp_body)["remote_accounts"] == []
+    assert Jason.decode!(conn.resp_body)["accounts"] == [Map.drop(disabled, ["user_id"])]
+  end
+
+  @tag :account_adoption
+  test "absent consent adopts only ACTIVE accounts and preserves an existing connected toolkit",
+       c do
+    existing = elem(ComposioAccess.account(c.tenant, c.group, c.uid, "owned"), 1)
+
+    Agent.update(
+      c.provider,
+      &%{
+        &1
+        | accounts: [
+            %{"id" => "owned", "status" => "ACTIVE"},
+            %{"id" => "other", "status" => "ACTIVE", "alias" => "other@example.test"}
+          ]
+      }
+    )
+
+    assert reconcile(c, %{"toolkit" => "googledrive"}).status == 200
+    assert {:ok, ^existing} = ComposioAccess.account(c.tenant, c.group, c.uid, "owned")
+    assert {:error, :not_found} = ComposioAccess.account(c.tenant, c.group, c.uid, "other")
+    {:ok, _} = ComposioAccess.enable_account(c.tenant, c.group, c.uid, "owned", false)
+
+    Agent.update(
+      c.provider,
+      &%{
+        &1
+        | accounts: [
+            %{"id" => "not-ready", "status" => "INITIATED"},
+            %{"id" => "authorized", "status" => "ACTIVE"}
+          ]
+      }
+    )
+
+    conn = reconcile(c)
+    assert conn.status == 200
+
+    assert Enum.any?(
+             Jason.decode!(conn.resp_body)["accounts"],
+             &(&1["id"] == "authorized" and &1["enabled"])
+           )
+
+    assert {:error, :not_found} = ComposioAccess.account(c.tenant, c.group, c.uid, "not-ready")
+  end
+
+  @tag :account_adoption
+  test "different identities remain explicit without a fresh consent and a new account outranks the baseline",
+       c do
+    {:ok, _} = ComposioAccess.enable_account(c.tenant, c.group, c.uid, "owned", false)
+    expired_drive_consent(c, ["first", "second"])
+
+    accounts = [
+      %{"id" => "first", "status" => "ACTIVE", "alias" => "one@example.test"},
+      %{"id" => "second", "status" => "ACTIVE", "alias" => "two@example.test"}
+    ]
+
+    Agent.update(c.provider, &%{&1 | accounts: accounts})
+    assert reconcile(c, %{"toolkit" => "googledrive"}).status == 200
+    assert {:error, :not_found} = ComposioAccess.account(c.tenant, c.group, c.uid, "first")
+    assert {:error, :not_found} = ComposioAccess.account(c.tenant, c.group, c.uid, "second")
+
+    Agent.update(
+      c.provider,
+      &%{
+        &1
+        | accounts:
+            accounts ++ [%{"id" => "new", "status" => "ACTIVE", "alias" => "new@example.test"}]
+      }
+    )
+
+    assert reconcile(c, %{"toolkit" => "googledrive"}).status == 200
+    assert {:ok, %{"enabled" => true}} = ComposioAccess.account(c.tenant, c.group, c.uid, "new")
+    {:ok, _} = ComposioAccess.enable_account(c.tenant, c.group, c.uid, "new", false)
+    Agent.update(c.provider, &%{&1 | accounts: accounts})
+    assert reconcile(c, %{"toolkit" => "googledrive", "account_id" => "second"}).status == 200
+
+    assert {:ok, %{"enabled" => true}} =
+             ComposioAccess.account(c.tenant, c.group, c.uid, "second")
+
+    assert {:error, :not_found} = ComposioAccess.account(c.tenant, c.group, c.uid, "first")
+  end
+
+  @tag :account_adoption
+  test "a connected account beyond the first local page blocks adoption even when the provider omits it",
+       c do
+    {:ok, _} = ComposioAccess.enable_account(c.tenant, c.group, c.uid, "owned", false)
+
+    for number <- 1..55 do
+      {:ok, _} =
+        ComposioAccess.put_account(c.tenant, c.group, c.uid, "a#{number}", %{
+          "mode" => "connect",
+          "toolkit" => "gmail",
+          "status" => "ACTIVE",
+          "name" => "Other toolkit"
+        })
+    end
+
+    {:ok, existing} =
+      ComposioAccess.put_account(c.tenant, c.group, c.uid, "zz-existing", %{
+        "mode" => "connect",
+        "toolkit" => "googledrive",
+        "status" => "ACTIVE",
+        "name" => "Existing Drive"
+      })
+
+    {:ok, page} = ComposioAccess.accounts(c.tenant, c.group, c.uid)
+    refute Enum.any?(page["items"], &(&1["id"] == "zz-existing"))
+    Agent.update(c.provider, &%{&1 | accounts: [%{"id" => "new-remote", "status" => "ACTIVE"}]})
+    conn = reconcile(c, %{"toolkit" => "googledrive"})
+    assert conn.status == 200
+
+    assert Enum.any?(
+             Jason.decode!(conn.resp_body)["accounts"],
+             &(&1["id"] == "zz-existing" and &1["enabled"])
+           )
+
+    assert {:ok, ^existing} = ComposioAccess.account(c.tenant, c.group, c.uid, "zz-existing")
+    assert {:error, :not_found} = ComposioAccess.account(c.tenant, c.group, c.uid, "new-remote")
+
+    reads =
+      Agent.get(c.provider, & &1.requests)
+      |> Enum.filter(&(get_in(&1, ["params", "name"]) == "COMPOSIO_MANAGE_CONNECTIONS"))
+
+    assert length(reads) == 1
+  end
+
+  @tag :account_adoption
+  test "cancel during discovery fences adoption of the late ACTIVE account", c do
+    {:ok, _} = ComposioAccess.enable_account(c.tenant, c.group, c.uid, "owned", false)
+    {:ok, consent} = ComposioAccess.begin_consent(c.tenant, c.group, c.uid, "googledrive")
+
+    {:ok, _} =
+      ComposioAccess.finish_consent(
+        c.tenant,
+        c.group,
+        c.uid,
+        "googledrive",
+        consent["id"],
+        "https://provider.example/drive"
+      )
+
+    owner = self()
+
+    Agent.update(
+      c.provider,
+      &Map.merge(&1, %{accounts: [%{"id" => "late", "status" => "ACTIVE"}], hold: owner})
+    )
+
+    task = Task.async(fn -> reconcile(c, %{"toolkit" => "googledrive"}) end)
+    assert_receive {:held, pid}, 5_000
+
+    {:ok, _} =
+      ComposioAccess.cancel_consent(c.tenant, c.group, c.uid, "googledrive", consent["id"])
+
+    send(pid, :release)
+    assert Task.await(task).status != 200
+    assert {:error, :not_found} = ComposioAccess.account(c.tenant, c.group, c.uid, "late")
+  end
+
+  @tag :account_adoption
+  test "credential authority loss during discovery cannot adopt a remote account", c do
+    {:ok, _} = ComposioAccess.enable_account(c.tenant, c.group, c.uid, "owned", false)
+
+    owner = self()
+
+    Agent.update(
+      c.provider,
+      &Map.merge(&1, %{accounts: [%{"id" => "late", "status" => "ACTIVE"}], hold: owner})
+    )
+
+    task = Task.async(fn -> reconcile(c, %{"toolkit" => "googledrive"}) end)
+    assert_receive {:held, pid}, 5_000
+
+    {:ok, _} =
+      ComposioAccess.update_profile(
+        c.tenant,
+        c.group,
+        c.uid,
+        &{:ok, Map.put(&1, "status", "reauthorization_required")}
+      )
+
+    send(pid, :release)
+    assert Task.await(task).status != 200
+    assert {:error, :not_found} = ComposioAccess.account(c.tenant, c.group, c.uid, "late")
+  end
+
+  @tag :account_adoption
+  test "opaque baseline accounts without identity metadata use a deterministic reference without inventing an identity",
+       c do
+    {:ok, _} = ComposioAccess.enable_account(c.tenant, c.group, c.uid, "owned", false)
+    expired_drive_consent(c, ["drive-z", "drive-a"])
+
+    Agent.update(
+      c.provider,
+      &%{
+        &1
+        | accounts: [
+            %{"id" => "drive-z", "status" => "ACTIVE"},
+            %{"id" => "drive-a", "status" => "ACTIVE"}
+          ]
+      }
+    )
+
+    conn = reconcile(c, %{"toolkit" => "googledrive"})
+    assert conn.status == 200
+    assert {:ok, selected} = ComposioAccess.account(c.tenant, c.group, c.uid, "drive-a")
+    assert selected["enabled"]
+    refute Map.has_key?(selected, "email")
+    assert {:error, :not_found} = ComposioAccess.account(c.tenant, c.group, c.uid, "drive-z")
+  end
+
+  @tag :account_adoption
+  test "reopening after an accepted account write settles its exact unfinished consent", c do
+    {:ok, _} = ComposioAccess.enable_account(c.tenant, c.group, c.uid, "owned", false)
+    {:ok, consent} = ComposioAccess.begin_consent(c.tenant, c.group, c.uid, "googledrive")
+
+    {:ok, _} =
+      ComposioAccess.finish_consent(
+        c.tenant,
+        c.group,
+        c.uid,
+        "googledrive",
+        consent["id"],
+        "https://provider.example/drive"
+      )
+
+    {:ok, _} =
+      ComposioAccess.prepare_adoption_consent(
+        c.tenant,
+        c.group,
+        c.uid,
+        "googledrive",
+        consent["id"],
+        "accepted"
+      )
+
+    {:ok, _} =
+      ComposioAccess.adopt_account(c.tenant, c.group, c.uid, %{
+        "id" => "accepted",
+        "toolkit" => "googledrive",
+        "mode" => "connect",
+        "status" => "ACTIVE",
+        "name" => "Member"
+      })
+
+    Agent.update(
+      c.provider,
+      &%{
+        &1
+        | accounts: [
+            %{"id" => "accepted", "status" => "ACTIVE"},
+            %{"id" => "other", "status" => "ACTIVE"}
+          ]
+      }
+    )
+
+    assert reconcile(c, %{"toolkit" => "googledrive"}).status == 200
+
+    assert {:ok, %{"status" => "completed", "selected_account_id" => "accepted"}} =
+             ComposioAccess.consent(c.tenant, c.group, c.uid, "googledrive")
+
+    assert {:error, :not_found} = ComposioAccess.account(c.tenant, c.group, c.uid, "other")
+  end
+
   test "authenticated member browses a complete online page without Agent or Routine grants", c do
     conn = browse(c)
     assert conn.status == 200
@@ -417,6 +815,10 @@ defmodule CommaWeb.GoogleDriveBrowserTest do
         "mode" => "project"
       })
 
+    {:ok, before_reconciliation} = ComposioAccess.profile(c.tenant, c.group, c.uid)
+    assert reconcile(c).status == 200
+    assert Agent.get(c.provider, & &1.requests) == []
+    assert {:ok, ^before_reconciliation} = ComposioAccess.profile(c.tenant, c.group, c.uid)
     Agent.update(c.provider, &Map.put(&1, :remote_user, "comma:" <> c.group <> ":" <> c.uid))
     conn = browse(c, %{"tab" => "my_drive"})
     assert conn.status == 200

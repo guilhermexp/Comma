@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@comma/test-utils/render";
 import { CommaI18nProvider } from "@comma/i18n/react";
 import { afterEach, expect, it, type Mock, vi } from "vitest";
@@ -159,7 +160,9 @@ it("distinguishes incomplete, failed, reconnect, no account and empty states wit
     getComposio: async () => ({ accounts: [], next_cursor: null }),
   } as unknown as CommaApiClient;
   render(view(emptyClient));
-  await screen.findByText("Connect Google Drive in Plugins to browse online files.");
+  await screen.findByText(
+    "No authorized Google Drive account is available. Connect Google Drive in Plugins."
+  );
   expect(
     read.mock.calls.every((call) => (call as unknown[])[1] === "google_drive")
   ).toBe(true);
@@ -217,4 +220,64 @@ it("keeps exact duplicate identities distinct, excludes other modes and offers r
   );
   expect(screen.queryByText("Current")).toBeNull();
   expect(read.mock.calls.at(-1)?.[2]).toMatchObject({ account_id: "b" });
+});
+
+it("offers different authorized identities directly in Drive and lists the chosen account without Plugins", async () => {
+  const candidates = [
+    {
+      ...account("personal"),
+      name: "Personal",
+      email: "personal@example.test",
+      enabled: false,
+    },
+    { ...account("work"), name: "Work", email: "work@example.test", enabled: false },
+  ];
+  let selected: (typeof candidates)[number] | undefined;
+  const status = () => ({
+    mode: "connect",
+    status: "connected",
+    user_id: "member",
+    accounts: selected ? [{ ...selected, enabled: true }] : [],
+    next_cursor: null,
+    expires_at: null,
+    capabilities: { catalog: true, search: true, account_management: true },
+  });
+  const command = vi.fn(async (_workspace, action, params) => {
+    if (action === "reconcile_accounts") {
+      if (params.account_id)
+        selected = candidates.find((item) => item.id === params.account_id);
+      return { ...status(), consent: null, remote_accounts: candidates };
+    }
+    if (action === "google_drive")
+      return page(
+        params.account_id === "work" ? "Work budget" : "Wrong identity budget"
+      );
+    throw new Error(`Unexpected action ${action}`);
+  });
+  const plugins = vi.fn();
+  render(
+    <CommaI18nProvider locale="en">
+      <GoogleDriveBrowser
+        api={
+          {
+            getComposio: async () => status(),
+            composioCommand: command,
+          } as unknown as CommaApiClient
+        }
+        workspaceId="workspace"
+        active
+        onPlugins={plugins}
+      />
+    </CommaI18nProvider>
+  );
+  const work = await screen.findByRole("group", { name: "Work · work@example.test" });
+  expect(screen.getAllByRole("button", { name: "Use this account" })).toHaveLength(2);
+  expect(screen.queryByRole("button", { name: /budget/ })).toBeNull();
+  fireEvent.click(within(work).getByRole("button", { name: "Use this account" }));
+  expect(await screen.findByRole("button", { name: /Work budget/ })).toBeVisible();
+  expect(screen.queryByText("Wrong identity budget")).toBeNull();
+  expect(plugins).not.toHaveBeenCalled();
+  expect(
+    command.mock.calls.filter(([, action]) => action === "reconcile_accounts")
+  ).toHaveLength(2);
 });

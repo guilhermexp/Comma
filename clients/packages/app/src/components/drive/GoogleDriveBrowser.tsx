@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { composioStatusSchema, composioAccountSchema } from "../../api";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useCommaLocale, useCommaMessages } from "@comma/i18n/react";
 import {
@@ -36,6 +38,7 @@ type Accounts = {
   cursor: string | null;
   selected: string;
   error?: boolean;
+  candidates?: ComposioAccount[];
 };
 type Listing = {
   api: CommaApiClient;
@@ -102,12 +105,18 @@ export function GoogleDriveBrowser({
     listing?.key === key && listing.api === api && active ? listing : undefined;
   const generation = useRef(0);
   const accountsMode = useRef<string | undefined>(undefined);
+  const accountChoice = useRef<{ workspace: string; id: string } | undefined>(
+    undefined
+  );
 
   useEffect(() => {
     if (!active || !workspace) return;
     const controller = new AbortController();
     let live = true;
     const timeout = setTimeout(() => controller.abort(), 35_000);
+    const choice = accountChoice.current;
+    accountChoice.current = undefined;
+    const selectedChoice = choice?.workspace === workspace ? choice.id : undefined;
     const load = accountsCursor
       ? api
           .composioCommand(
@@ -123,7 +132,45 @@ export function GoogleDriveBrowser({
           }))
       : api.getComposio(workspace, { signal: controller.signal });
     void load
-      .then((result) => {
+      .then(async (loaded) => {
+        if (!live || controller.signal.aborted) return;
+        let result = loaded;
+        let candidates: ComposioAccount[] = [];
+        if (
+          !accountsCursor &&
+          result.mode === "connect" &&
+          "status" in result &&
+          result.status === "connected" &&
+          (selectedChoice ||
+            !result.accounts.some(
+              (item) =>
+                item.toolkit === "googledrive" &&
+                item.mode === "connect" &&
+                item.status === "ACTIVE" &&
+                item.enabled
+            ))
+        ) {
+          const reconciled = composioStatusSchema
+            .extend({ remote_accounts: z.array(composioAccountSchema).default([]) })
+            .parse(
+              await api.composioCommand(
+                workspace,
+                "reconcile_accounts",
+                {
+                  toolkit: "googledrive",
+                  ...(selectedChoice ? { account_id: selectedChoice } : {}),
+                },
+                { signal: controller.signal }
+              )
+            );
+          result = reconciled;
+          candidates = reconciled.remote_accounts.filter(
+            (item) =>
+              item.toolkit === "googledrive" &&
+              item.mode === "connect" &&
+              item.status === "ACTIVE"
+          );
+        }
         if (!live || controller.signal.aborted) return;
         accountsMode.current = result.mode;
         const items = result.accounts.filter(
@@ -137,6 +184,7 @@ export function GoogleDriveBrowser({
           key: accountsKey,
           api,
           items,
+          candidates: items.length === 0 ? candidates : [],
           cursor: result.next_cursor,
           selected:
             items.find((item) => item.id === old?.selected)?.id ?? items[0]?.id ?? "",
@@ -491,10 +539,54 @@ export function GoogleDriveBrowser({
           </output>
         ) : !selectedId ? (
           <div className="p-xl text-sm text-tertiary">
-            <p>{m.online_drive_connect()}</p>
-            <button type="button" className={cx(button, "mt-lg")} onClick={onPlugins}>
-              {m.online_drive_plugins()}
-            </button>
+            {currentAccounts.candidates?.length ? (
+              <>
+                <p>{m.composio_empty()}</p>
+                {currentAccounts.candidates.map((candidate) => {
+                  const identity = composioAccountPresentation(
+                    candidate,
+                    currentAccounts.candidates!
+                  );
+                  return (
+                    <fieldset
+                      key={candidate.id}
+                      aria-label={[identity.name, identity.email]
+                        .filter(Boolean)
+                        .join(" · ")}
+                      className="m-0 flex items-center gap-md border-0 py-md"
+                    >
+                      <span>
+                        {identity.name}
+                        {identity.email && identity.email !== identity.name
+                          ? ` · ${identity.email}`
+                          : ""}
+                      </span>
+                      <button
+                        type="button"
+                        className={button}
+                        onClick={() => {
+                          accountChoice.current = { workspace, id: candidate.id };
+                          refresh();
+                        }}
+                      >
+                        {m.composio_use_account()}
+                      </button>
+                    </fieldset>
+                  );
+                })}
+              </>
+            ) : (
+              <>
+                <p>{m.online_drive_connect()}</p>
+                <button
+                  type="button"
+                  className={cx(button, "mt-lg")}
+                  onClick={onPlugins}
+                >
+                  {m.online_drive_plugins()}
+                </button>
+              </>
+            )}
           </div>
         ) : current?.error ? (
           <div role="alert" className="p-xl text-sm text-primary">

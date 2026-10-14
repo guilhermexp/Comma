@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
-import { composioAccountSchema, type CommaApiClient } from "../../api";
+import {
+  composioAccountSchema,
+  composioStatusSchema,
+  type CommaApiClient,
+} from "../../api";
 import {
   composioCatalogPageSchema,
   type ComposioCatalogItem,
@@ -13,8 +17,11 @@ const accountsPageSchema = z.object({
 
 export function useComposioConnectedCatalog(
   api: CommaApiClient,
-  workspaceId: string | undefined
+  workspaceId: string | undefined,
+  catalog: { toolkits: string[]; ready: boolean } = { toolkits: [], ready: true }
 ) {
+  const toolkitKey = JSON.stringify([...new Set(catalog.toolkits)].toSorted());
+  const ready = catalog.ready;
   const [revision, setRevision] = useState(0);
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
   const [state, setState] = useState<{
@@ -27,7 +34,7 @@ export function useComposioConnectedCatalog(
   }>();
 
   useEffect(() => {
-    if (!workspaceId) return;
+    if (!workspaceId || !ready) return;
     const controller = new AbortController();
     const options = { signal: controller.signal };
     const scope = { api, workspaceId, revision };
@@ -35,7 +42,17 @@ export function useComposioConnectedCatalog(
     setState({ ...scope, items, loading: true, failed: false });
     void (async () => {
       try {
-        const status = await api.getComposio(workspaceId, options);
+        let status = await api.getComposio(workspaceId, options);
+        if (controller.signal.aborted) return;
+        if (status.mode === "connect" && status.status === "connected")
+          status = composioStatusSchema.parse(
+            await api.composioCommand(
+              workspaceId,
+              "reconcile_accounts",
+              { toolkits: JSON.parse(toolkitKey) as string[] },
+              options
+            )
+          );
         let page = { items: status.accounts, next_cursor: status.next_cursor };
         const seen = new Set<string>();
         const cursors = new Set<string>();
@@ -95,7 +112,7 @@ export function useComposioConnectedCatalog(
       }
     })();
     return () => controller.abort();
-  }, [api, workspaceId, revision]);
+  }, [api, workspaceId, revision, ready, toolkitKey]);
 
   const current =
     state !== undefined &&

@@ -185,7 +185,10 @@ export function PluginsRoute() {
     workspaceId,
     catalogTab === "plugins" ? searchQuery : ""
   );
-  const connectedCatalog = useComposioConnectedCatalog(api, workspaceId);
+  const connectedCatalog = useComposioConnectedCatalog(api, workspaceId, {
+    toolkits: composioCatalog.items.slice(-20).map((item) => item.slug),
+    ready: composioCatalog.ready,
+  });
   const skillCatalog = useWorkspaceSkillsState(api, workspaceId ?? "");
   const skills = skillCatalog.skills;
   useEffect(() => {

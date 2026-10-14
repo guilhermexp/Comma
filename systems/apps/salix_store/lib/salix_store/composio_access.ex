@@ -166,6 +166,48 @@ defmodule SalixStore.ComposioAccess do
     end)
   end
 
+  # Adoption is an owner-authorized observation of an ACTIVE remote account,
+  # not an OAuth attempt or an Agent grant. Never convert an existing identity
+  # from another mode/toolkit into the observed account.
+  def adopt_account(
+        tenant,
+        group,
+        user,
+        %{"id" => id, "toolkit" => toolkit, "mode" => "connect", "status" => "ACTIVE"} = remote
+      ) do
+    update(account_key(tenant, group, user, id), fn
+      nil ->
+        {:ok,
+         Map.merge(Map.take(remote, ~w(id toolkit status mode name)), account_identity(remote))
+         |> Map.put("user_id", user)
+         |> Map.put("enabled", true)}
+
+      %{"mode" => "connect", "toolkit" => ^toolkit, "status" => "ACTIVE", "enabled" => true} =
+          current ->
+        {:ok, current}
+
+      _ ->
+        {:error, :composio_account_not_owned}
+    end)
+  end
+
+  def prepare_adoption_consent(tenant, group, user, toolkit, id, account_id) do
+    update(consent_key(tenant, group, user, toolkit), fn
+      %{"id" => ^id, "status" => status} = record when status in ["starting", "pending"] ->
+        {:ok,
+         record |> Map.put("status", "selecting") |> Map.put("selected_account_id", account_id)}
+
+      %{"id" => ^id, "status" => "selecting", "selected_account_id" => ^account_id} = record ->
+        {:ok, record}
+
+      %{"id" => ^id, "status" => "completed"} = record ->
+        {:ok, record}
+
+      _ ->
+        {:error, :composio_attempt_not_pending}
+    end)
+  end
+
   def begin_account(tenant, group, user, id, url, replaces \\ nil) do
     with {:ok, sealed} <-
            CredentialCipher.seal(tenant, account_key(tenant, group, user, id), %{"url" => url}) do
@@ -221,6 +263,9 @@ defmodule SalixStore.ComposioAccess do
         {:error, :invalid_composio_consent}
     end)
   end
+
+  def consents(tenant, group, user, cursor \\ nil),
+    do: page(prefix(tenant, group) <> "members/" <> segment(user) <> "/consents/", cursor)
 
   def consent(tenant, group, user, toolkit) do
     case read(consent_key(tenant, group, user, toolkit)) do

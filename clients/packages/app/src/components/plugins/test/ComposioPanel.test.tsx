@@ -40,6 +40,12 @@ function show(
   if (originalCommand && vi.isMockFunction(originalCommand)) {
     const implementation = originalCommand.getMockImplementation();
     originalCommand.mockImplementation(async (workspace, action, params, options) => {
+      if (action === "reconcile_accounts")
+        return {
+          ...(await api.getComposio!(workspace)),
+          consent: getConsent(),
+          remote_accounts: [],
+        };
       if (action === "consent" && params?.operation === "get")
         return { consent: getConsent() };
       const result = implementation
@@ -50,6 +56,12 @@ function show(
     composioCommand = originalCommand;
   } else {
     composioCommand = async (workspace, action, params = {}, options) => {
+      if (action === "reconcile_accounts")
+        return {
+          ...(await api.getComposio!(workspace)),
+          consent: getConsent(),
+          remote_accounts: [],
+        };
       if (action === "consent" && params.operation === "get")
         return { consent: getConsent() };
       const result = originalCommand
@@ -275,7 +287,7 @@ it("keeps a single initiated account unselectable until provider authorization c
 
   expect(
     await screen.findByText(
-      "Complete authorization in your browser. Comma detects the account automatically. If a choice is needed, select Use this account."
+      "Complete authorization in your browser. Comma detects authorized accounts automatically. If accounts use different identities, choose which one to use."
     )
   ).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Use this account" })).toBeNull();
@@ -430,7 +442,7 @@ it("reopens and cancels the pending consent by its ID without profile login acti
   );
 });
 
-it("selects the explicitly named connection when two connections share a provider identity", async () => {
+it("keeps disabled connections inactive during pending consent and enables only the named connection", async () => {
   const user = userEvent.setup();
   const composioCommand = vi.fn().mockResolvedValue({});
   show(
@@ -472,18 +484,18 @@ it("selects the explicitly named connection when two connections share a provide
   );
 
   await screen.findAllByText("casey@example.test");
+  expect(screen.queryByRole("button", { name: "Use this account" })).toBeNull();
   await user.click(
     within(
       screen.getByRole("group", {
         name: "Casey Example · casey@example.test · Connection 2",
       })
-    ).getByRole("button", { name: "Use this account" })
+    ).getByRole("button")
   );
+  await user.click(await screen.findByRole("menuitem", { name: "Enable in Comma" }));
   await waitFor(() =>
-    expect(composioCommand).toHaveBeenCalledWith("workspace", "consent", {
-      toolkit: "github",
-      consent_id: "github-consent-3",
-      operation: "select",
+    expect(composioCommand).toHaveBeenCalledWith("workspace", "account", {
+      operation: "enable",
       account_id: "verified-account-two",
     })
   );
@@ -525,7 +537,7 @@ it("does not treat a consent URL as a connected account", async () => {
   );
   expect(
     await screen.findByText(
-      "Complete authorization in your browser. Comma detects the account automatically. If a choice is needed, select Use this account."
+      "Complete authorization in your browser. Comma detects authorized accounts automatically. If accounts use different identities, choose which one to use."
     )
   ).toBeInTheDocument();
   expect(openNativePlatformExternalUrl).toHaveBeenCalledWith(
@@ -533,7 +545,7 @@ it("does not treat a consent URL as a connected account", async () => {
   );
   expect(
     await screen.findByText(
-      "No verified accounts for this app. Connect an account to continue."
+      "No account connected in Comma. Authorized accounts are detected automatically. Accounts with different identities require a choice."
     )
   ).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Use this account" })).toBeNull();
@@ -569,7 +581,7 @@ it("allows cancellation while consent is starting and hides reopen", async () =>
   );
 });
 
-it("explains expired app consent without requiring a working account to sign in again", async () => {
+it("keeps an expired past attempt from obscuring a working connection", async () => {
   const user = userEvent.setup();
   const composioCommand = vi.fn(async (_workspace, action) =>
     action === "connect"
@@ -611,9 +623,7 @@ it("explains expired app consent without requiring a working account to sign in 
   );
 
   await screen.findByText("Connected", { selector: "span" });
-  const expiry = screen.getByText(/past attempt expired/i);
-  expect(expiry).toHaveTextContent(/Existing connections are unaffected/i);
-  expect(expiry).toHaveTextContent(/Connect another account/i);
+  expect(screen.queryByText(/past attempt expired/i)).toBeNull();
   expect(screen.queryByRole("button", { name: "Sign in with Composio" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Cancel authorization" })).toBeNull();
   expect(composioCommand).not.toHaveBeenCalledWith(

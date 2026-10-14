@@ -26,6 +26,11 @@ export function useComposioCatalog(
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [completed, setCompleted] = useState<{
+    api: CommaApiClient;
+    workspaceId: string;
+    query: string;
+  }>();
   const request = useRef<AbortController | undefined>(undefined);
   const load = useCallback(
     async (next?: string) => {
@@ -53,7 +58,10 @@ export function useComposioCatalog(
       } catch {
         if (!controller.signal.aborted) setFailed(true);
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) {
+          setCompleted({ api, workspaceId, query });
+          setLoading(false);
+        }
       }
     },
     [api, workspaceId, query]
@@ -68,5 +76,10 @@ export function useComposioCatalog(
       request.current?.abort();
     };
   }, [load, query]);
-  return { items, cursor, loading, failed, load };
+  const ready =
+    completed?.api === api &&
+    completed.workspaceId === workspaceId &&
+    completed.query === query &&
+    !loading;
+  return { items, cursor, loading, failed, load, ready };
 }

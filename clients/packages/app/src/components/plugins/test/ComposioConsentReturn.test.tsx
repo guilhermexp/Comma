@@ -55,41 +55,63 @@ async function fixture(
     expires_at: null,
     capabilities: { catalog: true, search: true, account_management: true },
   });
-  const command = vi.fn(async (_workspace, action, params) => {
-    if (action === "connect") {
-      consent = {
-        id: "consent",
-        toolkit: "gmail",
-        status: "pending",
-        expires_at: Date.now() + expiresIn,
-        baseline_account_ids: baseline,
-      };
-      return {
-        consent_id: "consent",
-        status: "pending",
-        authorization_url: "https://provider.example/consent",
-      };
+  const command = vi.fn(
+    async (_workspace, action, params): Promise<Record<string, unknown>> => {
+      if (action === "connect") {
+        consent = {
+          id: "consent",
+          toolkit: "gmail",
+          status: "pending",
+          expires_at: Date.now() + expiresIn,
+          baseline_account_ids: baseline,
+        };
+        return {
+          consent_id: "consent",
+          status: "pending",
+          authorization_url: "https://provider.example/consent",
+        };
+      }
+      if (action === "reconcile_accounts") {
+        await hold;
+        const active = remote.filter((item) => item.status === "ACTIVE");
+        if (
+          !selected.some((item) => item.status === "ACTIVE" && item.enabled) &&
+          consent?.status !== "cancelled"
+        ) {
+          const fresh = active.filter((item) => !baseline?.includes(item.id));
+          const candidates = fresh.length ? fresh : active;
+          const chosen = params.account_id
+            ? active.find((item) => item.id === params.account_id)
+            : candidates.length === 1
+              ? candidates[0]
+              : undefined;
+          // The API fixture models the server completing its existing selection
+          // path. The component must reach Connected without dispatching a click.
+          if (chosen)
+            await command(_workspace, "consent", {
+              operation: "select",
+              account_id: chosen.id,
+            });
+        }
+        return { ...status(), consent, remote_accounts: remote };
+      }
+      if (action === "consent" && params.operation === "get") return { consent };
+      if (action === "consent" && params.operation === "cancel") {
+        consent = { ...consent, status: "cancelled" };
+        return { consent };
+      }
+      if (action === "consent" && params.operation === "select") {
+        const chosen = remote.find(
+          (item) => item.id === params.account_id && item.status === "ACTIVE"
+        );
+        if (!chosen) throw new Error("Account not active");
+        selected = [{ ...chosen, enabled: true }];
+        consent = { ...consent, status: "completed" };
+        return chosen;
+      }
+      throw new Error(`Unexpected action ${action}`);
     }
-    if (action === "refresh_accounts") {
-      await hold;
-      return { ...status(), consent, remote_accounts: remote };
-    }
-    if (action === "consent" && params.operation === "get") return { consent };
-    if (action === "consent" && params.operation === "cancel") {
-      consent = { ...consent, status: "cancelled" };
-      return { consent };
-    }
-    if (action === "consent" && params.operation === "select") {
-      const chosen = remote.find(
-        (item) => item.id === params.account_id && item.status === "ACTIVE"
-      );
-      if (!chosen) throw new Error("Account not active");
-      selected = [{ ...chosen, enabled: true }];
-      consent = { ...consent, status: "completed" };
-      return chosen;
-    }
-    throw new Error(`Unexpected action ${action}`);
-  });
+  );
   const page = render(
     <CommaI18nProvider locale="en">
       <ComposioConnectorDetail
@@ -120,7 +142,7 @@ async function fixture(
   };
 }
 const reads = (command: ReturnType<typeof vi.fn>) =>
-  command.mock.calls.filter(([, action]) => action === "refresh_accounts").length;
+  command.mock.calls.filter(([, action]) => action === "reconcile_accounts").length;
 const selections = (command: ReturnType<typeof vi.fn>) =>
   command.mock.calls.filter(
     ([, action, params]) => action === "consent" && params.operation === "select"
@@ -139,9 +161,11 @@ it("detects one newly ACTIVE account after browser authorization and reaches Con
 });
 
 it("keeps an existing connected account and its actions while consent discovery offers only unconnected candidates", async () => {
-  const f = await fixture(["connected", "available"], 10_000, true, [
+  const f = await fixture(["connected", "available"], 10_000, false, [
     { ...account("connected"), enabled: true },
   ]);
+  fireEvent.click(screen.getByRole("button", { name: "Connect another account" }));
+  await tick();
   expect(
     within(screen.getByRole("group", { name: "connected" })).getByText("Connected")
   ).toBeVisible();
@@ -168,15 +192,13 @@ it("keeps an existing connected account and its actions while consent discovery 
 });
 
 it.each([["existing"], null])(
-  "keeps old or unknown-baseline accounts explicit (%j)",
+  "adopts a sole already authorized account even with an old or missing baseline (%j)",
   async (baseline) => {
     const f = await fixture(baseline);
     f.remote([account("existing")]);
     await tick(2000);
-    expect(selections(f.command)).toHaveLength(0);
-    expect(screen.getByRole("button", { name: "Use this account" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Use this account" }));
-    await tick();
+    expect(selections(f.command)).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Use this account" })).toBeNull();
     expect(screen.getByText("Connected", { selector: "span" })).toBeVisible();
   }
 );
@@ -218,30 +240,27 @@ it("does not select non-ACTIVE accounts and checks on focus and visibility with 
   expect(screen.getByText("Connected", { selector: "span" })).toBeVisible();
 });
 
-it("stops at expiry and lets an authorized old account finish through a fresh consent", async () => {
+it("stops polling at expiry and adopts an authorized baseline account on focus without a fresh consent", async () => {
   const f = await fixture(["authorized"], 3000);
   await tick(3000);
   const count = reads(f.command);
   await tick(8000);
-  fireEvent.focus(window);
-  await tick();
   expect(reads(f.command)).toBe(count);
   expect(screen.getByText(/past attempt expired/i)).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Connect another account" }));
-  await tick();
   f.remote([account("authorized")]);
-  await tick(2000);
-  expect(selections(f.command)).toHaveLength(0);
-  fireEvent.click(screen.getByRole("button", { name: "Use this account" }));
+  fireEvent.focus(window);
   await tick();
+  expect(selections(f.command)).toHaveLength(1);
   expect(screen.getByText("Connected", { selector: "span" })).toBeVisible();
 });
 
 it("does no remote refresh without pending consent and stops after cancellation or unmount", async () => {
   const idle = await fixture([], 10_000, false);
+  const opened = reads(idle.command);
+  expect(opened).toBe(1);
   fireEvent.focus(window);
   await tick(6000);
-  expect(reads(idle.command)).toBe(0);
+  expect(reads(idle.command)).toBe(opened + 1);
   idle.page.unmount();
   const f = await fixture();
   fireEvent.click(screen.getByRole("button", { name: "Cancel authorization" }));

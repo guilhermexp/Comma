@@ -408,8 +408,8 @@ defmodule CommaWeb.ComposioConnectTest do
       assert Enum.find(public["accounts"], &(&1["id"] == id))["email"] == "casey@example.test"
     end
 
-    assert Enum.find(public["accounts"], &(&1["id"] == "drive-no-identity"))["name"] ==
-             "Googledrive"
+    assert {:error, :not_found} =
+             ComposioAccess.account(s.tenant, s.group, s.user, "drive-no-identity")
 
     for {id, record} <- s.siblings do
       assert {:ok, ^record} = ComposioAccess.account(s.tenant, s.group, s.user, id)

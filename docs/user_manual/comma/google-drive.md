@@ -9,8 +9,8 @@ offline mirror or synchronize Google files to local folders.
 
 1. Open **Drive**.
 2. Select **Google Drive** in the source sidebar.
-3. Select the Google account. Connections to the same identity keep separate
-   connection numbers. Choose the exact connection you need.
+3. If Comma shows account choices, select the Google account. Connections to the
+   same identity keep separate connection numbers.
 4. Select **Recent**, **My Drive** or **Shared with me**.
 5. Select a folder to open it. Use **Back** or a breadcrumb to return.
 6. Enter a name in **Search names** and select **Search**. To clear the search,
@@ -30,13 +30,16 @@ shared-drive directory.
 
 ## Connection and errors
 
-If no eligible account is connected, select **Open Plugins** and use the existing
-Google Drive connection flow. Opening the Drive tab does not start OAuth.
-Complete authorization in the browser, then return to the connector detail.
-Comma detects the account automatically while the detail is open. If Comma
-shows account choices, select **Use this account** for the required connection.
-If the attempt expires, select **Connect another account**. You can then select
-**Use this account** for an account that you already authorized.
+Opening Google Drive detects an already authorized account automatically and
+loads its files. This also works after an authorization attempt expires.
+Opening the connector detail or Plugins catalog can also detect the account.
+If authorized accounts have different identities, choose the account to use.
+Comma preserves existing connections and accounts that you disabled. To use a
+disabled account again, select **Enable in Comma** in its account menu in Plugins.
+
+If no authorized account is available, select **Open Plugins** and connect Google
+Drive. Complete authorization in the browser, then return to Comma. Opening the
+Drive tab does not start OAuth or require a new attempt for an authorized account.
 If the connection is unavailable, verify or reconnect it in Plugins, then retry.
 An incomplete search has a warning. An unsupported or failed provider result has
 an error and a retry action. Neither state means that your Drive is empty.

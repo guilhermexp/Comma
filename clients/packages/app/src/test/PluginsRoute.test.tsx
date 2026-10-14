@@ -986,6 +986,12 @@ describe("PluginsRoute", () => {
         // Connected services are absent from the first remote catalog page.
         return { items: [], next_cursor: "20" };
       }
+      if (action === "reconcile_accounts")
+        return {
+          ...(await harness.getComposio.mock.results.at(-1)!.value),
+          consent: null,
+          remote_accounts: [],
+        };
       if (action === "consent") return { consent: null };
       if (action === "accounts") return { items: [], next_cursor: null };
       throw new Error(`Unexpected action ${action}`);
@@ -998,6 +1004,67 @@ describe("PluginsRoute", () => {
       metadata,
     };
   }
+
+  it("automatically includes an already authorized Drive account in Installed without opening its detail", async () => {
+    harness.listWorkspacePlugins.mockResolvedValue(availablePlugins);
+    const connected = {
+      id: "googledrive_frisky-devout",
+      toolkit: "googledrive",
+      name: "Member",
+      email: "member@example.test",
+      mode: "connect",
+      status: "ACTIVE",
+      enabled: true,
+    };
+    let adopted = false;
+    const status = () => ({
+      mode: "connect",
+      status: "connected",
+      user_id: "member",
+      accounts: adopted ? [connected] : [],
+      next_cursor: null,
+      expires_at: null,
+      capabilities: { catalog: true, search: true, account_management: true },
+    });
+    harness.getComposio.mockImplementation(async () => status());
+    harness.composioCommand.mockImplementation(async (_workspace, action) => {
+      if (action === "reconcile_accounts") {
+        adopted = true;
+        return { ...status(), consent: null, remote_accounts: [] };
+      }
+      if (action === "catalog")
+        return {
+          items: [
+            {
+              slug: "googledrive",
+              name: "Google Drive",
+              description: "Files",
+              logo: "https://logos.composio.dev/api/googledrive",
+            },
+          ],
+          next_cursor: null,
+        };
+      throw new Error(`Unexpected action ${action}`);
+    });
+    render(<PluginsRoute />);
+    await screen.findByRole("button", { name: "View Google Drive plugin details" });
+    await waitFor(() =>
+      expect(
+        within(
+          screen.getByRole("button", { name: "View Google Drive plugin details" })
+        ).getByText("Connected")
+      ).toBeVisible()
+    );
+    expect(
+      screen.getByRole("button", { name: "View Google Drive plugin details" })
+    ).toBeVisible();
+    expect(
+      harness.composioCommand.mock.calls.filter(
+        ([, action]) => action === "reconcile_accounts"
+      )
+    ).toHaveLength(1);
+    expect(harness.openNativePlatformExternalUrl).not.toHaveBeenCalled();
+  });
 
   it("shows connected connectors outside the first page in the collapsed principal list and opens details without consent", async () => {
     const user = userEvent.setup();
@@ -1201,6 +1268,7 @@ describe("PluginsRoute", () => {
         baseline_account_ids: string[];
       } | null = null;
       let accountVisible = false;
+      let remoteAuthorized = false;
       harness.getComposio.mockImplementation(async () => ({
         mode: "connect",
         status: "connected",
@@ -1239,12 +1307,18 @@ describe("PluginsRoute", () => {
             authorization_url: "https://provider.example/consent",
           };
         }
-        if (action === "refresh_accounts")
+        if (action === "reconcile_accounts") {
+          if (!accountVisible && remoteAuthorized && consent?.status === "pending") {
+            accountVisible = true;
+            consent = { ...consent, status: "completed" };
+          }
           return {
-            ...(await harness.getComposio()),
+            ...(await harness.getComposio.mock.results.at(-1)!.value),
+            accounts: accountVisible ? [account] : [],
             consent,
-            remote_accounts: [{ ...account, enabled: false }],
+            remote_accounts: remoteAuthorized ? [{ ...account, enabled: false }] : [],
           };
+        }
         if (action === "consent" && params.operation === "get") return { consent };
         if (action === "consent" && params.operation === "select") {
           accountVisible = true;
@@ -1266,7 +1340,8 @@ describe("PluginsRoute", () => {
       );
       await user.click(await screen.findByRole("button", { name: "Add Gmail" }));
       if (outcome === "completed") {
-        await screen.findByText(/Comma detects the account automatically/);
+        await screen.findByText(/Comma detects authorized accounts automatically/);
+        remoteAuthorized = true;
         fireEvent.focus(window);
         await screen.findByText("Connected", { selector: "span" });
         await waitFor(() =>

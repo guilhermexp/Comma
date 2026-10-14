@@ -68,14 +68,33 @@ defmodule Salix.Control.ComposioConnect do
   end
 
   def accounts(tenant, group, user, toolkit) do
+    accounts_many(tenant, group, user, [toolkit])
+  end
+
+  # A single read for an explicit, bounded batch; never one RPC per account.
+  def accounts_many(tenant, group, user, toolkits)
+      when is_list(toolkits) and length(toolkits) in 1..100 do
     with {:ok, response} <-
            call(tenant, group, user, "COMPOSIO_MANAGE_CONNECTIONS", %{
-             "toolkits" => [%{"name" => toolkit, "action" => "list"}]
+             "toolkits" => Enum.map(toolkits, &%{"name" => &1, "action" => "list"})
            }),
-         %{"data" => %{"results" => results}} <- response,
-         %{"accounts" => accounts} <- results[toolkit],
-         true <- is_list(accounts) and length(accounts) <= 50 and Enum.all?(accounts, &is_map/1) do
-      Enum.reduce_while(accounts, {:ok, []}, fn raw, {:ok, acc} ->
+         %{"data" => %{"results" => results}} when is_map(results) <- response do
+      Enum.reduce_while(toolkits, {:ok, []}, fn toolkit, {:ok, accumulated} ->
+        case normalize_accounts(results[toolkit], toolkit) do
+          {:ok, accounts} -> {:cont, {:ok, accumulated ++ accounts}}
+          error -> {:halt, error}
+        end
+      end)
+    else
+      {:error, _} = error -> error
+      _ -> {:error, :invalid_composio_response}
+    end
+  end
+
+  defp normalize_accounts(%{"accounts" => accounts}, toolkit)
+       when is_list(accounts) and length(accounts) <= 50 do
+    Enum.reduce_while(accounts, {:ok, []}, fn
+      raw, {:ok, acc} when is_map(raw) ->
         id = raw["id"] || raw["account_id"]
         status = raw["status"]
 
@@ -88,8 +107,8 @@ defmodule Salix.Control.ComposioConnect do
             "email" => account_email(raw, toolkit),
             "identity_available" =>
               not is_nil(
-                account_label(raw["alias"]) || account_identity_name(raw, toolkit) ||
-                  account_email(raw, toolkit)
+                account_label(raw["alias"]) ||
+                  account_identity_name(raw, toolkit) || account_email(raw, toolkit)
               ),
             "status" => String.upcase(status),
             "mode" => "connect"
@@ -99,19 +118,17 @@ defmodule Salix.Control.ComposioConnect do
         else
           {:halt, {:error, :invalid_composio_response}}
         end
-      end)
-      |> case do
-        {:ok, items} ->
-          {:ok, Enum.reverse(items)}
 
-        error ->
-          error
-      end
-    else
-      {:error, _} = error -> error
-      _ -> {:error, :invalid_composio_response}
+      _, _ ->
+        {:halt, {:error, :invalid_composio_response}}
+    end)
+    |> case do
+      {:ok, items} -> {:ok, Enum.reverse(items)}
+      error -> error
     end
   end
+
+  defp normalize_accounts(_, _), do: {:error, :invalid_composio_response}
 
   def account(tenant, group, user, toolkit, id) do
     with {:ok, accounts} <- accounts(tenant, group, user, toolkit) do

@@ -538,18 +538,26 @@ with its data. The cipher retains the preexisting subscription ciphertext format
 Tokens, project keys, PKCE material, and consent links stay out of public
 account DTOs. The renderer receives a consent URL only for the requested browser action.
 
-The existing toolkit consent stores the server-read remote account IDs before
-the Add action, including accounts that are not yet ACTIVE. While the selected
-detail is mounted and the consent is pending, one serial discovery read runs at
-most every two seconds, with focus and visibility checks under the same bound.
-Each read covers one toolkit and at most 50 accounts. The ten-minute expiry,
-unmount, or a terminal consent stops discovery. Discovery does not adopt accounts.
-Exactly one new ACTIVE account is selected through the existing server consent
-selection path, which rechecks provider ownership and ACTIVE status. A missing
-historical baseline, multiple new accounts, and pre-existing accounts require an
-explicit choice from visible candidates. After expiry, Connect another account
-starts a fresh consent; an already authorized account can then be selected
-explicitly. This does not enable Agent grants or Routine sources.
+The existing toolkit consent stores server-read remote account IDs before Add,
+including accounts that are not yet ACTIVE. Personal Connect reconciliation
+adopts an unregistered ACTIVE account only when the member has no locally
+connected (ACTIVE and enabled) account for that toolkit. It never re-enables a
+registered account. Disabled accounts retain their Enable action. New accounts
+outside the consent baseline take priority. Otherwise, the current Connect
+payload exposes identity metadata but no authorization or update timestamp.
+Accounts with distinct known email/name identities require visible selection;
+accounts without distinct known identities use a deterministic exact-ID tie-break.
+An absent or expired consent does not block adoption. Existing account, consent,
+and credential owners remain authoritative; no new domain entity is introduced.
+
+While a pending consent detail is mounted, one serial reconciliation read runs
+at most every two seconds, with focus and visibility checks under the same bound.
+Expiry, unmount, or a terminal consent stops the timer. Opening or focusing an
+unconnected detail and opening Google Drive also perform one reconciliation read.
+Each toolkit read covers at most 50 remote accounts. Before writing, the backend
+rechecks member and credential authority. Consent claims fence cancellation and
+superseded attempts. Adoption does not replace accounts, delete remote accounts,
+grant Agent access, or enable Routine sources. Project mode remains explicit.
 
 [The desktop API](../../systems/apps/comma_web/lib/comma_web/composio_connect.ex)
 requires the workspace owner. Plugins → Integrations uses the incumbent catalog rows
@@ -560,7 +568,14 @@ uses enabled ACTIVE accounts in the selected mode under the current workspace/me
 Login alone does not make a toolkit connected. Native plugins retain their own state.
 The client reads local account pages of at most 50 records serially and resolves
 metadata in batches of at most 20 exact toolkit slugs against the public catalog cache.
-It does not crawl remote catalog pages or refresh provider accounts for this list.
+For personal Connect, each loaded catalog page also triggers one batched remote
+read for its slugs, up to 50 stored consent toolkits, and the built-in Google Drive
+source. The union has at most 100 toolkits; it does not crawl the remote catalog.
+Unknown toolkits outside these scopes become discoverable when their catalog page
+or detail is opened. The backend uses a 30-second bounded worker and serial
+member-local pages to check existing connections and registered candidate IDs.
+It retains one connected record per requested toolkit and only registered IDs
+from the bounded remote response; there are no per-account provider RPCs.
 Missing account state or metadata produces a visible retry error. Returning from
 connector details or changing workspace reloads the projection; old-scope responses
 cannot publish rows. Opening a connected row does not start consent.
@@ -597,13 +612,14 @@ responses. This value cannot reuse an account record because the provider accoun
 identity is not yet known. It introduces no second credential or access owner.
 Each detail reads only its selected toolkit's consent. A live attempt blocks another
 Add for that toolkit. Expiry or explicit cancellation permits a new attempt.
-Opening its URL does not select, enable, or grant an account. The member explicitly
-selects an account; the backend reads that exact ID from the member's toolkit and
-requires ACTIVE before completing the consent and saving the selected reference.
+Opening its URL does not grant an account. Explicit consent selection reads the
+exact ID from the member's toolkit and requires ACTIVE before completing consent.
+Automatic adoption uses the reconciliation policy above and saves its exact ID.
 Only that selection can retire a recorded reconnect target. Other accounts remain
-unchanged. Only the winning selection claim can write accounts. A completed selection
-replay only reads the saved account. An interrupted selection remains stored and
-fails closed for coordinated repair; no automatic recovery or progress is claimed.
+unchanged. Only the winning consent selection claim can write its selected account. A
+completed selection replay reads the saved account. Reconciliation can resume an
+interrupted adoption of the same selected ID or settle an already accepted ACTIVE
+and enabled account. It does not substitute another account for a stored selection.
 Project-mode links retain their explicit provider account binding.
 Explicit verification confirms the remote account state. Cancel prevents a late
 verification from restoring the local attempt.

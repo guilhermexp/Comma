@@ -28,6 +28,26 @@ defmodule CommaWeb.ComposioConnect do
     end
   end
 
+  defp run(s, "reconcile_accounts", params) do
+    CommaWeb.RecommendationMemberRead.within(
+      CommaWeb.RecommendationMemberRead.deadline(30_000),
+      fn ->
+        with {:ok, profile} <- Access.profile(s.tenant, s.group, s.user) do
+          if profile["mode"] == "connect" and profile["status"] == "connected" do
+            reconcile_accounts(s, profile, params)
+          else
+            with {:ok, page} <- Access.accounts(s.tenant, s.group, s.user),
+                 do:
+                   {:ok,
+                    public(profile, page)
+                    |> Map.put("consent", nil)
+                    |> Map.put("remote_accounts", [])}
+          end
+        end
+      end
+    )
+  end
+
   defp run(s, "routine_source", %{"operation" => operation, "account_id" => id} = params)
        when operation in ~w(prepare enable) and is_binary(id) do
     with {:ok, workspace} <- Workspaces.authorize(%{"id" => s.user}, %{}, s.workspace),
@@ -331,13 +351,253 @@ defmodule CommaWeb.ComposioConnect do
 
   defp run(_, _, _), do: {:error, :invalid_composio_request}
 
+  defp reconcile_accounts(s, profile, params) do
+    with {:ok, consents} <- Access.consents(s.tenant, s.group, s.user),
+         {:ok, toolkits} <- reconciliation_toolkits(params, consents["items"]),
+         {:ok, remote} <- reconciliation_read(s, toolkits),
+         {:ok, fresh_page} <- Access.accounts(s.tenant, s.group, s.user),
+         {:ok, {connected, registered}} <-
+           connected_toolkits(
+             s,
+             fresh_page,
+             toolkits,
+             MapSet.new(Enum.map(remote, & &1["id"])),
+             {%{}, MapSet.new()}
+           ),
+         candidates = Enum.reject(remote, &MapSet.member?(registered, &1["id"])),
+         {:ok, adopted} <-
+           adopt_remote_accounts(
+             s,
+             profile,
+             Map.values(connected),
+             remote,
+             candidates,
+             consents["items"],
+             params
+           ),
+         {:ok, current} <- Access.accounts(s.tenant, s.group, s.user),
+         {:ok, consent} <- current_consent(s, params["toolkit"]),
+         {:ok, current_profile} <- Access.profile(s.tenant, s.group, s.user) do
+      # Include exact records found by the remote read even when they are beyond
+      # the first local page. Pagination stays on the existing local account API.
+      scoped =
+        if params["toolkit"],
+          do: Enum.filter(Map.values(connected), &(&1["toolkit"] == params["toolkit"])),
+          else: []
+
+      accounts = Enum.uniq_by(adopted ++ scoped ++ current["items"], & &1["id"])
+
+      {:ok,
+       public(current_profile, Map.put(current, "items", accounts))
+       |> Map.put("consent", consent)
+       |> Map.put(
+         "remote_accounts",
+         if(params["toolkit"], do: Enum.map(candidates, &Map.put(&1, "enabled", false)), else: [])
+       )}
+    end
+  end
+
+  defp reconciliation_toolkits(%{"toolkit" => toolkit}, _) do
+    reconciliation_toolkits(%{"toolkits" => [toolkit], "scoped" => true}, [])
+  end
+
+  defp reconciliation_toolkits(params, consents) do
+    requested = Map.get(params, "toolkits", [])
+
+    if is_list(requested) and length(requested) <= 50 do
+      built_in = if params["scoped"], do: [], else: ["googledrive"]
+      toolkits = Enum.uniq(requested ++ Enum.map(consents, & &1["toolkit"]) ++ built_in)
+
+      if length(toolkits) <= 100 and
+           Enum.all?(toolkits, &(is_binary(&1) and String.match?(&1, ~r/^[a-z0-9_]{1,100}$/))),
+         do: {:ok, toolkits},
+         else: {:error, :invalid_composio_request}
+    else
+      {:error, :invalid_composio_request}
+    end
+  end
+
+  defp reconciliation_read(_, []), do: {:ok, []}
+
+  defp reconciliation_read(s, toolkits),
+    do: Connect.accounts_many(s.tenant, s.group, s.user, toolkits)
+
+  # Walk existing member-local pages serially in the bounded reconciliation
+  # worker. Retain at most one connected record per requested toolkit, rather
+  # than loading every member account into the response or issuing provider RPCs
+  # per account. Absence must consider later local pages as well.
+  defp connected_toolkits(s, page, toolkits, remote_ids, {connected, registered}) do
+    {found, known} =
+      Enum.reduce(page["items"], {connected, registered}, fn account, {acc, known} ->
+        toolkit = account["toolkit"]
+
+        acc =
+          if toolkit in toolkits and connected_account?(account, toolkit),
+            do: Map.put_new(acc, toolkit, account),
+            else: acc
+
+        known =
+          if MapSet.member?(remote_ids, account["id"]),
+            do: MapSet.put(known, account["id"]),
+            else: known
+
+        {acc, known}
+      end)
+
+    if is_nil(page["next_cursor"]) or Enum.all?(toolkits, &Map.has_key?(found, &1)) do
+      {:ok, {found, known}}
+    else
+      with {:ok, next} <- Access.accounts(s.tenant, s.group, s.user, page["next_cursor"]),
+           do: connected_toolkits(s, next, toolkits, remote_ids, {found, known})
+    end
+  end
+
+  defp adopt_remote_accounts(s, profile, local, remote, candidates, consents, params) do
+    remote
+    |> Enum.group_by(& &1["toolkit"])
+    |> Enum.reduce_while({:ok, []}, fn {toolkit, accounts}, {:ok, adopted} ->
+      consent = Enum.find(consents, &(&1["toolkit"] == toolkit))
+      connected = Enum.any?(local, &connected_account?(&1, toolkit))
+      active = Enum.filter(accounts, &(&1["status"] == "ACTIVE"))
+      selection = params["account_id"]
+
+      chosen =
+        if connected or ((consent || %{})["status"] == "cancelled" and is_nil(selection)),
+          do: nil,
+          else:
+            adoption_candidate(
+              Enum.filter(candidates, &(&1["toolkit"] == toolkit and &1["status"] == "ACTIVE")),
+              consent,
+              selection
+            )
+
+      if is_nil(chosen) do
+        selected = (consent || %{})["selected_account_id"]
+
+        if connected and Enum.any?(active, &(&1["id"] == selected)) do
+          case settle_adopted_consent(s, toolkit, consent, selected) do
+            :ok -> {:cont, {:ok, adopted}}
+            error -> {:halt, error}
+          end
+        else
+          {:cont, {:ok, adopted}}
+        end
+      else
+        # Recheck member and credential authority after the external read.
+        with {:ok, fresh} <- Access.profile(s.tenant, s.group, s.user),
+             true <-
+               fresh["connection_id"] == profile["connection_id"] and fresh["mode"] == "connect" and
+                 fresh["status"] == "connected",
+             {:ok, scope_now} <- scope(%{"id" => s.user}, %{}, s.workspace),
+             true <- scope_now == s,
+             :ok <- adoption_identity_available(s, chosen),
+             {:ok, prepared} <- prepare_adopted_consent(s, toolkit, consent, chosen["id"]),
+             {:ok, record} <- Access.adopt_account(s.tenant, s.group, s.user, chosen),
+             :ok <- settle_adopted_consent(s, toolkit, prepared, record["id"]) do
+          {:cont, {:ok, [record | adopted]}}
+        else
+          false -> {:halt, {:error, :composio_access_denied}}
+          error -> {:halt, error}
+        end
+      end
+    end)
+  end
+
+  defp adoption_identity_available(s, %{"id" => id, "toolkit" => toolkit}) do
+    case Access.account(s.tenant, s.group, s.user, id) do
+      {:error, :not_found} ->
+        :ok
+
+      {:ok,
+       %{"mode" => "connect", "toolkit" => ^toolkit, "status" => "ACTIVE", "enabled" => true}} ->
+        :ok
+
+      {:ok, _} ->
+        {:error, :composio_account_not_owned}
+
+      error ->
+        error
+    end
+  end
+
+  defp connected_account?(account, toolkit),
+    do:
+      account["mode"] == "connect" and account["toolkit"] == toolkit and
+        account["status"] == "ACTIVE" and account["enabled"] == true
+
+  defp adoption_candidate(active, _consent, selection) when is_binary(selection),
+    do: Enum.find(active, &(&1["id"] == selection))
+
+  defp adoption_candidate(active, %{"status" => "selecting", "selected_account_id" => id}, _),
+    do: Enum.find(active, &(&1["id"] == id))
+
+  defp adoption_candidate(active, consent, _) do
+    baseline = (consent || %{})["baseline_account_ids"] || []
+    fresh = Enum.reject(active, &(&1["id"] in baseline))
+    candidates = if fresh == [], do: active, else: fresh
+
+    cond do
+      length(candidates) == 1 ->
+        hd(candidates)
+
+      candidates != [] and no_distinct_account_identities?(candidates) ->
+        Enum.min_by(candidates, & &1["id"])
+
+      true ->
+        nil
+    end
+  end
+
+  # These Connect payloads expose alias/user_info, but no authorization/update
+  # timestamp. Unknown metadata is not evidence of a different identity. The
+  # opaque ID is only a deterministic tie-breaker, never an identity inference.
+  defp no_distinct_account_identities?(accounts) do
+    identities =
+      Enum.flat_map(accounts, fn account ->
+        value = if account["identity_available"], do: account["email"] || account["name"]
+
+        if is_binary(value) and String.trim(value) != "",
+          do: [String.downcase(String.trim(value))],
+          else: []
+      end)
+
+    length(Enum.uniq(identities)) <= 1
+  end
+
+  defp prepare_adopted_consent(_, _, nil, _), do: {:ok, nil}
+
+  defp prepare_adopted_consent(s, toolkit, %{"id" => id} = consent, account_id) do
+    if consent["status"] in ["starting", "pending", "selecting"] do
+      Access.prepare_adoption_consent(s.tenant, s.group, s.user, toolkit, id, account_id)
+    else
+      {:ok, consent}
+    end
+  end
+
+  defp settle_adopted_consent(s, toolkit, %{"id" => id, "status" => "selecting"}, account_id) do
+    with {:ok, _} <- Access.settle_consent(s.tenant, s.group, s.user, toolkit, id, account_id),
+         do: :ok
+  end
+
+  defp settle_adopted_consent(_, _, _, _), do: :ok
+
+  defp current_consent(_, nil), do: {:ok, nil}
+
+  defp current_consent(s, toolkit) do
+    case Access.consent(s.tenant, s.group, s.user, toolkit) do
+      {:ok, consent} -> {:ok, public_consent(consent)}
+      {:error, :not_found} -> {:ok, nil}
+      error -> error
+    end
+  end
+
   defp remember_accounts(s, remote) do
     Enum.reduce_while(remote, :ok, fn account, :ok ->
       # Existing pending/cancelled attempts have their own confirmation path.
       result =
         case Access.account(s.tenant, s.group, s.user, account["id"]) do
           {:error, :not_found} ->
-            Access.put_account(s.tenant, s.group, s.user, account["id"], account)
+            {:ok, :unselected}
 
           {:ok, _} ->
             Access.update_account_name(s.tenant, s.group, s.user, account["id"], account)
