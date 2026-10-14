@@ -11,7 +11,9 @@
         "input sender",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} arquivo de {sender}",
         "countPlural=other": "{formattedCount} arquivos de {sender}"
@@ -27,7 +29,9 @@
         "input sender",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "Recebendo {formattedCount} arquivo de {sender}",
         "countPlural=other": "Recebendo {formattedCount} arquivos de {sender}"
@@ -44,7 +48,9 @@
         "input chat",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} arquivo adicionado a “{chat}”",
         "countPlural=other": "{formattedCount} arquivos adicionados a “{chat}”"
@@ -58,7 +64,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "Não foi possível adicionar {formattedCount} arquivo",
         "countPlural=other": "Não foi possível adicionar {formattedCount} arquivos"
@@ -632,7 +640,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} notificação excluída",
         "countPlural=other": "{formattedCount} notificações excluídas"
@@ -649,7 +659,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} notificação",
         "countPlural=other": "{formattedCount} notificações"
@@ -707,7 +719,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} tarefa",
         "countPlural=other": "{formattedCount} tarefas"
@@ -812,7 +826,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} tarefa",
         "countPlural=other": "{formattedCount} tarefas"
@@ -902,7 +918,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} tarefa",
         "countPlural=other": "{formattedCount} tarefas"
@@ -1105,7 +1123,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} nova mensagem",
         "countPlural=other": "{formattedCount} novas mensagens"
@@ -2317,7 +2337,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} arquivo está público.",
         "countPlural=other": "{formattedCount} arquivos estão públicos."
@@ -2470,8 +2492,13 @@
   "settings_providers_reauth_hint": "Entre novamente com a mesma conta. Os agentes continuam usando este perfil.",
   "settings_providers_reset_menu": [
     {
-      "declarations": ["input count", "local countPlural = count: plural"],
-      "selectors": ["countPlural"],
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "Redefinir cota (resta {count} redefinição)",
         "countPlural=other": "Redefinir cota (restam {count} redefinições)"
@@ -2934,8 +2961,13 @@
   "drive_catalog_listing_stalled": "A listagem do Drive não avançou. Tente novamente.",
   "local_files_too_many": [
     {
-      "declarations": ["input count", "local countPlural = count: plural"],
-      "selectors": ["countPlural"],
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "Selecione no máximo mais {count} arquivo local.",
         "countPlural=other": "Selecione no máximo mais {count} arquivos locais."
@@ -2944,8 +2976,13 @@
   ],
   "local_files_too_many_chat": [
     {
-      "declarations": ["input count", "local countPlural = count: plural"],
-      "selectors": ["countPlural"],
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "Selecione no máximo mais {count} arquivo.",
         "countPlural=other": "Selecione no máximo mais {count} arquivos."
@@ -3142,5 +3179,50 @@
   "composio_access_not_allowed": "Esta conta não está autorizada para este agente.",
   "composio_gmail_summary": "Emails e etiquetas da sua conta Gmail.",
   "composio_drive_summary": "Encontre e gerencie arquivos no Google Drive.",
-  "composio_app_summary": "Use {app} com sua conta conectada."
+  "composio_app_summary": "Use {app} com sua conta conectada.",
+  "online_drive_sources": "Fontes do Drive",
+  "online_drive_local": "Drive local",
+  "online_drive_recent": "Recentes",
+  "online_drive_my_drive": "Meu Drive",
+  "online_drive_shared": "Compartilhados comigo",
+  "online_drive_search": "Pesquisar nomes",
+  "online_drive_search_submit": "Pesquisar",
+  "online_drive_views": "Vistas do Google Drive",
+  "online_drive_sort": "Ordenar arquivos",
+  "online_drive_activity": "Atividade recente",
+  "online_drive_name": "Nome",
+  "online_drive_name_desc": "Nome Z–A",
+  "online_drive_modified": "Modificado",
+  "online_drive_viewed": "Última visualização por você",
+  "online_drive_list": "Vista em lista",
+  "online_drive_grid": "Vista em grade",
+  "online_drive_grid_short": "Grade",
+  "online_drive_refresh": "Atualizar",
+  "online_drive_account": "Conta Google",
+  "online_drive_connection": "Conexão {number}",
+  "online_drive_more_accounts": "Próximas contas",
+  "online_drive_path": "Caminho da pasta",
+  "online_drive_back": "Voltar",
+  "online_drive_no_workspace": "Selecione um workspace para navegar no Google Drive.",
+  "online_drive_failed": "Não foi possível carregar o Google Drive. Tente esta vista novamente.",
+  "online_drive_retry": "Tentar novamente",
+  "online_drive_loading": "Carregando Google Drive…",
+  "online_drive_connect": "Conecte o Google Drive em Plugins para navegar nos arquivos online.",
+  "online_drive_plugins": "Abrir Plugins",
+  "online_drive_reconnect": "Esta conexão está indisponível. Verifique ou reconecte em Plugins.",
+  "online_drive_incomplete": "O Google retornou uma busca incompleta. Refine a busca ou atualize.",
+  "online_drive_open_failed": "Não foi possível abrir o arquivo. Tente novamente.",
+  "online_drive_empty": "Nenhum arquivo nesta vista.",
+  "online_drive_first_page": "Primeira página",
+  "online_drive_previous_page": "Página anterior",
+  "online_drive_next_page": "Próxima página",
+  "online_drive_type": "Tipo",
+  "online_drive_no_date": "Não disponível",
+  "online_drive_shortcut": "Atalho",
+  "online_drive_folder": "Pasta",
+  "online_drive_spreadsheet": "Planilha",
+  "online_drive_presentation": "Apresentação",
+  "online_drive_document": "Documento",
+  "online_drive_image": "Imagem",
+  "online_drive_file": "Arquivo"
 }

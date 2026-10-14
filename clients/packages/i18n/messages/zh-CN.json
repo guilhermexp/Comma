@@ -11,7 +11,9 @@
         "input sender",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "来自 {sender} 的 {formattedCount} 个文件",
         "countPlural=other": "来自 {sender} 的 {formattedCount} 个文件"
@@ -27,7 +29,9 @@
         "input sender",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "正在接收 {sender} 的 {formattedCount} 个文件",
         "countPlural=other": "正在接收 {sender} 的 {formattedCount} 个文件"
@@ -44,7 +48,9 @@
         "input chat",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "已将 {formattedCount} 个文件加入「{chat}」",
         "countPlural=other": "已将 {formattedCount} 个文件加入「{chat}」"
@@ -58,7 +64,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} 个文件未能加入",
         "countPlural=other": "{formattedCount} 个文件未能加入"
@@ -632,7 +640,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "已删除 {formattedCount} 条通知",
         "countPlural=other": "已删除 {formattedCount} 条通知"
@@ -649,7 +659,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} 条通知",
         "countPlural=other": "{formattedCount} 条通知"
@@ -707,7 +719,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} 个任务",
         "countPlural=other": "{formattedCount} 个任务"
@@ -812,7 +826,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} 个任务",
         "countPlural=other": "{formattedCount} 个任务"
@@ -902,7 +918,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} 个任务",
         "countPlural=other": "{formattedCount} 个任务"
@@ -1105,7 +1123,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} 条新消息",
         "countPlural=other": "{formattedCount} 条新消息"
@@ -2317,7 +2337,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "已公开 {formattedCount} 个文件。",
         "countPlural=other": "已公开 {formattedCount} 个文件。"
@@ -2470,8 +2492,13 @@
   "settings_providers_reauth_hint": "用同一个账号重新登录，Agent 会继续使用这个 Profile。",
   "settings_providers_reset_menu": [
     {
-      "declarations": ["input count", "local countPlural = count: plural"],
-      "selectors": ["countPlural"],
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "重置额度（剩余 {count} 次）",
         "countPlural=other": "重置额度（剩余 {count} 次）"
@@ -2934,8 +2961,13 @@
   "drive_catalog_listing_stalled": "Drive 文件列表未能继续加载。请重试。",
   "local_files_too_many": [
     {
-      "declarations": ["input count", "local countPlural = count: plural"],
-      "selectors": ["countPlural"],
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "最多还能选择 {count} 个本地文件。",
         "countPlural=other": "最多还能选择 {count} 个本地文件。"
@@ -2944,8 +2976,13 @@
   ],
   "local_files_too_many_chat": [
     {
-      "declarations": ["input count", "local countPlural = count: plural"],
-      "selectors": ["countPlural"],
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "最多还能选择 {count} 个文件。",
         "countPlural=other": "最多还能选择 {count} 个文件。"
@@ -3142,5 +3179,50 @@
   "composio_access_not_allowed": "此账户尚未授权给该智能体。",
   "composio_gmail_summary": "Gmail 账户中的邮件和标签。",
   "composio_drive_summary": "查找和管理 Google Drive 文件。",
-  "composio_app_summary": "通过已连接的账户使用 {app}。"
+  "composio_app_summary": "通过已连接的账户使用 {app}。",
+  "online_drive_sources": "Drive 来源",
+  "online_drive_local": "本地 Drive",
+  "online_drive_recent": "最近",
+  "online_drive_my_drive": "我的云端硬盘",
+  "online_drive_shared": "与我共享",
+  "online_drive_search": "搜索名称",
+  "online_drive_search_submit": "搜索",
+  "online_drive_views": "Google Drive 视图",
+  "online_drive_sort": "文件排序",
+  "online_drive_activity": "最近活动",
+  "online_drive_name": "名称",
+  "online_drive_name_desc": "名称降序",
+  "online_drive_modified": "修改日期",
+  "online_drive_viewed": "您上次查看",
+  "online_drive_list": "列表视图",
+  "online_drive_grid": "网格视图",
+  "online_drive_grid_short": "网格",
+  "online_drive_refresh": "刷新",
+  "online_drive_account": "Google 帐号",
+  "online_drive_connection": "连接 {number}",
+  "online_drive_more_accounts": "下一页帐号",
+  "online_drive_path": "文件夹路径",
+  "online_drive_back": "返回",
+  "online_drive_no_workspace": "选择工作区以浏览 Google Drive。",
+  "online_drive_failed": "无法加载 Google Drive。请重试此视图。",
+  "online_drive_retry": "重试",
+  "online_drive_loading": "正在加载 Google Drive…",
+  "online_drive_connect": "在插件中连接 Google Drive 以浏览在线文件。",
+  "online_drive_plugins": "打开插件",
+  "online_drive_reconnect": "此连接不可用。请在插件中验证或重新连接。",
+  "online_drive_incomplete": "Google 返回了不完整的搜索结果。请缩小搜索范围或刷新。",
+  "online_drive_open_failed": "无法打开文件。请重试。",
+  "online_drive_empty": "此视图中没有文件。",
+  "online_drive_first_page": "第一页",
+  "online_drive_previous_page": "上一页",
+  "online_drive_next_page": "下一页",
+  "online_drive_type": "类型",
+  "online_drive_no_date": "不可用",
+  "online_drive_shortcut": "快捷方式",
+  "online_drive_folder": "文件夹",
+  "online_drive_spreadsheet": "电子表格",
+  "online_drive_presentation": "演示文稿",
+  "online_drive_document": "文档",
+  "online_drive_image": "图片",
+  "online_drive_file": "文件"
 }

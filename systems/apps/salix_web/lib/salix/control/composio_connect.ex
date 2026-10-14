@@ -373,7 +373,23 @@ defmodule Salix.Control.ComposioConnect do
 
   def execute(_, _, _, _, _, _), do: {:error, :composio_access_denied}
 
-  # A complete-result read for the incumbent Routine recipes only. Unlike the
+  # Product-owned online Drive recipe; callers supply no slug, code, URL or session.
+  def execute_drive_read(tenant, group, user, account, arguments, authorize_effect, max_bytes) do
+    tool = %{"tool_slug" => "GOOGLEDRIVE_FIND_FILE", "arguments" => arguments}
+
+    case account["mode"] do
+      "connect" ->
+        execute_routine_read(tenant, group, user, account, tool, authorize_effect, max_bytes)
+
+      "project" ->
+        execute(tenant, group, user, account, [tool], authorize_effect)
+
+      _ ->
+        {:error, :composio_access_denied}
+    end
+  end
+
+  # A complete-result read for incumbent member recipes. Unlike the
   # agent broker this entry accepts no workbench code, file or session input.
   def execute_routine_read(
         tenant,
