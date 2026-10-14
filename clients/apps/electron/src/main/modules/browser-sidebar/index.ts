@@ -1445,7 +1445,12 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
 
   #startNavigation(active: ActiveBrowserSidebar, url: string) {
     if (active.profile === "google-drive" && !isGoogleNavigationUrl(url)) {
-      active.navigationResumeUrl = undefined;
+      if (
+        active.navigationResumeUrl &&
+        !isGoogleNavigationUrl(active.navigationResumeUrl)
+      ) {
+        active.navigationResumeUrl = undefined;
+      }
       active.reason = "Unsupported Google Drive navigation.";
       void this.#publishState(active).catch(() => undefined);
       return;

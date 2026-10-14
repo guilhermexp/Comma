@@ -158,6 +158,46 @@ describe("NativeBrowserSidebarService", () => {
     }
   );
 
+  it("preserves a valid Google Drive resume URL after rejected foreign programmatic navigation", async () => {
+    const pending = deferred<unknown>();
+    const h = await createHarness({ loadNavigation: () => pending.promise });
+    const input = {
+      sessionId: "drive",
+      profile: "google-drive" as const,
+      bounds: { x: 0, y: 0, width: 500, height: 500 },
+      url: "https://drive.google.com/file/d/example/view",
+    };
+    await h.service.open(input);
+    const view = h.views[0]!;
+    const resumeUrl = "https://accounts.google.com/ServiceLogin";
+    view.emitNavigation("will-redirect", resumeUrl);
+    await h.service.update({ sessionId: input.sessionId, visible: false });
+
+    await expect(
+      h.service.update({
+        sessionId: input.sessionId,
+        url: "https://foreign.example/page",
+      })
+    ).resolves.toMatchObject({
+      active: true,
+      available: true,
+      reason: "Unsupported Google Drive navigation.",
+    });
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(1);
+
+    const reopened = await h.service.open(input);
+    expect(reopened).toMatchObject({
+      active: true,
+      available: true,
+      url: resumeUrl,
+    });
+    expect(reopened.reason).toBeUndefined();
+    expect(view.webContents.loadURL).toHaveBeenNthCalledWith(2, resumeUrl);
+    expect(view.webContents.close).not.toHaveBeenCalled();
+    expect(h.createView).toHaveBeenCalledOnce();
+    pending.resolve(undefined);
+  });
+
   it("owns a sandboxed, permission-denied view and publishes its surface lifecycle", async () => {
     const harness = await createHarness();
 
