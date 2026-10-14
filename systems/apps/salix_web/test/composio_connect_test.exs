@@ -486,6 +486,47 @@ defmodule Salix.Control.ComposioConnectTest do
              ComposioAccess.profile("tenant", "group", "member")
   end
 
+  @tag :review_regression
+  test "catalog batches skip failed and oversized toolkit results without adopting a truncated choice",
+       c do
+    {:ok, auth} = start()
+    assert {:page, 200, _} = callback(auth)
+
+    invalid = [
+      %{"status" => "not_connected"},
+      %{"status" => "unsupported", "error" => "Toolkit does not support connection management"},
+      %{"successful" => false, "accounts" => [%{"id" => "failed-account", "status" => "ACTIVE"}]},
+      %{"accounts" => for(i <- 1..51, do: %{"id" => "oversized-#{i}", "status" => "ACTIVE"})}
+    ]
+
+    for result <- invalid do
+      Agent.update(
+        c.state,
+        &%{
+          &1
+          | responses: %{
+              "COMPOSIO_MANAGE_CONNECTIONS" => %{
+                "successful" => true,
+                "data" => %{
+                  "results" => %{
+                    "gmail" => result,
+                    "googledrive" => %{
+                      "accounts" => [%{"id" => "valid-drive", "status" => "ACTIVE"}]
+                    }
+                  }
+                }
+              }
+            }
+        }
+      )
+
+      assert {:ok, [%{"id" => "valid-drive", "toolkit" => "googledrive"}]} =
+               ComposioConnect.accounts_many("tenant", "group", "member", ["gmail", "googledrive"])
+
+      assert {:error, _} = ComposioConnect.accounts("tenant", "group", "member", "gmail")
+    end
+  end
+
   test "discovery returns selectable apps and actions; execution pins every action to one owned account",
        c do
     {:ok, auth} = start()

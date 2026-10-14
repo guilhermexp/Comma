@@ -331,6 +331,68 @@ defmodule CommaWeb.GoogleDriveBrowserTest do
              ComposioAccess.grants(c.tenant, c.group, c.w["router_agent_id"])
   end
 
+  @tag :review_regression
+  test "catalog adoption keeps a valid toolkit when another toolkit is absent or unsupported",
+       c do
+    {:ok, _} = ComposioAccess.enable_account(c.tenant, c.group, c.uid, "owned", false)
+
+    Agent.update(
+      c.provider,
+      &Map.put(&1, :toolkit_accounts, %{
+        "googledrive" => %{"accounts" => [%{"id" => "drive-valid", "status" => "ACTIVE"}]}
+      })
+    )
+
+    conn = reconcile(c, %{"toolkits" => ["gmail"]})
+    assert conn.status == 200
+
+    assert Enum.any?(
+             Jason.decode!(conn.resp_body)["accounts"],
+             &(&1["id"] == "drive-valid" and &1["enabled"])
+           )
+
+    assert [%{"params" => %{"name" => "COMPOSIO_MANAGE_CONNECTIONS"}}] =
+             Agent.get(c.provider, & &1.requests)
+
+    assert {:error, :not_found} = ComposioAccess.account(c.tenant, c.group, c.uid, "gmail")
+    # The same missing result is an error for an explicitly scoped read.
+    assert reconcile(c, %{"toolkit" => "gmail"}).status != 200
+  end
+
+  @tag :review_regression
+  test "a scoped cancelled consent beyond the first page still prevents automatic adoption", c do
+    {:ok, _} = ComposioAccess.enable_account(c.tenant, c.group, c.uid, "owned", false)
+
+    for i <- 1..60 do
+      {:ok, _} = ComposioAccess.begin_consent(c.tenant, c.group, c.uid, "a_toolkit_#{i}")
+    end
+
+    {:ok, consent} =
+      ComposioAccess.begin_consent(c.tenant, c.group, c.uid, "googledrive", nil, [
+        "drive-baseline"
+      ])
+
+    {:ok, cancelled} =
+      ComposioAccess.cancel_consent(c.tenant, c.group, c.uid, "googledrive", consent["id"])
+
+    {:ok, first_page} = ComposioAccess.consents(c.tenant, c.group, c.uid)
+    refute Enum.any?(first_page["items"], &(&1["toolkit"] == "googledrive"))
+    assert first_page["next_cursor"]
+
+    Agent.update(
+      c.provider,
+      &%{&1 | accounts: [%{"id" => "drive-baseline", "status" => "ACTIVE"}]}
+    )
+
+    conn = reconcile(c, %{"toolkit" => "googledrive"})
+    assert conn.status == 200
+
+    assert {:error, :not_found} =
+             ComposioAccess.account(c.tenant, c.group, c.uid, "drive-baseline")
+
+    assert {:ok, ^cancelled} = ComposioAccess.consent(c.tenant, c.group, c.uid, "googledrive")
+  end
+
   @tag :account_adoption
   test "expired consent adopts one of the same-identity baseline Drive accounts and lists real provider-stub files",
        c do

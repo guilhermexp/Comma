@@ -1066,6 +1066,89 @@ describe("PluginsRoute", () => {
     expect(harness.openNativePlatformExternalUrl).not.toHaveBeenCalled();
   });
 
+  it("keeps Installed visible while searching known catalog slugs without repeated reconciliation", async () => {
+    const user = userEvent.setup();
+    connectedCatalogFixture();
+    render(<PluginsRoute />);
+    await screen.findByRole("button", { name: "View Google Drive plugin details" });
+    const reads = () =>
+      harness.composioCommand.mock.calls.filter(
+        ([, action]) => action === "reconcile_accounts"
+      ).length;
+    await waitFor(() => expect(reads()).toBe(1));
+    const normalStatus = harness.getComposio.getMockImplementation()!;
+    for (const character of ["g", "o", "o"]) {
+      let finish!: () => void;
+      const held = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      harness.getComposio.mockImplementation(async (...args) => {
+        await held;
+        return normalStatus(...args);
+      });
+      const previousLoads = harness.getComposio.mock.calls.length;
+      await user.type(
+        screen.getByRole("textbox", { name: "Search plugins" }),
+        character
+      );
+      await waitFor(() =>
+        expect(harness.getComposio.mock.calls.length).toBeGreaterThan(previousLoads)
+      );
+      // The local account read is held so the reload state is observable.
+      expect(
+        screen.getByRole("button", { name: "View Google Drive plugin details" })
+      ).toBeVisible();
+      expect(
+        within(
+          screen.getByRole("button", { name: "View Google Drive plugin details" })
+        ).getByText("Connected")
+      ).toBeVisible();
+      finish();
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "View Google Drive plugin details" })
+        ).toBeVisible()
+      );
+      expect(reads()).toBe(1);
+    }
+  });
+
+  it("reconciles only newly discovered toolkit slugs across catalog searches", async () => {
+    const user = userEvent.setup();
+    const { drive } = connectedCatalogFixture();
+    const originalCommand = harness.composioCommand.getMockImplementation()!;
+    harness.composioCommand.mockImplementation(
+      async (workspace, action, params, options) => {
+        if (action === "catalog" && !params.toolkits && params.query)
+          return { items: [drive], next_cursor: null };
+        return originalCommand(workspace, action, params, options);
+      }
+    );
+    render(<PluginsRoute />);
+    await screen.findByRole("button", { name: "View Google Drive plugin details" });
+    const reads = () =>
+      harness.composioCommand.mock.calls.filter(
+        ([, action]) => action === "reconcile_accounts"
+      );
+    await waitFor(() => expect(reads()).toHaveLength(1));
+    await user.type(screen.getByRole("textbox", { name: "Search plugins" }), "g");
+    await waitFor(() => expect(reads()).toHaveLength(2));
+    expect(reads()[1]?.[2]).toEqual({ toolkits: ["googledrive"] });
+    await user.type(screen.getByRole("textbox", { name: "Search plugins" }), "o");
+    await waitFor(() =>
+      expect(harness.composioCommand).toHaveBeenCalledWith(
+        "wsp_1",
+        "catalog",
+        { query: "go" },
+        expect.anything()
+      )
+    );
+    expect(reads()).toHaveLength(2);
+    expect(
+      screen.getByRole("button", { name: "View Google Drive plugin details" })
+    ).toBeVisible();
+  });
+
   it("shows connected connectors outside the first page in the collapsed principal list and opens details without consent", async () => {
     const user = userEvent.setup();
     const { account, status } = connectedCatalogFixture();

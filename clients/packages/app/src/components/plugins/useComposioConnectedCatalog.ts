@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import {
   composioAccountSchema,
@@ -22,8 +22,20 @@ export function useComposioConnectedCatalog(
 ) {
   const toolkitKey = JSON.stringify([...new Set(catalog.toolkits)].toSorted());
   const ready = catalog.ready;
+  const discovery = useRef<
+    | {
+        api: CommaApiClient;
+        workspaceId: string;
+        toolkits: Set<string>;
+      }
+    | undefined
+  >(undefined);
   const [revision, setRevision] = useState(0);
-  const refresh = useCallback(() => setRevision((value) => value + 1), []);
+  const refresh = useCallback(() => {
+    // An explicit retry/return from detail may observe newly authorized accounts.
+    discovery.current = undefined;
+    setRevision((value) => value + 1);
+  }, []);
   const [state, setState] = useState<{
     api: CommaApiClient;
     workspaceId: string;
@@ -39,20 +51,47 @@ export function useComposioConnectedCatalog(
     const options = { signal: controller.signal };
     const scope = { api, workspaceId, revision };
     const items: ComposioCatalogItem[] = [];
-    setState({ ...scope, items, loading: true, failed: false });
+    const retainItems = (current: typeof state) =>
+      current?.api === api && current.workspaceId === workspaceId ? current.items : [];
+    const mergeItems = (current: typeof state) => [
+      ...new Map(
+        [...retainItems(current), ...items].map((item) => [item.slug, item])
+      ).values(),
+    ];
+    setState((current) => ({
+      ...scope,
+      items: retainItems(current),
+      loading: true,
+      failed: false,
+    }));
     void (async () => {
       try {
         let status = await api.getComposio(workspaceId, options);
         if (controller.signal.aborted) return;
-        if (status.mode === "connect" && status.status === "connected")
-          status = composioStatusSchema.parse(
-            await api.composioCommand(
-              workspaceId,
-              "reconcile_accounts",
-              { toolkits: JSON.parse(toolkitKey) as string[] },
-              options
-            )
+        if (status.mode === "connect" && status.status === "connected") {
+          const previous = discovery.current;
+          const known =
+            previous?.api === api && previous.workspaceId === workspaceId
+              ? previous
+              : undefined;
+          const added = (JSON.parse(toolkitKey) as string[]).filter(
+            (toolkit) => !known?.toolkits.has(toolkit)
           );
+          if (!known || added.length > 0) {
+            const next = known ?? { api, workspaceId, toolkits: new Set<string>() };
+            added.forEach((toolkit) => next.toolkits.add(toolkit));
+            // Consume this trigger before dispatch, including an uncertain response.
+            discovery.current = next;
+            status = composioStatusSchema.parse(
+              await api.composioCommand(
+                workspaceId,
+                "reconcile_accounts",
+                { toolkits: added },
+                options
+              )
+            );
+          }
+        }
         let page = { items: status.accounts, next_cursor: status.next_cursor };
         const seen = new Set<string>();
         const cursors = new Set<string>();
@@ -90,7 +129,12 @@ export function useComposioConnectedCatalog(
               seen.add(toolkit);
               items.push(item);
             }
-            setState({ ...scope, items: [...items], loading: true, failed: false });
+            setState((current) => ({
+              ...scope,
+              items: mergeItems(current),
+              loading: true,
+              failed: false,
+            }));
           }
           if (!page.next_cursor) break;
           if (cursors.has(page.next_cursor)) throw new Error("Repeated account cursor");
@@ -108,20 +152,23 @@ export function useComposioConnectedCatalog(
           setState({ ...scope, items: [...items], loading: false, failed: false });
       } catch {
         if (!controller.signal.aborted)
-          setState({ ...scope, items: [...items], loading: false, failed: true });
+          setState((current) => ({
+            ...scope,
+            items: mergeItems(current),
+            loading: false,
+            failed: true,
+          }));
       }
     })();
     return () => controller.abort();
   }, [api, workspaceId, revision, ready, toolkitKey]);
 
   const current =
-    state !== undefined &&
-    state.workspaceId === workspaceId &&
-    state.api === api &&
-    state.revision === revision;
+    state !== undefined && state.workspaceId === workspaceId && state.api === api;
   return {
     items: current ? state.items : [],
-    loading: !!workspaceId && (!current || state.loading),
+    loading:
+      !!workspaceId && (!current || state.loading || state.revision !== revision),
     failed: current && state.failed,
     refresh,
   };

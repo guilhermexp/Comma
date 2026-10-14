@@ -568,9 +568,15 @@ uses enabled ACTIVE accounts in the selected mode under the current workspace/me
 Login alone does not make a toolkit connected. Native plugins retain their own state.
 The client reads local account pages of at most 50 records serially and resolves
 metadata in batches of at most 20 exact toolkit slugs against the public catalog cache.
-For personal Connect, each loaded catalog page also triggers one batched remote
-read for its slugs, up to 50 stored consent toolkits, and the built-in Google Drive
-source. The union has at most 100 toolkits; it does not crawl the remote catalog.
+For personal Connect, initial load and an explicit refresh trigger one batched
+remote read. Later catalog loads add a remote read only for newly seen slugs,
+plus up to 50 stored consent toolkits and the built-in Google Drive source.
+Search readiness changes alone do not repeat provider reconciliation. Installed
+rows remain visible during reloads in the same workspace and API scope. The union has at most 100 toolkits; it does not crawl the remote catalog.
+A missing, unsupported, failed, invalid, or oversized toolkit result is skipped
+in an unscoped batch, so other toolkits can converge. An oversized result is
+never truncated for adoption. A scoped read still returns an error for that
+result and reads its exact stored consent rather than a consent-list page.
 Unknown toolkits outside these scopes become discoverable when their catalog page
 or detail is opened. The backend uses a 30-second bounded worker and serial
 member-local pages to check existing connections and registered candidate IDs.

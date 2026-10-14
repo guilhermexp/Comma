@@ -68,20 +68,24 @@ defmodule Salix.Control.ComposioConnect do
   end
 
   def accounts(tenant, group, user, toolkit) do
-    accounts_many(tenant, group, user, [toolkit])
+    read_accounts(tenant, group, user, [toolkit], :strict)
   end
 
-  # A single read for an explicit, bounded batch; never one RPC per account.
+  # Unscoped discovery isolates unsupported toolkits; exact reads stay strict.
   def accounts_many(tenant, group, user, toolkits)
-      when is_list(toolkits) and length(toolkits) in 1..100 do
+      when is_list(toolkits) and length(toolkits) in 1..100,
+      do: read_accounts(tenant, group, user, toolkits, :batch)
+
+  defp read_accounts(tenant, group, user, toolkits, mode) do
     with {:ok, response} <-
            call(tenant, group, user, "COMPOSIO_MANAGE_CONNECTIONS", %{
              "toolkits" => Enum.map(toolkits, &%{"name" => &1, "action" => "list"})
            }),
          %{"data" => %{"results" => results}} when is_map(results) <- response do
       Enum.reduce_while(toolkits, {:ok, []}, fn toolkit, {:ok, accumulated} ->
-        case normalize_accounts(results[toolkit], toolkit) do
+        case toolkit_accounts(results[toolkit], toolkit) do
           {:ok, accounts} -> {:cont, {:ok, accumulated ++ accounts}}
+          {:error, _} when mode == :batch -> {:cont, {:ok, accumulated}}
           error -> {:halt, error}
         end
       end)
@@ -90,6 +94,20 @@ defmodule Salix.Control.ComposioConnect do
       _ -> {:error, :invalid_composio_response}
     end
   end
+
+  defp toolkit_accounts(result, toolkit) when is_map(result) do
+    if result["successful"] == false or result["success"] == false or
+         result["error"] not in [nil, false, ""] or
+         result["status"] in ~w(error failed failure unsupported ERROR FAILED FAILURE UNSUPPORTED) do
+      {:error, :composio_operation_failed}
+    else
+      # Skip the whole oversized result. A prefix could change which identity
+      # wins or hide an explicit choice, so it is never used for adoption.
+      normalize_accounts(result, toolkit)
+    end
+  end
+
+  defp toolkit_accounts(_, _), do: {:error, :invalid_composio_response}
 
   defp normalize_accounts(%{"accounts" => accounts}, toolkit)
        when is_list(accounts) and length(accounts) <= 50 do

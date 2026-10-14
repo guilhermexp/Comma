@@ -352,9 +352,9 @@ defmodule CommaWeb.ComposioConnect do
   defp run(_, _, _), do: {:error, :invalid_composio_request}
 
   defp reconcile_accounts(s, profile, params) do
-    with {:ok, consents} <- Access.consents(s.tenant, s.group, s.user),
+    with {:ok, consents} <- reconciliation_consents(s, params),
          {:ok, toolkits} <- reconciliation_toolkits(params, consents["items"]),
-         {:ok, remote} <- reconciliation_read(s, toolkits),
+         {:ok, remote} <- reconciliation_read(s, toolkits, params),
          {:ok, fresh_page} <- Access.accounts(s.tenant, s.group, s.user),
          {:ok, {connected, registered}} <-
            connected_toolkits(
@@ -397,6 +397,19 @@ defmodule CommaWeb.ComposioConnect do
     end
   end
 
+  defp reconciliation_consents(s, %{"toolkit" => toolkit}) when is_binary(toolkit) do
+    case Access.consent(s.tenant, s.group, s.user, toolkit) do
+      {:ok, consent} -> {:ok, %{"items" => [consent]}}
+      {:error, :not_found} -> {:ok, %{"items" => []}}
+      error -> error
+    end
+  end
+
+  defp reconciliation_consents(_, %{"toolkit" => _}),
+    do: {:error, :invalid_composio_request}
+
+  defp reconciliation_consents(s, _), do: Access.consents(s.tenant, s.group, s.user)
+
   defp reconciliation_toolkits(%{"toolkit" => toolkit}, _) do
     reconciliation_toolkits(%{"toolkits" => [toolkit], "scoped" => true}, [])
   end
@@ -417,9 +430,12 @@ defmodule CommaWeb.ComposioConnect do
     end
   end
 
-  defp reconciliation_read(_, []), do: {:ok, []}
+  defp reconciliation_read(s, [toolkit], %{"toolkit" => toolkit}),
+    do: Connect.accounts(s.tenant, s.group, s.user, toolkit)
 
-  defp reconciliation_read(s, toolkits),
+  defp reconciliation_read(_, [], _), do: {:ok, []}
+
+  defp reconciliation_read(s, toolkits, _),
     do: Connect.accounts_many(s.tenant, s.group, s.user, toolkits)
 
   # Walk existing member-local pages serially in the bounded reconciliation
