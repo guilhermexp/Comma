@@ -321,6 +321,20 @@ defmodule Salix.Control.ComposioConnect do
 
   @impl true
   def execute(tenant, group, user, %{"mode" => "project"} = account, tools, authorize_effect) do
+    execute_project(tenant, group, user, account, tools, authorize_effect, [])
+  end
+
+  def execute(tenant, group, user, %{"mode" => "connect"} = local, tools, authorize_effect) do
+    with {:ok, _} <- schema(tenant, group, user, local, Enum.map(tools, & &1["tool_slug"])) do
+      execute_connect(tenant, group, user, local, tools, authorize_effect, fn result, _session ->
+        {:ok, result}
+      end)
+    end
+  end
+
+  def execute(_, _, _, _, _, _), do: {:error, :composio_access_denied}
+
+  defp execute_project(tenant, group, user, account, tools, authorize_effect, opts) do
     with {:ok, _} <- schema(tenant, group, user, account, Enum.map(tools, & &1["tool_slug"])),
          {:ok, %{"mode" => "project", "status" => "connected"}} <-
            Access.profile(tenant, group, user),
@@ -348,7 +362,8 @@ defmodule Salix.Control.ComposioConnect do
                 session,
                 account["id"],
                 tool["tool_slug"],
-                tool["arguments"]
+                tool["arguments"],
+                opts
               )
 
             _ ->
@@ -363,16 +378,6 @@ defmodule Salix.Control.ComposioConnect do
     end
   end
 
-  def execute(tenant, group, user, %{"mode" => "connect"} = local, tools, authorize_effect) do
-    with {:ok, _} <- schema(tenant, group, user, local, Enum.map(tools, & &1["tool_slug"])) do
-      execute_connect(tenant, group, user, local, tools, authorize_effect, fn result, _session ->
-        {:ok, result}
-      end)
-    end
-  end
-
-  def execute(_, _, _, _, _, _), do: {:error, :composio_access_denied}
-
   # Product-owned online Drive recipe; callers supply no slug, code, URL or session.
   def execute_drive_read(tenant, group, user, account, arguments, authorize_effect, max_bytes) do
     tool = %{"tool_slug" => "GOOGLEDRIVE_FIND_FILE", "arguments" => arguments}
@@ -382,7 +387,9 @@ defmodule Salix.Control.ComposioConnect do
         execute_routine_read(tenant, group, user, account, tool, authorize_effect, max_bytes)
 
       "project" ->
-        execute(tenant, group, user, account, [tool], authorize_effect)
+        execute_project(tenant, group, user, account, [tool], authorize_effect,
+          max_response_bytes: max_bytes
+        )
 
       _ ->
         {:error, :composio_access_denied}

@@ -481,6 +481,33 @@ It ignores previously stored global entries with `origin: builtin`, without dele
 Copying a built-in creates durable blobs and a user-owned skill. Copies remain available after the source leaves a later release.
 Plugin visibility, write authorization, and user-skill ownership remain unchanged. Built-ins follow each node's image during a rolling deployment.
 
+### Online Google Drive projection
+
+The Drive route can show a member's existing Google provider files through their
+exact Composio account. This is a transient, read-only projection, not a new
+file identity, replica or lifecycle owner. Google owns file IDs, folder and
+shortcut relationships, timestamps and opening destinations. ComposioAccess
+owns the member account and credential-mode relationship. Comma rechecks current
+Workspace authority, exact account ownership, mode and active status before
+provider dispatch and before returning a page.
+
+The browser keeps one page of at most 50 files, a bounded breadcrumb path and
+at most 20 previous opaque page tokens. Explicit navigation and refresh read one
+page; list/grid changes do not read. There is no background polling, recursive
+scan, per-file fanout, offline mirror or provider write. Recent uses recency;
+modified and viewed dates retain their separate meanings. Shared with me is
+not shared drives. A failed or unsupported preview result is never an empty
+success. File destinations accept only supported HTTPS Google file/folder paths.
+
+Browsing neither grants Agent tool access nor enrolls Routine sources. File
+metadata stays in the authenticated response and does not enter a Group
+Conversation. The existing local Synchronicity Drive and Drive Binding remain
+authoritative for local files and synchronization.
+Implementation: [route composition](../../clients/packages/app/src/components/drive/DriveRoute.tsx),
+[online browser](../../clients/packages/app/src/components/drive/GoogleDriveBrowser.tsx),
+[member read](../../systems/apps/comma_web/lib/comma_web/google_drive_browser.ex).
+See [the user procedure](../user_manual/comma/google-drive.md).
+
 ### Composio Connect access
 
 Composio Connect reuses OAuth credentials, provider account references, Agent grants,

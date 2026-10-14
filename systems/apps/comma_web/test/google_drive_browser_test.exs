@@ -6,6 +6,57 @@ defmodule CommaWeb.GoogleDriveBrowserTest do
     import Plug.Conn
     def init(state), do: state
 
+    def call(%{request_path: "/api/" <> _} = conn, state) do
+      {:ok, raw, conn} = read_body(conn)
+      body = if raw == "", do: %{}, else: Jason.decode!(raw)
+
+      Agent.update(
+        state,
+        &Map.update!(&1, :requests, fn calls ->
+          [%{"path" => conn.request_path, "body" => body} | calls]
+        end)
+      )
+
+      fixture = Agent.get(state, & &1)
+
+      result =
+        case conn.request_path do
+          "/api/v3/tools" ->
+            %{
+              "items" => [
+                %{"slug" => "GOOGLEDRIVE_FIND_FILE", "toolkit" => %{"slug" => "googledrive"}}
+              ],
+              "next_cursor" => nil
+            }
+
+          "/api/v3/connected_accounts/owned" ->
+            %{
+              "id" => "owned",
+              "status" => "ACTIVE",
+              "user_id" => fixture.remote_user,
+              "toolkit" => %{"slug" => "googledrive"}
+            }
+
+          "/api/v3.1/tool_router/session" ->
+            %{"session_id" => "project-session"}
+
+          "/api/v3.1/tool_router/session/project-session/execute" ->
+            %{
+              "successful" => true,
+              "data" => %{
+                "files" => fixture.files,
+                "nextPageToken" => fixture.cursor,
+                "incompleteSearch" => false
+              }
+            }
+
+          "/api/v3.1/tool_router/session/project-session" ->
+            %{}
+        end
+
+      conn |> put_resp_content_type("application/json") |> send_resp(200, Jason.encode!(result))
+    end
+
     def call(conn, state) do
       {:ok, raw, conn} = read_body(conn)
       request = Jason.decode!(raw)
@@ -339,5 +390,106 @@ defmodule CommaWeb.GoogleDriveBrowserTest do
       assert conn.status == 200
       assert hd(Jason.decode!(conn.resp_body)["files"])["url"] == nil
     end
+  end
+
+  test "failed inner provider data cannot become a successful file listing", c do
+    Agent.update(
+      c.provider,
+      &Map.put(&1, :response, %{
+        "successful" => true,
+        "data" => %{"successful" => false, "data" => %{"files" => &1.files}}
+      })
+    )
+
+    assert browse(c).status != 200
+  end
+
+  test "project mode pins the exact member account and a bounded read-only action session", c do
+    {:ok, _} =
+      ComposioAccess.put_project_settings(c.tenant, c.group, c.uid, %{
+        "api_key" => "fixture-project-key"
+      })
+
+    {:ok, _} =
+      ComposioAccess.put_account(c.tenant, c.group, c.uid, "owned", %{
+        "toolkit" => "googledrive",
+        "status" => "ACTIVE",
+        "mode" => "project"
+      })
+
+    Agent.update(c.provider, &Map.put(&1, :remote_user, "comma:" <> c.group <> ":" <> c.uid))
+    conn = browse(c, %{"tab" => "my_drive"})
+    assert conn.status == 200
+    assert [%{"id" => "file-1"}] = Jason.decode!(conn.resp_body)["files"]
+    requests = Agent.get(c.provider, & &1.requests)
+    session = Enum.find(requests, &(&1["path"] == "/api/v3.1/tool_router/session"))["body"]
+    assert session["connected_accounts"] == %{"googledrive" => ["owned"]}
+    assert session["tools"] == %{"googledrive" => %{"enable" => ["GOOGLEDRIVE_FIND_FILE"]}}
+    assert session["manage_connections"] == %{"enable" => false}
+    assert session["proxy_execute"] == %{"enable" => false}
+
+    action =
+      Enum.find(
+        requests,
+        &(&1["path"] == "/api/v3.1/tool_router/session/project-session/execute")
+      )["body"]
+
+    assert action["account"] == "owned"
+    assert action["arguments"]["folder_id"] == "root"
+    assert actions(c) == []
+    Agent.update(c.provider, &%{&1 | remote_user: "foreign", requests: []})
+    assert browse(c).status != 200
+
+    refute Enum.any?(
+             Agent.get(c.provider, & &1.requests),
+             &(&1["path"] == "/api/v3.1/tool_router/session/project-session/execute")
+           )
+  end
+
+  test "the documented Connect wrapper preserves dates, folders and shortcuts", c do
+    Agent.update(
+      c.provider,
+      &%{
+        &1
+        | files: [
+            %{
+              "id" => "folder",
+              "name" => "Reports",
+              "mimeType" => "application/vnd.google-apps.folder"
+            },
+            %{
+              "id" => "shortcut",
+              "name" => "Shortcut",
+              "mimeType" => "application/vnd.google-apps.shortcut",
+              "shortcutDetails" => %{
+                "targetId" => "folder",
+                "targetMimeType" => "application/vnd.google-apps.folder"
+              }
+            },
+            %{
+              "id" => "doc",
+              "name" => "Document",
+              "mimeType" => "application/vnd.google-apps.document",
+              "modifiedTime" => "2026-10-12T10:00:00Z",
+              "viewedByMeTime" => "2026-10-13T11:00:00Z",
+              "webViewLink" => "https://docs.google.com/document/d/doc/edit"
+            }
+          ]
+      }
+    )
+
+    conn = browse(c)
+    assert conn.status == 200
+    [folder, shortcut, doc] = Jason.decode!(conn.resp_body)["files"]
+    assert folder["mime_type"] == "application/vnd.google-apps.folder"
+
+    assert shortcut["shortcut"] == %{
+             "id" => "folder",
+             "mime_type" => "application/vnd.google-apps.folder"
+           }
+
+    assert doc["viewed_at"] == "2026-10-13T11:00:00Z"
+    assert doc["modified_at"] == "2026-10-12T10:00:00Z"
+    assert doc["url"] == "https://docs.google.com/document/d/doc/edit"
   end
 end

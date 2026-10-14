@@ -5,6 +5,8 @@ import { AiInputDropOverlay, ContentHeader, toast } from "@comma/ui";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import {
   useCallback,
+  useEffect,
+  useSyncExternalStore,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -70,8 +72,128 @@ import {
 } from "./driveBackend";
 import { useDriveFileReveal } from "./useDriveFileReveal";
 import { collectDroppedFiles, useDriveDropZone } from "./driveDropZone";
+import { GoogleDriveBrowser } from "./GoogleDriveBrowser";
+import { readActiveWorkspaceId, subscribeActiveWorkspace } from "../activeWorkspace";
+import { driveSecondaryButton } from "./driveButtonStyles";
 
 export function DriveRoute() {
+  const { api } = useCommaAuth();
+  const messages = useCommaMessages();
+  const navigate = useNavigate();
+  const [source, setSource] = useState<"local" | "google">("local");
+  const preferred = useSyncExternalStore(
+    subscribeActiveWorkspace,
+    readActiveWorkspaceId
+  );
+  const [workspace, setWorkspace] = useState<{
+    api: typeof api;
+    preferred: typeof preferred;
+    id?: string | undefined;
+    failed?: boolean;
+  }>();
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (source !== "google") return;
+    const controller = new AbortController();
+    let live = true;
+    const timeout = setTimeout(() => controller.abort(), 35_000);
+    void api
+      .listWorkspaces({ signal: controller.signal })
+      .then((items) => {
+        if (!live || controller.signal.aborted) return;
+        const ready = items.filter(
+          (item) => item.status === undefined || item.status === "ready"
+        );
+        setWorkspace({
+          api,
+          preferred,
+          id: (ready.find((item) => item.id === preferred) ?? ready[0])?.id,
+        });
+      })
+      .catch(() => {
+        if (live) setWorkspace({ api, preferred, failed: true });
+      })
+      .finally(() => clearTimeout(timeout));
+    return () => {
+      live = false;
+      controller.abort();
+      clearTimeout(timeout);
+    };
+  }, [api, preferred, source, retry]);
+  const current =
+    workspace?.api === api && workspace.preferred === preferred ? workspace : undefined;
+  return (
+    <div className="flex h-full min-h-0 min-w-0 flex-1 bg-main-panel-bg">
+      <nav
+        aria-label={messages.online_drive_sources()}
+        className="flex w-40 shrink-0 flex-col gap-sm border-r border-secondary px-md pt-xl"
+      >
+        <button
+          type="button"
+          aria-pressed={source === "local"}
+          className={`${driveSecondaryButton} aria-pressed:bg-secondary aria-pressed:text-primary`}
+          onClick={() => {
+            setSource("local");
+          }}
+        >
+          {messages.online_drive_local()}
+        </button>
+        <button
+          type="button"
+          aria-pressed={source === "google"}
+          className={`${driveSecondaryButton} aria-pressed:bg-secondary aria-pressed:text-primary`}
+          onClick={() => {
+            setSource("google");
+          }}
+        >
+          Google Drive
+        </button>
+      </nav>
+      <div
+        hidden={source !== "local"}
+        className={source === "local" ? "flex min-h-0 min-w-0 flex-1" : "hidden"}
+      >
+        <LocalDriveRoute active={source === "local"} />
+      </div>
+      <div
+        hidden={source !== "google"}
+        className={source === "google" ? "flex min-h-0 min-w-0 flex-1" : "hidden"}
+      >
+        {!current ? (
+          <output className="p-xl text-sm text-tertiary">
+            {messages.online_drive_loading()}
+          </output>
+        ) : current.failed ? (
+          <div role="alert" className="p-xl text-sm text-primary">
+            {messages.online_drive_failed()}{" "}
+            <button
+              type="button"
+              className={driveSecondaryButton}
+              onClick={() => {
+                setWorkspace(undefined);
+                setRetry((value) => value + 1);
+              }}
+            >
+              {messages.online_drive_retry()}
+            </button>
+          </div>
+        ) : (
+          <GoogleDriveBrowser
+            key={current.id ?? "none"}
+            api={api}
+            workspaceId={current.id}
+            active={source === "google"}
+            onPlugins={() => {
+              void navigate({ to: "/plugins" });
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LocalDriveRoute({ active }: { active: boolean }) {
   const locale = useCommaLocale();
   const messages = useCommaMessages();
   const navigate = useNavigate();
@@ -918,18 +1040,26 @@ export function DriveRoute() {
   }, [selectedFiles, selectedSpaceWritable]);
 
   useApplicationMenu([
-    { id: "drive-upload", enabled: selectedSpaceWritable, run: openFilePicker },
+    {
+      id: "drive-upload",
+      enabled: active && selectedSpaceWritable,
+      run: openFilePicker,
+    },
     {
       id: "drive-upload-folder",
-      enabled: selectedSpaceWritable,
+      enabled: active && selectedSpaceWritable,
       run: () => folderInputRef.current?.click(),
     },
     {
       id: "drive-add-folder",
-      enabled: Boolean(backend),
+      enabled: active && Boolean(backend),
       run: () => onRailAction("new-folder"),
     },
-    { id: "drive-download", enabled: selectedFiles.length > 0, run: downloadSelected },
+    {
+      id: "drive-download",
+      enabled: active && selectedFiles.length > 0,
+      run: downloadSelected,
+    },
   ]);
   return (
     <section

@@ -477,10 +477,11 @@ defmodule SalixStore.Composio do
     end
   end
 
-  def execute_action_session(settings, session_id, account_id, slug, arguments) do
+  def execute_action_session(settings, session_id, account_id, slug, arguments, opts \\ []) do
     request(settings, :post, "/api/v3.1/tool_router/session/#{URI.encode(session_id)}/execute",
       json: %{"tool_slug" => slug, "arguments" => arguments, "account" => account_id},
       label: "execute authorized action",
+      max_response_bytes: opts[:max_response_bytes],
       error_mode: :structured
     )
   end

@@ -122,8 +122,12 @@ defmodule CommaWeb.GoogleDriveBrowser do
       else: {:error, :invalid_provider_response}
   end
 
-  defp action_data(%{"successful" => true, "data" => %{"data" => data}}) when is_map(data),
-    do: {:ok, data}
+  defp action_data(%{"successful" => true, "data" => %{"data" => data} = inner})
+       when is_map(data) do
+    if inner["successful"] in [nil, true],
+      do: {:ok, data},
+      else: {:error, :invalid_provider_response}
+  end
 
   defp action_data(%{"successful" => true, "data" => data}) when is_map(data), do: {:ok, data}
   defp action_data(_), do: {:error, :invalid_provider_response}
