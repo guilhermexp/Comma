@@ -504,9 +504,13 @@ empty success. File destinations accept only supported HTTPS Google paths.
 Electron opens files through the existing BrowserSidebar session owner, with
 an immutable `google-drive` policy and the persistent `persist:comma-google-drive`
 partition. It creates no new domain entity. Main validates initial Google file
-paths and limits subsequent page navigation to exact Drive, Docs, and Google
-sign-in hosts. Foreign HTTP(S) navigation and new-window requests use the external
-opener; unsafe schemes are blocked. Google windows have no preload, Node access,
+paths and limits subsequent main-frame navigation to exact Drive, Docs, and Google
+sign-in hosts. HTTPS subframes can load other hosts for embedded Google controls
+and previews. Foreign HTTP(S) main-frame navigation and new-window requests use
+the external opener; unsafe schemes are blocked in every frame. Rejected foreign
+URLs do not replace the session's resumable destination. A rejected programmatic
+navigation returns a failure reason without closing the session.
+Google windows have no preload, Node access,
 or Comma credentials. The viewer reuses native surface ownership, bounds,
 suppression, and cleanup. Returning to the list retains its loaded location and
 scroll. Web builds use the external opener. Google browser authentication is

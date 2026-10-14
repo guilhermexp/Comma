@@ -1329,6 +1329,7 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
     ) => {
       if (typeof value !== "string" || !isSafeBrowserSidebarUrl(value)) return;
       const url = normalizeBrowserSidebarUrl(value);
+      if (active.profile === "google-drive" && !isGoogleNavigationUrl(url)) return;
       if (advanceGeneration && url !== active.navigationUrl) {
         active.navigationGeneration += 1;
       }
@@ -1443,8 +1444,12 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
   }
 
   #startNavigation(active: ActiveBrowserSidebar, url: string) {
-    if (active.profile === "google-drive" && !isGoogleNavigationUrl(url))
-      throw new Error("Unsupported Google Drive navigation.");
+    if (active.profile === "google-drive" && !isGoogleNavigationUrl(url)) {
+      active.navigationResumeUrl = undefined;
+      active.reason = "Unsupported Google Drive navigation.";
+      void this.#publishState(active).catch(() => undefined);
+      return;
+    }
     void this.#cancelInspection(active);
     const navigationGeneration = ++active.navigationGeneration;
     active.reason = undefined;
@@ -2055,9 +2060,17 @@ export function installBrowserSidebarSecurity(
       if (isSafeBrowserSidebarUrl(url)) void openExternal?.(url).catch(() => undefined);
     };
     const guard = (event: NavigationEvent) => {
+      if (event.isMainFrame === false) {
+        if (
+          !isSafeBrowserSidebarUrl(event.url) ||
+          new URL(event.url).protocol !== "https:"
+        )
+          event.preventDefault();
+        return;
+      }
       if (isGoogleNavigationUrl(event.url)) return;
       event.preventDefault();
-      if (event.isMainFrame !== false) externalize(event.url);
+      externalize(event.url);
     };
     webContents.on("will-frame-navigate", guard);
     webContents.on("will-navigate", guard);

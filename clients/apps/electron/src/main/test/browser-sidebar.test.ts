@@ -53,7 +53,13 @@ describe("NativeBrowserSidebarService", () => {
     expect(h.openExternal).toHaveBeenCalledTimes(2);
     await expect(
       h.service.update({ sessionId: "drive", url: "https://foreign.example/page" })
-    ).rejects.toThrow();
+    ).resolves.toMatchObject({
+      active: true,
+      available: true,
+      url: input.url,
+      reason: "Unsupported Google Drive navigation.",
+    });
+    expect(view.webContents.close).not.toHaveBeenCalled();
     await expect(h.service.open({ ...input, profile: undefined })).rejects.toThrow();
     await expect(
       h.service.open({
@@ -64,6 +70,93 @@ describe("NativeBrowserSidebarService", () => {
     ).rejects.toThrow();
     expect(view.webContents.loadURL).toHaveBeenCalledTimes(1);
   });
+
+  it("allows HTTPS Google Drive subframes without relaxing main-frame or unsafe-scheme guards", async () => {
+    const h = await createHarness();
+    await h.service.open({
+      sessionId: "drive",
+      profile: "google-drive",
+      bounds: { x: 0, y: 0, width: 500, height: 500 },
+      url: "https://drive.google.com/file/d/example/view",
+    });
+    const view = h.views[0]!;
+    for (const url of [
+      "https://ogs.google.com/widget",
+      "https://embedded.example/player",
+    ]) {
+      expect(
+        view.emitNavigation("will-frame-navigate", url, { isMainFrame: false })
+          .preventDefault
+      ).not.toHaveBeenCalled();
+      expect(
+        view.emitNavigation("will-redirect", url, { isMainFrame: false }).preventDefault
+      ).not.toHaveBeenCalled();
+    }
+    expect(h.openExternal).not.toHaveBeenCalled();
+    for (const isMainFrame of [false, true]) {
+      expect(
+        view.emitNavigation("will-frame-navigate", "javascript:alert(1)", {
+          isMainFrame,
+        }).preventDefault
+      ).toHaveBeenCalledOnce();
+      expect(
+        view.emitNavigation("will-redirect", "file:///private/file", { isMainFrame })
+          .preventDefault
+      ).toHaveBeenCalledOnce();
+    }
+    expect(
+      view.emitNavigation("will-frame-navigate", "http://embedded.example/player", {
+        isMainFrame: false,
+      }).preventDefault
+    ).toHaveBeenCalledOnce();
+    expect(h.openExternal).not.toHaveBeenCalled();
+    expect(
+      view.emitNavigation("will-frame-navigate", "https://ogs.google.com/widget")
+        .preventDefault
+    ).toHaveBeenCalledOnce();
+    expect(h.openExternal).toHaveBeenCalledExactlyOnceWith(
+      "https://ogs.google.com/widget"
+    );
+  });
+
+  it.each(["did-start-navigation", "will-redirect"])(
+    "keeps Google Drive resumable after a blocked foreign %s",
+    async (event) => {
+      const pending = deferred<unknown>();
+      const h = await createHarness({ loadNavigation: () => pending.promise });
+      const input = {
+        sessionId: "drive",
+        profile: "google-drive" as const,
+        bounds: { x: 0, y: 0, width: 500, height: 500 },
+        url: "https://drive.google.com/file/d/example/view",
+      };
+      await h.service.open(input);
+      const view = h.views[0]!;
+      const foreign = "https://foreign.example/page";
+      if (event === "did-start-navigation")
+        view.emitStateChange(event, {}, foreign, false, true);
+      else view.emitNavigation("will-redirect", foreign);
+      await h.service.update({ sessionId: "drive", visible: false });
+      await expect(h.service.open(input)).resolves.toMatchObject({
+        active: true,
+        available: true,
+        url: input.url,
+      });
+      expect(view.webContents.loadURL).toHaveBeenNthCalledWith(2, input.url);
+      // Both a remount (open) and a visibility update resume only the allowed page.
+      if (event === "did-start-navigation")
+        view.emitStateChange(event, {}, foreign, false, true);
+      else view.emitNavigation("will-redirect", foreign);
+      await h.service.update({ sessionId: "drive", visible: false });
+      await expect(
+        h.service.update({ sessionId: "drive", visible: true })
+      ).resolves.toMatchObject({ active: true, available: true, url: input.url });
+      expect(view.webContents.loadURL).toHaveBeenNthCalledWith(3, input.url);
+      expect(view.webContents.close).not.toHaveBeenCalled();
+      expect(h.createView).toHaveBeenCalledOnce();
+      pending.resolve(undefined);
+    }
+  );
 
   it("owns a sandboxed, permission-denied view and publishes its surface lifecycle", async () => {
     const harness = await createHarness();
