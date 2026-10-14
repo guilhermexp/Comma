@@ -1123,7 +1123,8 @@ function BrowserSidebarPanel({
   );
 }
 
-function NativeBrowserViewport({
+export function NativeBrowserViewport({
+  profile,
   closeBeforeOpenSessionIds,
   nativeCapacityBlockedAtEpoch,
   nativeCapacityEpoch,
@@ -1138,6 +1139,7 @@ function NativeBrowserViewport({
   url,
   visible,
 }: {
+  profile?: "google-drive" | undefined;
   closeBeforeOpenSessionIds?: string[] | undefined;
   nativeCapacityBlockedAtEpoch?: number | undefined;
   nativeCapacityEpoch: number;
@@ -1408,6 +1410,7 @@ function NativeBrowserViewport({
     lastSubmittedNavigationRevisionRef.current = openingIntent.navigationRevision;
     void getNativeBridge()
       .browserSidebar.open({
+        profile,
         bounds,
         closeBeforeOpenSessionIds: openingIntent.closeBeforeOpenSessionIds,
         navigationRevision: openingIntent.navigationRevision,
@@ -1483,6 +1486,7 @@ function NativeBrowserViewport({
           const latestCapacityEpoch = nativeCapacityEpochRef.current;
           void getNativeBridge()
             .browserSidebar.open({
+              profile,
               bounds: latestBounds,
               closeBeforeOpenSessionIds: requestedIntent.closeBeforeOpenSessionIds,
               navigationRevision: requestedIntent.navigationRevision,
@@ -1537,6 +1541,7 @@ function NativeBrowserViewport({
     readBounds,
     sessionId,
     tabId,
+    profile,
     settleOpenState,
     settleState,
     syncBounds,
@@ -1737,6 +1742,7 @@ function NativeBrowserViewport({
     const openingCapacityEpoch = nativeCapacityEpochRef.current;
     void getNativeBridge()
       .browserSidebar.open({
+        profile,
         bounds,
         closeBeforeOpenSessionIds: closeBeforeOpenSessionIds ?? [],
         navigationRevision,
@@ -1773,6 +1779,7 @@ function NativeBrowserViewport({
     readBounds,
     sessionId,
     tabId,
+    profile,
     settleOpenState,
     url,
   ]);

@@ -348,7 +348,7 @@ export interface ElectronMainRuntimeDeps {
   browserAppBundleIdentifier?: string | undefined;
   browserSitePermissionPlatform?: SitePermissionPlatform | undefined;
   createBrowserSidebarView?:
-    | ((cornerRadius: number) => BrowserSidebarViewLike)
+    | ((cornerRadius: number, profile?: "google-drive") => BrowserSidebarViewLike)
     | undefined;
   createBrowserInspectionComposerView?: (() => BrowserSidebarViewLike) | undefined;
   browserInspectionComposerUrl?: string | undefined;
@@ -1259,12 +1259,14 @@ export async function createElectronMainContext(
   });
   browserSidebarService = deps.createBrowserSidebarView
     ? new NativeBrowserSidebarService({
-        createView: (windowId) =>
+        openExternal: deps.openExternalUrl,
+        createView: (windowId, profile) =>
           deps.createBrowserSidebarView!(
             webContentsRegistry.getWindowRegistration(windowId)?.role ===
               "side-chat-test-window"
               ? 20
-              : 0
+              : 0,
+            profile
           ),
         locale: currentMainLocale,
         sitePermissions: deps.browserSitePermissionPlatform

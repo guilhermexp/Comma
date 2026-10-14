@@ -306,6 +306,29 @@ defmodule CommaWeb.GoogleDriveBrowserTest do
       S3.put(key, Jason.encode!(Map.put(Jason.decode!(body), "expires_at", 1)), if_match: etag)
   end
 
+  @tag :drive_shared_projection
+  test "preserves shared folder metadata for the online card projection", c do
+    Agent.update(c.provider, fn state ->
+      %{
+        state
+        | files: [
+            %{
+              "id" => "team-folder",
+              "name" => "Team resources",
+              "mimeType" => "application/vnd.google-apps.folder",
+              "shared" => true
+            }
+          ]
+      }
+    end)
+
+    response = browse(c, %{"tab" => "my_drive"})
+    assert response.status == 200
+
+    assert [%{"id" => "team-folder", "shared" => true}] =
+             Jason.decode!(response.resp_body)["files"]
+  end
+
   @tag :account_adoption
   test "catalog reconciliation reads its known toolkits in one batch and adopts each without grants",
        c do

@@ -1,4 +1,9 @@
 import {
+  GOOGLE_DRIVE_PARTITION,
+  isGoogleDriveFileUrl,
+  isGoogleNavigationUrl,
+} from "./google-drive-policy";
+import {
   browserSitePermissionsInputSchema,
   type BrowserSitePermissionsInput,
 } from "@comma/native-bridge";
@@ -267,6 +272,7 @@ export interface BrowserSidebarProvider {
 }
 
 interface ActiveBrowserSidebar {
+  profile?: "google-drive" | undefined;
   closing: boolean;
   closePromise?: Promise<void> | undefined;
   destructionObserved: Promise<void>;
@@ -331,7 +337,11 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
     string,
     Map<string, ActiveBrowserSidebar>
   >();
-  readonly #createView: (ownerWindowId: string) => BrowserSidebarViewLike;
+  readonly #openExternal: ((url: string) => Promise<void>) | undefined;
+  readonly #createView: (
+    ownerWindowId: string,
+    profile?: "google-drive"
+  ) => BrowserSidebarViewLike;
   readonly #createComposerView: (() => BrowserSidebarViewLike) | undefined;
   readonly #composerUrl: string | undefined;
   readonly #getCallerWindowId: () => string;
@@ -372,6 +382,7 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
 
   constructor({
     createView,
+    openExternal,
     sitePermissions,
     locale = defaultLocale,
     createComposerView,
@@ -383,9 +394,13 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
     resolveOwnerWindow,
     surfaces,
   }: {
+    openExternal?: ((url: string) => Promise<void>) | undefined;
     sitePermissions?: BrowserSitePermissions | undefined;
     locale?: MainLocaleSource | undefined;
-    createView: (ownerWindowId: string) => BrowserSidebarViewLike;
+    createView: (
+      ownerWindowId: string,
+      profile?: "google-drive"
+    ) => BrowserSidebarViewLike;
     createComposerView?: (() => BrowserSidebarViewLike) | undefined;
     composerUrl?: string | undefined;
     getCallerWindowId?: (() => string) | undefined;
@@ -402,6 +417,7 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
     surfaces: BrowserSidebarSurfaces;
   }) {
     this.#createView = createView;
+    this.#openExternal = openExternal;
     this.#sitePermissions = sitePermissions;
     this.#locale = locale;
     this.#createComposerView = createComposerView;
@@ -583,6 +599,8 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
     ownerWindowId: string,
     parsed: BrowserSidebarOpenInput
   ): Promise<BrowserSidebarState> {
+    if (parsed.profile === "google-drive" && !isGoogleDriveFileUrl(parsed.url))
+      throw new Error("Unsupported Google Drive destination.");
     const tabId = parsed.tabId ?? parsed.sessionId;
     const owner = this.#resolveOwnerWindow(ownerWindowId);
     if (!owner || owner.isDestroyed?.()) {
@@ -602,6 +620,8 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
     }
 
     const previous = this.#active(ownerWindowId, parsed.sessionId);
+    if (previous && previous.profile !== parsed.profile)
+      throw new Error("Browser session policy cannot change.");
     if (previous && !previous.closing) {
       if (previous.tabId !== tabId) {
         throw new Error(
@@ -666,10 +686,11 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
       await this.#evictBeforeOpening(ownerWindowId);
     }
     this.#hideOtherSessions(ownerWindowId, parsed.sessionId);
-    const view = this.#createView(ownerWindowId);
+    const view = this.#createView(ownerWindowId, parsed.profile);
     const webContents = view.webContents;
     const destructionSignal = createDestructionSignal();
     const active: ActiveBrowserSidebar = {
+      profile: parsed.profile,
       closing: false,
       destructionObserved: destructionSignal.promise,
       id: browserSidebarViewId(ownerWindowId, parsed.sessionId),
@@ -700,14 +721,17 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
         }
       });
       installBrowserSidebarSecurity(webContents, {
-        sitePermissions: this.#sitePermissions,
+        sitePermissions: parsed.profile ? undefined : this.#sitePermissions,
+        googleDrive: parsed.profile === "google-drive",
+        openExternal: this.#openExternal,
       });
-      this.#sitePermissions?.register(
-        webContents,
-        owner,
-        () =>
-          !active.closing && this.#active(ownerWindowId, active.sessionId) === active
-      );
+      if (!parsed.profile)
+        this.#sitePermissions?.register(
+          webContents,
+          owner,
+          () =>
+            !active.closing && this.#active(ownerWindowId, active.sessionId) === active
+        );
       this.#installNavigationStatePublishing(active);
       view.setBounds(parsed.bounds);
       view.setVisible(true);
@@ -730,7 +754,10 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
         id: active.id,
         lifecycle: "creating",
         ownerWindowId,
-        partition: BROWSER_SIDEBAR_PARTITION,
+        partition:
+          parsed.profile === "google-drive"
+            ? GOOGLE_DRIVE_PARTITION
+            : BROWSER_SIDEBAR_PARTITION,
         role: BROWSER_SIDEBAR_ROLE,
         view,
       });
@@ -1416,6 +1443,8 @@ export class NativeBrowserSidebarService implements BrowserSidebarProvider {
   }
 
   #startNavigation(active: ActiveBrowserSidebar, url: string) {
+    if (active.profile === "google-drive" && !isGoogleNavigationUrl(url))
+      throw new Error("Unsupported Google Drive navigation.");
     void this.#cancelInspection(active);
     const navigationGeneration = ++active.navigationGeneration;
     active.reason = undefined;
@@ -2012,11 +2041,40 @@ export function installBrowserSidebarSecurity(
   {
     now = Date.now,
     sitePermissions,
+    googleDrive = false,
+    openExternal,
   }: {
+    googleDrive?: boolean | undefined;
+    openExternal?: ((url: string) => Promise<void>) | undefined;
     now?: (() => number) | undefined;
     sitePermissions?: BrowserSitePermissions | undefined;
   } = {}
 ) {
+  if (googleDrive) {
+    const externalize = (url: string) => {
+      if (isSafeBrowserSidebarUrl(url)) void openExternal?.(url).catch(() => undefined);
+    };
+    const guard = (event: NavigationEvent) => {
+      if (isGoogleNavigationUrl(event.url)) return;
+      event.preventDefault();
+      if (event.isMainFrame !== false) externalize(event.url);
+    };
+    webContents.on("will-frame-navigate", guard);
+    webContents.on("will-navigate", guard);
+    webContents.on("will-redirect", guard);
+    webContents.setWindowOpenHandler(({ url }) => {
+      // Google file links and sign-in continue in the same isolated view.
+      if (isGoogleNavigationUrl(url))
+        void webContents.loadURL(url).catch(() => undefined);
+      else externalize(url);
+      return { action: "deny" };
+    });
+    webContents.session.setPermissionCheckHandler(() => false);
+    webContents.session.setPermissionRequestHandler(
+      (_contents, _permission, callback) => callback(false)
+    );
+    return;
+  }
   const preventUnsafeNavigation = (event: NavigationEvent) => {
     if (!isSafeBrowserSidebarUrl(event.url)) {
       event.preventDefault();

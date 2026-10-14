@@ -13,15 +13,26 @@ offline mirror or synchronize Google files to local folders.
    same identity keep separate connection numbers.
 4. Select **Recent**, **My Drive** or **Shared with me**.
 5. Select a folder to open it. Use **Back** or a breadcrumb to return.
-6. Enter a name in **Search names** and select **Search**. To clear the search,
-   clear the field and submit again. Search applies to the current tab or folder.
-7. Use the sort selector to change the order. Use **Next page** or
-   **Previous page** to browse more results. **First page** returns to the start.
-8. Select list or grid view. Both show the same page of files.
+6. Type in **Search names**. Search runs after you stop typing and applies to
+   the current tab or folder. Select **Clear search** to remove the filter.
+7. Open the sort menu to change the order. Scroll toward the bottom to load the
+   next page. A failed next page keeps the loaded files and offers **Retry**.
+8. The browser starts in grid view. **My Drive** and folders separate **Folders**
+   from **Items**. List view shows the same loaded files with both timestamps.
 9. Select **Refresh** to read the current view again. Returning from Local Drive
    also refreshes the online source and retains its location.
-10. Select a file to open its Google destination through Comma's existing opener.
-    A file without a supported Google destination cannot be opened here.
+10. In Electron, select a file to open its Google page in the Drive area. Use
+    **Back to files** to restore the list and its scroll position. The toolbar
+    also provides page back, forward, reload, and **Open in browser**.
+    Web builds open the file in the external browser. Unsupported destinations
+    remain unavailable.
+
+The account selector appears when more than one connected account is available.
+The Electron viewer has a separate persistent Google browser session. Sign in
+there with the account that can access the file. Composio authorization does
+not sign this browser session in. Google credentials stay separate from Comma's
+application session. Foreign page links open in the external browser. Browser
+sign-in and file permissions remain controlled by Google.
 
 **Recent** uses Google's recency order. **Modified** and **Last viewed by you**
 show distinct provider timestamps. A modified date does not mean that you opened
@@ -44,7 +55,8 @@ If the connection is unavailable, verify or reconnect it in Plugins, then retry.
 An incomplete search has a warning. An unsupported or failed provider result has
 an error and a retry action. Neither state means that your Drive is empty.
 
-Online browsing does not download file contents, write provider files, grant
-Agents access or enable Routines. Agent permissions and Routine source consent
+Listing files does not download their contents or write provider files. Opening
+a file loads its Google page; actions on that page use your Google browser
+session. Neither listing nor opening grants Agents access or enables Routines. Agent permissions and Routine source consent
 remain separate settings. This browser does not publish file metadata to a
 workspace conversation. Switch to **Local Drive** to use local file operations.

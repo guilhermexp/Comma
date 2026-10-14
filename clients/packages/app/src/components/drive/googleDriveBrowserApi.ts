@@ -8,6 +8,7 @@ const onlineFileSchema = z.object({
   modified_at: z.string().nullable(),
   viewed_at: z.string().nullable(),
   url: z.string().nullable(),
+  shared: z.boolean().default(false),
   shortcut: z.object({ id: z.string(), mime_type: z.string() }).nullable(),
 });
 const pageSchema = z.object({

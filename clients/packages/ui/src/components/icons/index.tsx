@@ -1,3 +1,8 @@
+import { IconFolderShared as CentralFolderSharedIcon } from "@central-icons-react/round-outlined-radius-2-stroke-2/IconFolderShared";
+import { IconSlidesWide as CentralSlidesIcon } from "@central-icons-react/round-outlined-radius-2-stroke-2/IconSlidesWide";
+import { IconTable as CentralTableIcon } from "@central-icons-react/round-outlined-radius-2-stroke-2/IconTable";
+import { IconFilePdf as CentralFilePdfIcon } from "@central-icons-react/round-outlined-radius-2-stroke-2/IconFilePdf";
+import { IconLayoutGrid1 as CentralGridIcon } from "@central-icons-react/round-outlined-radius-2-stroke-2/IconLayoutGrid1";
 import { IconZai as CentralZaiBrandIcon } from "@central-icons-react/round-filled-radius-2-stroke-2/IconZai";
 import { IconNvidia as CentralNvidiaBrandIcon } from "@central-icons-react/round-filled-radius-2-stroke-2/IconNvidia";
 import { IconOllama as CentralOllamaBrandIcon } from "@central-icons-react/round-filled-radius-2-stroke-2/IconOllama";
@@ -355,3 +360,13 @@ export const OllamaBrandIcon = createCentralIcon(CentralOllamaBrandIcon);
 export const OpencodeBrandIcon = createCentralIcon(CentralOpencodeBrandIcon);
 export const VercelBrandIcon = createCentralIcon(CentralVercelBrandIcon);
 export const CopilotBrandIcon = createCentralIcon(CentralCopilotBrandIcon);
+
+export const GridIcon = createCentralIcon(CentralGridIcon);
+
+export const FilePdfIcon = createCentralIcon(CentralFilePdfIcon);
+
+export const TableIcon = createCentralIcon(CentralTableIcon);
+
+export const SlidesIcon = createCentralIcon(CentralSlidesIcon);
+
+export const FolderSharedIcon = createCentralIcon(CentralFolderSharedIcon);

@@ -8,7 +8,7 @@ import {
   within,
 } from "@comma/test-utils/render";
 import { CommaI18nProvider } from "@comma/i18n/react";
-import { afterEach, expect, it, type Mock, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, type Mock, vi } from "vitest";
 import { CommaApiError, type CommaApiClient } from "../../../api";
 import { GoogleDriveBrowser } from "../GoogleDriveBrowser";
 
@@ -16,8 +16,31 @@ const open = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("../../../runtime-chat/nativePlatformActions", () => ({
   openNativePlatformExternalUrl: open,
 }));
+let reachEnd: (() => void) | undefined;
+beforeEach(() => {
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      constructor(private callback: IntersectionObserverCallback) {}
+      observe(target: Element) {
+        if (target.getAttribute("data-slot") === "scroll-area-load-more")
+          reachEnd = () =>
+            this.callback(
+              [{ isIntersecting: true, target } as IntersectionObserverEntry],
+              this as unknown as IntersectionObserver
+            );
+      }
+      unobserve() {}
+      disconnect() {
+        reachEnd = undefined;
+      }
+    }
+  );
+});
 afterEach(() => {
+  vi.unstubAllGlobals();
   cleanup();
+  vi.useRealTimers();
   vi.clearAllMocks();
 });
 const file = (name: string, id = name) => ({
@@ -25,7 +48,7 @@ const file = (name: string, id = name) => ({
   name,
   mime_type: "application/pdf",
   modified_at: "2026-10-13T10:00:00Z",
-  viewed_at: null,
+  viewed_at: null as string | null,
   url: "https://drive.google.com/file/d/file-1/view",
   shortcut: null,
 });
@@ -88,14 +111,13 @@ it("navigates folders, searches the current scope, pages opaque tokens, switches
   expect(screen.getByRole("button", { name: /Budget/ })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: /Reports/ }));
   await screen.findByRole("button", { name: /Inside/ });
-  fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  act(() => reachEnd?.());
   await waitFor(() =>
     expect(read.mock.calls.at(-1)?.[2].cursor).toBe("opaque/+== token")
   );
   fireEvent.change(screen.getByRole("searchbox", { name: "Search names" }), {
     target: { value: "Q'\\x" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await screen.findByRole("button", { name: /Match/ });
   expect(read.mock.calls.at(-1)?.[2]).toMatchObject({
     search: "Q'\\x",
@@ -280,4 +302,85 @@ it("offers different authorized identities directly in Drive and lists the chose
   expect(
     command.mock.calls.filter(([, action]) => action === "reconcile_accounts")
   ).toHaveLength(2);
+});
+
+it("keeps loaded pages while loading once, then fences a late page after changing scope", async () => {
+  let finish: ((value: ReturnType<typeof page>) => void) | undefined;
+  const read = vi.fn(async (_workspace, _action, request) => {
+    if (request.cursor)
+      return new Promise<ReturnType<typeof page>>((resolve) => {
+        finish = resolve;
+      });
+    return {
+      ...page(request.tab === "shared" ? "Shared item" : "First item"),
+      next_cursor: request.tab === "shared" ? null : "exact/+== token",
+    };
+  });
+  render(view(api(read)));
+  await screen.findByRole("button", { name: "First item" });
+  act(() => {
+    reachEnd?.();
+    reachEnd?.();
+  });
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+  expect(read.mock.calls[1]?.[2].cursor).toBe("exact/+== token");
+  expect(screen.getByRole("button", { name: "First item" })).toBeVisible();
+  fireEvent.click(screen.getByRole("tab", { name: "Shared with me" }));
+  await screen.findByRole("button", { name: "Shared item" });
+  await act(async () => finish?.(page("Late item")));
+  expect(screen.queryByText("Late item")).toBeNull();
+  expect(read.mock.calls[2]?.[2].cursor).toBeUndefined();
+});
+it("shows skeleton status until data arrives and never calls a modified date opened", async () => {
+  let finish: ((value: ReturnType<typeof page>) => void) | undefined;
+  const read = vi.fn(
+    () =>
+      new Promise<ReturnType<typeof page>>((resolve) => {
+        finish = resolve;
+      })
+  );
+  render(view(api(read)));
+  await waitFor(() => expect(read).toHaveBeenCalledOnce());
+  expect(screen.getByRole("status", { name: "Loading Google Drive…" })).toBeVisible();
+  await act(async () =>
+    finish?.({
+      ...page("Modified only"),
+      files: [
+        file("Modified only"),
+        { ...file("Viewed"), viewed_at: "2026-10-12T10:00:00Z" },
+      ],
+    })
+  );
+  const modified = screen.getByRole("button", { name: "Modified only" });
+  expect(within(modified).getByText(/Modified Oct/)).toBeVisible();
+  expect(within(modified).queryByText(/Opened/)).toBeNull();
+  expect(
+    within(screen.getByRole("button", { name: "Viewed" })).getByText(/Opened Oct/)
+  ).toBeVisible();
+});
+it("debounces typed searches and clears them in the active tab", async () => {
+  const read = vi.fn(async () => page("Result"));
+  render(view(api(read)));
+  await screen.findByRole("button", { name: "Result" });
+  vi.useFakeTimers();
+  const search = screen.getByRole("searchbox");
+  fireEvent.change(search, { target: { value: "ab" } });
+  await act(async () => {
+    vi.advanceTimersByTime(299);
+  });
+  expect(read).toHaveBeenCalledTimes(1);
+  fireEvent.change(search, { target: { value: "abc" } });
+  await act(async () => {
+    vi.advanceTimersByTime(300);
+  });
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(read.mock.calls.at(-1)).toEqual(
+    expect.arrayContaining([expect.objectContaining({ search: "abc", tab: "recent" })])
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+  await act(async () => {
+    vi.advanceTimersByTime(300);
+  });
+  expect(read).toHaveBeenCalledTimes(3);
+  vi.useRealTimers();
 });

@@ -1,3 +1,4 @@
+import { GOOGLE_DRIVE_PARTITION } from "./modules/browser-sidebar/google-drive-policy";
 import { isAuthorizationReturnUrl } from "./authorization-return";
 import { installApplicationMenu } from "./application-menu";
 import { applicationMenuProvider } from "./application-menu-provider";
@@ -1744,9 +1745,12 @@ async function createElectronMainContext() {
         logger: log,
       })
     ),
-    createBrowserSidebarView: (radius) => {
+    createBrowserSidebarView: (radius, profile) => {
       const view = new WebContentsView({
-        webPreferences: BROWSER_SIDEBAR_WEB_PREFERENCES,
+        webPreferences: {
+          ...BROWSER_SIDEBAR_WEB_PREFERENCES,
+          ...(profile === "google-drive" ? { partition: GOOGLE_DRIVE_PARTITION } : {}),
+        },
       });
       return applyBrowserSidebarAppearance(view, radius);
     },

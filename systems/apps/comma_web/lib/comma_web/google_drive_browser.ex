@@ -7,7 +7,7 @@ defmodule CommaWeb.GoogleDriveBrowser do
   alias CommaWeb.RecommendationMemberRead, as: Read
 
   @slug "GOOGLEDRIVE_FIND_FILE"
-  @fields "files(id,name,mimeType,modifiedTime,viewedByMeTime,webViewLink,shortcutDetails),nextPageToken,incompleteSearch"
+  @fields "files(id,name,mimeType,modifiedTime,viewedByMeTime,webViewLink,shortcutDetails,shared),nextPageToken,incompleteSearch"
   @max_bytes 256_000
   @sorts %{
     "recent" => "recency desc",
@@ -185,6 +185,7 @@ defmodule CommaWeb.GoogleDriveBrowser do
          "modified_at" => date(f["modifiedTime"]),
          "viewed_at" => date(f["viewedByMeTime"]),
          "url" => safe_url(f["webViewLink"]),
+         "shared" => f["shared"] == true,
          "shortcut" => shortcut
        }}
     else

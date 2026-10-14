@@ -39,6 +39,36 @@ const brandMark = <Key extends string>(
 /** Source-of-truth mapping from design icon usage to Central Icons npm packages. */
 export const iconRegistry = [
   {
+    exportName: "FolderSharedIcon",
+    centralName: "IconFolderShared",
+    variant: outlined,
+    source: "central",
+  },
+  {
+    exportName: "SlidesIcon",
+    centralName: "IconSlidesWide",
+    variant: outlined,
+    source: "central",
+  },
+  {
+    exportName: "TableIcon",
+    centralName: "IconTable",
+    variant: outlined,
+    source: "central",
+  },
+  {
+    exportName: "FilePdfIcon",
+    centralName: "IconFilePdf",
+    variant: outlined,
+    source: "central",
+  },
+  {
+    exportName: "GridIcon",
+    centralName: "IconLayoutGrid1",
+    variant: outlined,
+    source: "central",
+  },
+  {
     exportName: "CloudIcon",
     centralName: "IconCloud",
     variant: outlined,

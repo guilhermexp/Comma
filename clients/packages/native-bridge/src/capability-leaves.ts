@@ -701,6 +701,8 @@ export interface ViewSurface {
 }
 
 export interface BrowserSidebarOpenInput {
+  /** Immutable isolated Google file viewer policy. */
+  profile?: "google-drive" | undefined;
   sessionId: string;
   /** Stable renderer-owned tab identity. `sessionId` remains the native view key. */
   tabId?: string | undefined;
@@ -1555,6 +1557,7 @@ export const browserSidebarBoundsSchema = z
 
 export const browserSidebarOpenInputSchema = z
   .object({
+    profile: z.literal("google-drive").optional(),
     sessionId: browserSidebarSessionIdSchema,
     tabId: browserSidebarTabIdSchema.optional(),
     url: browserSidebarUrlSchema,

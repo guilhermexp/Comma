@@ -1,3 +1,7 @@
+import {
+  GoogleDriveProviderLogo,
+  Folder1Icon as DriveSourceFolderIcon,
+} from "@comma/ui";
 import { useApplicationMenu } from "../application-menu/useApplicationMenu";
 import { useCommaLocale, useCommaMessages } from "@comma/i18n/react";
 import { getNativeBridge } from "@comma/native-bridge";
@@ -126,26 +130,32 @@ export function DriveRoute() {
     <div className="flex h-full min-h-0 min-w-0 flex-1 bg-main-panel-bg">
       <nav
         aria-label={messages.online_drive_sources()}
-        className="flex w-40 shrink-0 flex-col gap-sm border-r border-secondary px-md pt-xl"
+        className="flex w-40 shrink-0 flex-col gap-xs border-r border-secondary px-md pt-lg"
       >
         <button
           type="button"
           aria-pressed={source === "local"}
-          className={`${driveSecondaryButton} aria-pressed:bg-secondary aria-pressed:text-primary`}
+          className={
+            "flex items-center gap-sm rounded-md px-md py-sm text-left text-sm text-tertiary hover:bg-secondary aria-pressed:bg-tertiary aria-pressed:text-primary focus-visible:shadow-focus-gray-shadow-xs"
+          }
           onClick={() => {
             setSource("local");
           }}
         >
+          <DriveSourceFolderIcon className="size-4 shrink-0" />
           {messages.online_drive_local()}
         </button>
         <button
           type="button"
           aria-pressed={source === "google"}
-          className={`${driveSecondaryButton} aria-pressed:bg-secondary aria-pressed:text-primary`}
+          className={
+            "flex items-center gap-sm rounded-md px-md py-sm text-left text-sm text-tertiary hover:bg-secondary aria-pressed:bg-tertiary aria-pressed:text-primary focus-visible:shadow-focus-gray-shadow-xs"
+          }
           onClick={() => {
             setSource("google");
           }}
         >
+          <GoogleDriveProviderLogo className="size-4 shrink-0" />
           Google Drive
         </button>
       </nav>

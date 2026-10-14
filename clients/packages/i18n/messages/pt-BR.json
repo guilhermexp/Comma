@@ -3224,5 +3224,13 @@
   "online_drive_presentation": "Apresentação",
   "online_drive_document": "Documento",
   "online_drive_image": "Imagem",
-  "online_drive_file": "Arquivo"
+  "online_drive_file": "Arquivo",
+  "online_drive_folders": "Pastas",
+  "online_drive_items": "Itens",
+  "online_drive_opened_date": "Aberto {date}",
+  "online_drive_modified_date": "Modificado {date}",
+  "online_drive_clear_search": "Limpar pesquisa",
+  "online_drive_back_to_files": "Voltar aos arquivos",
+  "online_drive_open_external": "Abrir no navegador",
+  "online_drive_forward": "Avançar"
 }

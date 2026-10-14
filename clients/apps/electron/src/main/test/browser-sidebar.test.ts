@@ -23,6 +23,48 @@ import {
 import { NativeSurfaceService } from "../modules/surfaces";
 
 describe("NativeBrowserSidebarService", () => {
+  it("isolates Google Drive sessions and rejects foreign programmatic destinations", async () => {
+    const h = await createHarness();
+    const input = {
+      sessionId: "drive",
+      profile: "google-drive" as const,
+      bounds: { x: 0, y: 0, width: 500, height: 500 },
+      url: "https://drive.google.com/file/d/example/view",
+    };
+    const state = await h.service.open(input);
+    expect(state.surface?.partition).toBe("persist:comma-google-drive");
+    expect(h.createView).toHaveBeenCalledWith("win_main", "google-drive");
+    const view = h.views[0]!;
+    expect(
+      view.emitNavigation("will-redirect", "https://accounts.google.com/ServiceLogin")
+        .preventDefault
+    ).not.toHaveBeenCalled();
+    expect(
+      view.emitNavigation("will-navigate", "https://foreign.example/page")
+        .preventDefault
+    ).toHaveBeenCalledOnce();
+    expect(h.openExternal).toHaveBeenCalledWith("https://foreign.example/page");
+    const windowOpen = view.webContents.setWindowOpenHandler.mock.calls[0]![0];
+    expect(windowOpen({ url: "https://foreign.example/popup" })).toEqual({
+      action: "deny",
+    });
+    expect(h.openExternal).toHaveBeenCalledWith("https://foreign.example/popup");
+    expect(windowOpen({ url: "file:///private/file" })).toEqual({ action: "deny" });
+    expect(h.openExternal).toHaveBeenCalledTimes(2);
+    await expect(
+      h.service.update({ sessionId: "drive", url: "https://foreign.example/page" })
+    ).rejects.toThrow();
+    await expect(h.service.open({ ...input, profile: undefined })).rejects.toThrow();
+    await expect(
+      h.service.open({
+        ...input,
+        sessionId: "unsafe",
+        url: "https://docs.google.com.evil.test/document/d/example/edit",
+      })
+    ).rejects.toThrow();
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(1);
+  });
+
   it("owns a sandboxed, permission-denied view and publishes its surface lifecycle", async () => {
     const harness = await createHarness();
 
@@ -1893,7 +1935,9 @@ async function createHarness({
   });
   let unregisterOwner: ((windowId: string) => void) | undefined;
   const releaseOwnerListener = vi.fn();
+  const openExternal = vi.fn(async (_url: string) => {});
   const service = new NativeBrowserSidebarService({
+    openExternal,
     createView,
     createComposerView,
     composerUrl: "assets://./#/browser-inspection-composer",
@@ -1913,6 +1957,7 @@ async function createHarness({
   });
 
   return {
+    openExternal,
     createView,
     composerViews,
     owner,

@@ -491,13 +491,26 @@ owns the member account and credential-mode relationship. Comma rechecks current
 Workspace authority, exact account ownership, mode and active status before
 provider dispatch and before returning a page.
 
-The browser keeps one page of at most 50 files, a bounded breadcrumb path and
-at most 20 previous opaque page tokens. Explicit navigation and refresh read one
-page; list/grid changes do not read. There is no background polling, recursive
-scan, per-file fanout, offline mirror or provider write. Recent uses recency;
-modified and viewed dates retain their separate meanings. Shared with me is
-not shared drives. A failed or unsupported preview result is never an empty
-success. File destinations accept only supported HTTPS Google file/folder paths.
+Each request reads at most 50 files. The browser retains loaded pages for
+continuous scrolling, with one page request in flight and a bounded breadcrumb
+path. The next opaque cursor is passed unchanged. Account, Workspace, tab,
+folder, search, and refresh changes fence late results. Search is debounced by
+300 ms; list/grid changes do not read. There is no background polling, recursive
+scan, per-file fanout, offline mirror, or provider write through the listing API.
+Recent uses recency; modified and viewed dates retain their separate meanings.
+Shared with me is not shared drives. A failed or unsupported result is never an
+empty success. File destinations accept only supported HTTPS Google paths.
+
+Electron opens files through the existing BrowserSidebar session owner, with
+an immutable `google-drive` policy and the persistent `persist:comma-google-drive`
+partition. It creates no new domain entity. Main validates initial Google file
+paths and limits subsequent page navigation to exact Drive, Docs, and Google
+sign-in hosts. Foreign HTTP(S) navigation and new-window requests use the external
+opener; unsafe schemes are blocked. Google windows have no preload, Node access,
+or Comma credentials. The viewer reuses native surface ownership, bounds,
+suppression, and cleanup. Returning to the list retains its loaded location and
+scroll. Web builds use the external opener. Google browser authentication is
+independent of the selected Composio account.
 
 Browsing neither grants Agent tool access nor enrolls Routine sources. File
 metadata stays in the authenticated response and does not enter a Group
@@ -505,6 +518,7 @@ Conversation. The existing local Synchronicity Drive and Drive Binding remain
 authoritative for local files and synchronization.
 Implementation: [route composition](../../clients/packages/app/src/components/drive/DriveRoute.tsx),
 [online browser](../../clients/packages/app/src/components/drive/GoogleDriveBrowser.tsx),
+[viewer policy](../../clients/apps/electron/src/main/modules/browser-sidebar/google-drive-policy.ts),
 [member read](../../systems/apps/comma_web/lib/comma_web/google_drive_browser.ex).
 See [the user procedure](../user_manual/comma/google-drive.md).
 
