@@ -32,6 +32,11 @@ shared-drive directory.
 
 If no eligible account is connected, select **Open Plugins** and use the existing
 Google Drive connection flow. Opening the Drive tab does not start OAuth.
+Complete authorization in the browser, then return to the connector detail.
+Comma detects the account automatically while the detail is open. If Comma
+shows account choices, select **Use this account** for the required connection.
+If the attempt expires, select **Connect another account**. You can then select
+**Use this account** for an account that you already authorized.
 If the connection is unavailable, verify or reconnect it in Plugins, then retry.
 An incomplete search has a warning. An unsupported or failed provider result has
 an error and a retry action. Neither state means that your Drive is empty.

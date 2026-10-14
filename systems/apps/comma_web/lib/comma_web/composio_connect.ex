@@ -274,6 +274,25 @@ defmodule CommaWeb.ComposioConnect do
     end
   end
 
+  # Consent discovery does not adopt candidates. Only consent select can enable
+  # a newly discovered account; ordinary metadata refresh keeps its old contract.
+  defp run(s, "refresh_accounts", %{"toolkit" => toolkit, "consent_id" => id})
+       when is_binary(toolkit) and is_binary(id) do
+    with {:ok, %{"mode" => "connect"} = profile} <- Access.profile(s.tenant, s.group, s.user),
+         {:ok, %{"id" => ^id}} <- Access.consent(s.tenant, s.group, s.user, toolkit),
+         {:ok, remote} <- Connect.accounts(s.tenant, s.group, s.user, toolkit),
+         {:ok, %{"id" => ^id} = consent} <- Access.consent(s.tenant, s.group, s.user, toolkit),
+         {:ok, accounts} <- Access.accounts(s.tenant, s.group, s.user) do
+      {:ok,
+       public(profile, accounts)
+       |> Map.put("consent", public_consent(consent))
+       |> Map.put("remote_accounts", Enum.map(remote, &Map.put(&1, "enabled", false)))}
+    else
+      {:ok, _} -> {:error, :composio_attempt_not_pending}
+      error -> error
+    end
+  end
+
   defp run(s, "refresh_accounts", %{"toolkit" => toolkit}) when is_binary(toolkit) do
     with {:ok, profile} <- Access.profile(s.tenant, s.group, s.user),
          true <- profile["mode"] == "connect",
@@ -337,7 +356,16 @@ defmodule CommaWeb.ComposioConnect do
   defp connect_personal(s, toolkit, replaces \\ nil) do
     with {:ok, %{"mode" => "connect", "status" => "connected"}} <-
            Access.profile(s.tenant, s.group, s.user),
-         {:ok, consent} <- Access.begin_consent(s.tenant, s.group, s.user, toolkit, replaces),
+         {:ok, remote} <- Connect.accounts(s.tenant, s.group, s.user, toolkit),
+         {:ok, consent} <-
+           Access.begin_consent(
+             s.tenant,
+             s.group,
+             s.user,
+             toolkit,
+             replaces,
+             Enum.map(remote, & &1["id"])
+           ),
          {:ok, link} <- Connect.add_account(s.tenant, s.group, s.user, toolkit),
          {:ok, _} <-
            Access.finish_consent(
@@ -421,7 +449,7 @@ defmodule CommaWeb.ComposioConnect do
   defp selectable_consent(_, _, _), do: {:error, :composio_attempt_not_pending}
 
   defp public_consent(consent) do
-    public = Map.take(consent, ~w(id toolkit status expires_at))
+    public = Map.take(consent, ~w(id toolkit status expires_at baseline_account_ids))
 
     if consent["status"] in ["starting", "pending"] and
          consent["expires_at"] <= System.system_time(:millisecond),

@@ -241,7 +241,7 @@ it("keeps project-mode connector authorization separate from Connect consent", a
   expect(screen.queryByText(/choose which account to use/)).toBeNull();
 });
 
-it("keeps a single initiated account unselected until the user chooses it", async () => {
+it("keeps a single initiated account unselectable until provider authorization completes", async () => {
   const composioCommand = vi.fn().mockResolvedValue({});
   show(
     {
@@ -275,12 +275,10 @@ it("keeps a single initiated account unselected until the user chooses it", asyn
 
   expect(
     await screen.findByText(
-      "Complete authorization in your browser. Then show accounts and choose which account to use."
+      "Complete authorization in your browser. Comma detects the account automatically. If a choice is needed, select Use this account."
     )
   ).toBeInTheDocument();
-  expect(
-    await screen.findByRole("button", { name: "Use this account" })
-  ).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Use this account" })).toBeNull();
   expect(composioCommand).not.toHaveBeenCalledWith(
     "workspace",
     "consent",
@@ -527,7 +525,7 @@ it("does not treat a consent URL as a connected account", async () => {
   );
   expect(
     await screen.findByText(
-      "Complete authorization in your browser. Then show accounts and choose which account to use."
+      "Complete authorization in your browser. Comma detects the account automatically. If a choice is needed, select Use this account."
     )
   ).toBeInTheDocument();
   expect(openNativePlatformExternalUrl).toHaveBeenCalledWith(
@@ -613,7 +611,6 @@ it("explains expired app consent without requiring a working account to sign in 
   );
 
   await screen.findByText("Connected", { selector: "span" });
-  await user.click(screen.getByText("Inactive accounts and past attempts"));
   const expiry = screen.getByText(/past attempt expired/i);
   expect(expiry).toHaveTextContent(/Existing connections are unaffected/i);
   expect(expiry).toHaveTextContent(/Connect another account/i);

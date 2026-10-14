@@ -1198,6 +1198,7 @@ describe("PluginsRoute", () => {
         toolkit: string;
         status: string;
         expires_at: number;
+        baseline_account_ids: string[];
       } | null = null;
       let accountVisible = false;
       harness.getComposio.mockImplementation(async () => ({
@@ -1223,13 +1224,14 @@ describe("PluginsRoute", () => {
             next_cursor: null,
           };
         if (action === "connect") {
-          accountVisible = true;
+          if (outcome === "response lost") accountVisible = true;
           if (outcome === "response lost") throw new Error("Connection response lost");
           consent = {
             id: "gmail-consent",
             toolkit: "gmail",
             status: "pending",
             expires_at: Date.now() + 600_000,
+            baseline_account_ids: [],
           };
           return {
             consent_id: consent.id,
@@ -1237,8 +1239,15 @@ describe("PluginsRoute", () => {
             authorization_url: "https://provider.example/consent",
           };
         }
+        if (action === "refresh_accounts")
+          return {
+            ...(await harness.getComposio()),
+            consent,
+            remote_accounts: [{ ...account, enabled: false }],
+          };
         if (action === "consent" && params.operation === "get") return { consent };
         if (action === "consent" && params.operation === "select") {
+          accountVisible = true;
           consent = { ...consent!, status: "completed" };
           return { account };
         }
@@ -1257,9 +1266,9 @@ describe("PluginsRoute", () => {
       );
       await user.click(await screen.findByRole("button", { name: "Add Gmail" }));
       if (outcome === "completed") {
-        await user.click(
-          await screen.findByRole("button", { name: "Use this account" })
-        );
+        await screen.findByText(/Comma detects the account automatically/);
+        fireEvent.focus(window);
+        await screen.findByText("Connected", { selector: "span" });
         await waitFor(() =>
           expect(screen.queryByRole("button", { name: "Use this account" })).toBeNull()
         );
@@ -1288,6 +1297,21 @@ describe("PluginsRoute", () => {
           )
         ).toHaveLength(2)
       );
+      if (outcome === "completed") {
+        await user.click(screen.getByRole("button", { name: "Back to plugins" }));
+        expect(
+          await screen.findByRole("button", { name: "View Gmail plugin details" })
+        ).toBeVisible();
+        await waitFor(() =>
+          expect(
+            within(
+              screen.getByRole("button", {
+                name: "View Gmail plugin details",
+              })
+            ).getByText("Connected")
+          ).toBeVisible()
+        );
+      }
     }
   );
 

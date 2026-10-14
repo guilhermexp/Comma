@@ -183,7 +183,7 @@ defmodule SalixStore.ComposioAccess do
     end
   end
 
-  def begin_consent(tenant, group, user, toolkit, replaces \\ nil) do
+  def begin_consent(tenant, group, user, toolkit, replaces \\ nil, baseline_account_ids \\ nil) do
     key = consent_key(tenant, group, user, toolkit)
     id = Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
 
@@ -193,7 +193,8 @@ defmodule SalixStore.ComposioAccess do
         "toolkit" => toolkit,
         "status" => "starting",
         "expires_at" => System.system_time(:millisecond) + 600_000,
-        "replaces" => replaces
+        "replaces" => replaces,
+        "baseline_account_ids" => baseline_account_ids
       }
     end
 

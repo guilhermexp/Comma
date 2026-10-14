@@ -538,6 +538,19 @@ with its data. The cipher retains the preexisting subscription ciphertext format
 Tokens, project keys, PKCE material, and consent links stay out of public
 account DTOs. The renderer receives a consent URL only for the requested browser action.
 
+The existing toolkit consent stores the server-read remote account IDs before
+the Add action, including accounts that are not yet ACTIVE. While the selected
+detail is mounted and the consent is pending, one serial discovery read runs at
+most every two seconds, with focus and visibility checks under the same bound.
+Each read covers one toolkit and at most 50 accounts. The ten-minute expiry,
+unmount, or a terminal consent stops discovery. Discovery does not adopt accounts.
+Exactly one new ACTIVE account is selected through the existing server consent
+selection path, which rechecks provider ownership and ACTIVE status. A missing
+historical baseline, multiple new accounts, and pre-existing accounts require an
+explicit choice from visible candidates. After expiry, Connect another account
+starts a fresh consent; an already authorized account can then be selected
+explicitly. This does not enable Agent grants or Routine sources.
+
 [The desktop API](../../systems/apps/comma_web/lib/comma_web/composio_connect.ex)
 requires the workspace owner. Plugins → Integrations uses the incumbent catalog rows
 and detail components for native and Composio connectors. Name search and paginated

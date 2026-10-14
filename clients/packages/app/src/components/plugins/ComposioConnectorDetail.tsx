@@ -16,7 +16,7 @@ import {
   type PluginDefinition,
 } from "@comma/ui";
 import type { CommaApiClient, ComposioStatus, ComposioAccount } from "../../api";
-import { composioAccountSchema } from "../../api";
+import { composioAccountSchema, composioStatusSchema } from "../../api";
 import { z } from "zod";
 import { openNativePlatformExternalUrl } from "../../runtime-chat/nativePlatformActions";
 
@@ -35,6 +35,7 @@ const consentSchema = z.object({
     "expired",
   ]),
   expires_at: z.number(),
+  baseline_account_ids: z.array(z.string()).nullable().optional(),
 });
 const consentResponseSchema = z.object({ consent: consentSchema.nullable() });
 const connectConsentResponseSchema = z.object({
@@ -75,6 +76,7 @@ export function ComposioConnectorDetail({
   const [details, setDetails] = useState<ComposioAccount>();
   const [disconnect, setDisconnect] = useState<{ id: string; name: string }>();
   const [authorization, setAuthorization] = useState<string>();
+  const [candidates, setCandidates] = useState<ComposioAccount[]>([]);
   const mounted = useRef(true);
   const inFlight = useRef(false);
   const connectionStarted = useRef(false);
@@ -161,6 +163,139 @@ export function ComposioConnectorDetail({
       clearTimeout(timer);
     };
   }, [api, load, status?.status, status?.expires_at, workspaceId]);
+
+  // One mounted detail, one toolkit, at most 50 remote accounts per read.
+  // Timer reads are at least 2 s apart for at most the ten-minute consent.
+  // Focus/visibility checks share that same request and rate bound.
+  useEffect(() => {
+    setCandidates([]);
+    if (
+      status?.mode !== "connect" ||
+      consent?.status !== "pending" ||
+      consent.toolkit !== toolkit ||
+      !consent.expires_at
+    )
+      return;
+    const id = consent.id;
+    const expiry = consent.expires_at;
+    const controller = new AbortController();
+    const options = { signal: controller.signal };
+    let timer: ReturnType<typeof setTimeout>;
+    let lastRead = -Infinity;
+    let checking = false;
+    let selecting = false;
+    const expire = () => {
+      controller.abort();
+      clearTimeout(timer);
+      setConsent((current) =>
+        current?.id === id ? { ...current, status: "expired" } : current
+      );
+    };
+    const expiryTimer = setTimeout(expire, Math.max(0, expiry - Date.now()));
+    const schedule = (delay = 2000) => {
+      clearTimeout(timer);
+      if (!controller.signal.aborted) timer = setTimeout(() => void check(), delay);
+    };
+    const check = async () => {
+      if (controller.signal.aborted || checking) return;
+      if (Date.now() >= expiry) {
+        expire();
+        return;
+      }
+      if (inFlight.current) {
+        schedule();
+        return;
+      }
+      const remaining = 2000 - (Date.now() - lastRead);
+      if (remaining > 0) {
+        schedule(remaining);
+        return;
+      }
+      checking = true;
+      inFlight.current = true;
+      lastRead = Date.now();
+      clearTimeout(timer);
+      try {
+        const result = await api.composioCommand(
+          workspaceId,
+          "refresh_accounts",
+          { toolkit, consent_id: id },
+          options
+        );
+        if (controller.signal.aborted) return;
+        const discovery = composioStatusSchema
+          .extend({
+            consent: consentSchema,
+            remote_accounts: z.array(composioAccountSchema),
+          })
+          .parse(result);
+        const next = discovery.consent;
+        if (next.id !== id || next.toolkit !== toolkit)
+          throw new Error("Stale consent discovery");
+        setStatus(discovery);
+        setConsent(next);
+        if (next.status !== "pending") return;
+        const active = discovery.remote_accounts.filter(
+          (account) =>
+            account.mode === "connect" &&
+            account.toolkit === toolkit &&
+            account.status === "ACTIVE"
+        );
+        setCandidates(active);
+        // Missing historical baselines require a human choice. All IDs that
+        // existed at start (including inactive accounts) are excluded from auto selection.
+        const fresh = next.baseline_account_ids
+          ? active.filter((account) => !next.baseline_account_ids!.includes(account.id))
+          : [];
+        if (fresh.length === 1) {
+          selecting = true;
+          setBusy(true);
+          await api.composioCommand(
+            workspaceId,
+            "consent",
+            {
+              toolkit,
+              consent_id: id,
+              operation: "select",
+              account_id: fresh[0]!.id,
+            },
+            options
+          );
+          if (!controller.signal.aborted) await load(controller.signal);
+        }
+      } catch {
+        if (!controller.signal.aborted) setError(true);
+      } finally {
+        checking = false;
+        inFlight.current = false;
+        if (selecting && mounted.current) setBusy(false);
+        schedule();
+      }
+    };
+    const onReturn = () => {
+      if (document.visibilityState !== "hidden") void check();
+    };
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
+    schedule();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+      clearTimeout(expiryTimer);
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
+    };
+  }, [
+    api,
+    workspaceId,
+    toolkit,
+    consent?.id,
+    consent?.status,
+    consent?.expires_at,
+    consent?.toolkit,
+    status?.mode,
+    load,
+  ]);
 
   const act = async (
     action: string,
@@ -261,9 +396,14 @@ export function ComposioConnectorDetail({
   const inactive = accounts.filter(
     (account) => account.status !== "ACTIVE" || !account.enabled
   );
-  const accountRows = (items: ComposioAccount[]) =>
+  const accountRows = (items: ComposioAccount[], selectionCandidates = false) =>
     items.map((account) => {
-      const { name, email, number } = composioAccountPresentation(account, accounts);
+      const { name, email, number } = composioAccountPresentation(account, [
+        ...accounts,
+        ...candidates.filter(
+          (candidate) => !accounts.some((item) => item.id === candidate.id)
+        ),
+      ]);
       const discriminator = number ? m.composio_connection_number({ number }) : "";
       return (
         <fieldset
@@ -279,84 +419,90 @@ export function ComposioConnectorDetail({
             {email && email !== name && (
               <span className="break-all text-secondary">{email}</span>
             )}
-            <span className="text-xs text-secondary">
-              {!account.enabled
-                ? m.composio_disabled()
-                : account.status === "ACTIVE"
-                  ? m.composio_connected()
-                  : account.status === "INITIATED"
-                    ? m.composio_pending_account()
-                    : account.status === "EXPIRED"
-                      ? m.composio_expired_account()
-                      : m.composio_unavailable()}
-              {discriminator && ` · ${discriminator}`}
-            </span>
+            {!selectionCandidates && (
+              <span className="text-xs text-secondary">
+                {!account.enabled
+                  ? m.composio_disabled()
+                  : account.status === "ACTIVE"
+                    ? m.composio_connected()
+                    : account.status === "INITIATED"
+                      ? m.composio_pending_account()
+                      : account.status === "EXPIRED"
+                        ? m.composio_expired_account()
+                        : m.composio_unavailable()}
+                {discriminator && ` · ${discriminator}`}
+              </span>
+            )}
           </div>
-          <MenuTrigger>
-            <Button
-              aria-label={m.composio_account_options({ account: name })}
-              hierarchy="tertiary-gray"
-              size="sm"
-              iconLeading={<MoreHorizontalIcon />}
-              isDisabled={busy}
-            />
-            <MenuPopover>
-              <Menu aria-label={m.composio_account_options({ account: name })}>
-                <MenuItem onAction={() => setDetails(account)}>
-                  {m.composio_account_details()}
-                </MenuItem>
-                {(account.status === "INITIATED"
-                  ? ["verify", "reopen", "cancel", "reconnect"]
-                  : [
-                      "verify",
-                      account.enabled ? "disable" : "enable",
-                      "reconnect",
-                      "disconnect",
-                    ]
-                ).map((operation) => (
-                  <MenuItem
-                    key={operation}
-                    tone={operation === "disconnect" ? "destructive" : "default"}
-                    onAction={() => {
-                      if (operation === "disconnect") setDisconnect(account);
-                      else void act("account", { account_id: account.id, operation });
-                    }}
-                  >
-                    {operation === "verify"
-                      ? m.composio_verify()
-                      : operation === "disable"
-                        ? m.composio_disable()
-                        : operation === "enable"
-                          ? m.composio_enable()
-                          : operation === "reopen"
-                            ? m.composio_reopen()
-                            : operation === "cancel"
-                              ? m.composio_cancel()
-                              : operation === "reconnect"
-                                ? m.composio_reconnect()
-                                : m.composio_disconnect()}
+          {!selectionCandidates && (
+            <MenuTrigger>
+              <Button
+                aria-label={m.composio_account_options({ account: name })}
+                hierarchy="tertiary-gray"
+                size="sm"
+                iconLeading={<MoreHorizontalIcon />}
+                isDisabled={busy}
+              />
+              <MenuPopover>
+                <Menu aria-label={m.composio_account_options({ account: name })}>
+                  <MenuItem onAction={() => setDetails(account)}>
+                    {m.composio_account_details()}
                   </MenuItem>
-                ))}
-              </Menu>
-            </MenuPopover>
-          </MenuTrigger>
-          {consent?.status === "pending" && consent.toolkit === toolkit && (
-            <Button
-              hierarchy="secondary-gray"
-              size="sm"
-              isDisabled={busy}
-              onPress={() =>
-                void act("consent", {
-                  toolkit,
-                  consent_id: consent.id,
-                  operation: "select",
-                  account_id: account.id,
-                })
-              }
-            >
-              {m.composio_use_account()}
-            </Button>
+                  {(account.status === "INITIATED"
+                    ? ["verify", "reopen", "cancel", "reconnect"]
+                    : [
+                        "verify",
+                        account.enabled ? "disable" : "enable",
+                        "reconnect",
+                        "disconnect",
+                      ]
+                  ).map((operation) => (
+                    <MenuItem
+                      key={operation}
+                      tone={operation === "disconnect" ? "destructive" : "default"}
+                      onAction={() => {
+                        if (operation === "disconnect") setDisconnect(account);
+                        else void act("account", { account_id: account.id, operation });
+                      }}
+                    >
+                      {operation === "verify"
+                        ? m.composio_verify()
+                        : operation === "disable"
+                          ? m.composio_disable()
+                          : operation === "enable"
+                            ? m.composio_enable()
+                            : operation === "reopen"
+                              ? m.composio_reopen()
+                              : operation === "cancel"
+                                ? m.composio_cancel()
+                                : operation === "reconnect"
+                                  ? m.composio_reconnect()
+                                  : m.composio_disconnect()}
+                    </MenuItem>
+                  ))}
+                </Menu>
+              </MenuPopover>
+            </MenuTrigger>
           )}
+          {account.status === "ACTIVE" &&
+            consent?.status === "pending" &&
+            consent.toolkit === toolkit && (
+              <Button
+                hierarchy="secondary-gray"
+                size="sm"
+                isDisabled={busy}
+                onPress={() =>
+                  void act("consent", {
+                    toolkit,
+                    consent_id: consent.id,
+                    operation: "select",
+                    account_id: account.id,
+                  })
+                }
+              >
+                {m.composio_use_account()}
+              </Button>
+            )}
         </fieldset>
       );
     });
@@ -524,6 +670,14 @@ export function ComposioConnectorDetail({
         )}
         {status?.status === "connected" && (
           <>
+            {consent?.status === "expired" && (
+              <p className="text-sm text-secondary">{m.composio_expired()}</p>
+            )}
+            {consent?.status === "pending" && candidates.length > 0 && (
+              <div className="rounded-xl border border-secondary">
+                {accountRows(candidates, true)}
+              </div>
+            )}
             <h2 className="m-0 text-sm font-medium">{m.composio_accounts()}</h2>
             <div className="rounded-xl border border-secondary bg-secondary">
               {connected.length === 0 && (
@@ -531,7 +685,12 @@ export function ComposioConnectorDetail({
                   {m.composio_empty()}
                 </p>
               )}
-              {accountRows(connected)}
+              {accountRows(
+                connected.filter(
+                  (account) =>
+                    !candidates.some((candidate) => candidate.id === account.id)
+                )
+              )}
               <div className="px-xl py-lg">
                 <Button
                   hierarchy="tertiary-gray"
@@ -543,7 +702,7 @@ export function ComposioConnectorDetail({
                 </Button>
               </div>
             </div>
-            {(inactive.length > 0 || consent?.status === "expired") && (
+            {inactive.length > 0 && (
               <details
                 className="text-sm"
                 open={Boolean(consentInProgress) || inactiveOpen}
@@ -552,10 +711,13 @@ export function ComposioConnectorDetail({
                 <summary className="cursor-pointer text-secondary">
                   {m.composio_other_connections()}
                 </summary>
-                {consent?.status === "expired" && (
-                  <p className="text-secondary">{m.composio_expired()}</p>
-                )}
-                {(inactiveOpen || consentInProgress) && accountRows(inactive)}
+                {(inactiveOpen || consentInProgress) &&
+                  accountRows(
+                    inactive.filter(
+                      (account) =>
+                        !candidates.some((candidate) => candidate.id === account.id)
+                    )
+                  )}
               </details>
             )}
             {status.mode === "connect" && (configuring || consentInProgress) && (

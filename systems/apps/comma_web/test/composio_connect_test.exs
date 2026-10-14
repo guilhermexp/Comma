@@ -311,7 +311,13 @@ defmodule CommaWeb.ComposioConnectTest do
                  "arguments" => %{"toolkits" => [%{"name" => "gmail", "action" => "add"}]}
                }
              }
-           ] = Agent.get(c.provider, & &1.rpc_requests)
+           ] =
+             Agent.get(c.provider, & &1.rpc_requests)
+             |> Enum.filter(
+               &(get_in(&1, ["params", "arguments", "toolkits"]) == [
+                   %{"name" => "gmail", "action" => "add"}
+                 ])
+             )
   end
 
   @tag :connect_shape
@@ -454,6 +460,127 @@ defmodule CommaWeb.ComposioConnectTest do
                }
              } = request
     end
+  end
+
+  @tag :consent_discovery
+  test "consent discovery retains the server baseline and selects only a verified exact ACTIVE account",
+       c do
+    s = connect_fixture(c)
+
+    add_response(
+      c,
+      initiated_result([
+        %{"id" => "old-active", "status" => "active"},
+        %{"id" => "old-pending", "status" => "initiated"}
+      ])
+    )
+
+    assert {:ok, link} =
+             command(c, "connect", %{"toolkit" => "gmail", "baseline_account_ids" => []})
+
+    assert {:ok, initial} = command(c, "consent", %{"toolkit" => "gmail", "operation" => "get"})
+    assert Enum.sort(initial["consent"]["baseline_account_ids"]) == ["old-active", "old-pending"]
+
+    add_response(
+      c,
+      initiated_result([
+        %{"id" => "old-active", "status" => "active"},
+        %{"id" => "old-pending", "status" => "active"},
+        %{"id" => "new-active", "status" => "active"},
+        %{"id" => "new-pending", "status" => "initiated"}
+      ])
+    )
+
+    assert {:ok, discovery} =
+             command(c, "refresh_accounts", %{
+               "toolkit" => "gmail",
+               "consent_id" => link["consent_id"]
+             })
+
+    assert discovery["consent"] == initial["consent"]
+
+    assert Enum.any?(
+             discovery["remote_accounts"],
+             &(&1["id"] == "new-active" and &1["status"] == "ACTIVE")
+           )
+
+    for id <- ~w(old-active old-pending new-active new-pending) do
+      assert {:error, :not_found} = ComposioAccess.account(s.tenant, s.group, s.user, id)
+    end
+
+    params = %{"toolkit" => "gmail", "consent_id" => link["consent_id"], "operation" => "select"}
+
+    assert {:error, :composio_account_not_active} =
+             command(c, "consent", Map.put(params, "account_id", "new-pending"))
+
+    assert {:ok, selected} = command(c, "consent", Map.put(params, "account_id", "new-active"))
+    assert selected["enabled"] and selected["status"] == "ACTIVE"
+    assert {:ok, completed} = command(c, "consent", %{"toolkit" => "gmail", "operation" => "get"})
+    assert completed["consent"]["status"] == "completed"
+
+    assert {:ok, %{"items" => []}} =
+             ComposioAccess.grants(s.tenant, s.group, c.w["router_agent_id"])
+
+    for {id, record} <- s.siblings do
+      assert {:ok, ^record} = ComposioAccess.account(s.tenant, s.group, s.user, id)
+    end
+  end
+
+  @tag :consent_discovery
+  test "expired consent can recover an already authorized account through a fresh explicit selection",
+       c do
+    s = connect_fixture(c)
+    add_response(c, initiated_result([]))
+    assert {:ok, old} = command(c, "connect", %{"toolkit" => "gmail"})
+
+    key =
+      "ctl/tenants/" <>
+        Base.url_encode64(s.tenant, padding: false) <>
+        "/composio/groups/" <>
+        Base.url_encode64(s.group, padding: false) <>
+        "/members/" <>
+        Base.url_encode64(s.user, padding: false) <>
+        "/consents/" <>
+        Base.url_encode64("gmail", padding: false) <> ".json"
+
+    assert {:ok, %{body: body, etag: etag}} = S3.get(key)
+
+    assert {:ok, _} =
+             S3.put(key, Jason.encode!(Map.put(Jason.decode!(body), "expires_at", 1)),
+               if_match: etag
+             )
+
+    add_response(c, initiated_result([%{"id" => "authorized", "status" => "active"}]))
+
+    params = %{
+      "toolkit" => "gmail",
+      "consent_id" => old["consent_id"],
+      "operation" => "select",
+      "account_id" => "authorized"
+    }
+
+    assert {:error, :composio_attempt_not_pending} = command(c, "consent", params)
+    assert {:ok, fresh} = command(c, "connect", %{"toolkit" => "gmail"})
+    refute fresh["consent_id"] == old["consent_id"]
+
+    assert {:ok, discovery} =
+             command(c, "refresh_accounts", %{
+               "toolkit" => "gmail",
+               "consent_id" => fresh["consent_id"]
+             })
+
+    assert discovery["consent"]["baseline_account_ids"] == ["authorized"]
+
+    assert {:error, :composio_attempt_not_pending} =
+             command(c, "refresh_accounts", %{
+               "toolkit" => "gmail",
+               "consent_id" => old["consent_id"]
+             })
+
+    assert {:ok, selected} =
+             command(c, "consent", Map.put(params, "consent_id", fresh["consent_id"]))
+
+    assert selected["id"] == "authorized" and selected["enabled"]
   end
 
   @tag :connect_shape
