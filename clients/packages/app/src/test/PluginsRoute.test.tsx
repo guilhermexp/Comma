@@ -1149,6 +1149,75 @@ describe("PluginsRoute", () => {
     ).toBeVisible();
   });
 
+  it("retries an aborted toolkit reconciliation on the next catalog search and connects the account", async () => {
+    const user = userEvent.setup();
+    const { drive, account, status } = connectedCatalogFixture();
+    const originalCommand = harness.composioCommand.getMockImplementation()!;
+    let adopted = false;
+    let aborted = false;
+    let driveReads = 0;
+    harness.getComposio.mockImplementation(async () =>
+      status(adopted ? [account("googledrive", "authorized-drive")] : [])
+    );
+    harness.composioCommand.mockImplementation(
+      async (workspace, action, params, options) => {
+        if (action === "catalog" && !params.toolkits && params.query)
+          return { items: [drive], next_cursor: null };
+        if (
+          action === "reconcile_accounts" &&
+          params.toolkits?.includes("googledrive")
+        ) {
+          driveReads += 1;
+          if (driveReads === 1)
+            return new Promise((_, reject) => {
+              options.signal.addEventListener(
+                "abort",
+                () => {
+                  aborted = true;
+                  reject(
+                    new DOMException(
+                      "Catalog search replaced the request",
+                      "AbortError"
+                    )
+                  );
+                },
+                { once: true }
+              );
+            });
+          adopted = true;
+          return {
+            ...status([account("googledrive", "authorized-drive")]),
+            consent: null,
+            remote_accounts: [],
+          };
+        }
+        return originalCommand(workspace, action, params, options);
+      }
+    );
+    render(<PluginsRoute />);
+    await waitFor(() =>
+      expect(harness.composioCommand).toHaveBeenCalledWith(
+        "wsp_1",
+        "reconcile_accounts",
+        { toolkits: [] },
+        expect.anything()
+      )
+    );
+    await user.type(screen.getByRole("textbox", { name: "Search plugins" }), "g");
+    await waitFor(() => expect(driveReads).toBe(1));
+    await user.type(screen.getByRole("textbox", { name: "Search plugins" }), "o");
+    await waitFor(() => expect(aborted).toBe(true));
+    await waitFor(() => expect(driveReads).toBe(2));
+    expect(
+      within(
+        await screen.findByRole("button", {
+          name: "View Google Drive plugin details",
+        })
+      ).getByText("Connected")
+    ).toBeVisible();
+    expect(harness.openNativePlatformExternalUrl).not.toHaveBeenCalled();
+  });
+
   it("shows connected connectors outside the first page in the collapsed principal list and opens details without consent", async () => {
     const user = userEvent.setup();
     const { account, status } = connectedCatalogFixture();

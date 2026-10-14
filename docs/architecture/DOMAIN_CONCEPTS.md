@@ -571,7 +571,10 @@ metadata in batches of at most 20 exact toolkit slugs against the public catalog
 For personal Connect, initial load and an explicit refresh trigger one batched
 remote read. Later catalog loads add a remote read only for newly seen slugs,
 plus up to 50 stored consent toolkits and the built-in Google Drive source.
-Search readiness changes alone do not repeat provider reconciliation. Installed
+Search readiness changes alone do not repeat provider reconciliation. An aborted
+read does not record its slugs as discovered; the next catalog trigger can retry
+them. A settled result or error consumes the trigger until explicit refresh.
+Installed
 rows remain visible during reloads in the same workspace and API scope. The union has at most 100 toolkits; it does not crawl the remote catalog.
 A missing, unsupported, failed, invalid, or oversized toolkit result is skipped
 in an unscoped batch, so other toolkits can converge. An oversized result is

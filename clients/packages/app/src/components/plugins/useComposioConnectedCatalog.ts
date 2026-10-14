@@ -79,17 +79,22 @@ export function useComposioConnectedCatalog(
           );
           if (!known || added.length > 0) {
             const next = known ?? { api, workspaceId, toolkits: new Set<string>() };
-            added.forEach((toolkit) => next.toolkits.add(toolkit));
-            // Consume this trigger before dispatch, including an uncertain response.
-            discovery.current = next;
-            status = composioStatusSchema.parse(
-              await api.composioCommand(
-                workspaceId,
-                "reconcile_accounts",
-                { toolkits: added },
-                options
-              )
-            );
+            try {
+              status = composioStatusSchema.parse(
+                await api.composioCommand(
+                  workspaceId,
+                  "reconcile_accounts",
+                  { toolkits: added },
+                  options
+                )
+              );
+            } finally {
+              // Settled results/errors consume the trigger; aborted reads can retry.
+              if (!controller.signal.aborted) {
+                added.forEach((toolkit) => next.toolkits.add(toolkit));
+                discovery.current = next;
+              }
+            }
           }
         }
         let page = { items: status.accounts, next_cursor: status.next_cursor };
