@@ -226,17 +226,51 @@ defmodule SalixAgent.Tools.Compute do
   # A long-lived process keeps the credentials it was started with. Later input
   # is new Comma-mediated use, so process.write rechecks the caller's current
   # access to every OAuth binding the process received (SalixAgent.ConnectorAccess).
-  # The record is written before the process starts; its id is pinned to the
-  # runtime's own request-derived id. Revocation cannot withdraw a value the
-  # running process already holds, and tail/stop stay available.
+  # The record is created once, before the process starts, for the runtime's
+  # request-derived process id (the gateway's idempotency key). A retry with the
+  # same bindings reuses it; different bindings conflict before provisioning and
+  # never replace the authority of a process that may already run. Revocation
+  # cannot withdraw a value the running process already holds; tail and stop
+  # stay available.
   defp record_process_credentials!(args, workload_id, agent_id, binding_ids) do
-    process_id = args["process_id"] || "process-request-" <> args["request_id"]
+    process_id = "process-request-" <> args["request_id"]
     key = SalixStore.Keys.ctl_compute_process_credentials(workload_id, process_id)
-    record = %{"agent_id" => agent_id, "oauth_binding_ids" => binding_ids}
 
-    case SalixStore.S3.put(key, Jason.encode!(record), []) do
-      {:ok, _} -> Map.put(args, "process_id", process_id)
-      _ -> raise "process credentials could not be recorded; the process was not started"
+    record = %{
+      "agent_id" => agent_id,
+      "group_id" => agent_group!(agent_id),
+      "workload_id" => workload_id,
+      "request_id" => args["request_id"],
+      "oauth_binding_ids" => binding_ids
+    }
+
+    case SalixStore.S3.put(key, Jason.encode!(record), if_none_match: "*") do
+      {:ok, _} ->
+        Map.put(args, "process_id", process_id)
+
+      {:error, :precondition_failed} ->
+        case SalixStore.S3.get(key) do
+          {:ok, %{body: body}} ->
+            if Jason.decode!(body) == record,
+              do: Map.put(args, "process_id", process_id),
+              else:
+                raise(
+                  "process.start request_id was already used with different credentials; the process was not started"
+                )
+
+          _ ->
+            raise "process credentials could not be checked; the process was not started"
+        end
+
+      _ ->
+        raise "process credentials could not be recorded; the process was not started"
+    end
+  end
+
+  defp agent_group!(agent_id) do
+    case SalixAgent.Control.get_record(agent_id) do
+      {:ok, %{"group_id" => group}} when is_binary(group) -> group
+      _ -> raise "the calling Agent could not be read; the process was not started"
     end
   end
 
@@ -254,11 +288,13 @@ defmodule SalixAgent.Tools.Compute do
         :ok
 
       {:ok, %{body: body}} ->
-        ids = Jason.decode!(body)["oauth_binding_ids"] || []
+        record = Jason.decode!(body)
+        ids = record["oauth_binding_ids"] || []
 
-        if Enum.all?(ids, &SalixAgent.ConnectorAccess.agent_allowed?(agent_id, "oauth", &1)),
-          do: :ok,
-          else: raise("this process holds an OAuth credential not granted to this Worker")
+        if record["group_id"] == agent_group!(agent_id) and
+             Enum.all?(ids, &SalixAgent.ConnectorAccess.agent_allowed?(agent_id, "oauth", &1)),
+           do: :ok,
+           else: raise("this process holds an OAuth credential not granted to this Worker")
 
       _ ->
         raise "process credential access could not be checked"

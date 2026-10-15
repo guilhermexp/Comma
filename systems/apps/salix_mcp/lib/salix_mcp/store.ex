@@ -1505,9 +1505,10 @@ defmodule SalixMCP.Store do
     end
   end
 
-  defp normalize_oauth_binding_refs(nil), do: {:ok, %{}}
+  @doc "Canonical form of a binding's `oauth_binding_refs`, as stored by create and update."
+  def normalize_oauth_binding_refs(nil), do: {:ok, %{}}
 
-  defp normalize_oauth_binding_refs(value) when is_map(value) do
+  def normalize_oauth_binding_refs(value) when is_map(value) do
     value
     |> stringify()
     |> Enum.reduce_while({:ok, %{}}, fn {name, ref}, {:ok, acc} ->
@@ -1518,7 +1519,7 @@ defmodule SalixMCP.Store do
     end)
   end
 
-  defp normalize_oauth_binding_refs(_value),
+  def normalize_oauth_binding_refs(_value),
     do: {:error, {:bad_request, "oauth_binding_refs must be an object"}}
 
   defp normalize_oauth_binding_ref(name, ref) when is_binary(ref) do

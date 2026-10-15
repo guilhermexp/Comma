@@ -119,7 +119,8 @@ defmodule CommaWeb.RouterWorkerAccessIngressTest do
       {:comma_web, :api_token},
       {:comma_web, :ingress_composio_accounts},
       {:comma_web, :ingress_test_pid},
-      {:salix_im, :conversation_notifier}
+      {:salix_im, :conversation_notifier},
+      {:salix_agent, :agent_management_ports}
     ]
 
     previous = Enum.map(keys, fn {app, key} -> {app, key, Application.get_env(app, key)} end)
@@ -130,6 +131,9 @@ defmodule CommaWeb.RouterWorkerAccessIngressTest do
     Application.put_env(:salix_agent, :im_provider_mod, Salix.Bindings.AgentIMProvider)
     Application.put_env(:salix_agent, :composio_store_mod, ComposioSettings)
     Application.put_env(:salix_agent, :composio_client_mod, ComposioClient)
+    # The owner recheck is Comma's composition; do not rely on whichever ports
+    # an earlier suite in this VM left behind (same as comma_web_router_test).
+    Application.put_env(:salix_agent, :agent_management_ports, CommaWeb.AgentManagement)
     Application.put_env(:comma_web, :ingress_test_pid, self())
     CommaWeb.Application.register_im_notifier()
     start_supervised!(ScriptLLM)
@@ -215,15 +219,16 @@ defmodule CommaWeb.RouterWorkerAccessIngressTest do
 
     send_message!(session, group, chat, "grant", "GRANT_MAIL_1 give the Worker my mail account")
 
-    eventually(fn ->
-      case SalixAgent.Control.get_record(worker) do
-        {:ok, %{"connector_access" => %{"accounts" => %{"composio_shared:ca_mail" => "allow"}}}} ->
-          true
+    # The tool is synchronous: once the Router's next round carries its result,
+    # the record write has finished. A refusal fails here with its own code.
+    grant = router_tool_result!("grant-1")
 
-        _ ->
-          nil
-      end
-    end)
+    unless match?(
+             {:ok,
+              %{"connector_access" => %{"accounts" => %{"composio_shared:ca_mail" => "allow"}}}},
+             SalixAgent.Control.get_record(worker)
+           ),
+           do: flunk("grant was not applied; Router tool result: " <> grant)
 
     send_message!(session, group, chat, "delegate-1", "DELEGATE_1 read my mail")
 
@@ -232,13 +237,13 @@ defmodule CommaWeb.RouterWorkerAccessIngressTest do
                    15_000
 
     send_message!(session, group, chat, "revoke", "REVOKE_MAIL_1 remove that access")
+    revoke = router_tool_result!("revoke-1")
 
-    eventually(fn ->
-      case SalixAgent.Control.get_record(worker) do
-        {:ok, %{"connector_access" => %{"accounts" => accounts}}} when accounts == %{} -> true
-        _ -> nil
-      end
-    end)
+    unless match?(
+             {:ok, %{"connector_access" => %{"accounts" => accounts}}} when accounts == %{},
+             SalixAgent.Control.get_record(worker)
+           ),
+           do: flunk("revoke was not applied; Router tool result: " <> revoke)
 
     send_message!(session, group, chat, "delegate-2", "DELEGATE_2 read my mail again")
 
@@ -256,6 +261,31 @@ defmodule CommaWeb.RouterWorkerAccessIngressTest do
 
     # Secrets never reach the model.
     refute Enum.any?(ScriptLLM.seen(), fn {_role, text} -> text =~ "ck_ingress_secret" end)
+  end
+
+  # agent.access_set runs as an async tool: the Router's next round first sees
+  # a `running` placeholder, then the completion notification
+  # (`tool-call-result:<id>`) after the tool, including its record write, has
+  # finished. Wait for that completion and return it, so a refusal is reported
+  # by its own status and code instead of a timeout on the stored record.
+  defp router_tool_result!(call_id) do
+    eventually(fn ->
+      Enum.find_value(ScriptLLM.seen(), fn {role, text} ->
+        role == :router && completion_excerpt(text, call_id)
+      end)
+    end)
+  end
+
+  defp completion_excerpt(text, call_id) do
+    case :binary.matches(text, ~s("runtime_message_id":"tool-call-result:#{call_id}")) do
+      [] ->
+        nil
+
+      matches ->
+        {at, _} = List.last(matches)
+        from = max(at - 1_500, 0)
+        binary_part(text, from, at - from)
+    end
   end
 
   defp access(worker, access),

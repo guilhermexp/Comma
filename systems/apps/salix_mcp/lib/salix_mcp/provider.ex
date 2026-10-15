@@ -230,20 +230,37 @@ defmodule SalixMCP.Provider do
   # credentials it carries and sends them to its endpoint. A restricted Worker
   # may do that only with every OAuth binding the result would carry.
   defp admit_dependencies(scope, existing, attrs) do
-    proposed = Map.merge(existing, stringify(attrs || %{}))
-
     if SalixAgent.ConnectorAccess.restricted?(scope.agent) do
-      case SalixAgent.ConnectorAccess.mcp_oauth_binding_ids(proposed, oauth_bindings(scope)) do
-        {:ok, ids} ->
-          if Enum.all?(ids, &SalixAgent.ConnectorAccess.allowed?(scope.agent, "oauth", &1)),
-            do: :ok,
-            else: {:error, "MCP binding carries an OAuth credential not granted to this Worker"}
-
-        _ ->
-          {:error, "MCP binding carries an OAuth credential not granted to this Worker"}
+      with {:ok, proposed} <- proposed_binding(existing, stringify(attrs || %{})) do
+        restricted_dependencies(scope, proposed)
       end
     else
       :ok
+    end
+  end
+
+  # The references the store would save: every accepted form (map or
+  # provider/alias string) in its canonical shape. Invalid input is refused.
+  defp proposed_binding(existing, attrs) do
+    if Map.has_key?(attrs, "oauth_binding_refs") do
+      case Store.normalize_oauth_binding_refs(attrs["oauth_binding_refs"]) do
+        {:ok, refs} -> {:ok, Map.merge(existing, Map.put(attrs, "oauth_binding_refs", refs))}
+        {:error, _} -> {:error, "MCP binding oauth_binding_refs are invalid"}
+      end
+    else
+      {:ok, Map.merge(existing, attrs)}
+    end
+  end
+
+  defp restricted_dependencies(scope, proposed) do
+    case SalixAgent.ConnectorAccess.mcp_oauth_binding_ids(proposed, oauth_bindings(scope)) do
+      {:ok, ids} ->
+        if Enum.all?(ids, &SalixAgent.ConnectorAccess.allowed?(scope.agent, "oauth", &1)),
+          do: :ok,
+          else: {:error, "MCP binding carries an OAuth credential not granted to this Worker"}
+
+      _ ->
+        {:error, "MCP binding carries an OAuth credential not granted to this Worker"}
     end
   end
 

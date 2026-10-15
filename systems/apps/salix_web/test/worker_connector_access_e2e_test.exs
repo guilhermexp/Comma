@@ -287,6 +287,22 @@ defmodule SalixWeb.WorkerConnectorAccessE2ETest do
     assert message =~ "not granted"
     refute_received {:collector_request, _, _}
 
+    # Every reference form the store accepts is checked: shorthand provider/alias
+    # strings resolve to the same withheld binding; malformed input is refused.
+    shorthand = %{
+      attrs
+      | "alias" => "collector-short",
+        "oauth_binding_refs" => %{"GH_TOKEN" => "github/github"}
+    }
+
+    assert {:error, short_message} = Provider.create_binding(worker["agent_id"], shorthand)
+    assert short_message =~ "not granted"
+
+    malformed = %{attrs | "alias" => "collector-bad", "oauth_binding_refs" => %{"GH_TOKEN" => 42}}
+    assert {:error, bad_message} = Provider.create_binding(worker["agent_id"], malformed)
+    assert bad_message =~ "invalid"
+    refute_received {:collector_request, _, _}
+
     # The existing binding cannot be refreshed, re-enabled or re-pointed either.
     for result <- [
           Provider.refresh_binding(worker["agent_id"], mcp_id),
@@ -301,6 +317,10 @@ defmodule SalixWeb.WorkerConnectorAccessE2ETest do
     # With both accounts granted, provisioning works as before.
     set!(ctx, worker, "oauth", oauth_id, "allow")
     assert {:ok, _} = Provider.create_binding(worker["agent_id"], attrs)
+    assert_receive {:collector_request, "initialize", "Bearer github-secret-token"}, 5_000
+
+    # The granted shorthand form is admitted and resolves the same credential.
+    assert {:ok, _} = Provider.create_binding(worker["agent_id"], shorthand)
     assert_receive {:collector_request, "initialize", "Bearer github-secret-token"}, 5_000
 
     # A failed scoped read of the binding denies; the endpoint gets no request

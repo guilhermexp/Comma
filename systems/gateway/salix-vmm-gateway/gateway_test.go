@@ -1434,6 +1434,61 @@ func TestTypedRuntimeProcessUsesOneCurrentContainerAndRetainsBoundedOutput(t *te
 	}
 }
 
+// A process keeps the credentials it started with. Restarting the same request
+// with other credentials (for example after the first account was revoked and a
+// second one granted) must not replace it: the gateway refuses changed
+// arguments, keeps the original process, and later input reaches that process.
+// Comma's process credential record relies on this request-id idempotency.
+func TestTypedRuntimeProcessRestartWithOtherCredentialsKeepsOriginalProcess(t *testing.T) {
+	gateway := newGateway("gateway", fakeControl{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	clientSide, hostSide := net.Pipe()
+	key := sessionKey{registrationID: "registration", allocationID: "allocation", allocationGeneration: 7, connectionEpoch: 0}
+	starts := make(chan *hostv1.ExecStart, 2)
+	grpcServer := grpc.NewServer()
+	hostv1.RegisterAgentRuntimeServiceServer(grpcServer, fakeAgentRuntime{execStart: starts})
+	go func() { _ = grpcServer.Serve(&singleConnListener{connection: hostSide, closed: make(chan struct{})}) }()
+	defer grpcServer.Stop()
+	gateway.sessions[key] = testRuntimeSession(t, &testSessionConn{Conn: clientSide, done: make(chan struct{})})
+	server := httptest.NewServer(gateway.proxyHandler())
+	defer server.Close()
+
+	first := typedRuntimeRequest(t, server, "process.start", `{"request_id":"credential-request","command":["sh"],"env":["GH_TOKEN=account-a"]}`)
+	if got := <-starts; !reflect.DeepEqual(got.GetEnv(), []string{"GH_TOKEN=account-a"}) {
+		t.Fatalf("first start env=%v", got.GetEnv())
+	}
+
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/v1/sessions/registration/allocation/7/0/process.start",
+		strings.NewReader(`{"request_id":"credential-request","command":["sh"],"env":["GH_TOKEN=account-b"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode == http.StatusOK || !strings.Contains(string(raw), "reused with different arguments") {
+		t.Fatalf("restart with other credentials status=%d body=%s", response.StatusCode, raw)
+	}
+	select {
+	case extra := <-starts:
+		t.Fatalf("restart reached the Host with env=%v", extra.GetEnv())
+	default:
+	}
+
+	var started struct {
+		ProcessID string `json:"process_id"`
+	}
+	if err := json.Unmarshal(first, &started); err != nil || started.ProcessID != "process-request-credential-request" {
+		t.Fatalf("first=%s err=%v", first, err)
+	}
+	write := typedRuntimeRequest(t, server, "process.write", `{"process_id":"`+started.ProcessID+`","data_base64":"`+base64.StdEncoding.EncodeToString([]byte("hi\n"))+`"}`)
+	if !strings.Contains(string(write), `"written_bytes":3`) {
+		t.Fatalf("write to the original process=%s", write)
+	}
+}
+
 func TestTypedRuntimeProcessRetriesKnownPreSendFailure(t *testing.T) {
 	clientSide, hostSide := net.Pipe()
 	runtime := &flakyEnvironmentRuntime{failures: 1}

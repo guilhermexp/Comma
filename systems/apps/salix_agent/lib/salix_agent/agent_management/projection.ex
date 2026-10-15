@@ -149,6 +149,14 @@ defmodule SalixAgent.AgentManagement.Projection do
         "provider" => settings["model_provider"],
         "reasoning_effort" => settings["reasoning_effort"]
       }
+      |> then(fn model ->
+        # An unpinned Codex or Claude compute Worker without a chosen template
+        # runs its runtime default: the builtin selection.
+        if is_nil(SalixAgent.AgentModelSelection.runtime_model_settings(record)) and
+             is_nil(record["template_id"]),
+           do: Map.put(model, "selection", %{"kind" => "builtin"}),
+           else: model
+      end)
     else
       # `source` says whether the Agent pins this template or follows a role
       # default; the remaining fields always describe the effective template.

@@ -890,6 +890,26 @@ defmodule SalixAgent.RouterWorkerConfigurationTest do
 
       assert model["source"] == "agent_config"
       assert model["model_id"] == runtime_model
+
+      assert model["selection"] == %{
+               "kind" => "runtime",
+               "model" => runtime_model,
+               "reasoning_effort" => nil
+             }
+
+      # Back to the runtime default: the builtin selection reads back everywhere.
+      own_id = own_login["agent_id"]
+
+      assert {:ok, %{"agent" => %{"model" => %{"selection" => %{"kind" => "builtin"}} = builtin}}} =
+               run(c, :set_model, %{"agent_id" => own_id, "selection" => %{"kind" => "builtin"}})
+
+      assert builtin["source"] == "runtime_default"
+
+      assert {:ok, %{"agent" => %{"model" => %{"selection" => %{"kind" => "builtin"}}}}} =
+               run(c, :get, %{"agent_id" => own_id})
+
+      assert {:ok, %{"current" => %{"selection" => %{"kind" => "builtin"}}}} =
+               run(c, :model_choices, %{"agent_id" => own_id})
     end
   end
 

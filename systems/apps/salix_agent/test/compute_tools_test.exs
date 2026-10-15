@@ -43,6 +43,12 @@ defmodule SalixAgent.ComputeToolsTest do
            "provider" => "github",
            "alias" => "github",
            "connection_id" => "compute-oauth"
+         },
+         %{
+           "binding_id" => "oauth-compute-b",
+           "provider" => "github",
+           "alias" => "second",
+           "connection_id" => "compute-oauth-b"
          }
        ]}
     end
@@ -439,6 +445,44 @@ defmodule SalixAgent.ComputeToolsTest do
     assert_raise RuntimeError, ~r/not granted to this Worker/, fn ->
       tool.("process.write").(write, %{ctx | compute_adapter: MustNotRunAdapter})
     end
+
+    # Restarting the same request with another account cannot replace the
+    # recorded authority of the process that may already run: it conflicts
+    # before reaching the runtime, and input stays checked against account A.
+    :ok =
+      SalixStore.OAuth.put("compute-oauth-b", %{"access_token" => "tok-b", "status" => "active"})
+
+    {:ok, _} =
+      SalixAgent.Control.configure_connector_access(
+        worker["agent_id"],
+        tenant,
+        "oauth:oauth-compute-b",
+        "allow"
+      )
+
+    assert_raise RuntimeError, ~r/already used with different credentials/, fn ->
+      tool.("process.start").(
+        %{"command" => ["sh"], "credential_env" => [%{ref | "alias" => "second"}]},
+        %{ctx | compute_adapter: MustNotRunAdapter}
+      )
+    end
+
+    assert_raise RuntimeError, ~r/not granted to this Worker/, fn ->
+      tool.("process.write").(write, %{ctx | compute_adapter: MustNotRunAdapter})
+    end
+
+    # An identical retry of the original request is still accepted.
+    {:ok, _} =
+      SalixAgent.Control.configure_connector_access(
+        worker["agent_id"],
+        tenant,
+        "oauth:oauth-compute",
+        "allow"
+      )
+
+    assert %{"args" => %{"process_id" => ^process_id}} =
+             tool.("process.start").(%{"command" => ["sh"], "credential_env" => [ref]}, ctx)
+             |> Jason.decode!()
 
     assert %{"operation" => "process.stop"} =
              tool.("process.stop").(%{"process_id" => process_id}, ctx) |> Jason.decode!()
