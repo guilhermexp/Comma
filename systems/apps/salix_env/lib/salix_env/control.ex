@@ -722,20 +722,32 @@ defmodule SalixEnv.Control do
         {:ok, runtime_binding_json(runtime)}
 
       %{"status" => "stale"} ->
-        with {:ok, summary} <-
-               probe_runtime(runtime["device_id"], device_runtime_id, group_id, tenant_id),
-             {:ok, current} <-
-               find_current_device_runtime(tenant_id, group_id, device_runtime_id),
-             true <- same_runtime_owner?(runtime, current),
-             refreshed = Map.update!(current, "runtime", &Map.merge(&1, summary)),
-             %{"status" => "ready"} <- runtime_availability(refreshed) do
-          {:ok, runtime_binding_json(refreshed)}
-        else
-          _ -> {:error, {:bad_request, "runtime_config.device_runtime_id is not ready"}}
+        reread = fn -> find_current_device_runtime(tenant_id, group_id, device_runtime_id) end
+
+        case reobserve_stale_runtime(runtime, device_runtime_id, tenant_id, group_id, reread) do
+          {:ok, refreshed} -> {:ok, runtime_binding_json(refreshed)}
+          :error -> {:error, {:bad_request, "runtime_config.device_runtime_id is not ready"}}
         end
 
       _status ->
         {:error, {:bad_request, "runtime_config.device_runtime_id is not ready"}}
+    end
+  end
+
+  # The Connector heartbeat never renews readiness: a probe can start runtime
+  # processes. An expired observation is rechecked once, on the selected
+  # runtime only, through the connector's own runtime_probe authority. Only a
+  # newer ready observation from the same connector run can bind.
+  defp reobserve_stale_runtime(runtime, device_runtime_id, tenant_id, group_id, reread) do
+    with {:ok, summary} <-
+           probe_runtime(runtime["device_id"], device_runtime_id, group_id, tenant_id),
+         {:ok, current} <- reread.(),
+         true <- same_runtime_owner?(runtime, current),
+         refreshed = Map.update!(current, "runtime", &Map.merge(&1, summary)),
+         %{"status" => "ready"} <- runtime_availability(refreshed) do
+      {:ok, refreshed}
+    else
+      _ -> :error
     end
   end
 
@@ -792,9 +804,19 @@ defmodule SalixEnv.Control do
 
   @doc "Validate a selectable management target against the current exact device inventory."
   def select_device_runtime_binding(device_runtime_id, tenant_id, group_id) do
-    case find_indexed_device_runtime(tenant_id, group_id, trim(device_runtime_id)) do
+    device_runtime_id = trim(device_runtime_id)
+
+    case find_indexed_device_runtime(tenant_id, group_id, device_runtime_id) do
       {:ok, %{"status" => "connected", "runtime" => %{"status" => "ready"}} = runtime} ->
         {:ok, runtime_binding_json(runtime)}
+
+      {:ok, %{"status" => "connected", "runtime" => %{"status" => "stale"}} = runtime} ->
+        reread = fn -> find_indexed_device_runtime(tenant_id, group_id, device_runtime_id) end
+
+        case reobserve_stale_runtime(runtime, device_runtime_id, tenant_id, group_id, reread) do
+          {:ok, refreshed} -> {:ok, runtime_binding_json(refreshed)}
+          :error -> {:error, :target_unavailable}
+        end
 
       {:ok, _} ->
         {:error, :target_unavailable}
@@ -821,7 +843,8 @@ defmodule SalixEnv.Control do
         |> Enum.filter(&(is_nil(opts[:provider]) or &1["runtime_provider"] == opts[:provider]))
         |> Enum.map(fn entry ->
           runtime = entry["runtime"]
-          selectable = entry["status"] == "connected" and runtime["status"] == "ready"
+          # Listing never probes. Selection rechecks an expired observation.
+          selectable = entry["status"] == "connected" and runtime["status"] in ~w(ready stale)
 
           %{
             "target" => %{

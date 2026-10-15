@@ -1,6 +1,6 @@
 defmodule SalixAgent.Tools.RuntimeTargets do
   @moduledoc "Existing runtime target discovery handed off from Agent tools to the environment domain."
-  @description "Discover a bounded page of existing runtime targets. kind=connected pages devices (at most 50 candidates); kind=compute requires provider=codex/pi/claude and pages the current product's Workloads. Pass an item's entire target unchanged to agent.create_worker.runtime or agent.rebind_runtime.target. Empty items with next_cursor are not exhaustion. This never creates, wakes, logs into or stops an environment."
+  @description "Discover a bounded page of existing runtime targets. kind=connected pages devices (at most 50 candidates); kind=compute requires provider=codex/pi/claude and pages the current product's Workloads. Pass an item's entire target unchanged to agent.create_worker.runtime or agent.rebind_runtime.target. A connected item stays selectable after its readiness observation expires; selection rechecks that runtime on the device and refuses it if it is not ready. Empty items with next_cursor are not exhaustion. This never creates, wakes, logs into or stops an environment."
   def defs,
     do: [
       {"env.runtime_targets", @description, schema(), &__MODULE__.call/2,

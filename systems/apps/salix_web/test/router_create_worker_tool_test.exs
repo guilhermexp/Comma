@@ -91,6 +91,7 @@ defmodule SalixWeb.RouterCreateWorkerToolTest do
       template_id: template_id,
       router: router,
       connector_run_id: device.connector_run_id,
+      transport_id: device.transport_id,
       environment_id: device.environment_id,
       runtime_id: device.runtime_id,
       device_runtime_id: device.device_runtime_id
@@ -561,6 +562,161 @@ defmodule SalixWeb.RouterCreateWorkerToolTest do
     assert result.error
   end
 
+  # The Connector does not renew readiness on its heartbeat: probes start
+  # runtime processes. An expired observation of a live runtime must still be
+  # selectable, and selection re-checks it once on the device before binding.
+  test "Router selection re-checks an expired readiness observation on the live connector",
+       fixture do
+    ctx = tool_context(fixture.router)
+    target = %{"kind" => "connected", "device_runtime_id" => fixture.device_runtime_id}
+    test_pid = self()
+
+    create = fn id ->
+      tool_result(
+        "agent.create_worker",
+        %{
+          "name" => "Worker #{id}",
+          "purpose" => "Execute the test responsibility",
+          "creation_reason" => "This test needs an independent Worker",
+          "runtime" => target
+        },
+        ctx,
+        id
+      )
+    end
+
+    {:ok, _} =
+      Registry.update_meta(fixture.connector_run_id, fn meta ->
+        Map.put(meta, "capabilities", %{"runtime_probe" => true})
+      end)
+
+    expire!(fixture)
+    # Each probe reply is chosen by the test: {publish?, runtime changes}.
+    replies = start_supervised!({Agent, fn -> [] end})
+    owner = live_connector!(fixture, test_pid, replies)
+    on_exit(fn -> if Process.alive?(owner), do: send(owner, :stop) end)
+
+    assert [item] =
+             tool!("env.runtime_targets", %{"kind" => "connected"}, ctx, "discover")["items"]
+
+    assert item["selectable"] == true
+    refute_received {:probe_request, _}
+
+    # A probe that reports a logged-out CLI keeps the target refused.
+    Agent.update(replies, fn _ -> [{true, %{"auth_ready" => false, "ready" => false}}] end)
+    logged_out = create.("logged-out")
+    assert logged_out.error
+    assert logged_out.content =~ "target_unavailable"
+
+    assert_received {:probe_request,
+                     %{"provider" => "codex", "identity_material" => "/usr/local/bin/codex"}}
+
+    # A reply that does not publish a newer observation cannot revive the old one.
+    expire!(fixture)
+    Agent.update(replies, fn _ -> [{false, %{}}] end)
+    unchanged = create.("not-renewed")
+    assert unchanged.error
+    assert unchanged.content =~ "target_unavailable"
+    assert_received {:probe_request, _}
+
+    # A ready probe binds the Worker; later selections reuse the fresh observation.
+    expire!(fixture)
+    Agent.update(replies, fn _ -> [{true, %{}}] end)
+    assert create.("ready").content |> Jason.decode!() |> Map.fetch!("result") == "applied"
+    assert_received {:probe_request, _}
+    assert create.("fresh").content |> Jason.decode!() |> Map.fetch!("result") == "applied"
+    refute_received {:probe_request, _}
+
+    # A connector without probe authority is never asked to start a runtime.
+    expire!(fixture)
+
+    {:ok, _} =
+      Registry.update_meta(fixture.connector_run_id, fn meta ->
+        Map.put(meta, "capabilities", %{"runtime_probe" => false})
+      end)
+
+    assert create.("scoped").error
+    refute_received {:probe_request, _}
+
+    {:ok, _} =
+      Registry.update_meta(fixture.connector_run_id, fn meta ->
+        Map.put(meta, "capabilities", %{"runtime_probe" => true})
+      end)
+
+    {:ok, _} = Registry.mark_disconnected(fixture.connector_run_id)
+    assert create.("offline").error
+    refute_received {:probe_request, _}
+
+    assert [%{"selectable" => false}] =
+             tool!("env.runtime_targets", %{"kind" => "connected"}, ctx, "offline")["items"]
+  end
+
+  defp expire!(fixture) do
+    now = System.system_time(:millisecond)
+
+    {:ok, _} =
+      Registry.update_meta(fixture.connector_run_id, fn meta ->
+        Map.update!(meta, "agent_runtimes", fn runtimes ->
+          Enum.map(
+            runtimes,
+            &Map.merge(&1, %{
+              "auth_ready" => true,
+              "ready" => true,
+              "readiness_checked_at" => now - 700_000,
+              "readiness_valid_until" => now - 1
+            })
+          )
+        end)
+      end)
+  end
+
+  # A connector owner for the fixture transport. Like salix-connect, it
+  # publishes the probe observation before it answers the request.
+  defp live_connector!(fixture, test_pid, replies) do
+    owner =
+      spawn_link(fn ->
+        :ok = SalixEnv.Bridge.register_owner(fixture.transport_id)
+        send(test_pid, :owner_ready)
+        live_connector_loop(fixture, test_pid, replies)
+      end)
+
+    assert_receive :owner_ready
+    owner
+  end
+
+  defp live_connector_loop(fixture, test_pid, replies) do
+    receive do
+      {:env_rpc, ref, from, %{"method" => "runtime_probe", "params" => params}} ->
+        send(test_pid, {:probe_request, params})
+        {publish?, changes} = Agent.get_and_update(replies, fn [next | rest] -> {next, rest} end)
+        now = System.system_time(:millisecond)
+
+        {:ok, record} =
+          Registry.update_meta(fixture.connector_run_id, fn meta ->
+            Map.update!(meta, "agent_runtimes", fn runtimes ->
+              Enum.map(runtimes, fn runtime ->
+                if publish?,
+                  do:
+                    runtime
+                    |> Map.merge(%{
+                      "readiness_checked_at" => now,
+                      "readiness_valid_until" => now + 600_000
+                    })
+                    |> Map.merge(changes),
+                  else: runtime
+              end)
+            end)
+          end)
+
+        [runtime] = record["meta"]["agent_runtimes"]
+        send(from, {:env_rpc_reply, ref, {:ok, %{"runtimes" => [runtime]}}})
+        live_connector_loop(fixture, test_pid, replies)
+
+      :stop ->
+        :ok
+    end
+  end
+
   defp tool_context(router) do
     ctx =
       %{
@@ -598,7 +754,7 @@ defmodule SalixWeb.RouterCreateWorkerToolTest do
 
     {:ok, ^env_id, record} =
       Registry.connect(
-        "test-node",
+        to_string(node()),
         %{
           "tenant_id" => tenant_id(),
           "group_id" => group_id,
@@ -632,6 +788,7 @@ defmodule SalixWeb.RouterCreateWorkerToolTest do
             "readiness_checked_at" => System.system_time(:millisecond),
             "readiness_valid_until" => System.system_time(:millisecond) + 600_000,
             "command" => "/usr/local/bin/codex",
+            "identity_material" => "/usr/local/bin/codex",
             "version" => "codex-test"
           }
         ])
@@ -639,6 +796,7 @@ defmodule SalixWeb.RouterCreateWorkerToolTest do
 
     %{
       connector_run_id: connector_run_id,
+      transport_id: env_id,
       environment_id: environment_id,
       runtime_id: runtime_id,
       device_runtime_id: device_runtime_id

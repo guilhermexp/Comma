@@ -297,6 +297,14 @@ reasoning effort, provider account and runtime settings retain their existing
 validation and lifecycle. Do not reinterpret descriptive purpose as instructions.
 Expose supported choices through bounded discovery, not hardcoded provider lists.
 Runtime changes must state which Sessions they affect and preserve accepted work.
+A connected runtime readiness observation expires after its validity window.
+The Connector heartbeat does not renew it, because a probe can start runtime
+processes. Discovery never probes; it keeps an expired runtime on a connected
+Connector selectable. `agent.create_worker`, `agent.rebind_runtime` and Session
+dispatch recheck only the selected runtime through the Connector's `runtime_probe`
+capability. Only a newer ready observation from the same Connector run can bind.
+Offline Connectors, Connectors without that capability, failed probes and
+unauthenticated runtimes stay refused. A new observation renews the window.
 
 Account access is an Agent configuration relationship to an existing credential
 or connector binding, not a new account, secret copy, or lifecycle authority.
