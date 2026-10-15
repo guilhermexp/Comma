@@ -175,6 +175,7 @@ export const ConversationView = memo(function ConversationView({
   groupId,
   inlineTaskLinkAdapter,
   leadingPanel,
+  topPanel,
   state,
   surfaceActive = true,
   trailingPanel,
@@ -199,6 +200,7 @@ export const ConversationView = memo(function ConversationView({
   groupId?: string | undefined;
   inlineTaskLinkAdapter?: InlineTaskLinkAdapter | undefined;
   leadingPanel?: ReactNode;
+  topPanel?: ReactNode;
   onComposerContentHeightChange?: (height: number) => void;
   onComposerNoticeHeightChange?: (height: number) => void;
   onOpenConversationRef?: ((conversationRef: ChatConversationRef) => void) | undefined;
@@ -1301,6 +1303,7 @@ export const ConversationView = memo(function ConversationView({
         onContextMenuCapture={handleContextMenuCapture}
         ref={routeRef}
       >
+        {topPanel}
         {variant === "side-chat" || variant === "home" ? null : (
           <ContentHeader aria-busy={connecting} className="comma-chat-header">
             <div

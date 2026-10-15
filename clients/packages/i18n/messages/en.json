@@ -11,9 +11,7 @@
         "input sender",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} file from {sender}",
         "countPlural=other": "{formattedCount} files from {sender}"
@@ -29,9 +27,7 @@
         "input sender",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Receiving {formattedCount} file from {sender}",
         "countPlural=other": "Receiving {formattedCount} files from {sender}"
@@ -48,9 +44,7 @@
         "input chat",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Added {formattedCount} file to “{chat}”",
         "countPlural=other": "Added {formattedCount} files to “{chat}”"
@@ -64,9 +58,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} file couldn’t be added",
         "countPlural=other": "{formattedCount} files couldn’t be added"
@@ -640,9 +632,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} notification deleted",
         "countPlural=other": "{formattedCount} notifications deleted"
@@ -659,9 +649,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} notification",
         "countPlural=other": "{formattedCount} notifications"
@@ -719,9 +707,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} task",
         "countPlural=other": "{formattedCount} tasks"
@@ -826,9 +812,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} Task",
         "countPlural=other": "{formattedCount} Tasks"
@@ -918,9 +902,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} task",
         "countPlural=other": "{formattedCount} tasks"
@@ -1123,9 +1105,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} new message",
         "countPlural=other": "{formattedCount} new messages"
@@ -2337,9 +2317,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} file is public.",
         "countPlural=other": "{formattedCount} files are public."
@@ -2492,13 +2470,8 @@
   "settings_providers_reauth_hint": "Sign in again with the same account. Agents keep using this profile.",
   "settings_providers_reset_menu": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Reset quota ({count} reset left)",
         "countPlural=other": "Reset quota ({count} resets left)"
@@ -2961,13 +2934,8 @@
   "drive_catalog_listing_stalled": "Drive listing did not advance. Try again.",
   "local_files_too_many": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Select at most {count} more local file.",
         "countPlural=other": "Select at most {count} more local files."
@@ -2976,13 +2944,8 @@
   ],
   "local_files_too_many_chat": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Select at most {count} more file.",
         "countPlural=other": "Select at most {count} more files."
@@ -3232,5 +3195,26 @@
   "online_drive_clear_search": "Clear search",
   "online_drive_back_to_files": "Back to files",
   "online_drive_open_external": "Open in browser",
-  "online_drive_forward": "Forward"
+  "online_drive_forward": "Forward",
+  "voice_call_title": "Call Comma",
+  "voice_call_start": "Call",
+  "voice_call_connecting": "Connecting…",
+  "voice_call_live": "On call",
+  "voice_call_ending": "Hanging up…",
+  "voice_call_ended": "Call ended",
+  "voice_call_mute": "Mute",
+  "voice_call_unmute": "Unmute",
+  "voice_call_hang_up": "Hang up",
+  "voice_call_captions": "Live captions",
+  "voice_call_transcript": "Call transcript",
+  "voice_call_you": "You",
+  "voice_call_microphone": "Microphone access is required. Allow Comma in System Settings, Privacy & Security, Microphone.",
+  "voice_call_account_required": "Add an enabled ChatGPT account in Settings, Models, Profiles.",
+  "voice_call_plan_limit": "Your ChatGPT plan voice limit has been reached. Try again after it resets.",
+  "voice_call_disabled": "Voice is disabled. Enable voice in Salix settings.",
+  "voice_call_busy": "This workspace already has an active call.",
+  "voice_call_sign_in": "Reconnect your ChatGPT Profile and call again.",
+  "voice_call_failed": "The call could not connect. Check your connection and ChatGPT Profile.",
+  "voice_call_playback": "Audio playback failed. Check your output device and call again.",
+  "voice_call_truncated": "Only the most recent captions are shown."
 }

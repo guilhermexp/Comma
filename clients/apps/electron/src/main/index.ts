@@ -1874,7 +1874,17 @@ function startElectronApp() {
       registerAppProtocol(devServerUrl, {
         getCredentialAuthority: () => appContext?.session,
       });
-      installSessionSecurity(session.defaultSession);
+      installSessionSecurity(
+        session.defaultSession,
+        process.platform === "darwin"
+          ? {
+              allowedOrigins: allowedRendererOrigins(devServerUrl),
+              getMainWebContents: () => primaryWindow?.webContents,
+              requestSystemAccess: () =>
+                systemPreferences.askForMediaAccess("microphone"),
+            }
+          : undefined
+      );
       installDynamicUiNetworkSecurity(session.defaultSession);
       appContext = await createElectronMainContext();
       registerNativeBridgeHandlersFromContext(appContext);

@@ -11,9 +11,7 @@
         "input sender",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} arquivo de {sender}",
         "countPlural=other": "{formattedCount} arquivos de {sender}"
@@ -29,9 +27,7 @@
         "input sender",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Recebendo {formattedCount} arquivo de {sender}",
         "countPlural=other": "Recebendo {formattedCount} arquivos de {sender}"
@@ -48,9 +44,7 @@
         "input chat",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} arquivo adicionado a “{chat}”",
         "countPlural=other": "{formattedCount} arquivos adicionados a “{chat}”"
@@ -64,9 +58,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Não foi possível adicionar {formattedCount} arquivo",
         "countPlural=other": "Não foi possível adicionar {formattedCount} arquivos"
@@ -640,9 +632,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} notificação excluída",
         "countPlural=other": "{formattedCount} notificações excluídas"
@@ -659,9 +649,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} notificação",
         "countPlural=other": "{formattedCount} notificações"
@@ -719,9 +707,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} tarefa",
         "countPlural=other": "{formattedCount} tarefas"
@@ -826,9 +812,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} tarefa",
         "countPlural=other": "{formattedCount} tarefas"
@@ -918,9 +902,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} tarefa",
         "countPlural=other": "{formattedCount} tarefas"
@@ -1123,9 +1105,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} nova mensagem",
         "countPlural=other": "{formattedCount} novas mensagens"
@@ -2337,9 +2317,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} arquivo está público.",
         "countPlural=other": "{formattedCount} arquivos estão públicos."
@@ -2492,13 +2470,8 @@
   "settings_providers_reauth_hint": "Entre novamente com a mesma conta. Os agentes continuam usando este perfil.",
   "settings_providers_reset_menu": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Redefinir cota (resta {count} redefinição)",
         "countPlural=other": "Redefinir cota (restam {count} redefinições)"
@@ -2961,13 +2934,8 @@
   "drive_catalog_listing_stalled": "A listagem do Drive não avançou. Tente novamente.",
   "local_files_too_many": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Selecione no máximo mais {count} arquivo local.",
         "countPlural=other": "Selecione no máximo mais {count} arquivos locais."
@@ -2976,13 +2944,8 @@
   ],
   "local_files_too_many_chat": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Selecione no máximo mais {count} arquivo.",
         "countPlural=other": "Selecione no máximo mais {count} arquivos."
@@ -3232,5 +3195,26 @@
   "online_drive_clear_search": "Limpar pesquisa",
   "online_drive_back_to_files": "Voltar aos arquivos",
   "online_drive_open_external": "Abrir no navegador",
-  "online_drive_forward": "Avançar"
+  "online_drive_forward": "Avançar",
+  "voice_call_title": "Ligar para o Comma",
+  "voice_call_start": "Ligar",
+  "voice_call_connecting": "Conectando…",
+  "voice_call_live": "Em chamada",
+  "voice_call_ending": "Encerrando…",
+  "voice_call_ended": "Chamada encerrada",
+  "voice_call_mute": "Silenciar",
+  "voice_call_unmute": "Ativar microfone",
+  "voice_call_hang_up": "Encerrar",
+  "voice_call_captions": "Legendas ao vivo",
+  "voice_call_transcript": "Transcrição da chamada",
+  "voice_call_you": "Você",
+  "voice_call_microphone": "O microfone precisa de permissão. Autorize o Comma em Ajustes do Sistema, Privacidade e Segurança, Microfone.",
+  "voice_call_account_required": "Adicione uma conta ChatGPT ativa em Configurações, Modelos, Perfis.",
+  "voice_call_plan_limit": "O limite de voz do seu plano ChatGPT foi atingido. Tente após a renovação do limite.",
+  "voice_call_disabled": "Voz desativada. Ative a voz nas configurações do Salix.",
+  "voice_call_busy": "Este espaço de trabalho já tem uma chamada ativa.",
+  "voice_call_sign_in": "Reconecte seu perfil ChatGPT e ligue novamente.",
+  "voice_call_failed": "Não foi possível conectar. Verifique a conexão e seu perfil ChatGPT.",
+  "voice_call_playback": "Falha ao reproduzir áudio. Verifique a saída de áudio e ligue novamente.",
+  "voice_call_truncated": "Apenas as legendas mais recentes são exibidas."
 }

@@ -141,10 +141,57 @@ export function installDynamicUiNetworkSecurity(target: Session) {
   target.webRequest.onErrorOccurred(finish);
 }
 
-export function installSessionSecurity(session: PermissionSessionTarget) {
-  session.setPermissionCheckHandler(() => false);
-  session.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false);
+export function installSessionSecurity(
+  session: PermissionSessionTarget,
+  microphone?: {
+    allowedOrigins: string[];
+    getMainWebContents: () => WebContents | undefined;
+    requestSystemAccess: () => Promise<boolean>;
+  }
+) {
+  const origins = new Set(microphone?.allowedOrigins ?? []);
+  const trusted = (
+    contents: WebContents | null,
+    url: string | undefined,
+    mainFrame: boolean
+  ) =>
+    Boolean(
+      microphone &&
+      contents &&
+      contents === microphone.getMainWebContents() &&
+      mainFrame &&
+      url &&
+      isAllowedUrl(url, origins) &&
+      isAllowedUrl(contents.getURL(), origins)
+    );
+  session.setPermissionCheckHandler(
+    (contents, permission, origin, details) =>
+      permission === "media" &&
+      details?.mediaType === "audio" &&
+      trusted(contents, details.requestingUrl ?? origin, details.isMainFrame)
+  );
+  session.setPermissionRequestHandler((contents, permission, callback, details) => {
+    const audioOnly =
+      details &&
+      "mediaTypes" in details &&
+      details.mediaTypes?.length === 1 &&
+      details.mediaTypes[0] === "audio";
+    if (
+      permission !== "media" ||
+      !audioOnly ||
+      !trusted(contents, details.requestingUrl, details.isMainFrame)
+    ) {
+      callback(false);
+      return;
+    }
+    void microphone!.requestSystemAccess().then(
+      (allowed) => {
+        callback(
+          allowed && trusted(contents, details.requestingUrl, details.isMainFrame)
+        );
+      },
+      () => callback(false)
+    );
   });
 }
 

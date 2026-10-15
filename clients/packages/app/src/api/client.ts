@@ -1,5 +1,11 @@
 import type { CommaLocale } from "@comma/i18n";
 import {
+  voiceCallAnswerSchema,
+  voiceCallEventsSchema,
+  type VoiceCallAnswer,
+  type VoiceCallEvents,
+} from "./voiceCalls";
+import {
   browserBindingSchema,
   browserResultSchema,
   browserEventSchema,
@@ -253,6 +259,14 @@ export type ComposioStatus = z.infer<typeof composioStatusSchema>;
 export type ComposioAccount = z.infer<typeof composioAccountSchema>;
 
 export interface CommaApiClient {
+  startVoiceCall(workspaceId: string, sdp: string): Promise<VoiceCallAnswer>;
+  voiceCallEvents(
+    workspaceId: string,
+    callId: string,
+    after: number,
+    options?: { signal?: AbortSignal }
+  ): Promise<VoiceCallEvents>;
+  endVoiceCall(workspaceId: string, callId: string): Promise<unknown>;
   getComposio(
     workspaceId: string,
     options?: { signal?: AbortSignal }
@@ -961,6 +975,30 @@ export function createCommaApi(config: CommaApiConfig): CommaApiClient {
   }
 
   return {
+    startVoiceCall(workspaceId, sdp) {
+      return request(
+        "POST",
+        `/v1/comma/workspaces/${encodeURIComponent(workspaceId)}/voice/calls`,
+        voiceCallAnswerSchema,
+        { sdp }
+      );
+    },
+    voiceCallEvents(workspaceId, callId, after, options = {}) {
+      return request(
+        "GET",
+        `/v1/comma/workspaces/${encodeURIComponent(workspaceId)}/voice/calls/${encodeURIComponent(callId)}/events?after=${after}`,
+        voiceCallEventsSchema,
+        undefined,
+        options.signal
+      );
+    },
+    endVoiceCall(workspaceId, callId) {
+      return request(
+        "DELETE",
+        `/v1/comma/workspaces/${encodeURIComponent(workspaceId)}/voice/calls/${encodeURIComponent(callId)}`,
+        z.unknown()
+      );
+    },
     getCompute(workspaceId, options = {}) {
       return request(
         "GET",

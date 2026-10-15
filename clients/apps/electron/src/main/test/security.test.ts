@@ -69,4 +69,52 @@ describe("Electron security guards", () => {
     expect(callback).toHaveBeenCalledWith(false);
     expect(checkHandler({}, "media")).toBe(false);
   });
+
+  it("grants only microphone requests from the main renderer and rechecks after OS consent", async () => {
+    const setPermissionCheckHandler = vi.fn();
+    const setPermissionRequestHandler = vi.fn();
+    const contents = { getURL: vi.fn(() => "http://localhost:5173/") };
+    const requestSystemAccess = vi.fn(async () => true);
+    installSessionSecurity(
+      { setPermissionCheckHandler, setPermissionRequestHandler },
+      {
+        allowedOrigins: ["http://localhost:5173"],
+        getMainWebContents: () => contents as never,
+        requestSystemAccess,
+      }
+    );
+    const check = setPermissionCheckHandler.mock.calls[0]![0];
+    const request = setPermissionRequestHandler.mock.calls[0]![0];
+    const details = {
+      isMainFrame: true,
+      requestingUrl: "http://localhost:5173/",
+      mediaTypes: ["audio"],
+    };
+    const callback = vi.fn();
+    request(contents, "media", callback, details);
+    await Promise.resolve();
+    expect(callback).toHaveBeenCalledWith(true);
+    expect(
+      check(contents, "media", "http://localhost:5173", {
+        ...details,
+        mediaType: "audio",
+      })
+    ).toBe(true);
+    for (const [target, permission, data] of [
+      [contents, "media", { ...details, mediaTypes: ["video"] }],
+      [contents, "media", { ...details, isMainFrame: false }],
+      [contents, "media", { ...details, requestingUrl: "https://evil.example" }],
+      [{ getURL: contents.getURL }, "media", details],
+      [contents, "geolocation", details],
+    ]) {
+      callback.mockClear();
+      request(target, permission, callback, data);
+      expect(callback).toHaveBeenCalledWith(false);
+    }
+    callback.mockClear();
+    request(contents, "media", callback, details);
+    contents.getURL.mockReturnValue("https://evil.example");
+    await Promise.resolve();
+    expect(callback).toHaveBeenCalledWith(false);
+  });
 });

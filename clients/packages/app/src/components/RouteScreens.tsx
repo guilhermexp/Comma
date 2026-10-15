@@ -57,6 +57,8 @@ import { useOnboardingOpen } from "./onboarding/onboardingPresence";
 import { useOnboardingAhead } from "./onboarding/useOnboardingAhead";
 import { getUserDisplayName } from "./UserAvatar";
 import { RecommendationRail } from "./recommendations/RecommendationRail";
+import { getNativeBridge } from "@comma/native-bridge";
+import { VoiceCallControl } from "./voice/VoiceCallControl";
 
 // Rail geometry updates do not change the conversation or its data sources.
 export const HomeRoute = memo(function HomeRoute({
@@ -596,6 +598,13 @@ function HomeConversationSurface({
 
   return (
     <ConversationView
+      topPanel={
+        workspaceId &&
+        getNativeBridge().platform === "electron" &&
+        getNativeBridge().os === "macos" ? (
+          <VoiceCallControl api={api} workspaceId={workspaceId} />
+        ) : undefined
+      }
       actions={actions}
       api={api}
       composerPresentation={composerPresentation}
