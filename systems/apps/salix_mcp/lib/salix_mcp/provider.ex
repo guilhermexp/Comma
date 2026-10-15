@@ -9,7 +9,8 @@ defmodule SalixMCP.Provider do
   def provider_state(agent_id) do
     with {:ok, scope} <- Store.scope_for_agent(agent_id) do
       bindings =
-        Store.list_group_bindings(scope.tenant_id, scope.group_id, include_disabled: true)
+        scope
+        |> permitted_bindings()
         |> Enum.map(&provider_binding_state/1)
 
       {:ok,
@@ -24,7 +25,8 @@ defmodule SalixMCP.Provider do
   def dynamic_disclosure_entries(agent_id) do
     with {:ok, scope} <- Store.scope_for_agent(agent_id) do
       entries =
-        Store.list_group_bindings(scope.tenant_id, scope.group_id, include_disabled: true)
+        scope
+        |> permitted_bindings()
         |> Enum.flat_map(&binding_tool_entries/1)
 
       {:ok, entries}
@@ -66,7 +68,8 @@ defmodule SalixMCP.Provider do
   def list_bindings(agent_id) do
     with {:ok, scope} <- Store.scope_for_agent(agent_id) do
       bindings =
-        Store.list_group_bindings(scope.tenant_id, scope.group_id, include_disabled: true)
+        scope
+        |> permitted_bindings()
         |> Enum.map(&put_operation_ids/1)
         |> Enum.map(&agent_binding_projection/1)
 
@@ -119,6 +122,7 @@ defmodule SalixMCP.Provider do
     with {:ok, scope} <- Store.scope_for_agent(agent_id),
          {:ok, binding} <-
            Store.find_binding_by_alias(scope.tenant_id, scope.group_id, binding_alias),
+         :ok <- permit(scope, binding),
          {:ok, tool_name} <- resolve_tool_name(binding, tool_alias) do
       Gateway.call_tool(scope.tenant_id, scope.group_id, binding["binding_id"], tool_name, args,
         agent_id: agent_id,
@@ -148,31 +152,62 @@ defmodule SalixMCP.Provider do
 
   @impl true
   def list_resources(agent_id, binding_id) do
-    with {:ok, scope} <- Store.scope_for_agent(agent_id) do
+    with {:ok, scope} <- Store.scope_for_agent(agent_id),
+         :ok <- permit_id(scope, binding_id) do
       Gateway.list_resources(scope.tenant_id, scope.group_id, binding_id)
     end
   end
 
   @impl true
   def read_resource(agent_id, binding_id, uri) do
-    with {:ok, scope} <- Store.scope_for_agent(agent_id) do
+    with {:ok, scope} <- Store.scope_for_agent(agent_id),
+         :ok <- permit_id(scope, binding_id) do
       Gateway.read_resource(scope.tenant_id, scope.group_id, binding_id, uri)
     end
   end
 
   @impl true
   def list_prompts(agent_id, binding_id) do
-    with {:ok, scope} <- Store.scope_for_agent(agent_id) do
+    with {:ok, scope} <- Store.scope_for_agent(agent_id),
+         :ok <- permit_id(scope, binding_id) do
       Gateway.list_prompts(scope.tenant_id, scope.group_id, binding_id)
     end
   end
 
   @impl true
   def get_prompt(agent_id, binding_id, name, args) do
-    with {:ok, scope} <- Store.scope_for_agent(agent_id) do
+    with {:ok, scope} <- Store.scope_for_agent(agent_id),
+         :ok <- permit_id(scope, binding_id) do
       Gateway.get_prompt(scope.tenant_id, scope.group_id, binding_id, name, args)
     end
   end
+
+  # Per-Worker connector access (SalixAgent.ConnectorAccess): a binding and the
+  # managed OAuth bindings it carries must be allowed for the calling Agent.
+  # The MCP connection is shared per binding, so dispatch is the enforcement
+  # point; the credential itself never reaches the Agent.
+  defp permitted_bindings(scope) do
+    oauth = oauth_bindings(scope)
+
+    Store.list_group_bindings(scope.tenant_id, scope.group_id, include_disabled: true)
+    |> Enum.filter(&SalixAgent.ConnectorAccess.mcp_allowed?(scope.agent, &1, oauth))
+  end
+
+  defp permit(scope, binding) do
+    if SalixAgent.ConnectorAccess.mcp_allowed?(scope.agent, binding, oauth_bindings(scope)),
+      do: :ok,
+      else: {:error, "MCP binding is not granted to this Worker"}
+  end
+
+  defp permit_id(scope, binding_id) do
+    case Store.find_binding_by_alias(scope.tenant_id, scope.group_id, binding_id) do
+      {:ok, binding} -> permit(scope, binding)
+      _ -> :ok
+    end
+  end
+
+  defp oauth_bindings(scope),
+    do: fn -> SalixAgent.OAuthStore.bindings_for_group(scope.group_id) end
 
   defp binding_tool_entries(binding) do
     binding_alias = binding["alias"] || binding["binding_id"]

@@ -281,6 +281,93 @@ The [runtime failure-reply projection](../../systems/apps/salix_agent/lib/salix_
 The current Router owner scopes this transient presentation to accepted source messages and the active IM Connect peer.
 Provider tickets and refresh timers remain in memory. They add no Message, Task lifecycle, or durable identity.
 
+### Router administration of Workers
+
+Implementation contract approved on 2026-10-15; delivery requires runtime proof.
+The Group's Router manages existing Worker configuration on an explicit request
+from the current authenticated Comma workspace owner. The request itself is
+confirmation when its target and effect are clear. Ask about ambiguity, not for
+a redundant second approval. Worker messages, tools, schedules and external
+content cannot supply this authority. Recheck current ownership and membership.
+Never accept the acting person's identity from model arguments.
+
+Reuse Agent configuration, Templates, runtime bindings and credential owners.
+Name, management purpose, instructions, skills, tool restrictions, model choice,
+reasoning effort, provider account and runtime settings retain their existing
+validation and lifecycle. Do not reinterpret descriptive purpose as instructions.
+Expose supported choices through bounded discovery, not hardcoded provider lists.
+Runtime changes must state which Sessions they affect and preserve accepted work.
+
+Account access is an Agent configuration relationship to an existing credential
+or connector binding, not a new account, secret copy, or lifecycle authority.
+Personal Composio access remains owned by ComposioAccess and its existing grants.
+For shared Composio, managed OAuth and MCP, use scoped canonical account or binding
+identifiers, never labels. Plugin access resolves the underlying connection.
+An existing Comma Worker without the new policy keeps its shared access until changed.
+Every newly created Comma Worker starts with no connector accounts granted.
+Comma is identified by the Group's authoritative billing owner, never by model input.
+Bridge for Teams and other non-Comma Groups are outside this contract and keep
+inherited Group access. Explicit per-account
+denials override inherited shared access; granting one account grants no others.
+Keep these defaults and overrides on the existing Agent configuration owner.
+
+Discovery, dispatch and managed credential provisioning must honor current access,
+including external runtime paths. Hiding a tool alone is not enforcement.
+Revocation prevents new Comma-mediated use without deleting the account or another
+Worker's grant. It cannot undo provider effects or retract credentials already
+obtained outside Comma. Login and provider consent retain their human steps.
+Never expose secrets in discovery, tool results, prompts, logs or error messages.
+
+Acceptance: the Router discovers real choices, configures any visible Worker in
+its authorized Group, and reads the saved result back. Cover every supported
+configuration family and connector account class. Prove grant, permitted use,
+revoke, then denied use; another Worker and another account must be unaffected.
+Prove current-user identity through the production Comma ingress, not a fabricated
+tool context. Reject missing or stale origin, non-owners, Workers, archived targets,
+and cross-Group or cross-Tenant requests. Validate legacy and new-Worker defaults,
+failure outcomes and effective runtime settings. Independent security review and
+a Dev smoke are required before accepting this implementation.
+
+Implementation. The Router tools `agent.configure`, `agent.model_choices`,
+`agent.set_model`, `agent.skill_add`, `agent.skill_remove`, `agent.access_list`
+and `agent.access_set` are in the
+[Agent management catalog](../../systems/apps/salix_agent/lib/salix_agent/tools/agent_management.ex).
+[OwnerAuthority](../../systems/apps/salix_agent/lib/salix_agent/agent_management/owner_authority.ex)
+reads the person only from the sealed origin of the current source message. The origin
+and the activation must name the same non-empty source. The
+[Comma composition](../../systems/apps/comma_web/lib/comma_web/agent_management.ex)
+then rechecks the active owner of the Group's ready workspace. Salix without Comma
+refuses these tools. Existing tools, such as `agent.update`, keep their Router-only rule.
+[Configuration](../../systems/apps/salix_agent/lib/salix_agent/agent_management/configuration.ex)
+writes instructions, `disabled_tools`, the cloud VM and connector access at the Agent
+record CAS. Model choice uses
+[AgentModelSelection](../../systems/apps/salix_agent/lib/salix_agent/agent_model_selection.ex),
+which Comma's model route also uses. Worker skills are entries in the Worker's own
+[SkillStore](../../systems/apps/salix_agent/lib/salix_agent/skill_store.ex) layer.
+`agent.get` reads back the saved configuration and the effective model.
+
+[ConnectorAccess](../../systems/apps/salix_agent/lib/salix_agent/connector_access.ex)
+stores `connector_access` on the Worker record. A record without it inherits.
+When `AgentControl` creates a Worker in a Group whose billing owner surface is `comma`,
+the record starts with `none`. This covers workspace provisioning, `agent.create_worker`
+and domain-owned Workers, because all of them write the record there. If the Group
+record cannot be read, the create fails. Workers in other Groups get no policy.
+An inspector Worker's pinned Composio accounts are allowed unless explicitly denied.
+Decisions read the current record at use. Enforcement points: shared Composio
+[execution and listing](../../systems/apps/salix_agent/lib/salix_agent/tools/composio.ex),
+[triggers](../../systems/apps/salix_agent/lib/salix_agent/tools/composio_triggers.ex) and
+armed trigger delivery in [Loops](../../systems/apps/salix_agent/lib/salix_agent/loops.ex);
+[OAuth credential resolution](../../systems/apps/salix_agent/lib/salix_agent/oauth_credentials.ex)
+for `env.exec`, `compute.exec`, `process.start`, `web.http_request` and Loop scripts;
+and the [MCP provider](../../systems/apps/salix_mcp/lib/salix_mcp/provider.ex) for
+disclosure, tool calls, resources and prompts. An MCP binding also needs every managed
+OAuth binding that it carries. External runtimes use the same tool dispatch, so these
+points also apply to them. Personal Composio stays on the
+[ComposioBroker](../../systems/apps/salix_agent/lib/salix_agent/composio_broker.ex) grants.
+Limits: a connected Device runtime's model is set by its binding and has no write path.
+Compute targets require a Bridge for Teams project. Device logins follow `agent.rebind_runtime`.
+Revocation does not stop an MCP call or a Composio action that has already started.
+
 ## 3. Conversations and messages
 
 | Concept | Meaning and boundary |

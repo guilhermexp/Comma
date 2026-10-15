@@ -146,7 +146,17 @@ defmodule SalixAgent.Tools.OAuthTest do
       end
     end)
 
-    agent = SalixAgent.TestSupport.new_agent_id()
+    # Credential tools read the calling Agent's connector access, so the
+    # caller is a real Worker that predates per-account access.
+    tenant = SalixAgent.TestSupport.new_tenant_id()
+
+    agent =
+      SalixAgent.TestSupport.create_control_agent_in_group!(
+        tenant,
+        SalixStore.Ids.new_group_id(tenant),
+        %{}
+      )["agent_id"]
+
     sid = SalixStore.Ids.new_session_id()
 
     {:ok, agent: agent, sid: sid, ctx: %{agent_id: agent, session_id: sid}}

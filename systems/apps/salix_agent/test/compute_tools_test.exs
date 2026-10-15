@@ -33,10 +33,18 @@ defmodule SalixAgent.ComputeToolsTest do
   end
 
   defmodule OAuthStore do
-    def agent_oauth_context("agent"), do: {:ok, %{tenant: "tenant", group_id: "group"}}
+    def agent_oauth_context(_agent), do: {:ok, %{tenant: "tenant", group_id: "group"}}
 
     def bindings_for_group("group") do
-      {:ok, [%{"provider" => "github", "alias" => "github", "connection_id" => "compute-oauth"}]}
+      {:ok,
+       [
+         %{
+           "binding_id" => "oauth-compute",
+           "provider" => "github",
+           "alias" => "github",
+           "connection_id" => "compute-oauth"
+         }
+       ]}
     end
   end
 
@@ -262,11 +270,40 @@ defmodule SalixAgent.ComputeToolsTest do
         "status" => "active"
       })
 
+    # Credential provisioning reads the calling Agent's connector access.
+    tenant = SalixAgent.TestSupport.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    agent = SalixAgent.TestSupport.create_control_agent_in_group!(tenant, group, %{})
+
+    new_worker =
+      SalixAgent.TestSupport.create_control_agent_in_group!(tenant, group, %{
+        "connector_access_policy" => "new"
+      })
+
+    grant = fn id, principal ->
+      {:ok, grant} =
+        Compute.issue_grant(%{
+          id: id,
+          tenant_id: "tenant",
+          environment_id: context.environment.id,
+          workload_id: context.workload.id,
+          principal_type: "agent",
+          principal_id: principal,
+          permissions: ["workspace", "service_route", "runtime"],
+          expires_at: DateTime.add(DateTime.utc_now(), 300, :second)
+        })
+
+      grant
+    end
+
+    agent_grant = grant.("grant-oauth-legacy", agent["agent_id"])
+    new_grant = grant.("grant-oauth-new", new_worker["agent_id"])
+
     ctx = %{
       tenant_id: "tenant",
-      agent_id: "agent",
+      agent_id: agent["agent_id"],
       environment_id: context.environment.id,
-      workload_grant_id: context.grant.id,
+      workload_grant_id: agent_grant.id,
       compute_adapter: Adapter,
       plugin_projection: %{},
       tool_call_id: "oauth-compute-call"
@@ -296,9 +333,19 @@ defmodule SalixAgent.ComputeToolsTest do
 
       next = elem(entry, 3).(%{"command" => ["true"]}, ctx) |> Jason.decode!()
       refute Map.has_key?(next["args"], "env")
+
+      # A Worker without access to the binding gets no credential.
+      assert_raise RuntimeError, ~r/not granted to this Worker/, fn ->
+        elem(entry, 3).(args, %{
+          ctx
+          | agent_id: new_worker["agent_id"],
+            workload_grant_id: new_grant.id,
+            compute_adapter: MustNotRunAdapter
+        })
+      end
     end
 
-    :ok = Compute.revoke_grant("tenant", context.grant.id, 1)
+    :ok = Compute.revoke_grant("tenant", agent_grant.id, 1)
     entry = Enum.find(ComputeTools.defs(), &(elem(&1, 0) == "compute.exec"))
 
     assert_raise RuntimeError, ~r/revoked/, fn ->

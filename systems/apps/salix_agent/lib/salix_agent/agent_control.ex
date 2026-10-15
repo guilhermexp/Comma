@@ -166,6 +166,33 @@ defmodule SalixAgent.AgentControl do
     end)
   end
 
+  @doc """
+  Patch a visible Worker's instructions, tool restrictions and cloud VM setting
+  at the same canonical CAS as its metadata. Validation is the configure path's.
+  """
+  def configure_worker_settings(id, tenant_id, patch) do
+    management_change(id, tenant_id, fn record ->
+      with :ok <- writable_authority(record, :salix),
+           {:ok, updates} <-
+             validate_updates(record, Map.take(patch, ~w(system_prompt disabled_tools vm))) do
+        updated = Map.merge(record, strip_vm_command_flags(updates))
+        {:ok, if(updated == record, do: :unchanged, else: :applied), updated}
+      end
+    end)
+  end
+
+  @doc "Change one shared connector account entry of a Worker's access policy."
+  def configure_connector_access(id, tenant_id, ref, access) do
+    management_change(id, tenant_id, fn record ->
+      with :ok <- writable_authority(record, :salix),
+           {:ok, policy} <- SalixAgent.ConnectorAccess.put(record, ref, access),
+           :ok <- SalixAgent.ConnectorAccess.validate(policy) do
+        updated = Map.put(record, "connector_access", policy)
+        {:ok, if(updated == record, do: :unchanged, else: :applied), updated}
+      end
+    end)
+  end
+
   @doc "Compare expected binding revision and allocate its successor at the actual Control CAS."
   # Model anchor: tla/salix/AgentBindingCommand.tla.
   def rebind_external_worker(agent_id, tenant_id, target, expected, command_id)
@@ -1438,6 +1465,7 @@ defmodule SalixAgent.AgentControl do
          now
        ) do
     with :ok <- ensure_agent_record_absent(id),
+         {:ok, connector_access} <- new_connector_access(role, group_id, tenant_id),
          {:ok, owned} <- Agent.create(id, local_node_id(), SalixAgent.State) do
       rec =
         %{
@@ -1466,6 +1494,7 @@ defmodule SalixAgent.AgentControl do
         |> put_optional("management_purpose", attrs["management_purpose"])
         |> put_optional("management_creation_audit", attrs["management_creation_audit"])
         |> put_optional("inspector_policy", runtime_updates["inspector_policy"])
+        |> put_optional("connector_access", connector_access)
         |> put_optional("source_initial_agent_revision", attrs["source_initial_agent_revision"])
         |> put_optional(
           "source_worker_tool_idempotency_hash",
@@ -1508,6 +1537,20 @@ defmodule SalixAgent.AgentControl do
       end
     end
   end
+
+  # Connector access contract (SalixAgent.ConnectorAccess): a Worker created in
+  # a Comma workspace Group starts with no shared connector account. Groups of
+  # other products, such as Bridge for Teams, have no owner grant path yet and
+  # keep inherited Group access. An unreadable Group fails the create.
+  defp new_connector_access("worker", group_id, tenant_id) do
+    with {:ok, group} <- GroupContext.get(group_id, tenant_id) do
+      if get_in(group, ["billing_owner", "surface"]) == "comma",
+        do: {:ok, SalixAgent.ConnectorAccess.new_worker_policy()},
+        else: {:ok, nil}
+    end
+  end
+
+  defp new_connector_access(_role, _group_id, _tenant_id), do: {:ok, nil}
 
   defp ensure_agent_record_absent(agent_id) do
     case S3.head(Keys.ctl_agent(agent_id)) do

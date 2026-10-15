@@ -1,7 +1,19 @@
 defmodule SalixAgent.AgentManagement do
   @moduledoc "Synchronous Router commands. The caller owns retries; no command worker or desired-state copy."
   alias SalixAgent.Control
-  alias SalixAgent.AgentManagement.{Error, Ports, Projection, Targets}
+
+  alias SalixAgent.AgentManagement.{
+    Configuration,
+    Error,
+    OwnerAuthority,
+    Ports,
+    Projection,
+    Targets
+  }
+
+  # Privileged configuration: only the current workspace owner's own request.
+  @owner_operations ~w(configure model_choices set_model skill_add skill_remove access_list access_set)a
+  @read_operations ~w(list get model_choices access_list)a
   alias SalixStore.{CasRecord, Ids, Keys}
 
   def run(operation, args, ctx) do
@@ -17,7 +29,7 @@ defmodule SalixAgent.AgentManagement do
     _ ->
       {:error,
        Error.public(
-         if(operation in [:get, :list], do: :read_unavailable, else: :mutation_outcome_unknown)
+         if(operation in @read_operations, do: :read_unavailable, else: :mutation_outcome_unknown)
        )}
   end
 
@@ -53,7 +65,7 @@ defmodule SalixAgent.AgentManagement do
     _ -> {:error, Error.public(:mutation_outcome_unknown)}
   end
 
-  defp admit(operation) when operation in [:list, :get], do: :ok
+  defp admit(operation) when operation in @read_operations, do: :ok
   defp admit(_), do: SalixStore.AgentConfigurationRollout.ensure_open()
 
   defp router(%{agent_id: id}) do
@@ -90,9 +102,40 @@ defmodule SalixAgent.AgentManagement do
   defp dispatch(:archive, %{"user_confirmed" => false}, _ctx, _caller),
     do: {:error, :user_confirmation_required}
 
+  defp dispatch(operation, args, ctx, caller) when operation in @owner_operations do
+    scope = %{tenant_id: caller["tenant_id"], group_id: caller["group_id"]}
+
+    with {:ok, owner} <- OwnerAuthority.current_owner(scope, ctx),
+         {:ok, record} <- get(scope, args["agent_id"]),
+         :ok <- if(operation in @read_operations, do: :ok, else: writable(record)) do
+      configuration(operation, scope, record, args, ctx, owner)
+    end
+  end
+
   defp dispatch(operation, args, ctx, caller) do
     command(%{tenant_id: caller["tenant_id"], group_id: caller["group_id"]}, operation, args, ctx)
   end
+
+  defp configuration(:configure, scope, record, args, _ctx, _owner),
+    do: Configuration.configure(scope, record, args)
+
+  defp configuration(:model_choices, scope, record, args, _ctx, _owner),
+    do: Configuration.model_choices(scope, record, args)
+
+  defp configuration(:set_model, scope, record, args, _ctx, _owner),
+    do: Configuration.set_model(scope, record, args)
+
+  defp configuration(:skill_add, scope, record, args, ctx, _owner),
+    do: Configuration.skill_add(scope, record, args, ctx)
+
+  defp configuration(:skill_remove, scope, record, args, ctx, owner),
+    do: Configuration.skill_remove(scope, record, args, ctx, owner)
+
+  defp configuration(:access_list, scope, record, args, ctx, owner),
+    do: Configuration.access_list(scope, record, args, ctx, owner)
+
+  defp configuration(:access_set, scope, record, args, ctx, owner),
+    do: Configuration.access_set(scope, record, args, ctx, owner)
 
   defp get(scope, id) do
     with true <- Ids.valid_agent_id_for_group?(id, scope.group_id),

@@ -134,8 +134,18 @@ defmodule SalixAgent.ToolsHttpRequestTest do
 
     # The tool itself needs only the calling Agent; the dispatcher context
     # (disclosure, runtime) is built where a test goes through dispatch.
-    {:ok,
-     base: "http://127.0.0.1:#{port}", ctx: %{agent_id: SalixAgent.TestSupport.new_agent_id()}}
+    # Credential resolution reads the calling Agent's connector access, so the
+    # caller is a real (pre-existing) Worker record.
+    tenant = SalixAgent.TestSupport.new_tenant_id()
+
+    agent =
+      SalixAgent.TestSupport.create_control_agent_in_group!(
+        tenant,
+        SalixStore.Ids.new_group_id(tenant),
+        %{}
+      )
+
+    {:ok, base: "http://127.0.0.1:#{port}", ctx: %{agent_id: agent["agent_id"]}}
   end
 
   defp restore(app, key, nil), do: Application.delete_env(app, key)

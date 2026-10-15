@@ -128,7 +128,7 @@ defmodule SalixAgent.Tools.ComposioTriggers do
 
     with :ok <- webhook_ready(settings),
          {:ok, _} <- Loops.get_agent_owned(loop_id, ctx.agent_id),
-         {:ok, _} <- owned_account(settings, group, account, true),
+         {:ok, _} <- owned_account(settings, group, account, true, ctx.agent_id),
          {:ok, %{"trigger_id" => id}} when is_binary(id) and byte_size(id) in 1..256 <-
            client().upsert_trigger(settings, group, account, slug, config),
          {:ok, row} <-
@@ -149,7 +149,7 @@ defmodule SalixAgent.Tools.ComposioTriggers do
     loop_id = required!(args, "loop_id")
 
     with {:ok, _} <- Loops.get_agent_owned(loop_id, ctx.agent_id),
-         {:ok, value} <- binding_for(settings, group, args["trigger_id"]),
+         {:ok, value} <- binding_for(settings, group, args["trigger_id"], ctx.agent_id),
          {:ok, row} <- Loops.bind_composio_trigger(loop_id, ctx.agent_id, value) do
       result({:ok, SalixAgent.Loops.public(row)}, ctx)
     else
@@ -163,7 +163,14 @@ defmodule SalixAgent.Tools.ComposioTriggers do
     action = required!(args, "action")
     if action not in ["enable", "disable", "delete"], do: raise("Invalid trigger action")
 
-    with {:ok, _} <- owned_trigger(settings, group, id, action in ["disable", "delete"]),
+    with {:ok, trigger} <- owned_trigger(settings, group, id, action in ["disable", "delete"]),
+         true <-
+           (action != "enable" or
+              SalixAgent.ConnectorAccess.agent_allowed?(
+                ctx.agent_id,
+                "composio_shared",
+                to_string(trigger["connected_account_id"])
+              )) || {:error, :not_found},
          {:ok, _} <- client().manage_trigger(settings, group, id, action) do
       result({:ok, %{"trigger_id" => id, "status" => action}}, ctx)
     else
@@ -171,17 +178,19 @@ defmodule SalixAgent.Tools.ComposioTriggers do
     end
   end
 
-  defp binding_for(_settings, _group, nil), do: {:ok, nil}
+  defp binding_for(_settings, _group, nil, _agent_id), do: {:ok, nil}
 
-  defp binding_for(settings, group, id) when is_binary(id) and byte_size(id) in 1..256 do
+  defp binding_for(settings, group, id, agent_id)
+       when is_binary(id) and byte_size(id) in 1..256 do
     with :ok <- webhook_ready(settings),
          {:ok, trigger} <- owned_trigger(settings, group, id),
-         {:ok, _} <- owned_account(settings, group, trigger["connected_account_id"], true) do
+         {:ok, _} <-
+           owned_account(settings, group, trigger["connected_account_id"], true, agent_id) do
       {:ok, binding(settings, id, trigger["connected_account_id"], trigger["trigger_name"])}
     end
   end
 
-  defp binding_for(_, _, _), do: {:error, :invalid_trigger_id}
+  defp binding_for(_, _, _, _), do: {:error, :invalid_trigger_id}
 
   defp binding(settings, id, account, slug),
     do: %{
@@ -217,6 +226,15 @@ defmodule SalixAgent.Tools.ComposioTriggers do
       _ ->
         {:error, :invalid_composio_response}
     end
+  end
+
+  # Arming or re-binding a trigger is use of the account: the Agent must hold
+  # access to it (SalixAgent.ConnectorAccess). Cleanup of an existing trigger
+  # (disable/delete) stays available so a revoked Worker can stop events.
+  defp owned_account(settings, group, id, active?, agent_id) do
+    if SalixAgent.ConnectorAccess.agent_allowed?(agent_id, "composio_shared", to_string(id)),
+      do: owned_account(settings, group, id, active?),
+      else: {:error, :not_found}
   end
 
   defp owned_account(settings, group, id, active?) do

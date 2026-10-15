@@ -126,6 +126,8 @@ defmodule SalixWeb.ComposioWebhook do
   defp failed?({:ok, {:ok, _}}), do: false
   defp failed?({:ok, {:error, :not_found}}), do: false
   defp failed?({:ok, {:error, :binding_changed}}), do: false
+  # The owning Worker lost access to the account: a settled drop, not a retry.
+  defp failed?({:ok, {:error, :connector_access_revoked}}), do: false
   defp failed?({:ok, {:error, {:not_active, _}}}), do: false
   defp failed?(_), do: true
   defp valid?(s, max), do: is_binary(s) and byte_size(s) > 0 and byte_size(s) <= max

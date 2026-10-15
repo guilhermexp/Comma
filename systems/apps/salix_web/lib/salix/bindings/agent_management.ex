@@ -101,6 +101,9 @@ defmodule Salix.Bindings.AgentManagement do
 
   defp target_cursor(_, _), do: {:error, :invalid_cursor}
 
+  # Salix alone has no workspace owner; only a product composition can admit one.
+  def authorize_owner(_scope, _user_id), do: {:error, :owner_unavailable}
+
   def worker_template(scope),
     do: SalixAgent.AgentDefaults.creation_template("worker", scope.tenant_id)
 end

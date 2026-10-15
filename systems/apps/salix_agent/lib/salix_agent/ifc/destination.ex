@@ -331,11 +331,18 @@ defmodule SalixAgent.IFC.Destination do
   defp tool("agent.update", _args, ctx),
     do: {:persist, %{"kind" => "agent_configuration", "group_id" => group_id(ctx)}}
 
-  # A personal Composio grant is Group-scoped Agent configuration carrying only
-  # an Agent id and an account id. ComposioGrants still derives the owner from
-  # the sealed origin and validates the target Group; this label confers nothing.
-  defp tool(name, _args, ctx) when name in ~w(composio.personal_grant composio.personal_revoke),
-    do: {:persist, %{"kind" => "agent_configuration", "group_id" => group_id(ctx)}}
+  # Worker settings, skills, model choice and account access are Group-visible
+  # Agent configuration. AgentManagement derives the owner from the sealed
+  # origin and validates the target Group; this label confers nothing.
+  defp tool(name, _args, ctx)
+       when name in ~w(agent.configure agent.set_model agent.skill_add agent.skill_remove
+                       agent.access_set),
+       do: {:persist, %{"kind" => "agent_configuration", "group_id" => group_id(ctx)}}
+
+  # Discovery reads the Group's existing configuration and catalogs. It sends
+  # no user content anywhere and returns no credential material.
+  defp tool(name, _args, _ctx) when name in ~w(agent.model_choices agent.access_list),
+    do: {:read, %{}}
 
   defp tool("memory.write", args, ctx) do
     path = arg(args, "path")
@@ -497,8 +504,7 @@ defmodule SalixAgent.IFC.Destination do
       # lookup sends only validated public tool identifiers; neither sends user
       # content. Execution below remains public egress and needs normal IFC
       # approval for workspace-sourced arguments.
-      name in ~w(mcp.list composio.personal_accounts composio.personal_schema
-                 composio.personal_grant_list) ->
+      name in ~w(mcp.list composio.personal_accounts composio.personal_schema) ->
         {:read, %{}}
 
       String.starts_with?(name, "mcp.") or String.starts_with?(name, "composio.") ->

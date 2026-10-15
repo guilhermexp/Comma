@@ -33,7 +33,7 @@ defmodule SalixAgent.Tools.Composio do
   `:composio_client_mod` app env (same seam pattern as `:oauth_adapters_fn`).
   """
 
-  alias SalixAgent.{ComposioStore, OAuthStore, Waits}
+  alias SalixAgent.{ComposioStore, ConnectorAccess, OAuthStore, Waits}
   alias SalixAgent.Tools.AsyncPolicy
 
   @normal_auto_wait_seconds AsyncPolicy.normal_tool_auto_wait_seconds()
@@ -59,7 +59,6 @@ defmodule SalixAgent.Tools.Composio do
           ]
   def defs do
     SalixAgent.ComposioBroker.defs() ++
-      SalixAgent.ComposioGrants.defs() ++
       [
         {"composio.list_connections",
          "List this agent group's Composio connected accounts.\n\n" <>
@@ -120,8 +119,13 @@ defmodule SalixAgent.Tools.Composio do
            max_pages: @connected_accounts_max_pages
          ) do
       {:ok, items} ->
+        record = agent_record!(ctx.agent_id)
+
         connections =
           items
+          |> Enum.filter(
+            &ConnectorAccess.allowed?(record, "composio_shared", to_string(&1["id"]))
+          )
           |> Enum.map(&connection_entry/1)
           |> Enum.sort_by(fn e -> {e["toolkit"], e["connected_account_id"]} end)
 
@@ -210,13 +214,28 @@ defmodule SalixAgent.Tools.Composio do
 
         cond do
           status == SalixStore.Composio.active_status() ->
-            Jason.encode!(%{
-              "status" => "active",
-              "connected_account_id" => connected_account_id,
-              "toolkit" => to_string(get_in(account, ["toolkit", "slug"]) || ""),
-              "message" =>
-                "connection is ready; the toolkit's tools can be called via composio.execute"
-            })
+            if ConnectorAccess.agent_allowed?(
+                 ctx.agent_id,
+                 "composio_shared",
+                 connected_account_id
+               ) do
+              Jason.encode!(%{
+                "status" => "active",
+                "connected_account_id" => connected_account_id,
+                "toolkit" => to_string(get_in(account, ["toolkit", "slug"]) || ""),
+                "message" =>
+                  "connection is ready; the toolkit's tools can be called via composio.execute"
+              })
+            else
+              Jason.encode!(%{
+                "status" => "active",
+                "connected_account_id" => connected_account_id,
+                "toolkit" => to_string(get_in(account, ["toolkit", "slug"]) || ""),
+                "granted" => false,
+                "message" =>
+                  "connection is ready, but this Worker has no access to it; the workspace owner can grant it through the Router"
+              })
+            end
 
           status in SalixStore.Composio.pending_statuses() ->
             Jason.encode!(%{
@@ -255,7 +274,7 @@ defmodule SalixAgent.Tools.Composio do
     connected_account_id = required_arg(args, "connected_account_id")
     {settings, group_id} = composio_context!(ctx.agent_id)
 
-    case owned_account(settings, connected_account_id, group_id) do
+    case owned_permitted_account(ctx, settings, connected_account_id, group_id) do
       {:ok, _account} ->
         case client().delete_connected_account(settings, connected_account_id) do
           :ok ->
@@ -425,9 +444,18 @@ defmodule SalixAgent.Tools.Composio do
     connected_account_id = optional_arg(args, "connected_account_id")
 
     {settings, group_id} = composio_context!(ctx.agent_id)
+    record = agent_record!(ctx.agent_id)
+
+    # Without an account Composio picks one of the Group's accounts itself, so a
+    # Worker under per-account access must name an account it may use.
+    if is_nil(connected_account_id) and ConnectorAccess.restricted?(record),
+      do:
+        raise(
+          "connected_account_id is required for this Worker; choose one from composio.list_connections"
+        )
 
     if connected_account_id do
-      case owned_account(settings, connected_account_id, group_id) do
+      case owned_permitted_account(ctx, settings, connected_account_id, group_id) do
         {:ok, %{"status" => "ACTIVE"}} -> :ok
         {:ok, _} -> raise "Composio account is not active"
         :not_found -> raise "Composio account not found in this group"
@@ -512,6 +540,21 @@ defmodule SalixAgent.Tools.Composio do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  # A Group account this Agent may currently use. Another Worker's grant, or
+  # an account it was denied, reads as not found so access cannot be probed.
+  defp owned_permitted_account(ctx, settings, connected_account_id, group_id) do
+    if ConnectorAccess.agent_allowed?(ctx.agent_id, "composio_shared", connected_account_id),
+      do: owned_account(settings, connected_account_id, group_id),
+      else: :not_found
+  end
+
+  defp agent_record!(agent_id) do
+    case SalixAgent.Control.get_record(agent_id) do
+      {:ok, record} -> record
+      _ -> raise "load agent: unavailable"
     end
   end
 

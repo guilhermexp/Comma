@@ -365,6 +365,7 @@ defmodule SalixAgent.Loops do
     result =
       with {:ok, row} <- Store.get(id),
            true <- row["composio_trigger"] == binding,
+           :ok <- trigger_account_access(row, binding),
            {:ok, normalized} <- normalize_event(event) do
         deliver_to_owner(row, normalized)
       else
@@ -374,6 +375,17 @@ defmodule SalixAgent.Loops do
 
     emit("loop_event", event_outcome(result), System.monotonic_time() - started)
     result
+  end
+
+  # An armed trigger delivers only while its Agent may still use the account.
+  defp trigger_account_access(row, binding) do
+    if SalixAgent.ConnectorAccess.agent_allowed?(
+         row["agent_id"],
+         "composio_shared",
+         to_string(binding["connected_account_id"])
+       ),
+       do: :ok,
+       else: {:error, :connector_access_revoked}
   end
 
   # The PostgreSQL receipt owns accepted work. Placement/runtime failure after

@@ -15,7 +15,6 @@ defmodule SalixAgent.Tools.ComposioTest do
   @group_id "group-composio-1"
   @tenant "tenant-composio"
   @settings %{"api_key" => "ck_test", "base_url" => ""}
-  @ctx %{agent_id: "agent-1", session_id: "sess-1"}
 
   defmodule StubOAuthStore do
     @moduledoc false
@@ -115,6 +114,19 @@ defmodule SalixAgent.Tools.ComposioTest do
     Application.put_env(:salix_agent, :composio_test_settings, %{@tenant => {:ok, @settings}})
     Application.put_env(:salix_agent, :composio_test_pid, self())
 
+    # Shared Composio tools read the calling Agent's connector access; the
+    # caller is a Worker that predates per-account access.
+    tenant = SalixAgent.TestSupport.new_tenant_id()
+
+    agent =
+      SalixAgent.TestSupport.create_control_agent_in_group!(
+        tenant,
+        SalixStore.Ids.new_group_id(tenant),
+        %{}
+      )
+
+    Process.put(:composio_test_agent_id, agent["agent_id"])
+
     on_exit(fn ->
       Enum.each(prev, fn
         {key, nil} -> Application.delete_env(:salix_agent, key)
@@ -124,6 +136,8 @@ defmodule SalixAgent.Tools.ComposioTest do
 
     :ok
   end
+
+  defp ctx, do: %{agent_id: Process.get(:composio_test_agent_id), session_id: "sess-1"}
 
   defp stub_responses(map), do: Application.put_env(:salix_agent, :composio_test_responses, map)
 
@@ -139,7 +153,7 @@ defmodule SalixAgent.Tools.ComposioTest do
         ] do
       err =
         assert_raise RuntimeError, fn ->
-          fun.(%{"toolkit" => "gmail", "tool_slug" => "X"}, @ctx)
+          fun.(%{"toolkit" => "gmail", "tool_slug" => "X"}, ctx())
         end
 
       assert err.message =~ "composio is not configured for this tenant"
@@ -150,7 +164,7 @@ defmodule SalixAgent.Tools.ComposioTest do
   test "a runtime without a composio store seam reports not configured" do
     Application.put_env(:salix_agent, :composio_store_mod, nil)
 
-    err = assert_raise RuntimeError, fn -> ComposioTools.list_connections(%{}, @ctx) end
+    err = assert_raise RuntimeError, fn -> ComposioTools.list_connections(%{}, ctx()) end
     assert err.message =~ "composio is not configured"
   end
 
@@ -171,7 +185,7 @@ defmodule SalixAgent.Tools.ComposioTest do
          ]}
     })
 
-    out = ComposioTools.list_connections(%{}, @ctx) |> Jason.decode!()
+    out = ComposioTools.list_connections(%{}, ctx()) |> Jason.decode!()
 
     assert [
              %{"connected_account_id" => "ca_1", "toolkit" => "gmail", "status" => "ACTIVE"},
@@ -189,7 +203,7 @@ defmodule SalixAgent.Tools.ComposioTest do
 
     error =
       assert_raise RuntimeError, fn ->
-        ComposioTools.list_connections(%{}, @ctx)
+        ComposioTools.list_connections(%{}, ctx())
       end
 
     assert error.message =~ "connected_accounts_page_limit_exceeded"
@@ -212,7 +226,7 @@ defmodule SalixAgent.Tools.ComposioTest do
          }}
     })
 
-    {content, events} = ComposioTools.request_connection(%{"toolkit" => "Gmail"}, @ctx)
+    {content, events} = ComposioTools.request_connection(%{"toolkit" => "Gmail"}, ctx())
     out = Jason.decode!(content)
 
     assert out["status"] == "pending"
@@ -253,7 +267,7 @@ defmodule SalixAgent.Tools.ComposioTest do
       })
 
       out =
-        ComposioTools.check_connection(%{"connected_account_id" => "ca_1"}, @ctx)
+        ComposioTools.check_connection(%{"connected_account_id" => "ca_1"}, ctx())
         |> Jason.decode!()
 
       assert out["status"] == expected, "#{provider_status} should map to #{expected}"
@@ -267,7 +281,7 @@ defmodule SalixAgent.Tools.ComposioTest do
     })
 
     out =
-      ComposioTools.check_connection(%{"connected_account_id" => "ca_foreign"}, @ctx)
+      ComposioTools.check_connection(%{"connected_account_id" => "ca_foreign"}, ctx())
       |> Jason.decode!()
 
     assert out["status"] == "not_found"
@@ -283,7 +297,7 @@ defmodule SalixAgent.Tools.ComposioTest do
     })
 
     out =
-      ComposioTools.delete_connection(%{"connected_account_id" => "ca_1"}, @ctx)
+      ComposioTools.delete_connection(%{"connected_account_id" => "ca_1"}, ctx())
       |> Jason.decode!()
 
     assert out["status"] == "deleted"
@@ -297,7 +311,7 @@ defmodule SalixAgent.Tools.ComposioTest do
     })
 
     out =
-      ComposioTools.delete_connection(%{"connected_account_id" => "ca_x"}, @ctx)
+      ComposioTools.delete_connection(%{"connected_account_id" => "ca_x"}, ctx())
       |> Jason.decode!()
 
     assert out["status"] == "not_found"
@@ -308,7 +322,7 @@ defmodule SalixAgent.Tools.ComposioTest do
 
   test "list_tools requires a toolkit or query and trims long descriptions" do
     assert_raise RuntimeError, ~r/at least one of 'toolkit' or 'query'/, fn ->
-      ComposioTools.list_tools(%{}, @ctx)
+      ComposioTools.list_tools(%{}, ctx())
     end
 
     stub_responses(%{
@@ -323,7 +337,7 @@ defmodule SalixAgent.Tools.ComposioTest do
          ]}
     })
 
-    out = ComposioTools.list_tools(%{"toolkit" => "gmail"}, @ctx) |> Jason.decode!()
+    out = ComposioTools.list_tools(%{"toolkit" => "gmail"}, ctx()) |> Jason.decode!()
 
     assert [%{"tool_slug" => "GMAIL_FETCH_EMAILS", "description" => desc}] = out["tools"]
     assert String.length(desc) == 301
@@ -351,7 +365,7 @@ defmodule SalixAgent.Tools.ComposioTest do
          ]}
     })
 
-    out = ComposioTools.get_tool(%{"tool_slug" => "gmail_fetch_emails"}, @ctx) |> Jason.decode!()
+    out = ComposioTools.get_tool(%{"tool_slug" => "gmail_fetch_emails"}, ctx()) |> Jason.decode!()
 
     assert out["tool_slug"] == "GMAIL_FETCH_EMAILS"
     assert out["input_parameters"]["properties"]["max_results"]
@@ -376,7 +390,7 @@ defmodule SalixAgent.Tools.ComposioTest do
     })
 
     out =
-      ComposioTools.list_toolkits_catalog(%{"query" => "calendar"}, @ctx) |> Jason.decode!()
+      ComposioTools.list_toolkits_catalog(%{"query" => "calendar"}, ctx()) |> Jason.decode!()
 
     assert [entry] = out["toolkits"]
     assert entry["toolkit"] == "googlecalendar"
@@ -406,7 +420,7 @@ defmodule SalixAgent.Tools.ComposioTest do
     out =
       ComposioTools.execute(
         %{"tool_slug" => "GMAIL_FETCH_EMAILS", "arguments" => %{"max_results" => 1}},
-        @ctx
+        ctx()
       )
       |> Jason.decode!()
 
@@ -423,7 +437,7 @@ defmodule SalixAgent.Tools.ComposioTest do
       execute_tool: {:ok, %{"data" => %{}, "successful" => false, "error" => "missing scopes"}}
     })
 
-    out = ComposioTools.execute(%{"tool_slug" => "GMAIL_FETCH_EMAILS"}, @ctx) |> Jason.decode!()
+    out = ComposioTools.execute(%{"tool_slug" => "GMAIL_FETCH_EMAILS"}, ctx()) |> Jason.decode!()
 
     assert out["successful"] == false
     assert out["error"] == "missing scopes"
@@ -442,7 +456,7 @@ defmodule SalixAgent.Tools.ComposioTest do
          }}
     })
 
-    encoded = ComposioTools.execute(%{"tool_slug" => "GMAIL_FETCH_EMAILS"}, @ctx)
+    encoded = ComposioTools.execute(%{"tool_slug" => "GMAIL_FETCH_EMAILS"}, ctx())
     out = Jason.decode!(encoded)
 
     assert byte_size(encoded) > 150_000
@@ -453,7 +467,7 @@ defmodule SalixAgent.Tools.ComposioTest do
 
   test "execute rejects non-object arguments" do
     assert_raise RuntimeError, ~r/'arguments' must be a JSON object/, fn ->
-      ComposioTools.execute(%{"tool_slug" => "X", "arguments" => "nope"}, @ctx)
+      ComposioTools.execute(%{"tool_slug" => "X", "arguments" => "nope"}, ctx())
     end
   end
 
@@ -465,7 +479,7 @@ defmodule SalixAgent.Tools.ComposioTest do
     assert_raise RuntimeError, ~r/not found in this group/, fn ->
       ComposioTools.execute(
         %{"tool_slug" => "GMAIL_FETCH_EMAILS", "connected_account_id" => "ca_foreign"},
-        @ctx
+        ctx()
       )
     end
 
@@ -481,7 +495,7 @@ defmodule SalixAgent.Tools.ComposioTest do
     })
 
     ctx =
-      @ctx
+      ctx()
       |> Map.merge(%{
         role: "worker",
         runtime_kind: :internal,

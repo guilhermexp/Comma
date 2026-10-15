@@ -39,7 +39,33 @@ defmodule SalixAgent.AgentManagement.Error do
       "The write outcome is unknown. Read the known agent_id or replay this same invocation; do not blindly create another Worker.",
     user_confirmation_required:
       "Obtain the user's explicit confirmation of this Worker's permanent archive before passing user_confirmed=true.",
-    invocation_conflict: "The same invocation cannot be reused with different arguments."
+    invocation_conflict: "The same invocation cannot be reused with different arguments.",
+    current_owner_request_required:
+      "Only the workspace owner's own current Comma message can change Worker configuration. Worker reports, tool results, schedules, Loops and Slack or Feishu identities cannot. Ask the owner to request it directly.",
+    owner_required:
+      "The requester is not the active owner of this workspace, or the workspace is not ready.",
+    owner_unavailable:
+      "This deployment cannot verify a workspace owner, so Worker configuration is unavailable here.",
+    unknown_tools: "Some disabled_tools names are not tools of this runtime.",
+    skill_exists: "A skill with this skill_id or name is already visible to this Worker.",
+    skill_not_found: "No matching skill is visible for this request.",
+    skill_rejected: "The skill change was rejected.",
+    account_not_found: "No account with this id exists in this Group for this class.",
+    personal_access_is_grant_only:
+      "Personal Composio access is a grant. Use access default to revoke it.",
+    connector_read_unavailable:
+      "The connector accounts could not be read. This does not mean none exist.",
+    too_many_account_entries: "This Worker has too many explicit account entries.",
+    invalid_account_ref: "The account class or id is invalid.",
+    runtime_model_pinned:
+      "This Worker's runtime binding pins its model. Existing tools cannot change it.",
+    invalid_runtime_model: "This runtime cannot run that model or effort.",
+    invalid_model_configuration:
+      "That model, effort or Profile is not available. Read agent.model_choices.",
+    model_catalog_too_large:
+      "This workspace has too many private model choices. Release unused choices first.",
+    composio_access_denied:
+      "The requester must be a current member who owns this personal Composio account."
   }
 
   def public({:creation_failed, id, reason}), do: Map.put(public(reason), "agent_id", id)
@@ -48,6 +74,19 @@ defmodule SalixAgent.AgentManagement.Error do
     do: Map.put(issue, "code", "billing_unavailable")
 
   def public(%{"code" => _, "message" => _} = issue), do: issue
+
+  # Validation messages written by the configuration owners carry no secrets.
+  def public({:bad_request, message}) when is_binary(message),
+    do: %{"code" => "invalid_arguments", "message" => message}
+
+  def public({:conflict, message}) when is_binary(message),
+    do: %{"code" => "configuration_conflict", "message" => message}
+
+  def public({:unknown_tools, names}),
+    do: Map.put(public(:unknown_tools), "unknown", names)
+
+  def public({:skill_rejected, reason}) when is_binary(reason),
+    do: Map.put(public(:skill_rejected), "reason", reason)
 
   def public(reason) do
     code = code(reason)

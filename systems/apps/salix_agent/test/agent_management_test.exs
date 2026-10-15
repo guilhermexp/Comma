@@ -386,7 +386,7 @@ defmodule SalixAgent.AgentManagementTest do
     assert archived["agent"]["permanent"]
     refute Map.has_key?(archived["agent"], "runtime_shutdown")
     assert {:ok, %{"agent" => detail}} = AgentManagement.run(:get, %{"agent_id" => id}, ctx.ctx)
-    assert Map.drop(detail, ["model", "creation_audit"]) == archived["agent"]
+    assert Map.drop(detail, ["model", "creation_audit", "configuration"]) == archived["agent"]
     assert detail["lifecycle"] == "archived"
     assert {:error, :agent_permanently_archived} = Control.unarchive(id, ctx.tenant)
   end

@@ -81,9 +81,10 @@ defmodule SalixAgent.OAuthCredentials do
   def resolve(agent_id, entries, opts) do
     with {:ok, refs} <- normalize_entries(entries),
          {:ok, %{tenant: tenant, group_id: group_id}} <- agent_context(agent_id),
-         {:ok, bindings} <- group_bindings(group_id) do
+         {:ok, bindings} <- group_bindings(group_id),
+         {:ok, record} <- agent_record(agent_id) do
       Enum.reduce_while(refs, {:ok, %{}}, fn ref, {:ok, acc} ->
-        case resolve_one(ref, tenant, bindings, opts) do
+        case resolve_one(ref, tenant, bindings, record, opts) do
           {:ok, value} -> {:cont, {:ok, Map.put(acc, ref.env_var, value)}}
           {:error, reason} -> {:halt, {:error, resolve_error(ref, reason)}}
         end
@@ -163,11 +164,12 @@ defmodule SalixAgent.OAuthCredentials do
 
   # ---- per-entry resolution (willow ResolveAll body) ----
 
-  defp resolve_one(ref, tenant, bindings, opts) do
+  defp resolve_one(ref, tenant, bindings, record, opts) do
     with :ok <- require_fields(ref),
          {:ok, adapter} <- adapter_for(ref.provider),
          {:ok, binding} <- find_binding(bindings, ref),
          :ok <- check_binding_enabled(binding),
+         :ok <- check_agent_access(record, binding),
          {:ok, conn_id} <- connection_id(binding),
          {:ok, conn} <- load_connection(conn_id),
          :ok <- check_status(conn),
@@ -201,6 +203,21 @@ defmodule SalixAgent.OAuthCredentials do
     |> case do
       nil -> {:error, "is not bound to this agent group"}
       binding -> {:ok, binding}
+    end
+  end
+
+  # The credential is provisioned only to an Agent that may use this binding
+  # (SalixAgent.ConnectorAccess); the token is never read for any other Agent.
+  defp check_agent_access(record, binding) do
+    if SalixAgent.ConnectorAccess.allowed?(record, "oauth", to_string(binding["binding_id"])),
+      do: :ok,
+      else: {:error, "is not granted to this Worker"}
+  end
+
+  defp agent_record(agent_id) do
+    case SalixAgent.Control.get_record(agent_id) do
+      {:ok, record} -> {:ok, record}
+      _ -> {:error, "load agent: unavailable"}
     end
   end
 

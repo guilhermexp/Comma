@@ -112,8 +112,11 @@ defmodule SalixAgent.Tools.OAuth do
       {:ok, %{group_id: group_id}} when is_binary(group_id) and group_id != "" ->
         case OAuthStore.bindings_for_group(group_id) do
           {:ok, bindings} ->
+            record = agent_record(ctx.agent_id)
+
             entries =
               bindings
+              |> Enum.filter(&oauth_allowed?(record, &1))
               |> Enum.map(&credential_entry/1)
               |> Enum.sort_by(fn e -> {e["provider"], e["alias"]} end)
 
@@ -521,9 +524,13 @@ defmodule SalixAgent.Tools.OAuth do
         {:error, reason} -> raise "list oauth bindings: #{format_reason(reason)}"
       end
 
+    record = agent_record(ctx.agent_id)
+
+    # A Worker can remove only a credential it may use; others read as absent.
     match =
       Enum.find(bindings, fn binding ->
-        to_string(binding["provider"]) == provider and to_string(binding["alias"]) == alias_
+        to_string(binding["provider"]) == provider and to_string(binding["alias"]) == alias_ and
+          oauth_allowed?(record, binding)
       end)
 
     case match do
@@ -551,6 +558,18 @@ defmodule SalixAgent.Tools.OAuth do
         end
     end
   end
+
+  defp agent_record(agent_id) do
+    case SalixAgent.Control.get_record(agent_id) do
+      {:ok, record} -> record
+      _ -> nil
+    end
+  end
+
+  defp oauth_allowed?(nil, _binding), do: false
+
+  defp oauth_allowed?(record, binding),
+    do: SalixAgent.ConnectorAccess.allowed?(record, "oauth", to_string(binding["binding_id"]))
 
   defp not_found_result(provider, alias_) do
     Jason.encode!(%{

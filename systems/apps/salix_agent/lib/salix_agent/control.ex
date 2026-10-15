@@ -16,6 +16,11 @@ defmodule SalixAgent.Control do
   defdelegate page_workers(tenant_id, group_id, opts \\ []), to: SalixAgent.AgentControl
   defdelegate page_agents(tenant_id, group_id, opts \\ []), to: SalixAgent.AgentControl
   defdelegate configure_worker_metadata(id, tenant_id, patch), to: SalixAgent.AgentControl
+  defdelegate configure_worker_settings(id, tenant_id, patch), to: SalixAgent.AgentControl
+
+  defdelegate configure_connector_access(id, tenant_id, ref, access),
+    to: SalixAgent.AgentControl
+
   defdelegate archive_permanently(agent_id, tenant_id), to: SalixAgent.AgentControl
 
   defdelegate permanently_archived?(record), to: SalixAgent.AgentControl

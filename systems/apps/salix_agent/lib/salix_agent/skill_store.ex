@@ -196,6 +196,35 @@ defmodule SalixAgent.SkillStore do
     end
   end
 
+  @doc """
+  Place a new skill in one Agent's own layer. The acting Agent (`ctx.agent_id`)
+  is recorded as creator; only that target Agent's projection sees the skill.
+  `source_skill` copies a visible skill; otherwise `attrs` carries its content.
+  """
+  @spec prepare_agent_create(ctx(), String.t(), map() | nil, map()) ::
+          {:ok, map()} | {:error, term()}
+  def prepare_agent_create(ctx, target_agent_id, source_skill, attrs)
+      when is_binary(target_agent_id) and target_agent_id != "" do
+    prepared =
+      if is_map(source_skill),
+        do: prepare_group_copy(ctx, source_skill, attrs),
+        else: prepare_group_create(ctx, attrs)
+
+    with {:ok, event} <- prepared do
+      {:ok, Map.put(event, "scope", normalize_scope(:agent, target_agent_id))}
+    end
+  end
+
+  @doc "Remove an editable skill from one Agent's own layer for an authenticated person."
+  @spec prepare_agent_delete(ctx(), String.t(), String.t(), map()) ::
+          {:ok, map()} | {:error, term()}
+  def prepare_agent_delete(ctx, target_agent_id, skill_id, actor)
+      when is_binary(target_agent_id) and target_agent_id != "" do
+    with {:ok, event} <- prepare_group_control_plane_delete(ctx, skill_id, actor) do
+      {:ok, Map.put(event, "scope", normalize_scope(:agent, target_agent_id))}
+    end
+  end
+
   @doc "Prepare writing a runtime skill file."
   @spec prepare_file_write(ctx(), map(), String.t(), binary()) :: {:ok, map()} | {:error, term()}
   def prepare_file_write(ctx, skill, rel_path, content)

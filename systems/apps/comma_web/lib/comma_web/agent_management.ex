@@ -22,6 +22,21 @@ defmodule CommaWeb.AgentManagement do
     end
   end
 
+  @doc "The sealed person must still be the active owner of this Group's ready workspace."
+  def authorize_owner(scope, user_id) when is_binary(user_id) and user_id != "" do
+    with {:ok, group} <- Salix.Control.Groups.get(scope.group_id, scope.tenant_id),
+         %{"surface" => "comma", "product_owner_type" => "workspace", "product_owner_id" => id}
+         when is_binary(id) <- group["billing_owner"],
+         {:ok, workspace} <- Comma.Workspaces.authorize_group_owner(id, scope.group_id, user_id),
+         true <- workspace["salix_tenant_id"] == scope.tenant_id do
+      :ok
+    else
+      _ -> {:error, :owner_required}
+    end
+  end
+
+  def authorize_owner(_scope, _user_id), do: {:error, :owner_required}
+
   defp workspace_template(id, scope) do
     with {:ok, workspace} <- Comma.Workspaces.get(id),
          true <-

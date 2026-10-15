@@ -127,15 +127,56 @@ defmodule SalixAgent.TestSupport do
         "name" => attrs["name"] || agent_id,
         "role" => attrs["role"] || "worker"
       }
-      |> Map.merge(Map.drop(attrs, ["tenant_id"]))
+      |> Map.merge(Map.drop(attrs, ["tenant_id", "connector_access_policy"]))
 
     create = if authority == :owned, do: :create_owned_preallocated, else: :create_preallocated
 
     case apply(SalixAgent.Control, create, [create_attrs, tenant_id, agent_id]) do
-      {:ok, agent} -> agent
-      {:error, :exists} -> unwrap!(SalixAgent.Control.get(agent_id))
-      {:error, reason} -> raise "failed to create control agent #{agent_id}: #{inspect(reason)}"
+      {:ok, agent} ->
+        # Fixtures stand for Workers that predate per-account connector access
+        # unless a test asks for the policy every newly created Worker gets.
+        if attrs["connector_access_policy"] == "new" do
+          :ok = put_connector_access!(agent_id, SalixAgent.ConnectorAccess.new_worker_policy())
+          Map.put(agent, "connector_access", SalixAgent.ConnectorAccess.new_worker_policy())
+        else
+          :ok = legacy_connector_access!(agent_id)
+          Map.delete(agent, "connector_access")
+        end
+
+      {:error, :exists} ->
+        unwrap!(SalixAgent.Control.get(agent_id))
+
+      {:error, reason} ->
+        raise "failed to create control agent #{agent_id}: #{inspect(reason)}"
     end
+  end
+
+  @doc "Give a fixture the policy a Worker created in a Comma workspace Group gets."
+  def put_connector_access!(agent_id, policy) do
+    key = SalixStore.Keys.ctl_agent(agent_id)
+    {:ok, %{body: body, etag: etag}} = SalixStore.S3.get(key)
+    record = body |> Jason.decode!() |> Map.put("connector_access", policy)
+    {:ok, _} = SalixStore.S3.put(key, Jason.encode!(record), if_match: etag)
+    SalixStore.ReadScope.invalidate({:record, key})
+    :ok
+  end
+
+  @doc "Remove the connector access policy, as on a Worker created before it existed."
+  def legacy_connector_access!(agent_id) do
+    key = SalixStore.Keys.ctl_agent(agent_id)
+    {:ok, %{body: body, etag: etag}} = SalixStore.S3.get(key)
+    record = Jason.decode!(body)
+
+    if Map.has_key?(record, "connector_access") do
+      {:ok, _} =
+        SalixStore.S3.put(key, Jason.encode!(Map.delete(record, "connector_access")),
+          if_match: etag
+        )
+
+      SalixStore.ReadScope.invalidate({:record, key})
+    end
+
+    :ok
   end
 
   @doc "Create a real pending host capability and return its execution projection."
