@@ -59,6 +59,7 @@ defmodule SalixAgent.Tools.Composio do
           ]
   def defs do
     SalixAgent.ComposioBroker.defs() ++
+      SalixAgent.ComposioGrants.defs() ++
       [
         {"composio.list_connections",
          "List this agent group's Composio connected accounts.\n\n" <>

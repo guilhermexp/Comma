@@ -34,7 +34,10 @@ defmodule SalixAgent.ComposioBroker do
     ]
   end
 
-  def personal_tool?(name), do: Enum.any?(defs(), &(elem(&1, 0) == name))
+  # Personal grant management shares the personal family's disclosure: it never
+  # depends on tenant project settings. Its own entries keep the Router-only role.
+  def personal_tool?(name),
+    do: Enum.any?(defs(), &(elem(&1, 0) == name)) or SalixAgent.ComposioGrants.tool?(name)
 
   def accounts(args, ctx) do
     with {:ok, scope} <- scope(ctx.agent_id),
