@@ -13,6 +13,13 @@ retired. Old source anchors outside the current roster are historical only.
 Run `make tla`; retain the expected lease and RPC counterexamples rather than
 claiming stronger exclusivity or delivery semantics than the code provides.
 
+## Worker administration
+
+Comma Router mutations of Workers require `AgentManagement.OwnerAuthority`.
+Check `ConnectorAccess` before managed credential provisioning and connector use,
+not only tool disclosure. Keep personal Composio grants in `ComposioAccess`.
+See [the account access contract](../docs/architecture/DOMAIN_CONCEPTS.md#router-administration-of-workers).
+
 ## Agent event archive
 
 Everything the agent loop receives or sends must attempt encrypted archival at
