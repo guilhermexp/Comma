@@ -4,7 +4,7 @@ export const voiceCallAnswerSchema = z.object({
   call_id: z.string(),
   sdp: z.string(),
 });
-export const voiceCallEventSchema = z.discriminatedUnion("kind", [
+const callEventSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("started") }),
   z.object({
     kind: z.literal("caption"),
@@ -15,6 +15,14 @@ export const voiceCallEventSchema = z.discriminatedUnion("kind", [
   }),
   z.object({ kind: z.literal("closed"), reason: z.string() }),
   z.object({ kind: z.literal("error"), code: z.string() }),
+]);
+export const voiceCallEventSchema = z.union([
+  callEventSchema,
+  z.object({
+    type: z.literal("delegation"),
+    id: z.string(),
+    status: z.enum(["pending", "answered"]),
+  }),
 ]);
 export const voiceCallEventsSchema = z.object({
   events: z.array(voiceCallEventSchema),

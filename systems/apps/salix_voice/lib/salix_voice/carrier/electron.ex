@@ -100,6 +100,9 @@ defmodule SalixVoice.Carrier.Electron do
       {:noreply,
        emit(state, %{kind: "caption", role: role, turn: turn, text: text, final: final?})}
 
+  def handle_info({:voice_call, :delegation, id, status}, state),
+    do: {:noreply, emit(state, %{type: "delegation", id: id, status: status})}
+
   def handle_info({:voice_call, :error, code}, state) do
     state = if state.answer, do: state, else: finish_answer(state, {:error, code})
     {:noreply, emit(state, %{kind: "error", code: code})}

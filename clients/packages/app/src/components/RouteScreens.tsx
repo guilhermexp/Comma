@@ -59,6 +59,8 @@ import { getUserDisplayName } from "./UserAvatar";
 import { RecommendationRail } from "./recommendations/RecommendationRail";
 import { getNativeBridge } from "@comma/native-bridge";
 import { VoiceCallControl } from "./voice/VoiceCallControl";
+import { VoiceCallTranscript } from "./voice/VoiceCallTranscript";
+import { useVoiceCallHistory } from "./voice/useVoiceCallHistory";
 
 // Rail geometry updates do not change the conversation or its data sources.
 export const HomeRoute = memo(function HomeRoute({
@@ -595,14 +597,36 @@ function HomeConversationSurface({
   workspaceId?: string | undefined;
 }) {
   const messages = useCommaMessages();
+  const callHistory = useVoiceCallHistory(
+    JSON.stringify([workspaceId, state.conversation?.id]),
+    state.messages.at(-1)?.messageId
+  );
+  const callTails = useMemo(
+    () =>
+      callHistory.records.map(({ messageId, transcript }) => ({
+        key: transcript.callId,
+        messageId,
+        node: <VoiceCallTranscript transcript={transcript} />,
+      })),
+    [callHistory.records]
+  );
 
   return (
     <ConversationView
-      topPanel={
+      messageListTails={callTails}
+      headerControls={
         workspaceId &&
         getNativeBridge().platform === "electron" &&
         getNativeBridge().os === "macos" ? (
-          <VoiceCallControl api={api} workspaceId={workspaceId} />
+          <VoiceCallControl
+            api={api}
+            workspaceId={workspaceId}
+            surfaceActive={surfaceActive}
+            onOpen={() => {
+              window.location.hash = "/";
+            }}
+            onTranscript={callHistory.record}
+          />
         ) : undefined
       }
       actions={actions}

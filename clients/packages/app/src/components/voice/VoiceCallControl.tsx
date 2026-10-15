@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, ScrollArea } from "@comma/ui";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { CallIcon } from "@comma/ui";
+import { VoiceCallBar, VoiceCallButton } from "./VoiceCallBar";
+import { useVoiceCallFeedback, type CallPhase } from "./useVoiceCallFeedback";
+import type { CallTranscript } from "./VoiceCallTranscript";
 import { useCommaMessages } from "@comma/i18n/react";
 import { CommaApiError, type CommaApiClient } from "../../api";
 import type { VoiceCallEvent } from "../../api/voiceCalls";
 
-type Phase = "idle" | "connecting" | "live" | "ending" | "ended" | "failed";
 type Caption = Extract<VoiceCallEvent, { kind: "caption" }>;
 type Attempt = {
   cancelled: boolean;
@@ -57,17 +60,72 @@ function gatherIce(pc: RTCPeerConnection, signal: AbortSignal): Promise<void> {
 export function VoiceCallControl({
   api,
   workspaceId,
+  surfaceActive = true,
+  onOpen,
+  onTranscript,
 }: {
   api: CommaApiClient;
   workspaceId: string;
+  surfaceActive?: boolean;
+  onOpen?: (() => void) | undefined;
+  onTranscript?: ((transcript: CallTranscript) => void) | undefined;
 }) {
   const m = useCommaMessages();
-  const [phase, setPhase] = useState<Phase>("idle");
+  const [phase, setPhase] = useState<CallPhase>("idle");
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState<string>();
   const [captions, setCaptions] = useState<Caption[]>([]);
   const [truncated, setTruncated] = useState(false);
   const attempt = useRef<Attempt | undefined>(undefined);
+  const anchor = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState({ left: 0, top: 0 });
+  const [showCaptions, setShowCaptions] = useState(false);
+  const [pendingDelegations, setPendingDelegations] = useState<Set<string>>(new Set());
+  const recorded = useRef(false);
+  const getStreams = useCallback(
+    () => ({
+      mic: attempt.current?.stream,
+      agent: (attempt.current?.audio.srcObject as MediaStream | null) ?? undefined,
+    }),
+    []
+  );
+  const { seconds, levels } = useVoiceCallFeedback(phase, muted, getStreams);
+
+  useLayoutEffect(() => {
+    const element = anchor.current;
+    if (!element || !surfaceActive) return;
+    const measure = () => {
+      const box = element.getBoundingClientRect();
+      setPosition({ left: box.left + box.width / 2, top: box.top });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [surfaceActive]);
+
+  useEffect(() => {
+    if (phase === "connecting") {
+      recorded.current = false;
+      setPendingDelegations(new Set());
+    }
+    if (phase !== "ended" && phase !== "failed") return;
+    setPendingDelegations(new Set());
+    if (!recorded.current && captions.length && attempt.current?.callId) {
+      recorded.current = true;
+      onTranscript?.({ callId: attempt.current.callId, seconds, captions, truncated });
+    }
+  }, [captions, onTranscript, phase, seconds, truncated]);
+
+  useEffect(() => {
+    if (phase !== "ended" && phase !== "failed") return;
+    const timer = setTimeout(() => setPhase("idle"), phase === "failed" ? 6000 : 1600);
+    return () => clearTimeout(timer);
+  }, [phase]);
 
   const requestClose = useCallback(
     (mine: Attempt) => {
@@ -195,6 +253,15 @@ export function VoiceCallControl({
           cursor = result.cursor;
           if (result.truncated) setTruncated(true);
           for (const event of result.events) {
+            if ("type" in event) {
+              setPendingDelegations((previous) => {
+                const next = new Set(previous);
+                if (event.status === "pending") next.add(event.id);
+                else next.delete(event.id);
+                return next;
+              });
+              continue;
+            }
             if (event.kind === "started") {
               current.sidebandReady = true;
               ready();
@@ -240,95 +307,64 @@ export function VoiceCallControl({
     }
   }
 
-  const active = ["connecting", "live", "ending"].includes(phase);
+  function toggleMute() {
+    const next = !muted;
+    attempt.current?.stream?.getAudioTracks().forEach((track) => {
+      track.enabled = !next;
+    });
+    setMuted(next);
+  }
+
+  function hangUp() {
+    const mine = attempt.current;
+    setPhase("ending");
+    if (mine) {
+      release(mine);
+      void requestClose(mine).finally(() => {
+        if (attempt.current === mine) setPhase("ended");
+      });
+    } else setPhase("ended");
+  }
+
   return (
-    <section
-      className="border-b border-border-secondary px-4 py-2"
-      aria-label={m.voice_call_title()}
-      data-testid="voice-call"
-    >
-      <div className="flex items-center gap-3">
-        {!active && (
-          <Button size="xs" hierarchy="secondary-gray" onPress={() => void start()}>
-            {m.voice_call_start()}
-          </Button>
-        )}
-        <output>
-          {phase === "connecting"
-            ? m.voice_call_connecting()
-            : phase === "live"
-              ? m.voice_call_live()
-              : phase === "ending"
-                ? m.voice_call_ending()
-                : phase === "ended"
-                  ? m.voice_call_ended()
-                  : ""}
-        </output>
-        {phase === "live" && (
-          <Button
-            size="xs"
-            hierarchy="secondary-gray"
-            onPress={() => {
-              const next = !muted;
-              attempt.current?.stream?.getAudioTracks().forEach((track) => {
-                track.enabled = !next;
-              });
-              setMuted(next);
-            }}
+    <div ref={anchor} className="flex w-full items-center justify-end">
+      {phase === "idle" && surfaceActive && (
+        <VoiceCallButton
+          label={m.voice_call_start({ agent: "Comma" })}
+          icon={<CallIcon />}
+          entry
+          onPress={() => void start()}
+        />
+      )}
+      {phase !== "idle" &&
+        createPortal(
+          <div
+            className="fixed z-40 max-w-[calc(100vw-24px)]"
+            style={
+              surfaceActive
+                ? { ...position, transform: "translateX(-50%)" }
+                : { right: 24, bottom: 24 }
+            }
           >
-            {muted ? m.voice_call_unmute() : m.voice_call_mute()}
-          </Button>
+            <VoiceCallBar
+              phase={phase}
+              name="Comma"
+              muted={muted}
+              showCaptions={showCaptions}
+              working={pendingDelegations.size > 0}
+              compact={!surfaceActive}
+              seconds={seconds}
+              levels={levels}
+              caption={captions.at(-1)}
+              error={error}
+              onMute={toggleMute}
+              onCaptions={() => setShowCaptions(!showCaptions)}
+              onHangUp={hangUp}
+              onOpen={onOpen}
+            />
+          </div>,
+          document.body
         )}
-        {active && (
-          <Button
-            size="xs"
-            hierarchy="destructive"
-            disabled={phase === "ending"}
-            onPress={() => {
-              const mine = attempt.current;
-              setPhase("ending");
-              if (mine) {
-                release(mine);
-                void requestClose(mine).finally(() => {
-                  if (attempt.current === mine) setPhase("ended");
-                });
-              } else setPhase("ended");
-            }}
-          >
-            {m.voice_call_hang_up()}
-          </Button>
-        )}
-      </div>
-      {error && (
-        <p role="alert" className="mt-2 text-sm text-fg-error-primary">
-          {error}
-        </p>
-      )}
-      {active && captions.length > 0 && (
-        <p aria-live="polite" className="mt-2 text-sm">
-          {captions.at(-1)?.text}
-        </p>
-      )}
-      {captions.length > 0 && (
-        <details open={!active} className="mt-2 text-sm">
-          <summary>
-            {active ? m.voice_call_captions() : m.voice_call_transcript()}
-          </summary>
-          {truncated && <p>{m.voice_call_truncated()}</p>}
-          <ScrollArea className="max-h-48" edgeEffect="none">
-            <div aria-live="polite">
-              {captions.map((caption) => (
-                <p key={`${caption.role}:${caption.turn}`}>
-                  <strong>
-                    {caption.role === "caller" ? m.voice_call_you() : "Comma"}:{" "}
-                  </strong>
-                  {caption.text}
-                </p>
-              ))}
-            </div>
-          </ScrollArea>
-        </details>
-      )}
-    </section>
+    </div>
   );
 }

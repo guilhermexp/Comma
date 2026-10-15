@@ -480,6 +480,17 @@ defmodule SalixVoice.CallActorTest do
     assert opts[:trusted_source_text] == "Also book"
   end
 
+  for carrier <- [:twilio, :websocket] do
+    test "#{carrier} does not receive Electron delegation status" do
+      {call, info, model} = live_call(%{carrier: unquote(carrier), carrier_call_id: "CA_status"})
+      emit(model, call, {:delegation, "dlg_private", 500})
+      assert_receive {:ingress, _, _, %{"event_type" => "voice.delegation"}, _, _}, 1_000
+      assert {:ok, _} = provider(call, :say, info, %{"text" => "Done."})
+      assert_receive {:fake_model, ^model, {:append, :commentary, "dlg_private", "Done."}}
+      refute_receive {:voice_call, :delegation, _, _}, 30
+    end
+  end
+
   test "voice.say speaks through commentary in chunks and answers the oldest delegation" do
     {call, info, model} = live_call()
     emit(model, call, {:delegation, "dlg_1", 500})

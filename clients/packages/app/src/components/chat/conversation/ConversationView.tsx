@@ -175,7 +175,8 @@ export const ConversationView = memo(function ConversationView({
   groupId,
   inlineTaskLinkAdapter,
   leadingPanel,
-  topPanel,
+  headerControls,
+  messageListTails,
   state,
   surfaceActive = true,
   trailingPanel,
@@ -200,7 +201,8 @@ export const ConversationView = memo(function ConversationView({
   groupId?: string | undefined;
   inlineTaskLinkAdapter?: InlineTaskLinkAdapter | undefined;
   leadingPanel?: ReactNode;
-  topPanel?: ReactNode;
+  headerControls?: ReactNode;
+  messageListTails?: readonly import("../thread/ConversationThread").AnchoredTail[];
   onComposerContentHeightChange?: (height: number) => void;
   onComposerNoticeHeightChange?: (height: number) => void;
   onOpenConversationRef?: ((conversationRef: ChatConversationRef) => void) | undefined;
@@ -1047,6 +1049,10 @@ export const ConversationView = memo(function ConversationView({
     threadGroupId,
     threadWorkspaceId,
   ]);
+  const anchoredMessageTails = useMemo(
+    () => [...(labelProposalsTails ?? []), ...(messageListTails ?? [])],
+    [labelProposalsTails, messageListTails]
+  );
   const transcriptTail = useMemo(
     () => (
       <>
@@ -1157,7 +1163,7 @@ export const ConversationView = memo(function ConversationView({
                   defaultAssistantActorRole={isTask ? undefined : "router"}
                   groupId={threadGroupId}
                   afterMessages={transcriptTail}
-                  anchoredTails={labelProposalsTails}
+                  anchoredTails={anchoredMessageTails}
                   responseFeedback={isTask ? undefined : responseFeedback}
                   messages={state.messages}
                   onOpenConversationRef={onOpenConversationRef}
@@ -1303,7 +1309,6 @@ export const ConversationView = memo(function ConversationView({
         onContextMenuCapture={handleContextMenuCapture}
         ref={routeRef}
       >
-        {topPanel}
         {variant === "side-chat" || variant === "home" ? null : (
           <ContentHeader aria-busy={connecting} className="comma-chat-header">
             <div
@@ -1375,9 +1380,10 @@ export const ConversationView = memo(function ConversationView({
         {variant === "home" ? (
           <HomeLayout>
             {leadingPanel}
-            <div className="comma-home-chat">
-              {browserTrigger ? (
-                <div className="flex h-11 shrink-0 items-center justify-end px-xl">
+            <div className="comma-home-chat relative">
+              {headerControls || browserTrigger ? (
+                <div className="absolute inset-x-0 top-4 z-20 flex items-center justify-end gap-sm px-xl">
+                  {headerControls}
                   {browserTrigger}
                 </div>
               ) : null}

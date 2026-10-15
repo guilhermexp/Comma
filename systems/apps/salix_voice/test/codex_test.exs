@@ -379,6 +379,13 @@ defmodule SalixVoice.Model.CodexTest do
     assert input["content"] =~ "Create a reminder tomorrow at nine"
     assert input["trusted_origin"]["principal_ref"]["namespace"] == "comma_user"
     assert input["trusted_origin"]["principal_ref"]["subject_id"] == "owner"
+    scope = {tenant, group, "owner"}
+    assert {:ok, %{events: pending_events}} = Electron.events(answer.call_id, scope, 0)
+
+    assert Enum.filter(pending_events, &(Map.get(&1, :type) == "delegation")) == [
+             %{type: "delegation", id: "del_call", status: "pending"}
+           ]
+
     text = String.duplicate("é😀", 180)
 
     assert {:ok, _} =
@@ -413,13 +420,23 @@ defmodule SalixVoice.Model.CodexTest do
              Electron.events(answer.call_id, {tenant, group, "other"}, 0)
 
     assert {:ok, %{events: events}} = Electron.events(answer.call_id, scope, 0)
-    assert Enum.any?(events, &(&1.kind == "caption" and &1.text == "Create a reminder"))
+
+    assert Enum.any?(
+             events,
+             &(Map.get(&1, :kind) == "caption" and &1.text == "Create a reminder")
+           )
+
+    assert Enum.filter(events, &(Map.get(&1, :type) == "delegation")) == [
+             %{type: "delegation", id: "del_call", status: "pending"},
+             %{type: "delegation", id: "del_call", status: "answered"}
+           ]
+
     assert {:ok, _} = Electron.hang_up(answer.call_id, scope)
     assert_receive {:sent, %{"type" => "session.close"}}, 2_000
     send(server, {:push, %{"type" => "session.closed"}})
     assert_receive {:metered, %{carrier: "electron", sku: "gpt-live-1-codex"}}, 2_000
     assert {:ok, %{events: events}} = Electron.events(answer.call_id, scope, 0)
-    assert Enum.any?(events, &(&1.kind == "closed"))
+    assert Enum.any?(events, &(Map.get(&1, :kind) == "closed"))
     Application.put_env(:salix_voice, :codex_test_selection, {:error, :codex_account_required})
     assert {:error, :codex_account_required} = Electron.start(attrs)
     assert {:error, :not_configured} = SalixVoice.admit(%{attrs | carrier: :websocket})

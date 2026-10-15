@@ -11,7 +11,9 @@
         "input sender",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "来自 {sender} 的 {formattedCount} 个文件",
         "countPlural=other": "来自 {sender} 的 {formattedCount} 个文件"
@@ -27,7 +29,9 @@
         "input sender",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "正在接收 {sender} 的 {formattedCount} 个文件",
         "countPlural=other": "正在接收 {sender} 的 {formattedCount} 个文件"
@@ -44,7 +48,9 @@
         "input chat",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "已将 {formattedCount} 个文件加入「{chat}」",
         "countPlural=other": "已将 {formattedCount} 个文件加入「{chat}」"
@@ -58,7 +64,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} 个文件未能加入",
         "countPlural=other": "{formattedCount} 个文件未能加入"
@@ -632,7 +640,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "已删除 {formattedCount} 条通知",
         "countPlural=other": "已删除 {formattedCount} 条通知"
@@ -649,7 +659,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} 条通知",
         "countPlural=other": "{formattedCount} 条通知"
@@ -707,7 +719,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} 个任务",
         "countPlural=other": "{formattedCount} 个任务"
@@ -812,7 +826,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} 个任务",
         "countPlural=other": "{formattedCount} 个任务"
@@ -902,7 +918,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} 个任务",
         "countPlural=other": "{formattedCount} 个任务"
@@ -1105,7 +1123,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{formattedCount} 条新消息",
         "countPlural=other": "{formattedCount} 条新消息"
@@ -2317,7 +2337,9 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "已公开 {formattedCount} 个文件。",
         "countPlural=other": "已公开 {formattedCount} 个文件。"
@@ -2470,8 +2492,13 @@
   "settings_providers_reauth_hint": "用同一个账号重新登录，Agent 会继续使用这个 Profile。",
   "settings_providers_reset_menu": [
     {
-      "declarations": ["input count", "local countPlural = count: plural"],
-      "selectors": ["countPlural"],
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "重置额度（剩余 {count} 次）",
         "countPlural=other": "重置额度（剩余 {count} 次）"
@@ -2934,8 +2961,13 @@
   "drive_catalog_listing_stalled": "Drive 文件列表未能继续加载。请重试。",
   "local_files_too_many": [
     {
-      "declarations": ["input count", "local countPlural = count: plural"],
-      "selectors": ["countPlural"],
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "最多还能选择 {count} 个本地文件。",
         "countPlural=other": "最多还能选择 {count} 个本地文件。"
@@ -2944,8 +2976,13 @@
   ],
   "local_files_too_many_chat": [
     {
-      "declarations": ["input count", "local countPlural = count: plural"],
-      "selectors": ["countPlural"],
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "最多还能选择 {count} 个文件。",
         "countPlural=other": "最多还能选择 {count} 个文件。"
@@ -3197,8 +3234,8 @@
   "online_drive_open_external": "在浏览器中打开",
   "online_drive_forward": "前进",
   "voice_call_title": "呼叫 Comma",
-  "voice_call_start": "呼叫",
-  "voice_call_connecting": "连接中…",
+  "voice_call_start": "呼叫 {agent}",
+  "voice_call_connecting": "正在呼叫…",
   "voice_call_live": "通话中",
   "voice_call_ending": "正在挂断…",
   "voice_call_ended": "通话已结束",
@@ -3216,5 +3253,11 @@
   "voice_call_sign_in": "请重新连接你的 ChatGPT 配置，然后再次呼叫。",
   "voice_call_failed": "无法连接通话。请检查网络和 ChatGPT 配置。",
   "voice_call_playback": "音频播放失败。请检查输出设备并重试。",
-  "voice_call_truncated": "仅显示最近的字幕。"
+  "voice_call_truncated": "仅显示最近的字幕。",
+  "voice_call_working": "正在处理…",
+  "voice_call_failure_status": "通话失败",
+  "voice_call_show_captions": "显示字幕",
+  "voice_call_hide_captions": "隐藏字幕",
+  "voice_call_return": "返回 {agent}",
+  "voice_call_record": "通话 · {duration}"
 }

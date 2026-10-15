@@ -664,6 +664,7 @@ export {
   WechatBrandIcon,
   DiscordBrandIcon,
   ChatBubbleIcon,
+  CallIcon,
 } from "./icons";
 export type { IconProps } from "./icons";
 export { brandMarks, isBrandKey, type BrandKey } from "./icons/brandMarks";

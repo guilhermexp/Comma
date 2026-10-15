@@ -685,6 +685,7 @@ defmodule SalixVoice.CallActor do
       }
 
       Process.send_after(self(), {:flush_delegation, id}, state.timers.delegation_settle_ms)
+      electron_delegation(state, id, "pending")
       %{state | delegations: Map.put(state.delegations, id, delegation)}
     end
   end
@@ -1041,10 +1042,19 @@ defmodule SalixVoice.CallActor do
 
   defp answer_delegation(state, id) do
     case state.delegations do
-      %{^id => %{status: :pending}} -> finish_delegation(state, id, "answered")
-      _ -> state
+      %{^id => %{status: :pending}} ->
+        electron_delegation(state, id, "answered")
+        finish_delegation(state, id, "answered")
+
+      _ ->
+        state
     end
   end
+
+  defp electron_delegation(%{carrier: :electron} = state, id, status),
+    do: to_socket(state, {:voice_call, :delegation, id, status})
+
+  defp electron_delegation(_state, _id, _status), do: :ok
 
   defp finish_delegation(state, id, outcome) do
     delegation = Map.fetch!(state.delegations, id)
