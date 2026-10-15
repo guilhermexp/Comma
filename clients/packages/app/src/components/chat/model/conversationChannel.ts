@@ -107,6 +107,8 @@ export type DraftAttachment = {
 export type ChatActivity = {
   action?: string | undefined;
   conversationId?: string | undefined;
+  /** Producer-admitted technical detail: a file, program or host name. */
+  detail?: string | undefined;
   displayHoldMs?: number | undefined;
   displayPriority?: string | undefined;
   displayStrength?: string | undefined;
@@ -121,8 +123,25 @@ export type ChatActivity = {
   streamIncarnation?: number | undefined;
   summary?: string | undefined;
   summaryClass?: ActivitySummaryClass | undefined;
+  /** Producer start evidence (epoch seconds) of the action in `toolCallId`. */
+  startedAt?: number | undefined;
+  toolCallId?: string | undefined;
   toolName?: string | undefined;
   updatedAt?: number | undefined;
+};
+
+/** A Task Participant's own current action, from its source-bound Activity. */
+export type ChatParticipantActivity = {
+  detail?: string | undefined;
+  goal?: string | undefined;
+  phase: "execution" | "messaging" | "thinking";
+  responseKey: string;
+  startedAt?: number | undefined;
+  status: "failed" | "running";
+  summary?: string | undefined;
+  summaryClass: "generic" | "public";
+  toolCallId?: string | undefined;
+  toolName?: string | undefined;
 };
 
 export type ActivitySummaryClass = "none" | "generic" | "public";
@@ -154,6 +173,7 @@ export type ChatBoundWorker = {
 };
 
 export type ChatParticipantStatus = {
+  activity?: ChatParticipantActivity | undefined;
   workingProvider?: "wechat" | "telegram" | "signal" | undefined;
   loopWake?: boolean | undefined;
   actorId?: string | undefined;
@@ -1269,6 +1289,7 @@ export class ConversationChannel {
             status: p.status,
             updatedAt: p.updated_at,
             ...(p.issue ? { issue: p.issue } : {}),
+            ...participantActivityProjection(p.state, p.activity),
           })),
         });
       },
@@ -1603,6 +1624,7 @@ export class ConversationChannel {
       displayHoldMs: numberValue(raw.display_hold_ms),
       displayPriority: stringValue(raw.display_priority),
       displayStrength: stringValue(raw.display_strength),
+      detail: payload.detail,
       goal: payload.goal,
       ownerTurnKey,
       phase: payload.phase,
@@ -1614,6 +1636,7 @@ export class ConversationChannel {
       streamIncarnation,
       summary: payload.summary,
       summaryClass,
+      ...executionIdentityValue(raw, payload.phase),
       toolName: payload.toolName,
       updatedAt: numberValue(raw.updated_at),
     };
@@ -3057,6 +3080,7 @@ function activityPayloadValue(
 ):
   | {
       action: string | undefined;
+      detail: string | undefined;
       goal: string | undefined;
       phase: "execution" | "idle" | "messaging" | "thinking";
       status: "failed" | "idle" | "running";
@@ -3070,6 +3094,7 @@ function activityPayloadValue(
   if (summaryClass === "generic" && phase === "thinking" && status === "failed") {
     return {
       action: undefined,
+      detail: undefined,
       goal: undefined,
       phase,
       status,
@@ -3086,6 +3111,7 @@ function activityPayloadValue(
     const copy = phase === "thinking" ? "Thinking" : "Typing";
     return {
       action: copy,
+      detail: undefined,
       goal: undefined,
       phase,
       status,
@@ -3102,17 +3128,20 @@ function activityPayloadValue(
     const summary = publicActivityProseValue(raw.summary);
     const action = optionalPublicActivityProseValue(raw.action);
     const goal = optionalPublicActivityProseValue(raw.goal);
+    const detail = optionalPublicActivityProseValue(raw.detail);
     const toolName = optionalPublicActivityProseValue(raw.tool_name);
     if (
       summary === undefined ||
       action === null ||
       goal === null ||
+      detail === null ||
       toolName === null
     ) {
       return undefined;
     }
     return {
       action,
+      detail,
       goal,
       phase,
       status,
@@ -3124,6 +3153,7 @@ function activityPayloadValue(
   if (summaryClass === "none" && phase === "idle" && status === "idle") {
     return {
       action: undefined,
+      detail: undefined,
       goal: undefined,
       phase,
       status,
@@ -3133,6 +3163,58 @@ function activityPayloadValue(
   }
 
   return undefined;
+}
+
+// Only an execution frame names a tool call and its start. A malformed value
+// is absent: the indicator then shows no time rather than a wrong one.
+function executionIdentityValue(
+  raw: Record<string, unknown>,
+  phase: string
+): { startedAt?: number; toolCallId?: string } {
+  if (phase !== "execution") return {};
+  const toolCallId = stringValue(raw.tool_call_id);
+  const startedAt = raw.started_at;
+  return {
+    ...(toolCallId !== undefined && toolCallId.length <= 128 ? { toolCallId } : {}),
+    ...(typeof startedAt === "number" && Number.isFinite(startedAt) && startedAt > 0
+      ? { startedAt }
+      : {}),
+  };
+}
+
+// A Task Participant's Activity passes the same summary authority as the
+// Conversation stream; only an active Participant's live action is kept.
+function participantActivityProjection(
+  state: ChatParticipantStatus["state"],
+  raw: Record<string, unknown> | undefined
+): { activity?: ChatParticipantActivity } {
+  if (state !== "active" || raw === undefined) return {};
+  const summaryClass = activitySummaryClassValue(raw.summary_class);
+  const responseKey = stringValue(raw.response_key);
+  const payload =
+    summaryClass === undefined ? undefined : activityPayloadValue(raw, summaryClass);
+  if (
+    responseKey === undefined ||
+    payload === undefined ||
+    (summaryClass !== "generic" && summaryClass !== "public") ||
+    payload.status === "idle" ||
+    payload.phase === "idle"
+  ) {
+    return {};
+  }
+  return {
+    activity: {
+      detail: payload.detail,
+      goal: payload.goal,
+      phase: payload.phase,
+      responseKey,
+      status: payload.status,
+      summary: payload.summary,
+      summaryClass,
+      toolName: payload.toolName,
+      ...executionIdentityValue(raw, payload.phase),
+    },
+  };
 }
 
 function publicActivityProseValue(value: unknown): string | undefined {

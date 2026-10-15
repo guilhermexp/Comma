@@ -56,3 +56,22 @@ export const RouterError: Story = {
     },
   },
 };
+
+// Fixture frame: a running command with its producer start, as the indicator
+// shows a real tool call. The time counts from the story's load.
+export const RouterRunningCommand: Story = {
+  args: {
+    activity: {
+      conversationId: "preview",
+      detail: "git",
+      phase: "execution",
+      responseKey: "preview-response",
+      startedAt: Date.now() / 1000,
+      status: "running",
+      summary: "Running a command",
+      summaryClass: "public",
+      toolCallId: "preview-call",
+      toolName: "env.exec",
+    },
+  },
+};

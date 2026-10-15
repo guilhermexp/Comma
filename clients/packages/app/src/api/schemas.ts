@@ -648,6 +648,9 @@ export const commaTaskParticipantStatusesSchema = z
           status: z.string(),
           updated_at: z.number(),
           issue: z.string().optional(),
+          // The Participant's source-bound Activity. Summary authority is
+          // checked where it is projected; a malformed one is just absent.
+          activity: z.record(z.string(), z.unknown()).optional().catch(undefined),
         })
       )
       .max(2),
@@ -675,6 +678,7 @@ export const commaConversationEventSchema = z
     action: z.string().optional(),
     client_request_id: z.string().optional(),
     delta: z.string().optional(),
+    detail: z.string().optional(),
     draft_id: z.string().optional(),
     conversation_id: z.string().optional(),
     goal: z.string().optional(),
@@ -814,6 +818,7 @@ export const commaConversationEventSchema = z
           event.action !== undefined ||
           event.summary !== undefined ||
           event.goal !== undefined ||
+          event.detail !== undefined ||
           event.tool_name !== undefined
         ) {
           rejectContradictoryAuthority();
@@ -828,6 +833,7 @@ export const commaConversationEventSchema = z
         event.action !== copy ||
         event.summary !== copy ||
         event.goal !== undefined ||
+        event.detail !== undefined ||
         event.tool_name !== undefined
       ) {
         rejectContradictoryAuthority();
@@ -845,6 +851,7 @@ export const commaConversationEventSchema = z
         !boundedPublicProse(event.summary, true) ||
         !boundedPublicProse(event.action, false) ||
         !boundedPublicProse(event.goal, false) ||
+        !boundedPublicProse(event.detail, false) ||
         !boundedPublicProse(event.tool_name, false)
       ) {
         rejectContradictoryAuthority();
@@ -858,6 +865,7 @@ export const commaConversationEventSchema = z
       event.action !== undefined ||
       event.summary !== undefined ||
       event.goal !== undefined ||
+      event.detail !== undefined ||
       event.tool_name !== undefined
     ) {
       rejectContradictoryAuthority();

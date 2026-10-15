@@ -154,7 +154,7 @@ defmodule SalixIM.ConversationParticipantActivity do
   defp presentation_activity(%{} = activity) do
     Map.take(
       activity,
-      ~w(phase status action summary summary_class goal tool_name display_strength display_priority display_hold_ms producer_epoch response_key sequence source_message_ids started_at completed_at updated_at)
+      ~w(phase status action summary summary_class goal detail tool_name tool_call_id display_strength display_priority display_hold_ms producer_epoch response_key sequence source_message_ids started_at completed_at updated_at)
     )
   end
 

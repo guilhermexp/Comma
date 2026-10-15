@@ -36,6 +36,7 @@ export const chatSyncWarningSchema = z.enum(["stale", "suspect-empty"]);
 export const chatActivitySchema = z.object({
   action: z.string().optional(),
   conversationId: z.string().optional(),
+  detail: z.string().optional(),
   displayHoldMs: z.number().optional(),
   displayPriority: z.string().optional(),
   displayStrength: z.string().optional(),
@@ -50,8 +51,24 @@ export const chatActivitySchema = z.object({
   streamIncarnation: z.number().int().positive(),
   summary: z.string().optional(),
   summaryClass: z.enum(["none", "generic", "public"]),
+  startedAt: z.number().positive().optional(),
+  toolCallId: z.string().min(1).max(128).optional(),
   toolName: z.string().optional(),
   updatedAt: z.number().optional(),
+});
+
+/** A Task Participant's own current action, from its source-bound Activity. */
+export const chatParticipantActivitySchema = z.object({
+  detail: z.string().optional(),
+  goal: z.string().optional(),
+  phase: z.enum(["thinking", "execution", "messaging"]),
+  responseKey: z.string().min(1).max(128),
+  startedAt: z.number().positive().optional(),
+  status: z.enum(["running", "failed"]),
+  summary: z.string().optional(),
+  summaryClass: z.enum(["generic", "public"]),
+  toolCallId: z.string().min(1).max(128).optional(),
+  toolName: z.string().optional(),
 });
 
 export const chatAssistantDraftSchema = z.object({
@@ -71,6 +88,7 @@ export const chatBoundWorkerSchema = z.object({
 });
 
 export const chatParticipantStatusSchema = z.object({
+  activity: chatParticipantActivitySchema.optional(),
   workingProvider: z.enum(["wechat", "telegram", "signal"]).optional(),
   loopWake: z.boolean().optional(),
   actorId: z.string().optional(),
@@ -898,6 +916,7 @@ export const sideChatHostFrameSchema = z.discriminatedUnion("kind", [
 
 export type StatusMenuRow = z.infer<typeof statusMenuRowSchema>;
 export type ChatActivity = z.infer<typeof chatActivitySchema>;
+export type ChatParticipantActivity = z.infer<typeof chatParticipantActivitySchema>;
 export type ChatAssistantDraft = z.infer<typeof chatAssistantDraftSchema>;
 export type ChatInlineTask = z.infer<typeof chatInlineTaskSchema>;
 export type ChatMessagePart = z.infer<typeof chatMessagePartSchema>;

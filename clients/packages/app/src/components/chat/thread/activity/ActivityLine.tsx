@@ -1,6 +1,13 @@
-import { useCommaMessages } from "@comma/i18n/react";
+import { formatNumber } from "@comma/i18n";
+import { useCommaLocale, useCommaMessages } from "@comma/i18n/react";
 import { AiActivity, CommaLogoAnimation } from "@comma/ui";
-import { useLayoutEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+} from "react";
 import type {
   ChatActivity,
   ChatParticipantStatus,
@@ -8,6 +15,7 @@ import type {
 import { useRouterDisplayName } from "../../../router-identity/RouterIdentityProvider";
 import { routerDisplayName } from "../../../router-identity/routerDisplayName";
 import { withRouterNameSpacing } from "../../../router-identity/routerNameSpacing";
+import { elapsedSeconds, liveExecutionAction, type LiveAction } from "./liveAction";
 import { participantStatusLabel } from "./participantStatusLabel";
 import { toolActivityLabel } from "./toolActivityLabel";
 import { workerMeshGradientStyle } from "./workerAvatar";
@@ -24,6 +32,10 @@ type SlotPresentation = {
   actorRole?: "router" | "worker" | undefined;
   state: ChatParticipantStatus["state"] | "waiting";
   workingProvider?: ChatParticipantStatus["workingProvider"];
+  /** The running tool call this label names. */
+  action?: LiveAction | undefined;
+  /** The label comes from the Participant's own Activity, not its state. */
+  current?: true | undefined;
 };
 
 export function ParticipantStatusSlot({
@@ -56,10 +68,26 @@ export function ParticipantStatusSlot({
   const participant = participantPresentation(participantStatus, messages);
   const taskPresentations = participantStatuses?.flatMap((taskParticipant) => {
     const presentation = participantPresentation(taskParticipant, messages);
+    const action =
+      presentation?.state === "active"
+        ? liveExecutionAction(messages, taskParticipant.activity, presentation.key)
+        : undefined;
+    const phaseLabel =
+      presentation?.state === "active" && taskParticipant.activity?.status === "running"
+        ? taskParticipant.activity.phase === "thinking"
+          ? messages.chat_activity_thinking()
+          : taskParticipant.activity.phase === "messaging"
+            ? messages.chat_activity_typing()
+            : undefined
+        : undefined;
+    const currentLabel = action?.label ?? phaseLabel;
     return presentation
       ? [
           {
             ...presentation,
+            ...(currentLabel
+              ? { action, current: true as const, label: currentLabel }
+              : {}),
             // Participants snapshot the Agent name when they join; the
             // Router's current name comes from its identity.
             name:
@@ -82,18 +110,13 @@ export function ParticipantStatusSlot({
     participantStatus?.state !== "stopped" &&
     participantStatus?.loopWake !== true;
   // Tool work is worded here, in the reader's language, from the tool's
-  // identity; the model's own label for its command comes first. The
+  // identity; the model's own label for its command is its detail. The
   // producer's English summary only serves clients that cannot localize.
-  const liveExecutionSummary =
-    liveActivity && activity.phase === "execution" && activity.summaryClass === "public"
-      ? activity.goal?.trim() ||
-        toolActivityLabel(messages, activity.toolName, "running") ||
-        messages.chat_activity_working()
-      : undefined;
-  const liveToolSummary =
-    toolPresentation === "bubble" && !participantStatuses
-      ? liveExecutionSummary
-      : undefined;
+  const liveAction = liveActivity
+    ? liveExecutionAction(messages, activity, activity.conversationId ?? "")
+    : undefined;
+  const liveToolAction =
+    toolPresentation === "bubble" && !participantStatuses ? liveAction : undefined;
   // A source-bound Activity can end with the first send. The Participant
   // remains the authority for work that continues after that reply.
   const ongoingWork =
@@ -104,22 +127,24 @@ export function ParticipantStatusSlot({
   const fallbackSummary = hasResponse
     ? messages.chat_activity_working()
     : messages.chat_activity_thinking();
-  const activeSummary = liveToolSummary
-    ? liveToolSummary
-    : streaming || (!hasResponse && liveActivity && activity.phase === "messaging")
+  const typing =
+    streaming || (!hasResponse && liveActivity && activity.phase === "messaging");
+  // Typing hands the line to the reply; a tool bubble keeps its own action.
+  const activeAction = liveToolAction ?? (typing ? undefined : liveAction);
+  const activeSummary = activeAction
+    ? activeAction.label
+    : typing
       ? messages.chat_activity_typing()
-      : liveExecutionSummary
-        ? liveExecutionSummary
-        : liveActivity &&
-            activity.summaryClass === "public" &&
-            activity.phase === "thinking"
-          ? activity.summary?.trim() || fallbackSummary
-          : fallbackSummary;
+      : liveActivity &&
+          activity.summaryClass === "public" &&
+          activity.phase === "thinking"
+        ? activity.summary?.trim() || fallbackSummary
+        : fallbackSummary;
   const executionFailed =
     toolActivityLabel(messages, activity?.toolName, "failed") ??
     messages.chat_tool_failed();
   const presentation: SlotPresentation | undefined =
-    optimisticThinking && !hasResponse && !liveToolSummary
+    optimisticThinking && !hasResponse && !liveToolAction
       ? {
           actorRole: "router",
           key: "optimistic-thinking",
@@ -129,7 +154,7 @@ export function ParticipantStatusSlot({
       : ((participant?.state === "error" ? participant : undefined) ??
         failedTurnPresentation(activity, generationFailed, executionFailed) ??
         (ongoingWork ||
-        ((!hasResponse || liveToolSummary) &&
+        ((!hasResponse || liveToolAction) &&
           (streaming ||
             liveActivity ||
             (participant?.state === "active" && participantStatus?.loopWake !== true)))
@@ -139,6 +164,7 @@ export function ParticipantStatusSlot({
               label: activeSummary,
               state: "active",
               workingProvider: participantStatus?.workingProvider,
+              ...(activeAction ? { action: activeAction } : {}),
             }
           : replyTimedOut
             ? {
@@ -171,6 +197,9 @@ export function ParticipantStatusSlot({
   const router = named.find((item) => item.actorRole === "router");
   const workingProvider =
     !taskPresentations && errors.length === 0 ? active[0]?.workingProvider : undefined;
+  // Several Task Participants share one line: the first in the slot's order
+  // with actual Activity speaks, and every Participant stays in the title.
+  const currentTask = named.find((item) => item.current);
   const summary = workingProvider
     ? {
         wechat: messages.chat_activity_working_wechat,
@@ -178,32 +207,60 @@ export function ParticipantStatusSlot({
         signal: messages.chat_activity_working_signal,
       }[workingProvider]()
     : taskPresentations
-      ? named.length > 0
-        ? // Agent names are formatted into the copy; a CJK name sits flush.
-          withRouterNameSpacing(
-            named.length === 1
-              ? messages.chat_active_single({ name: named[0]!.name! })
-              : named.length === 2
-                ? messages.chat_active_pair({
-                    first: named[0]!.name!,
-                    second: named[1]!.name!,
-                  })
-                : router
-                  ? messages.chat_active_router_workers({
-                      router: routerName,
-                      count: named.length - 1,
+      ? currentTask
+        ? withRouterNameSpacing(`${currentTask.name} · ${currentTask.label}`)
+        : named.length > 0
+          ? // Agent names are formatted into the copy; a CJK name sits flush.
+            withRouterNameSpacing(
+              named.length === 1
+                ? messages.chat_active_single({ name: named[0]!.name! })
+                : named.length === 2
+                  ? messages.chat_active_pair({
+                      first: named[0]!.name!,
+                      second: named[1]!.name!,
                     })
-                  : messages.chat_active_workers({ count: named.length })
-          )
-        : errors.map((item) => `${item.name} · ${item.label}`).join("; ")
+                  : router
+                    ? messages.chat_active_router_workers({
+                        router: routerName,
+                        count: named.length - 1,
+                      })
+                    : messages.chat_active_workers({ count: named.length })
+            )
+          : errors.map((item) => `${item.name} · ${item.label}`).join("; ")
       : (presentations[0]?.label ?? "");
   const visible = presentations.length > 0;
+  const shownAction =
+    workingProvider || errors.length > 0
+      ? undefined
+      : taskPresentations
+        ? currentTask?.action
+        : presentations[0]?.action;
+  // One element per action content, so shimmer and the text swap follow the
+  // action rather than every re-render.
+  const actionShown = shownAction !== undefined;
+  const actionDetail = shownAction?.detail;
+  const actionStartedAtMs = shownAction?.startedAtMs;
+  const summaryContent = useMemo(
+    () =>
+      actionShown ? (
+        <LiveActionText
+          label={summary}
+          detail={actionDetail}
+          startedAtMs={actionStartedAtMs}
+        />
+      ) : (
+        summary
+      ),
+    [summary, actionShown, actionDetail, actionStartedAtMs]
+  );
   const toolBubble = Boolean(
-    !workingProvider && liveToolSummary && presentation?.state === "active"
+    !workingProvider && liveToolAction && presentation?.state === "active"
   );
   const thinkingBubble = !toolBubble && errors.length === 0;
   const detail = presentations
-    .map((item) => (item.name ? `${item.name} · ${item.label}` : item.label))
+    .map((item) =>
+      [item.name, item.label, item.action?.detail].filter(Boolean).join(" · ")
+    )
     .join("\n");
 
   return (
@@ -304,16 +361,80 @@ export function ParticipantStatusSlot({
           <AiActivity
             // Keep one mounted activity through timestamp, text and participant
             // changes. Its existing text swap animates only a changed summary.
-            activityKey={summary}
+            activityKey={shownAction ? `${summary}\n${shownAction.identity}` : summary}
             className="comma-chat-activity-line"
             events={[]}
             shimmer={active.length > 0 && errors.length === 0}
             status={errors.length ? "failed" : active.length ? "running" : "complete"}
-            summary={summary}
+            summary={summaryContent}
           />
         </div>
       </div>
     </div>
+  );
+}
+
+// A flex item drops its leading space; a no-break space keeps the gap.
+const SEPARATOR = "\u00a0· ";
+
+// The action's own words come first and never shrink; a long detail is cut
+// before the elapsed time, which stays readable on a narrow line.
+function LiveActionText({
+  detail,
+  label,
+  startedAtMs,
+}: {
+  detail?: string | undefined;
+  label: string;
+  startedAtMs?: number | undefined;
+}) {
+  return (
+    <span className="comma-chat-activity-action" data-testid="live-action">
+      <span className="comma-chat-activity-action-label">{label}</span>
+      {detail ? (
+        <span
+          className="comma-chat-activity-action-detail"
+          data-testid="live-action-detail"
+        >
+          {`${SEPARATOR}${detail}`}
+        </span>
+      ) : null}
+      {startedAtMs !== undefined ? <ElapsedTime startedAtMs={startedAtMs} /> : null}
+    </span>
+  );
+}
+
+// Mounted only while its action runs, so time advances only then. The start
+// is the producer's evidence for this action; a re-render keeps it. Each tick
+// lands on the action's next whole second, so the count never lags a second.
+function ElapsedTime({ startedAtMs }: { startedAtMs: number }) {
+  const locale = useCommaLocale();
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      const now = Date.now();
+      setNowMs(now);
+      const intoSecond = (((now - startedAtMs) % 1000) + 1000) % 1000;
+      timer = setTimeout(tick, 1000 - intoSecond);
+    };
+    tick();
+    return () => clearTimeout(timer);
+  }, [startedAtMs]);
+  const seconds = elapsedSeconds(startedAtMs, nowMs);
+  const unit = (value: number, name: "minute" | "second") =>
+    formatNumber(value, locale, { style: "unit", unit: name, unitDisplay: "narrow" });
+  return (
+    <span
+      className="comma-chat-activity-action-elapsed"
+      data-testid="live-action-elapsed"
+    >
+      {`${SEPARATOR}${
+        seconds < 60
+          ? unit(seconds, "second")
+          : `${unit(Math.floor(seconds / 60), "minute")} ${unit(seconds % 60, "second")}`
+      }`}
+    </span>
   );
 }
 

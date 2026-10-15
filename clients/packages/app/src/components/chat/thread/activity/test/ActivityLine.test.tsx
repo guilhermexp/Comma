@@ -873,6 +873,166 @@ describe("ParticipantStatusSlot", () => {
   });
 });
 
+describe("Current action", () => {
+  const T0 = 1_790_000_000_000;
+  const turn = { conversationId: "cnv_1", responseKey: "rsp_1" };
+  const running = {
+    ...turn,
+    phase: "execution",
+    status: "running",
+    summaryClass: "public" as const,
+    summary: "Working",
+  };
+  const command: ChatActivity = {
+    ...running,
+    detail: "git",
+    startedAt: T0 / 1000,
+    toolCallId: "call_a",
+    toolName: "env.exec",
+    sequence: 2,
+  };
+  const read: ChatActivity = {
+    ...running,
+    detail: "notes.md",
+    startedAt: (T0 + 7_000) / 1000,
+    toolCallId: "call_b",
+    toolName: "fs.read_file",
+    sequence: 3,
+  };
+  const slot = (activity: ChatActivity | undefined, extra: object = {}) => (
+    <CommaI18nProvider locale="en">
+      <ParticipantStatusSlot
+        activity={activity}
+        participantStatus={router}
+        {...extra}
+      />
+    </CommaI18nProvider>
+  );
+  const line = (container: HTMLElement) =>
+    (currentSummary(container)?.textContent ?? "").replaceAll("\u00a0", " ");
+  // The outgoing text layer of a swap stays mounted while it animates out.
+  const shown = (container: HTMLElement, testId: string) =>
+    currentSummary(container)?.querySelector(`[data-testid="${testId}"]`) ?? null;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("follows thinking, tool A, tool B and the reply in one indicator", () => {
+    const view = render(
+      slot({ ...turn, phase: "thinking", status: "running", summaryClass: "generic" })
+    );
+    const indicator = view.getByTestId("participant-status-slot");
+    expect(line(view.container)).toBe("Thinking");
+
+    vi.setSystemTime(T0 + 1_000);
+    view.rerender(slot(command));
+    settle();
+    expect(line(view.container)).toBe("Running a command · git · 2s");
+    act(() => vi.advanceTimersByTime(3_000));
+    expect(line(view.container)).toBe("Running a command · git · 5s");
+
+    // A replay of the same call (new frame, same start) keeps its time.
+    view.rerender(slot({ ...command, sequence: 4, updatedAt: (T0 + 5_000) / 1000 }));
+    expect(line(view.container)).toBe("Running a command · git · 5s");
+
+    // A new call starts its own time from its own start evidence.
+    act(() => vi.advanceTimersByTime(3_000));
+    view.rerender(slot(read));
+    settle();
+    expect(line(view.container)).toBe("Reading files · notes.md · 2s");
+
+    view.rerender(
+      slot({ ...turn, phase: "messaging", status: "running", summaryClass: "generic" })
+    );
+    settle();
+    expect(line(view.container)).toBe("Typing");
+    expect(shown(view.container, "live-action-elapsed")).not.toBeInTheDocument();
+    expect(view.getByTestId("participant-status-slot")).toBe(indicator);
+  });
+
+  it("puts the model's goal first and never invents a start or a detail", () => {
+    const view = render(
+      slot({ ...command, goal: "Checking logs", startedAt: undefined })
+    );
+    expect(line(view.container)).toBe("Running a command · Checking logs");
+    expect(shown(view.container, "live-action-elapsed")).not.toBeInTheDocument();
+
+    // A start without the call's identity cannot be attributed to one action.
+    view.rerender(slot({ ...read, detail: undefined, toolCallId: undefined }));
+    expect(line(view.container)).toBe("Reading files");
+  });
+
+  it("retires the running claim when the owner stops or the tool fails", () => {
+    const view = render(slot(command));
+    expect(shown(view.container, "live-action")).toBeInTheDocument();
+
+    view.rerender(
+      <CommaI18nProvider locale="en">
+        <ParticipantStatusSlot
+          activity={command}
+          participantStatus={{ ...router, state: "stopped" }}
+        />
+      </CommaI18nProvider>
+    );
+    expect(shown(view.container, "live-action")).not.toBeInTheDocument();
+
+    view.rerender(slot({ ...command, status: "failed", sequence: 5 }));
+    settle();
+    expect(line(view.container)).toBe("The command failed");
+    expect(shown(view.container, "live-action-elapsed")).not.toBeInTheDocument();
+  });
+
+  it("keeps each Task Participant's own action instead of generic thinking", () => {
+    const workerActivity = {
+      detail: "notes.md",
+      phase: "execution" as const,
+      responseKey: "rsp_w",
+      startedAt: (T0 - 3_000) / 1000,
+      status: "running" as const,
+      summaryClass: "public" as const,
+      summary: "Reading a file",
+      toolCallId: "call_w",
+      toolName: "fs.read_file",
+    };
+    const view = render(statusView([{ ...worker, activity: workerActivity }]));
+    vi.setSystemTime(T0 - 1_000);
+    settle();
+    expect(line(view.container)).toBe("Worker · Reading files · notes.md · 3s");
+
+    // The Router's thinking is its own; the first with actual Activity speaks.
+    view.rerender(
+      statusView([
+        {
+          ...router,
+          activity: { ...workerActivity, phase: "thinking", summaryClass: "generic" },
+        },
+        { ...worker, activity: workerActivity },
+      ])
+    );
+    settle();
+    expect(line(view.container)).toMatch(/· Thinking$/);
+    expect(view.getByTestId("participant-status-slot").title).toContain(
+      "Worker · Reading files · notes.md"
+    );
+
+    // An idle Participant has no action left to claim.
+    view.rerender(statusView([{ ...worker, activity: undefined }]));
+    settle();
+    expect(shown(view.container, "live-action")).not.toBeInTheDocument();
+    expect(line(view.container)).toBe("Worker is thinking");
+  });
+});
+
+// Lets a text swap finish; the fake clock moves with it.
+function settle() {
+  act(() => vi.advanceTimersByTime(1_000));
+}
+
 function currentSummary(container: HTMLElement) {
   return container.querySelector(
     '.comma-ai-activity-text-layer:not([aria-hidden="true"]) .comma-ai-activity-text-summary'

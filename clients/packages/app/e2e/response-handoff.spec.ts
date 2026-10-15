@@ -2940,6 +2940,138 @@ test("side-chat: public tool activity stays in a separate wrapping bubble after 
   await expectTailNearComposer(page);
 });
 
+test("route: the reply indicator names the current action and times only that action", async ({
+  page,
+  handoffBaseURL,
+}, info) => {
+  const T0 = Date.parse("2026-10-15T12:00:00Z");
+  await page.clock.install({ time: T0 });
+  await openSurface(page, "route", handoffBaseURL);
+  // Time moves only when the test moves it; screenshots show settled text.
+  await page.clock.pauseAt(T0 + 1_000);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const messages = [user];
+  const slot = page.getByTestId("participant-status-slot");
+  const line = slot.locator(
+    '.comma-ai-activity-text-layer:not([aria-hidden="true"]) .comma-ai-activity-text-summary'
+  );
+  const turn = { conversationId: "handoff", responseKey: "response-1" };
+  const command = {
+    ...turn,
+    detail: "git",
+    phase: "execution",
+    startedAt: T0 / 1000,
+    status: "running",
+    summary: "Running a command",
+    summaryClass: "public" as const,
+    toolCallId: "call-a",
+    toolName: "env.exec",
+  };
+
+  await show(page, {
+    messages,
+    participantStatus: owner,
+    activity: {
+      ...turn,
+      phase: "thinking",
+      status: "running",
+      summaryClass: "generic",
+    },
+  });
+  await expect(line).toHaveText("Thinking");
+  const indicator = await slot.elementHandle();
+
+  await page.clock.runFor(2_000);
+  await show(page, { messages, participantStatus: owner, activity: command });
+  await expect(line).toHaveText("Running a command · git · 3s");
+  await page.clock.runFor(2_000);
+  await expect(line).toHaveText("Running a command · git · 5s");
+  await page.screenshot({ path: info.outputPath("route-current-command.png") });
+
+  // A new call has its own start; a long detail is cut before the time.
+  const longDetail = "a-very-long-generated-report-name-for-the-quarterly-review.md";
+  await show(page, {
+    messages,
+    participantStatus: owner,
+    activity: {
+      ...command,
+      detail: longDetail,
+      startedAt: (T0 + 4_000) / 1000,
+      summary: "Reading a file",
+      toolCallId: "call-b",
+      toolName: "fs.read_file",
+    },
+  });
+  await page.clock.runFor(1_000);
+  await expect(line).toContainText("Reading files");
+  await expect(line).toContainText("· 2s");
+  await page.setViewportSize({ width: 360, height: 720 });
+  const detail = line.getByTestId("live-action-detail");
+  const elapsed = line.getByTestId("live-action-elapsed");
+  await expect
+    .poll(async () => {
+      const [detailBox, elapsedBox, lineBox] = await Promise.all([
+        detail.evaluate((node) => ({
+          clipped: node.scrollWidth > node.clientWidth,
+          overflow: getComputedStyle(node).textOverflow,
+        })),
+        elapsed.boundingBox(),
+        line.boundingBox(),
+      ]);
+      return (
+        detailBox.clipped &&
+        detailBox.overflow === "ellipsis" &&
+        elapsedBox!.x + elapsedBox!.width <= lineBox!.x + lineBox!.width + 1 &&
+        elapsedBox!.width > 0
+      );
+    })
+    .toBe(true);
+  await page.screenshot({ path: info.outputPath("route-current-read-narrow.png") });
+  await page.setViewportSize({ width: 800, height: 720 });
+
+  // A Task Participant keeps its own action instead of generic thinking.
+  await show(page, {
+    messages,
+    participantStatus: undefined,
+    activity: undefined,
+    participantStatuses: [
+      {
+        ...owner,
+        participantId: "worker",
+        actorRole: "worker",
+        actorId: "actor_worker",
+        name: "Reviewer",
+        activity: {
+          detail: "notes.md",
+          phase: "execution",
+          responseKey: "response-w",
+          startedAt: (T0 + 3_000) / 1000,
+          status: "running",
+          summaryClass: "public",
+          toolCallId: "call-w",
+          toolName: "fs.read_file",
+        },
+      },
+    ],
+  });
+  // The text swap finishes on its own timer, which moves with the clock.
+  await page.clock.runFor(1_000);
+  await expect(line).toHaveText("Reviewer · Reading files · notes.md · 4s");
+  await page.screenshot({
+    path: info.outputPath("task-participant-current-action.png"),
+  });
+
+  // Stopping retires the action; nothing keeps claiming the tool runs.
+  await show(page, {
+    messages,
+    participantStatus: { ...owner, state: "stopped" },
+    participantStatuses: undefined,
+    activity: command,
+  });
+  await expect(slot).toBeHidden();
+  expect(await slot.evaluate((node, before) => node === before, indicator)).toBe(true);
+});
+
 async function applyDesktopScreenshotBackdrop(page: Page) {
   await page.emulateMedia({ colorScheme: "dark" });
   await page.evaluate(() => {

@@ -5735,6 +5735,43 @@ button.comma-chat-user-bubble-toggle:focus-visible {
   white-space: nowrap;
 }
 
+/* A current action keeps its words and elapsed time; only the detail
+   (file, program, host or the model's goal) is cut to fit the line. */
+.comma-chat-activity-line .comma-chat-activity-action {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.comma-chat-activity-line .comma-chat-activity-action-label,
+.comma-chat-activity-line .comma-chat-activity-action-elapsed {
+  flex: none;
+}
+
+.comma-chat-activity-line .comma-chat-activity-action-elapsed {
+  font-variant-numeric: tabular-nums;
+}
+
+.comma-chat-activity-line .comma-chat-activity-action-detail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Side Chat's tool bubble wraps the whole action instead of cutting it. */
+.comma-chat-activity-slot[data-presentation="tool-call"] .comma-chat-activity-action {
+  display: inline;
+  white-space: normal;
+}
+
+.comma-chat-activity-slot[data-presentation="tool-call"]
+  .comma-chat-activity-action-detail {
+  overflow: visible;
+  text-overflow: clip;
+}
+
 /* Error copy belongs to the notice card and must grow it; only active status
    copy uses the one-line ellipsis contract above. */
 .comma-chat-activity-line[data-status="failed"] .comma-ai-activity-text-summary {

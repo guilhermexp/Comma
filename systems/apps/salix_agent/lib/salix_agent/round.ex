@@ -90,6 +90,8 @@ defmodule SalixAgent.Round do
   @visible_reply_draft_key {__MODULE__, :visible_reply_draft}
   @send_message_draft_stream_key {__MODULE__, :send_message_draft_stream}
   @reasoning_activity_key {__MODULE__, :reasoning_activity}
+  # Start evidence of the current tool batch: tool_call_id => started_at.
+  @tool_activity_started_key {__MODULE__, :tool_activity_started}
 
   # Live Thinking refreshes only from provider-designated public summaries:
   # keep the tail and emit at most ~2 activities/second.
@@ -1391,11 +1393,24 @@ defmodule SalixAgent.Round do
         ActivityEvent.llm_failed(agent_id, session_id, visible_scope(host))
 
       {:activity, {:tool_calls_started, calls}} ->
+        started_at = ActivityEvent.now()
+
+        Process.put(
+          @tool_activity_started_key,
+          for(
+            call <- calls,
+            id = ActivityEvent.tool_call_identity(call),
+            into: %{},
+            do: {id, started_at}
+          )
+        )
+
         ActivityEvent.tool_calls_started(
           agent_id,
           session_id,
           VisibleReplyPolicy.sanitize_activity_calls(calls, visible_phase(host)),
-          visible_scope(host)
+          visible_scope(host),
+          started_at
         )
 
       {:telemetry, phase} ->
@@ -1641,6 +1656,8 @@ defmodule SalixAgent.Round do
       visible_scope(host)
     )
 
+    settle_tool_activity(host, calls, results, pending)
+
     pending =
       if flags["planned"],
         do: Enum.map(pending, &Map.put(&1, :round_progress_event, flags["progress_event"])),
@@ -1670,6 +1687,46 @@ defmodule SalixAgent.Round do
 
     {results, pending} = SessionToolDispatch.execute_with_async_window(calls, ctx)
     {%{host | async_pending: pending, billing_context: ctx.billing_context}, results}
+  end
+
+  # The batch's start frames name the last call, which may already be done.
+  # A call that is still running owns the surface: the first in call order,
+  # with its original start. With none running and no failure frame, the round
+  # returns to the model, so the surface stops claiming a finished tool. A
+  # failure frame already retires the running claim and is kept as the outcome.
+  # A batch with a reply call leaves the surface to its messaging frame.
+  defp settle_tool_activity(host, calls, results, pending) do
+    if Enum.any?(calls, &ActivityEvent.activity_call?/1) and
+         not Enum.any?(calls, &ActivityEvent.reply_call?/1),
+       do: settle_tool_activity(host, results, pending)
+
+    :ok
+  end
+
+  defp settle_tool_activity(host, results, pending) do
+    %{agent_id: agent_id} = host.context
+    started = Process.get(@tool_activity_started_key, %{})
+
+    running = Enum.filter(pending, &ActivityEvent.activity_call?(&1[:call]))
+
+    case Enum.min_by(running, &(&1[:call_index] || 0), fn -> nil end) do
+      %{call: call} = first ->
+        id = first[:tool_call_id] || ActivityEvent.tool_call_identity(call)
+
+        ActivityEvent.tool_calls_started(
+          agent_id,
+          host.session_id,
+          VisibleReplyPolicy.sanitize_activity_calls([call], visible_phase(host)),
+          visible_scope(host),
+          Map.get(started, id)
+        )
+
+      nil ->
+        unless Enum.any?(results, &ActivityEvent.errored_result?/1),
+          do: ActivityEvent.thinking(agent_id, host.session_id, nil, visible_scope(host))
+    end
+
+    :ok
   end
 
   # The workspace commit runs once per batch; a retried transaction reuses it

@@ -167,6 +167,52 @@ defmodule SalixAgent.ActivityEventTest do
     end
   end
 
+  describe "technical detail" do
+    for {name, tool, args, expected} <- [
+          {"a file names its base name only", "fs.read_file",
+           %{"path" => "/workspace/private/notes.md"}, "notes.md"},
+          {"a command names its program only", "env.exec",
+           %{"command" => "/usr/bin/git push https://user:token@example.com main"}, "git"},
+          {"an environment assignment before the program fails closed", "env.exec",
+           %{"command" => "API_KEY=sk-live-123 curl https://example.com"}, nil},
+          {"a substitution fails closed", "env.exec", %{"command" => "$(cat secret)"}, nil},
+          {"a URL names its host only", "web.http_request",
+           %{"url" => "https://user:pass@API.Example.com:8443/v1?token=abc#x"},
+           "api.example.com"},
+          {"a page list names its first host", "web.read_pages",
+           %{"urls" => ["https://docs.example.org/a", "https://other.test"]}, "docs.example.org"},
+          {"a non-web scheme yields nothing", "web.http_request",
+           %{"url" => "file:///etc/passwd"}, nil},
+          {"a dot-only name yields nothing", "fs.read_file", %{"path" => "/a/.."}, nil},
+          {"an oversized name yields nothing", "fs.write_file",
+           %{"path" => String.duplicate("a", 65)}, nil},
+          {"a tool without an admitted argument yields nothing", "web.search",
+           %{"query" => "my private question"}, nil}
+        ] do
+      test name do
+        activity =
+          started_activity(%{
+            "id" => "d1",
+            "name" => unquote(tool),
+            "args" => unquote(Macro.escape(args))
+          })
+
+        assert activity["detail"] == unquote(expected)
+        refute inspect(activity) =~ "token"
+        refute inspect(activity) =~ "sk-live"
+      end
+    end
+  end
+
+  test "a start is carried only when the producer has one" do
+    call = %{"id" => "s1", "name" => "fs.read_file", "args" => %{"path" => "a.md"}}
+
+    :ok = ActivityEvent.tool_calls_started("agent-1", "im-conv-1", [call], nil, 1_790_000_000.25)
+    assert_receive {:notified, "agent-1", {:activity, %{"started_at" => 1_790_000_000.25}}}
+
+    refute Map.has_key?(started_activity(call), "started_at")
+  end
+
   # A nil expectation means the field must be absent from the activity.
   defp assert_fields(activity, expected) do
     for {field, value} <- expected do

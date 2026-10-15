@@ -524,6 +524,86 @@ describe("ConversationChannel", () => {
     vi.useRealTimers();
   });
 
+  it("projects each active Task Participant's own Activity under summary authority", async () => {
+    const api = createConversationApi();
+    const channel = createChannel(api, { initialKind: "agent_task" });
+    channel.start();
+    api.resolvePoll(0, {
+      conversation: conversation({ kind: "agent_task", status: "active" }),
+      etag: '"v1"',
+      notModified: false,
+    });
+    await flushMicrotasks();
+    const options = vi.mocked(api.client.streamConversationListEvents).mock
+      .calls[0]![1];
+    const participant = {
+      conversation_id: "cnv_1",
+      participant_id: "ptc_worker",
+      name: "Worker",
+      state: "active" as const,
+      status: "is working...",
+      updated_at: 1,
+    };
+    const execution = {
+      detail: "notes.md",
+      phase: "execution",
+      response_key: "rsp_w",
+      started_at: 1_790_000_000,
+      status: "running",
+      summary: "Reading a file",
+      summary_class: "public",
+      tool_call_id: "call_w",
+      tool_name: "fs.read_file",
+    };
+
+    options.onParticipantStatuses?.(
+      taskParticipantSnapshot([{ ...participant, activity: execution }])
+    );
+    expect(channel.getSnapshot().participantStatuses?.[0]?.activity).toEqual({
+      detail: "notes.md",
+      goal: undefined,
+      phase: "execution",
+      responseKey: "rsp_w",
+      startedAt: 1_790_000_000,
+      status: "running",
+      summary: "Reading a file",
+      summaryClass: "public",
+      toolCallId: "call_w",
+      toolName: "fs.read_file",
+    });
+
+    // Generic thinking keeps only its product copy, never public detail.
+    options.onParticipantStatuses?.(
+      taskParticipantSnapshot([
+        {
+          ...participant,
+          activity: { ...execution, phase: "thinking", summary_class: "generic" },
+        },
+      ])
+    );
+    expect(channel.getSnapshot().participantStatuses?.[0]?.activity).toEqual({
+      detail: undefined,
+      goal: undefined,
+      phase: "thinking",
+      responseKey: "rsp_w",
+      status: "running",
+      summary: "Thinking",
+      summaryClass: "generic",
+      toolName: undefined,
+    });
+
+    // Generic execution has no authority; a stopped Participant has no
+    // current action, whatever its last frame said.
+    for (const rejected of [
+      { ...participant, activity: { ...execution, summary_class: "generic" } },
+      { ...participant, state: "stopped", activity: execution },
+    ]) {
+      options.onParticipantStatuses?.(taskParticipantSnapshot([rejected]));
+      expect(channel.getSnapshot().participantStatuses?.[0]?.activity).toBeUndefined();
+    }
+    channel.stop();
+  });
+
   it("keeps both Task participants through projection and fences stopped streams", async () => {
     const api = createConversationApi();
     const channel = createChannel(api, { initialKind: "agent_task" });
@@ -3207,6 +3287,58 @@ describe("ConversationChannel", () => {
     });
   });
 
+  it("keeps a tool call's identity, start and detail only on its execution frame", () => {
+    const api = createConversationApi();
+    const channel = createChannel(api);
+
+    channel.start();
+    api.emit(
+      0,
+      { type: "snapshot", messages: [message("msg_user", "user", "hello")] },
+      "snapshot"
+    );
+    api.emit(
+      0,
+      activityEvent({
+        detail: "git",
+        sequence: 70,
+        started_at: 1_790_000_000.5,
+        tool_call_id: "call_a",
+      }),
+      "activity"
+    );
+    expect(channel.getSnapshot().activity).toMatchObject({
+      detail: "git",
+      startedAt: 1_790_000_000.5,
+      toolCallId: "call_a",
+    });
+
+    // Detail is public prose under the same budget; an oversized one voids
+    // the frame, and a lower replay cannot bring the old call back.
+    api.emit(0, activityEvent({ detail: "x".repeat(513), sequence: 71 }), "activity");
+    api.emit(0, activityEvent({ sequence: 69, tool_call_id: "call_old" }), "activity");
+    expect(channel.getSnapshot().activity).toMatchObject({ toolCallId: "call_a" });
+
+    // A thinking frame names no tool call and has no start to time.
+    api.emit(
+      0,
+      activityEvent({
+        phase: "thinking",
+        sequence: 72,
+        started_at: 1_790_000_001,
+        summary: "Planning",
+        tool_call_id: "call_a",
+        tool_name: undefined,
+      }),
+      "activity"
+    );
+    const thinking = channel.getSnapshot().activity;
+    expect(thinking).toMatchObject({ phase: "thinking", sequence: 72 });
+    expect(thinking?.toolCallId).toBeUndefined();
+    expect(thinking?.startedAt).toBeUndefined();
+    channel.stop();
+  });
+
   it("canonicalizes generic product copy and strips non-public payload", () => {
     const api = createConversationApi();
     const channel = createChannel(api);
@@ -4817,6 +4949,15 @@ function message(
 }
 
 let nextActivitySequence = 1;
+
+function taskParticipantSnapshot(participants: object[]) {
+  return {
+    type: "task_participant_statuses" as const,
+    group_id: "grp_1",
+    conversation_id: "cnv_1",
+    participants: participants as never,
+  };
+}
 
 function activityEvent(
   attrs: Partial<CommaConversationEvent> & Record<string, unknown> = {}

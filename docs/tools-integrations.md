@@ -109,7 +109,7 @@ See [browser settings, control, and recovery](storage-search.md#browser-run-sett
 
 Telegram `/devices` edits one message: details, refresh, pages. No links.
 WeChat `设备列表`: quoted numbers or marked commands.
-Each action reauthorizes the binding and reads six devices or one detail through `Comma.Devices`. No polling.
+Each action reauthorizes the binding and reads six devices or one detail via `Comma.Devices`. No polling.
 Check/expiry times shown. Restart expired lists.
 WeChat links require login and Workspace confirmation. No permission edits.
 Interrupted WeChat replies may repeat.
@@ -140,11 +140,11 @@ Tool definitions and adapter tests define the API.
 ## Internal host location deadlines
 
 Each internal `location.request` registers a durable timer before the tool returns `running`.
-The capability request selects one terminal outcome through CAS. A late host response cannot replace an expired outcome.
-The timer delivers that outcome through the session-owned async completion path, then removes its marker.
-Storage or delivery failure retains the marker for retry. The existing timer catch-up handles deadlines missed during an outage.
-A session wait can end or change without cancelling this deadline. This behavior does not require a client callback.
-This path creates timers for new requests. It does not scan or repair historical requests.
+The capability request selects one terminal outcome through CAS; a late host response cannot replace an expired one.
+The timer delivers it through the session-owned async completion path, then removes its marker.
+Storage or delivery failure keeps the marker for retry; catch-up handles deadlines missed in an outage.
+A session wait can end or change without cancelling it. No client callback is needed.
+Only new requests get timers; old requests are not scanned or repaired.
 
 ## Comma reply dispatch
 
@@ -159,52 +159,55 @@ The Router can send a current-source reply in the same `end_turn` call that
 declares `outcome: "done"` or `outcome: "blocked"`. `reply` contains a disclosed IM or Comma `tool` and its `params`. It can include an `ifc`
 source declaration. Before dispatch, the runtime checks source, destination, tool permission, and content label. It settles only after send success while the Session still matches the accepted source. Failed or refused sends leave the turn open. Plain assistant text remains runtime-only.
 
-A Comma reply in `end_turn` waits for the completed model response and committed
-intent before its draft appears. `SessionToolDispatch` authorizes the final
-source, destination and IFC declaration before it publishes the complete text.
-This rejects nonempty delivery filters regardless of field order. Repair rounds
-do not publish this draft. The draft stays visible until the send result commits.
-This path does not show text during generation.
-Ordinary `call` streaming and its audience-filter handling are outside this guarantee.
+A Comma reply in `end_turn` shows its draft only after the completed model
+response and committed intent. `SessionToolDispatch` first authorizes the final
+source, destination and IFC declaration, rejecting nonempty delivery filters in
+any field order. Repair rounds do not publish this draft; it stays visible until
+the send result commits. This path shows no text during generation. Ordinary
+`call` streaming and its audience filters are outside this guarantee.
 
-A standalone send delivers a message without ending the activation. The
-model-visible `call` schema does not offer `reply_mode` or `final_outcome`.
-`TerminalReply` ignores those fields on standalone model calls from stale
-prompts. This includes Worker reports to a Task and Router deliveries after a
-Worker result. After delivery, the agent continues unfinished work or calls
-`end_turn` without another reply. It must not repeat a successful send.
+A standalone send delivers without ending the activation. The
+model-visible `call` schema offers no `reply_mode` or `final_outcome`, and
+`TerminalReply` ignores them on standalone calls from stale prompts, including
+Worker reports to a Task and Router deliveries after a Worker result. After
+delivery, the agent continues unfinished work or calls `end_turn` without
+another reply, never repeating a successful send.
 
 Opening promises require execution. Worker Task routing and authorization remain unchanged. Widgets are output formats, not delegation lifecycles.
 
-A request that answers a new human message in a Comma user chat ends with the
-`opening=on` turn flag. The flag remains active until the model responds to
-that message. It activates a prompt rule: send one short opening, or the direct
-answer, before longer work. Tool continuations, Task conversations, and other
-providers do not get the flag. The rule is a prompt instruction only. It does
-not change the configured reasoning effort, and it does not guarantee a
+A request that answers a new human message in a Comma user chat carries the
+`opening=on` turn flag until the model responds to that message. Its prompt
+rule asks for one short opening, or the direct answer, before longer work. Tool
+continuations, Task conversations and other providers lack the flag. It is a
+prompt instruction only; it neither changes reasoning effort nor guarantees a
 first-reply time.
 
 ### History and client presentation
 
-History retains the model's original `end_turn(reply)` call. Only dispatch
-unwraps the nested send. A delivered event binds the assistant message and
-call IDs. Request projection uses that event to replace a running placeholder
-with a completion receipt, including when settlement consumes the completion
-wake. The stored journal and earlier reader-page bodies remain unchanged.
-Diagnostic redaction and page limits still apply.
+History keeps the model's original `end_turn(reply)` call; only dispatch
+unwraps the nested send. A delivered event binds the assistant message and call
+IDs. Request projection replaces a running placeholder with its completion
+receipt, also when settlement consumes the completion wake. The
+stored journal, earlier reader-page bodies, diagnostic redaction and page limits
+remain unchanged.
 
-Normal activation records the system prompt from the same configuration used
-for tool dispatch. Runtime rules, skills, and configured instructions update
-together. Unchanged configuration keeps the same prompt bytes and adds no
+Normal activation records the system prompt from the tool dispatch
+configuration; runtime rules, skills and configured instructions update together. Unchanged configuration keeps the same prompt bytes and adds no
 prompt event. History and accepted work remain intact. Compaction can use the
-previous prompt before it records the current configuration. An upgrade notice
-explains the old history representations once. It does not rewrite those records.
+previous prompt before it records the current one. An upgrade notice explains
+old history representations once without rewriting them.
 
-A Comma SSE snapshot includes Participant status and draft from the same owner
-read. The client applies both with canonical Messages. This is a presentation
-frame, not a transaction across Conversation and Participant owners. Absent
-status preserves the previous projection. A stopped Participant clears visible
-activity immediately. An active Participant can continue after a progress reply.
+A Comma SSE snapshot includes Participant status and draft from one owner read;
+the client applies both with canonical Messages. It is a presentation frame, not
+a transaction across Conversation and Participant owners. Absent status keeps
+the previous projection. A stopped Participant clears visible activity
+immediately; an active one can continue after a progress reply.
+
+Tool Activity frames repeat the call's `tool_call_id` and producer `started_at`;
+clients time the action only from them. `detail` is a file, program or host
+name from one known argument; raw arguments stay private. A settled batch
+yields to a live call or thinking. Task snapshots carry each active
+Participant's Activity. External runtimes lack response identity: no frames.
 
 ### Ownership and failure
 

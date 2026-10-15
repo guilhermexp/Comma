@@ -265,7 +265,8 @@ defmodule CommaWeb.CommaEventsContractTest do
           {state.participant_subscribers,
            put_in(state, [:participant_statuses, {conversation_id, participant_id}], %{
              "activity" => activity,
-             "wait" => Keyword.get(opts, :wait)
+             "wait" => Keyword.get(opts, :wait),
+             "presentation_activity" => Keyword.get(opts, :presentation_activity)
            })}
         end)
 
@@ -592,6 +593,115 @@ defmodule CommaWeb.CommaEventsContractTest do
     assert [_] = sse_payloads(body, "conversation_list_invalidated")
     refute body =~ "session_id"
     refute body =~ "draft"
+  end
+
+  test "Task SSE projects each active participant's own current action" do
+    %{workspace: workspace, session: session} = create_fixture("task-actions@example.com")
+    {:ok, task} = SalixClientFake.create_group_conversation(workspace, %{"kind" => "agent_task"})
+    task_id = task["conversation_id"]
+    group_id = workspace["default_group_id"]
+    worker_id = SalixStore.Ids.new_participant_id()
+
+    SalixClientFake.put_task_participants(task_id, [
+      %{
+        "participant_id" => worker_id,
+        "name" => "Worker",
+        "agent_id" => workspace["default_worker_agent_id"]
+      }
+    ])
+
+    message_id = SalixStore.Ids.new_message_id()
+    {:ok, source} = SalixIM.ConversationSourceIdentity.encode(task_id, message_id, worker_id)
+    response_key = "rsp_" <> Base.url_encode64(:crypto.strong_rand_bytes(18), padding: false)
+    active = %{"state" => "active", "status" => "is executing a tool...", "updated_at" => 1}
+
+    execution = %{
+      "phase" => "execution",
+      "status" => "running",
+      "action" => "Reading a file",
+      "summary" => "Reading a file",
+      "summary_class" => "public",
+      "detail" => "notes.md",
+      "tool_name" => "fs.read_file",
+      "tool_call_id" => "call_w",
+      "started_at" => 1_790_000_000.5,
+      "producer_epoch" => "epoch-a",
+      "response_key" => response_key,
+      "sequence" => 7,
+      "source_message_ids" => [source],
+      "agent_group_id" => group_id
+    }
+
+    SalixClientFake.put_task_status(workspace, task_id, worker_id, active,
+      presentation_activity: execution
+    )
+
+    response_task =
+      Task.async(fn ->
+        user_req(
+          session["token"],
+          :get,
+          "/v1/comma/groups/#{group_id}/conversations/events?conversation_id=#{task_id}&wait=600"
+        )
+      end)
+
+    assert eventually(fn -> SalixClientFake.participant_subscriber_count() == 1 end)
+    reads = SalixClientFake.participant_status_read_count()
+
+    # Generic copy cannot carry public execution detail or a call identity.
+    SalixClientFake.put_task_status(workspace, task_id, worker_id, active,
+      presentation_activity: %{
+        execution
+        | "phase" => "thinking",
+          "summary_class" => "generic",
+          "sequence" => 8
+      }
+    )
+
+    assert eventually(fn -> SalixClientFake.participant_status_read_count() > reads end)
+    reads = SalixClientFake.participant_status_read_count()
+
+    # A stopped participant has no current action, whatever its last frame.
+    SalixClientFake.put_task_status(
+      workspace,
+      task_id,
+      worker_id,
+      %{"state" => "stopped", "status" => "", "updated_at" => 2},
+      presentation_activity: execution
+    )
+
+    assert eventually(fn -> SalixClientFake.participant_status_read_count() > reads end)
+    SalixClientFake.invalidate_task_list(group_id, task_id)
+    body = Task.await(response_task, 2000) |> expect_status(200)
+    [first, generic, stopped] = sse_payloads(body, "task_participant_statuses")
+
+    assert [%{"activity" => activity}] = first["participants"]
+
+    assert activity == %{
+             "phase" => "execution",
+             "status" => "running",
+             "action" => "Reading a file",
+             "summary" => "Reading a file",
+             "summary_class" => "public",
+             "detail" => "notes.md",
+             "tool_name" => "fs.read_file",
+             "tool_call_id" => "call_w",
+             "started_at" => 1_790_000_000.5,
+             "producer_epoch" => "epoch-a",
+             "response_key" => response_key,
+             "sequence" => 7,
+             "source_message_ids" => [message_id]
+           }
+
+    assert [%{"activity" => generic_activity}] = generic["participants"]
+    assert generic_activity["summary"] == "Thinking"
+
+    for key <- ~w(detail tool_name tool_call_id started_at goal),
+        do: refute(Map.has_key?(generic_activity, key))
+
+    assert [%{"state" => "stopped"} = stopped_worker] = stopped["participants"]
+    refute Map.has_key?(stopped_worker, "activity")
+    refute body =~ "agent_group_id"
   end
 
   test "Task SSE hides waiting participants and restores them when work resumes" do

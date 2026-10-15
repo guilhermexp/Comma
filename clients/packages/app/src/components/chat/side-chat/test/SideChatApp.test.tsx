@@ -912,7 +912,8 @@ describe("SideChatApp", () => {
 
     renderSideChatApp();
 
-    const initialParticipantStatus = await screen.findByText("Checking the workspace");
+    // The model's goal is the detail beside the localized tool action.
+    const initialParticipantStatus = await screen.findByText(/Checking the workspace$/);
     expect(screen.queryByText("is executing a tool...")).toBeNull();
     const initialActivity = initialParticipantStatus.closest(
       '[data-slot="ai-activity"]'
@@ -1027,7 +1028,7 @@ describe("SideChatApp", () => {
     await waitFor(() => {
       expect(screen.getByText("Continue streaming chat")).toBeInTheDocument();
       expect(screen.getByText("Fresh D2 answer")).toBeInTheDocument();
-      expect(screen.getByText("Working on the new response")).toBeInTheDocument();
+      expect(screen.getByText(/Working on the new response$/)).toBeInTheDocument();
       expect(screen.getByTestId("participant-status-slot")).toHaveAttribute(
         "data-active",
         "true"

@@ -1114,6 +1114,25 @@ defmodule SalixAgent.RoundActivityTest do
     # thinking precedes execution precedes the terminal idle.
     assert phase_index(activities, "thinking") < phase_index(activities, "execution")
     assert List.last(activities)["phase"] == "idle"
+
+    # Every frame of the call carries its one start, so a client's elapsed
+    # time survives the settle re-emission; once the call is done the
+    # surface returns to thinking instead of naming the finished tool.
+    executions = Enum.filter(activities, &(&1["tool_call_id"] == "t1"))
+    assert [started_at] = executions |> Enum.map(& &1["started_at"]) |> Enum.uniq()
+    assert is_number(started_at) and started_at > 0
+
+    last_execution =
+      activities
+      |> Enum.with_index()
+      |> Enum.filter(&(elem(&1, 0)["phase"] == "execution"))
+      |> List.last()
+      |> elem(1)
+
+    assert activities
+           |> Enum.drop(last_execution + 1)
+           |> Enum.map(& &1["phase"])
+           |> Enum.member?("thinking")
   end
 
   test "a source activation keeps one response identity across tool and final rounds", %{agent: a} do

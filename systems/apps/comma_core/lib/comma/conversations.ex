@@ -36,7 +36,10 @@ defmodule Comma.Conversations do
     "summary",
     "summary_class",
     "goal",
+    "detail",
     "tool_name",
+    "tool_call_id",
+    "started_at",
     "display_strength",
     "display_priority",
     "display_hold_ms",
@@ -47,6 +50,9 @@ defmodule Comma.Conversations do
     "updated_at"
   ]
   @public_activity_prose_max_codepoints 512
+  @public_activity_tool_call_id_max_bytes 128
+  # Only execution frames carry tool identity, start evidence and detail.
+  @public_activity_execution_keys ["detail", "tool_name", "tool_call_id", "started_at"]
 
   def list(user, session, group_id) do
     with {:ok, page} <- list_page(user, session, group_id, []) do
@@ -390,6 +396,7 @@ defmodule Comma.Conversations do
               |> Map.put("name", participant.name)
               |> put_optional("actor_id", participant.actor_id)
               |> put_optional("actor_role", participant.actor_role)
+              |> put_optional("activity", task_participant_activity(status, participant))
             ]
         end
       end)
@@ -402,6 +409,17 @@ defmodule Comma.Conversations do
       "participants" => participants
     }
   end
+
+  # The same source-bound projection as the Conversation stream, so each
+  # active Task Participant can show its own current action.
+  defp task_participant_activity(%{"state" => "active"}, participant) do
+    case public_activity(participant.status["presentation_activity"], participant) do
+      %{} = activity -> Map.drop(activity, ["type", "conversation_id"])
+      nil -> nil
+    end
+  end
+
+  defp task_participant_activity(_status, _participant), do: nil
 
   defp list_scoped_conversation_page(user, workspace, conversation_id) do
     data =
@@ -861,7 +879,8 @@ defmodule Comma.Conversations do
          %{"summary_class" => "generic", "phase" => "thinking", "status" => "failed"} =
            activity
        ) do
-    {:ok, "generic", Map.drop(activity, ["action", "summary", "goal", "tool_name"])}
+    {:ok, "generic",
+     Map.drop(activity, ["action", "summary", "goal" | @public_activity_execution_keys])}
   end
 
   defp public_activity_payload(
@@ -872,7 +891,7 @@ defmodule Comma.Conversations do
 
     {:ok, "generic",
      activity
-     |> Map.drop(["goal", "tool_name"])
+     |> Map.drop(["goal" | @public_activity_execution_keys])
      |> Map.merge(%{"action" => copy, "summary" => copy})}
   end
 
@@ -884,8 +903,9 @@ defmodule Comma.Conversations do
     if public_activity_prose?(activity["summary"]) and
          optional_public_activity_prose?(activity["action"]) and
          optional_public_activity_prose?(activity["goal"]) and
+         optional_public_activity_prose?(activity["detail"]) and
          optional_public_activity_prose?(activity["tool_name"]) do
-      {:ok, "public", activity}
+      {:ok, "public", public_execution_identity(activity)}
     else
       :error
     end
@@ -894,10 +914,33 @@ defmodule Comma.Conversations do
   defp public_activity_payload(
          %{"summary_class" => "none", "phase" => "idle", "status" => "idle"} = activity
        ) do
-    {:ok, "none", Map.drop(activity, ["action", "summary", "goal", "tool_name"])}
+    {:ok, "none",
+     Map.drop(activity, ["action", "summary", "goal" | @public_activity_execution_keys])}
   end
 
   defp public_activity_payload(_activity), do: :error
+
+  # A thinking frame names no tool. An execution frame keeps its opaque call
+  # identity and positive start evidence only when they are well formed; a
+  # malformed value is dropped, so the client shows no time rather than a
+  # wrong one.
+  defp public_execution_identity(%{"phase" => "execution"} = activity) do
+    activity
+    |> keep_if("tool_call_id", fn id ->
+      is_binary(id) and id != "" and byte_size(id) <= @public_activity_tool_call_id_max_bytes
+    end)
+    |> keep_if("started_at", &(is_number(&1) and &1 > 0))
+  end
+
+  defp public_execution_identity(activity),
+    do: Map.drop(activity, @public_activity_execution_keys)
+
+  defp keep_if(map, key, valid?) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> if valid?.(value), do: map, else: Map.delete(map, key)
+      :error -> map
+    end
+  end
 
   defp public_activity_prose?(value) when is_binary(value) do
     value != "" and String.trim(value) != "" and

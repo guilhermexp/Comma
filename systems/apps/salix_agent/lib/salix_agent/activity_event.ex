@@ -8,7 +8,8 @@ defmodule SalixAgent.ActivityEvent do
 
   The map shape mirrors Willow's `StreamActivity` (the commaboard frontend's
   `WebAgentAssistantActivity` contract): `phase` / `status` / `action` /
-  `summary` / `summary_class` / `goal`, `tool_name` / `tool_call_id`, `display_strength` /
+  `summary` / `summary_class` / `goal` / `detail`, `tool_name` / `tool_call_id` /
+  `started_at`, `display_strength` /
   `display_priority` / `display_hold_ms`, `producer_epoch`, `sequence`,
   `updated_at`. Aggregate frames emit `agent_id` / `session_id` only. A fully
   authorized source activation additionally emits its exact
@@ -18,7 +19,8 @@ defmodule SalixAgent.ActivityEvent do
   Execution `action` / `summary` text is an English fallback for consumers
   that cannot localize. Comma clients word tool activity in the reader's
   language from `tool_name`, and show `goal` (the model's own label for an
-  `env.exec` call) when present. A tool identifier is never user copy.
+  `env.exec` call) or else `detail` (a file name, program name or host) when
+  present. A tool identifier is never user copy.
 
   Emission is best-effort: `Notifier.notify/2` rescues consumer failures, so a
   bad subscriber never breaks a round.
@@ -168,9 +170,21 @@ defmodule SalixAgent.ActivityEvent do
   The reply tool is skipped here because the validated IM adapter boundary
   emits its messaging activity; raw tool arguments are never an activity
   payload.
+
+  `started_at` (epoch seconds) is the action's start evidence. Every frame
+  for the same `tool_call_id` carries the same value, so a client times the
+  current action from it rather than from frame receipt. A frame without it
+  has no known start. `detail` is the bounded technical detail admitted by
+  `call_detail/2`, never the raw argument.
   """
-  @spec tool_calls_started(String.t(), String.t(), [map()], map() | nil) :: :ok
-  def tool_calls_started(agent_id, session_id, tool_calls, activation_scope \\ nil) do
+  @spec tool_calls_started(String.t(), String.t(), [map()], map() | nil, number() | nil) :: :ok
+  def tool_calls_started(
+        agent_id,
+        session_id,
+        tool_calls,
+        activation_scope \\ nil,
+        started_at \\ nil
+      ) do
     for call <- tool_calls, name = activity_tool_name(call), name != nil, not reply_call?(call) do
       goal = call_goal(name, call)
       action = goal || describe_tool(name)
@@ -184,9 +198,11 @@ defmodule SalixAgent.ActivityEvent do
           summary: action,
           summary_class: @summary_class_public,
           goal: goal,
+          detail: call_detail(name, call),
           status: "running",
           tool_name: name,
           tool_call_id: call_id(call),
+          started_at: started_at,
           display_strength: @strength_strong
         },
         activation_scope
@@ -195,6 +211,10 @@ defmodule SalixAgent.ActivityEvent do
 
     :ok
   end
+
+  @doc "The producer clock used for `started_at` and `updated_at`."
+  @spec now() :: float()
+  def now, do: System.system_time(:millisecond) / 1000
 
   @doc "Emit a failed execution activity for each errored non-reply result."
   @spec tool_calls_finished(String.t(), String.t(), [map()], map() | nil) :: :ok
@@ -276,14 +296,16 @@ defmodule SalixAgent.ActivityEvent do
         "summary" => attrs[:summary],
         "summary_class" => normalize_summary_class(attrs[:summary_class]),
         "goal" => attrs[:goal],
+        "detail" => attrs[:detail],
         "tool_name" => tool_name,
         "tool_call_id" => present(attrs[:tool_call_id]),
+        "started_at" => started_at(attrs[:started_at]),
         "display_strength" => normalize_strength(attrs[:display_strength]),
         "display_priority" => priority,
         "display_hold_ms" => hold_ms(priority),
         "producer_epoch" => producer_epoch,
         "sequence" => System.unique_integer([:monotonic, :positive]),
-        "updated_at" => System.system_time(:millisecond) / 1000
+        "updated_at" => now()
       }
       |> Map.merge(activity_v2_scope(activation_scope, producer_epoch))
       |> Enum.reject(fn {_key, value} -> is_nil(value) end)
@@ -299,7 +321,7 @@ defmodule SalixAgent.ActivityEvent do
   defp emit(_agent_id, _session_id, _attrs, _activation_scope), do: :ok
 
   defp bound_public_activity_attrs(%{summary_class: @summary_class_public} = attrs) do
-    Enum.reduce([:action, :summary, :goal, :tool_name], attrs, fn field, bounded ->
+    Enum.reduce([:action, :summary, :goal, :detail, :tool_name], attrs, fn field, bounded ->
       case Map.fetch(bounded, field) do
         {:ok, value} when is_binary(value) ->
           Map.put(bounded, field, bound_public_activity_prose(value))
@@ -376,6 +398,77 @@ defmodule SalixAgent.ActivityEvent do
 
   defp call_goal(_name, _call), do: nil
 
+  defp started_at(value) when is_number(value) and value > 0, do: value
+  defp started_at(_value), do: nil
+
+  # Technical detail is admitted per tool, from one known argument, reduced to
+  # a part that names the target without its contents: a file's base name, a
+  # command's program name, or a URL's host. Anything else, or any value
+  # outside the narrow shapes below, yields no detail. This is not a secret
+  # scanner: whole commands, paths, queries, URLs and payloads are never
+  # admitted, because no pattern can prove such free text is safe to show.
+  @file_detail_tools ~w(fs.read_file fs.write_file fs.edit_file fs.delete_file fs.stat_file
+                        compute.workspace.read compute.workspace.write compute.workspace.stat)
+  @web_detail_tools ~w(web.read_pages web.http_request)
+  @detail_max_codepoints 64
+
+  defp call_detail(name, call) when name in @file_detail_tools,
+    do: file_name_detail(call_args(call)["path"])
+
+  defp call_detail("env.exec", call), do: program_detail(call_args(call)["command"])
+
+  defp call_detail(name, call) when name in @web_detail_tools do
+    args = call_args(call)
+
+    case args["url"] || List.wrap(args["urls"]) |> List.first() do
+      url when is_binary(url) -> host_detail(url)
+      _absent -> nil
+    end
+  end
+
+  defp call_detail(_name, _call), do: nil
+
+  defp file_name_detail(path) when is_binary(path) do
+    name = path |> String.trim() |> String.trim_trailing("/") |> Path.basename()
+
+    if String.length(name) <= @detail_max_codepoints and
+         Regex.match?(~r/\A[\p{L}\p{N}._-]+(?: [\p{L}\p{N}._-]+)*\z/u, name) and
+         not Regex.match?(~r/\A\.+\z/, name),
+       do: name
+  end
+
+  defp file_name_detail(_path), do: nil
+
+  # The first word only, when it is a plain lowercase program name. An
+  # environment assignment, quoting, substitution or anything else that is not
+  # a program name fails closed, and nothing after the first word is read.
+  defp program_detail(command) when is_binary(command) do
+    with [word | _rest] <- String.split(String.trim(command), ~r/\s+/, parts: 2),
+         program = Path.basename(word),
+         true <- Regex.match?(~r/\A[a-z][a-z0-9._+-]{0,23}\z/, program) do
+      program
+    else
+      _not_a_program_name -> nil
+    end
+  end
+
+  defp program_detail(_command), do: nil
+
+  # Host only: user info, port, path, query and fragment are dropped.
+  defp host_detail(url) do
+    case URI.parse(String.trim(url)) do
+      %URI{scheme: scheme, host: host} when scheme in ["http", "https"] and is_binary(host) ->
+        host = String.downcase(host)
+
+        if byte_size(host) <= @detail_max_codepoints and
+             Regex.match?(~r/\A[a-z0-9-]+(?:\.[a-z0-9-]+)+\z/, host),
+           do: host
+
+      _other ->
+        nil
+    end
+  end
+
   # A "call" envelope nests the target tool's arguments under "params".
   defp call_args(call) do
     args = call[:args] || call["args"]
@@ -408,7 +501,8 @@ defmodule SalixAgent.ActivityEvent do
     end
   end
 
-  defp reply_call?(call) when is_map(call) do
+  @doc false
+  def reply_call?(call) when is_map(call) do
     case call_name(call) do
       @reply_tool ->
         true
@@ -422,7 +516,7 @@ defmodule SalixAgent.ActivityEvent do
     end
   end
 
-  defp reply_call?(_call), do: false
+  def reply_call?(_call), do: false
 
   defp call_name(call) when is_map(call), do: present(call[:name] || call["name"])
 
@@ -475,4 +569,17 @@ defmodule SalixAgent.ActivityEvent do
 
   @doc false
   def reply_tool, do: @reply_tool
+
+  @doc false
+  # The identity a frame carries in `tool_call_id` for this call.
+  def tool_call_identity(call), do: call_id(call)
+
+  @doc false
+  # Whether `tool_calls_started/5` emits a frame for this call.
+  def activity_call?(call), do: activity_tool_name(call) != nil and not reply_call?(call)
+
+  @doc false
+  # Whether `tool_calls_finished/4` emits a failure frame for this result.
+  def errored_result?(result),
+    do: errored?(result) and result_name(result) not in [nil, @reply_tool]
 end
