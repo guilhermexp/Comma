@@ -373,8 +373,10 @@ sent. Resource and prompt calls read the exact binding first; a failed read deni
 Under per-account access, shared Composio actions must belong to the pinned account's
 toolkit, and reserved `COMPOSIO_*` meta-tools are refused. `process.start` records the
 OAuth bindings whose values it injects, once per request id and before the process
-starts. A retry with the same bindings reuses the record; other bindings conflict
-before provisioning and never replace it. `process.write` to that process rechecks them;
+starts. An OAuth-bearing retry with the same bindings reuses the record; other
+bindings conflict before reaching the gateway and never replace it. A retry without
+credentials writes no record and relies on the gateway's request-id idempotency;
+it cannot replace a protected record. `process.write` to that process rechecks them;
 `process.tail` and `process.stop` stay available. A Worker loses the right to change a
 shared Composio trigger with the account, but it can still unbind its own Loop. External runtimes use the same tool dispatch, so these
 points also apply to them. Personal Composio stays on the

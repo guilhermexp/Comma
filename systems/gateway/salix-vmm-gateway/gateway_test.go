@@ -1466,10 +1466,19 @@ func TestTypedRuntimeProcessRestartWithOtherCredentialsKeepsOriginalProcess(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := io.ReadAll(response.Body)
+	var rejected map[string]string
+	decodeErr := json.NewDecoder(response.Body).Decode(&rejected)
 	response.Body.Close()
-	if response.StatusCode == http.StatusOK || !strings.Contains(string(raw), "reused with different arguments") {
-		t.Fatalf("restart with other credentials status=%d body=%s", response.StatusCode, raw)
+	// The public runtime error contract (runtime_error.go): structured fields,
+	// never the internal error or the submitted environment.
+	if decodeErr != nil || response.StatusCode != http.StatusBadGateway || rejected["code"] != "runtime_failed" ||
+		rejected["stage"] != "runtime" || rejected["resource"] != "runtime" {
+		t.Fatalf("restart with other credentials status=%d body=%v err=%v", response.StatusCode, rejected, decodeErr)
+	}
+	for _, value := range rejected {
+		if strings.Contains(value, "account-b") {
+			t.Fatalf("rejection exposed the submitted environment: %v", rejected)
+		}
 	}
 	select {
 	case extra := <-starts:
