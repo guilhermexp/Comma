@@ -10,6 +10,10 @@ defmodule SalixVoice.Model do
     * `{:input_transcript, text, final?, offset_ms | nil}`: caller text
     * `{:output_transcript, text, final?}`: agent text
     * `{:delegation, delegation_id, offset_ms}`
+    * `{:delegation, delegation_id, nil, request}`: client delegation text
+    * `{:signaled, sdp_answer}`: renderer media negotiation
+    * `{:caption, role, turn, text, final?}`: deduplicated renderer captions
+    * `{:fatal_error, code}`: safe admission or provider failure
     * `:speech_started`: the caller barged in; the carrier clears playback
     * `{:closed, reason, usage_map}`: the session ended; `usage_map["seconds"]`
       holds billed seconds when the model reported them
@@ -17,7 +21,10 @@ defmodule SalixVoice.Model do
 
   `opts.settings` holds only the GPT-Live fields of `SalixVoice.Settings`:
   `gpt_live_url`, `gpt_live_model`, `gpt_live_voice` and `openai_api_key`. An
-  implementation must not keep the key in its process state.
+  implementation must not keep the key in its process state. Electron uses
+  `SalixVoice.Model.Codex`, with only the voice setting and transient `opts.input`
+  containing the AccountPool account reference, tenant and SDP. Subscription
+  credentials never enter CallActor or carrier state.
 
   The implementation is `Application.get_env(:salix_voice, :model_mod,
   SalixVoice.Model.GptLive)`.
@@ -29,14 +36,15 @@ defmodule SalixVoice.Model do
           required(:ref) => reference(),
           required(:audio_format) => audio_format(),
           required(:instructions) => String.t(),
-          required(:settings) => map()
+          required(:settings) => map(),
+          optional(:input) => map()
         }
 
   @callback start_link(opts()) :: {:ok, pid()} | {:error, term()}
   @callback send_audio(pid(), binary()) :: :ok
   @callback append(
               pid(),
-              :commentary | :thinking | :instructions,
+              :commentary | :thinking | :instructions | :final,
               delegation_id :: String.t() | nil,
               text :: String.t()
             ) :: :ok

@@ -105,8 +105,17 @@ defmodule SalixVoice.CallActor do
       key_name: args[:key_name],
       principal: args[:principal],
       display_name: args[:display_name],
-      model_settings: Map.take(settings, @model_setting_fields),
-      sku: settings["gpt_live_model"] || "gpt-live-1",
+      model_settings:
+        Map.take(
+          settings,
+          if(args.carrier == :electron, do: ["gpt_live_voice"], else: @model_setting_fields)
+        ),
+      model_input: args[:model_input],
+      sku:
+        if(args.carrier == :electron,
+          do: "gpt-live-1-codex",
+          else: settings["gpt_live_model"] || "gpt-live-1"
+        ),
       timers: timers,
       max_call_ms: max_call_ms,
       started_at_ms: args.started_at_ms,
@@ -114,7 +123,8 @@ defmodule SalixVoice.CallActor do
       socket: nil,
       socket_ref: nil,
       attached_mono: nil,
-      model_mod: SalixVoice.Model.impl(),
+      model_mod:
+        if(args.carrier == :electron, do: SalixVoice.Model.Codex, else: SalixVoice.Model.impl()),
       model_pid: nil,
       model_ref: make_ref(),
       model_started_mono: nil,
@@ -193,10 +203,11 @@ defmodule SalixVoice.CallActor do
       ref: state.model_ref,
       audio_format: state.audio_format,
       instructions: state.instructions,
-      settings: state.model_settings
+      settings: state.model_settings,
+      input: state.model_input
     }
 
-    state = %{state | model_settings: nil}
+    state = %{state | model_settings: nil, model_input: nil}
 
     result = with :ok <- SalixVoice.authorize(state), do: safe_start_model(state.model_mod, opts)
 
@@ -205,7 +216,7 @@ defmodule SalixVoice.CallActor do
         schedule(
           %{state | model_pid: pid},
           :model_start,
-          state.timers.model_start_ms,
+          if(state.carrier == :electron, do: 60_000, else: state.timers.model_start_ms),
           :model_start_timeout
         )
 
@@ -315,7 +326,8 @@ defmodule SalixVoice.CallActor do
     with {:ok, text} <- required_text(request["text"]),
          {:ok, delegation_id} <- resolve_delegation(state, request["delegation_id"]) do
       chunks = Speech.chunks(text)
-      Enum.each(chunks, &append(state, :commentary, delegation_id, &1))
+      kind = if state.carrier == :electron and delegation_id, do: :final, else: :commentary
+      Enum.each(chunks, &append(state, kind, delegation_id, &1))
       state = answer_delegation(state, delegation_id)
 
       {:ok, %{"delivered" => true, "chunks" => length(chunks), "delegation_id" => delegation_id},
@@ -586,11 +598,50 @@ defmodule SalixVoice.CallActor do
   defp maybe_greet(state), do: state
 
   defp model_event(state, {:started, _session_id}) do
+    to_socket(state, {:voice_call, :started})
     state = %{state | model_started_mono: state.model_started_mono || now()}
     state = state |> cancel(:model_start) |> maybe_greet()
 
     Enum.each(:queue.to_list(state.prebuffer), &state.model_mod.send_audio(state.model_pid, &1))
     %{state | prebuffer: :queue.new(), prebuffer_bytes: 0}
+  end
+
+  defp model_event(state, {:signaled, sdp}) do
+    to_socket(state, {:voice_call, :signaled, sdp})
+    state
+  end
+
+  defp model_event(state, {:fatal_error, code}) do
+    to_socket(state, {:voice_call, :error, code})
+    end_call(state, :model_error)
+  end
+
+  defp model_event(state, {:caption, role, turn, text, final?}) do
+    to_socket(state, {:voice_call, :caption, role, turn, text, final?})
+
+    ledger =
+      cond do
+        not final? -> state.ledger
+        role == :caller -> Transcript.add_caller(state.ledger, text, nil)
+        true -> Transcript.add_agent(state.ledger, text)
+      end
+
+    %{state | ledger: ledger}
+  end
+
+  defp model_event(state, {:delegation, id, offset_ms, request}) do
+    state = model_event(state, {:delegation, id, offset_ms})
+
+    case state.delegations do
+      %{^id => delegation} ->
+        %{
+          state
+          | delegations: Map.put(state.delegations, id, Map.put(delegation, :request, request))
+        }
+
+      _ ->
+        state
+    end
   end
 
   defp model_event(state, {:audio, audio}) do
@@ -713,7 +764,8 @@ defmodule SalixVoice.CallActor do
         {caller_text, ledger} = Transcript.take_caller(state.ledger, delegation.offset_ms)
         last_agent = Transcript.last_agent_sentence(ledger)
         state = %{state | ledger: ledger}
-        enqueue_delegation(state, id, caller_text, last_agent)
+        request = if delegation[:request] in [nil, ""], do: caller_text, else: delegation.request
+        enqueue_delegation(state, id, request, last_agent)
         state
 
       _ ->
@@ -857,6 +909,9 @@ defmodule SalixVoice.CallActor do
       "source_actor_type" => "provider_system"
     }
   end
+
+  defp caller_authority(%{caller: %{"kind" => "comma_user", "value" => user}}),
+    do: %{"source_actor_type" => "user", "from_user_id" => user}
 
   defp caller_authority(_state), do: %{}
 

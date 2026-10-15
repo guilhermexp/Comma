@@ -3,6 +3,13 @@ defmodule BillingCore.VoiceMeteringTest do
 
   alias BillingCore.VoiceMetering
 
+  defmodule SubscriptionSink do
+    def enqueue(rows) do
+      send(Application.fetch_env!(:billing_core, :voice_metering_test_pid), {:usage, rows})
+      :ok
+    end
+  end
+
   defmodule Repo do
     def transaction(fun) do
       try do
@@ -97,6 +104,33 @@ defmodule BillingCore.VoiceMeteringTest do
                  components: [%{component: :model_seconds, meter_unit: :second, quantity: 0}]
                })
              )
+
+    assert collect() == []
+  end
+
+  test "subscription seconds are reported with zero debit and never enter pricing or the ledger" do
+    Application.put_env(:billing_core, :voice_subscription_sink, SubscriptionSink)
+    on_exit(fn -> Application.delete_env(:billing_core, :voice_subscription_sink) end)
+    assert :ok = VoiceMetering.authorize(%{carrier: :electron})
+
+    assert :ok =
+             VoiceMetering.charge(
+               call(%{
+                 carrier: "electron",
+                 sku: "gpt-live-1-codex",
+                 source_key: "voice:electron:vc_test"
+               })
+             )
+
+    assert_receive {:usage, [row]}
+    assert row["source_key"] == "voice:electron:vc_test"
+    assert row["charge_status"] == "tenant_funded"
+    assert row["charged_credits"] == 0
+
+    assert Jason.decode!(row["pricing_components"]) == [
+             %{"component" => "model_seconds", "meter_unit" => "second", "quantity" => 128},
+             %{"component" => "carrier_seconds", "meter_unit" => "second", "quantity" => 131}
+           ]
 
     assert collect() == []
   end

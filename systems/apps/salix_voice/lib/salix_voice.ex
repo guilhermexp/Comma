@@ -43,7 +43,7 @@ defmodule SalixVoice do
     with :ok <- not_draining(),
          {:ok, settings} <- load_settings(),
          :ok <- enabled(settings),
-         :ok <- configured(settings),
+         {:ok, attrs} <- configure_call(settings, attrs),
          :ok <- node_capacity(settings),
          :ok <- group_free(attrs.group_id),
          :ok <- authorize(Map.put(attrs, :sku, settings["gpt_live_model"])) do
@@ -64,7 +64,8 @@ defmodule SalixVoice do
             :key_expires_at,
             :key_name,
             :principal,
-            :display_name
+            :display_name,
+            :model_input
           ])
           |> Map.merge(%{
             call_id: call_id,
@@ -265,6 +266,17 @@ defmodule SalixVoice do
 
   defp configured(settings) do
     if present?(settings["openai_api_key"]), do: :ok, else: {:error, :not_configured}
+  end
+
+  defp configure_call(_settings, %{carrier: :electron} = attrs) do
+    with {:ok, id} <- SalixVoice.CodexAccounts.impl().select(attrs.tenant_id) do
+      {:ok,
+       Map.put(attrs, :model_input, %{tenant_id: attrs.tenant_id, account_id: id, sdp: attrs.sdp})}
+    end
+  end
+
+  defp configure_call(settings, attrs) do
+    with :ok <- configured(settings), do: {:ok, attrs}
   end
 
   defp node_capacity(settings) do

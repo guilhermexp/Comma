@@ -12,7 +12,7 @@ defmodule SalixVoice.Telemetry do
       start until the caller profile is decided or given up, with `outcome`
   """
 
-  @transports ~w(twilio websocket)
+  @transports ~w(twilio websocket electron)
   @reasons ~w(completed caller_hangup agent_hangup busy timeout model_error carrier_error revoked draining)
   @profile_outcomes ~w(ok empty timeout not_configured no_evidence egress_denied rate_limited)
 

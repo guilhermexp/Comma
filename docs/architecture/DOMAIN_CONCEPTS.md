@@ -837,15 +837,15 @@ No canonical Message, Conversation or participant lifecycle is added.
 
 ### Voice Call
 
-A Voice Call is one live call between a caller and a Group's Router. GPT-Live speaks with the caller through one carrier: Twilio or the `comma.voice.v1` WebSocket API.
+A Voice Call is one live call between a caller and a Group's Router. GPT-Live speaks through Twilio, the `comma.voice.v1` WebSocket API, or Electron WebRTC. Electron owns its media; Salix owns signaling and the sideband.
 Reuse is insufficient: a call is not a Session, Conversation, Message or Participant. It is a live media transport with its own admission, deadline, drain and charge. The IM Connect only binds callers and receives Router replies.
 Identity is the call ID (`vc_` and 26 base32 characters) that Salix mints at admission, together with the carrier and carrier call ID. Twilio supplies its `CallSid`. A WebSocket call uses its call ID. The carrier call ID keys the charge.
-Scope is one Group. A phone call binds through a verified caller number of the Group's voice IM Connect. A WebSocket call binds through a voice agent API key of that Group.
-[CallActor](../../systems/apps/salix_voice/lib/salix_voice/call_actor.ex) owns the call on the node that holds its media. `:pg` groups find it. At most one call per Group is live in the cluster.
+Scope is one Group. A phone call binds through a verified caller number of the Group's voice IM Connect. A WebSocket call binds through a voice agent API key of that Group. An Electron call binds through the authenticated Comma user and the Workspace default Group, using an existing tenant Codex AccountPool account.
+[CallActor](../../systems/apps/salix_voice/lib/salix_voice/call_actor.ex) owns the call on the node that holds its model connection. `:pg` groups find it. The Electron caption carrier is a bounded, temporary projection of this call, with no separate call lifecycle. At most one call per Group is live in the cluster.
 The lifecycle is admitted, attached, live, ending and ended. A call ends on completion, a hang-up, a busy Group, its deadline, an attach timeout, a model or carrier error, key revocation or drain.
 A call keeps no durable state. After it ends, only its charge, the canonical Messages from its delegations and start and end inputs, and its metrics remain. A call does not resume after node loss. The caller calls again.
 Each delegation, one call-start input when the call is ready and one call-end input after it, enters the Router Conversation as provider input through `ConversationServer -> ConversationActor`. The Router answers through the `voice.*` Provider Operations.
-The Group's voice IM Connect is the delivery connect and holds the `ProviderIdentity` number reservations. Revoking the voice agent API key ends its calls. The Group billing owner receives the charge.
+The Group's voice IM Connect is the delivery connect and holds the `ProviderIdentity` number reservations. Revoking the voice agent API key ends its calls. The Group billing owner receives API-funded charges. Subscription calls record actual seconds as an exempt reporting projection, without a Comma credit debit.
 The caller profile is a per-call projection, not an entity: [Profile](../../systems/apps/salix_voice/lib/salix_voice/profile.ex) decides it with Jev from recent Router session text before the model starts, and nothing stores it. See [voice profile](../messaging-voice.md#voice-profile).
 Implementation: [SalixVoice](../../systems/apps/salix_voice/lib/salix_voice.ex),
 [VoiceConnects](../../systems/apps/salix_im/lib/salix_im/voice_connects.ex),

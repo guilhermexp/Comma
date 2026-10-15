@@ -228,6 +228,9 @@ defmodule SalixIM.AgentDeliveryPayload do
     end
   end
 
+  defp provider_source_actor_type(%{"provider" => "voice", "source_actor_type" => "user"}, _),
+    do: "user"
+
   defp provider_source_actor_type(metadata, source_message_id) do
     case trim(metadata["source_actor_type"]) do
       type when type in ["provider_user", "provider_system"] ->

@@ -2202,6 +2202,24 @@ defmodule CommaWeb.Router do
     end)
   end
 
+  post "/v1/comma/workspaces/:workspace_id/voice/calls" do
+    with_voice_call(conn, workspace_id, 201, fn workspace, user ->
+      CommaWeb.VoiceCalls.start(workspace, user, conn.body_params)
+    end)
+  end
+
+  get "/v1/comma/workspaces/:workspace_id/voice/calls/:call_id/events" do
+    with_voice_call(conn, workspace_id, 200, fn workspace, user ->
+      CommaWeb.VoiceCalls.events(workspace, user, call_id, conn.query_params["after"] || "0")
+    end)
+  end
+
+  delete "/v1/comma/workspaces/:workspace_id/voice/calls/:call_id" do
+    with_voice_call(conn, workspace_id, 200, fn workspace, user ->
+      CommaWeb.VoiceCalls.hang_up(workspace, user, call_id)
+    end)
+  end
+
   # ---- Signal (docs/messaging-voice.md) ----
   #
   # The Signal chats connected to the workspace's default group. A connection
@@ -4697,6 +4715,48 @@ defmodule CommaWeb.Router do
 
   defp with_voice_numbers(conn, workspace_id, operation) do
     with_workspace_voice(conn, workspace_id, 200, operation, &public_voice_numbers/1)
+  end
+
+  defp with_voice_call(conn, workspace_id, status, operation) do
+    with_user(conn, fn user, session ->
+      with :ok <- full_workspace_session(session),
+           {:ok, workspace} <- Comma.Workspaces.authorize(user, session, workspace_id),
+           {:ok, workspace} <- Comma.Salix.Client.impl().resolve_workspace_scope(workspace),
+           {:ok, result} <- operation.(workspace, user) do
+        conn |> put_resp_header("cache-control", "no-store") |> send_json(status, result)
+      else
+        {:error, reason}
+        when reason in [
+               :codex_account_required,
+               :plan_limit,
+               :sign_in_required,
+               :disabled,
+               :busy,
+               :call_not_found,
+               :invalid_input,
+               :invalid_answer,
+               :subscription_access_unavailable,
+               :draining,
+               :node_full,
+               :not_configured
+             ] ->
+          status =
+            case reason do
+              :call_not_found -> 404
+              :invalid_input -> 400
+              :busy -> 409
+              :plan_limit -> 429
+              _ -> 503
+            end
+
+          conn
+          |> put_resp_header("cache-control", "no-store")
+          |> send_json(status, %{error: reason, message: CommaWeb.VoiceCalls.message(reason)})
+
+        {:error, reason} ->
+          comma_error(conn, reason)
+      end
+    end)
   end
 
   defp with_workspace_voice(conn, workspace_id, status, operation, project) do

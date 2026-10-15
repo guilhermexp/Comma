@@ -16,6 +16,8 @@ defmodule BillingCore.VoiceMetering do
   require Logger
 
   @doc "Authorize a metered voice call against the current Group billing owner."
+  def authorize(%{carrier: :electron}), do: :ok
+
   def authorize(attrs) do
     owner = stringify(attrs[:owner_snapshot] || %{})
 
@@ -59,6 +61,9 @@ defmodule BillingCore.VoiceMetering do
       components == [] ->
         :ok
 
+      attrs[:carrier] == "electron" and attrs[:sku] == "gpt-live-1-codex" ->
+        subscription_usage(attrs, owner, components)
+
       true ->
         BillingCore.RepoCharges.charge_meter_event(%{
           repo: attrs[:repo],
@@ -83,6 +88,44 @@ defmodule BillingCore.VoiceMetering do
         })
         |> tap(&log_failure(&1, attrs))
     end
+  end
+
+  # An exemption projection, not a ledger debit or a pending price. Reuse the
+  # existing charge reporting table and its bounded, best-effort delivery.
+  # The ChatGPT plan pays for the provider; no catalog backfill can debit it.
+  defp subscription_usage(attrs, owner, components) do
+    row =
+      SalixAnalytics.BillingChargeEvent.build(%{
+        source: "billing_core.voice_subscription",
+        source_key: attrs.source_key,
+        billing_account_id: owner["billing_account_id"],
+        surface: owner["surface"] || "comma",
+        product_owner_type: owner["product_owner_type"] || "workspace",
+        product_owner_id: owner["product_owner_id"] || attrs.group_id,
+        tenant_id: attrs.tenant_id,
+        group_id: attrs.group_id,
+        actor_type: "user",
+        entrypoint: "voice_call",
+        provider: "openai",
+        sku: attrs.sku,
+        metered_at: attrs.metered_at,
+        status: "tenant_funded",
+        charge_status: "tenant_funded",
+        pricing_status: "not_applicable",
+        entitlement_mode: "subscription",
+        calculated_credits: 0,
+        charged_credits: 0,
+        pricing_components: Enum.map(components, &component/1)
+      })
+
+    sink =
+      Application.get_env(:billing_core, :voice_subscription_sink, SalixAnalytics.TypedSinkWorker)
+
+    sink.enqueue([row])
+  rescue
+    _ -> {:error, :voice_usage_unavailable}
+  catch
+    _, _ -> {:error, :voice_usage_unavailable}
   end
 
   defp component(component) do
