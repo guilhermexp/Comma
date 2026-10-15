@@ -614,6 +614,12 @@ body[data-comma-window-role="browser-inspection-composer"] #root {
   grid-column: 2;
 }
 
+/* The floating call pill is 40px controls plus 6px padding on both sides.
+   Reserve only its height while it is visible. No backdrop covers the chat. */
+.comma-home-chat[data-call-active="true"] .comma-chat-thread {
+  padding-block-start: calc(var(--comma-chat-thread-top-inset) + 52px);
+}
+
 /* Below the theme's --container-md (560px, written out: container queries
    accept no var()) both rails have auto-folded and render no handle, so the
    route inset that hosts the handles is empty. Chat then keeps one 16px edge

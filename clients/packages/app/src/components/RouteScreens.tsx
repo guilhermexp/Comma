@@ -597,6 +597,7 @@ function HomeConversationSurface({
   workspaceId?: string | undefined;
 }) {
   const messages = useCommaMessages();
+  const [callBarVisible, setCallBarVisible] = useState(false);
   const callHistory = useVoiceCallHistory(
     JSON.stringify([workspaceId, state.conversation?.id]),
     state.messages.at(-1)?.messageId
@@ -613,6 +614,7 @@ function HomeConversationSurface({
 
   return (
     <ConversationView
+      callBarVisible={callBarVisible}
       messageListTails={callTails}
       headerControls={
         workspaceId &&
@@ -626,6 +628,7 @@ function HomeConversationSurface({
               window.location.hash = "/";
             }}
             onTranscript={callHistory.record}
+            onBarVisibilityChange={setCallBarVisible}
           />
         ) : undefined
       }

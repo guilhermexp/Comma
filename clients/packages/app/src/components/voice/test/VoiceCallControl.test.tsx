@@ -114,33 +114,51 @@ function setup(overrides = {}) {
 }
 
 it("captures audio, relays SDP, shows captions, mutes and retains the transcript after hang up", async () => {
-  const { api } = setup();
-  fireEvent.click(screen.getByRole("button", { name: "Call Comma" }));
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("00:00"));
-  expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
-  expect(api.startVoiceCall).toHaveBeenCalledWith("wsp_test", "offer");
-  expect(remote).toHaveBeenCalledWith({ type: "answer", sdp: "answer" });
-  expect(screen.queryByText("Hello there")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Show captions" }));
-  expect(screen.getByText("Hello there")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Hide captions" }));
-  expect(screen.queryByText("Hello there")).not.toBeInTheDocument();
-  expect(screen.queryByText("Hello")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Mute" }));
-  expect(track.enabled).toBe(false);
-  fireEvent.click(screen.getByRole("button", { name: "Unmute" }));
-  expect(track.enabled).toBe(true);
-  fireEvent.click(screen.getByRole("button", { name: "Hang up" }));
-  await waitFor(() =>
-    expect(screen.getByRole("status")).toHaveTextContent("Call ended")
-  );
-  expect(api.endVoiceCall).toHaveBeenCalledTimes(1);
-  expect(track.stop).toHaveBeenCalledTimes(1);
-  expect(closePeer).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("article", { name: "Call transcript" })).toBeVisible();
-  expect(screen.queryByText("Hello there")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Call · 00:00" }));
-  expect(screen.getByText("Hello there")).toBeVisible();
+  vi.useFakeTimers();
+  try {
+    const { api } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Call Comma" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("00:00");
+    expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
+    expect(api.startVoiceCall).toHaveBeenCalledWith("wsp_test", "offer");
+    expect(remote).toHaveBeenCalledWith({ type: "answer", sdp: "answer" });
+    expect(screen.queryByText("Hello there")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show captions" }));
+    expect(screen.getByText("Hello there")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Hide captions" }));
+    expect(screen.queryByText("Hello there")).not.toBeInTheDocument();
+    expect(screen.queryByText("Hello")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Mute" }));
+    expect(track.enabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Unmute" }));
+    expect(track.enabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Hang up" }));
+    // Settle the close promise and the effect that publishes the transcript
+    // before reading either result. Keep the dismissal clock under test control.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Call ended");
+    expect(api.endVoiceCall).toHaveBeenCalledTimes(1);
+    expect(track.stop).toHaveBeenCalledTimes(1);
+    expect(closePeer).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("article", { name: "Call transcript" })).toBeVisible();
+    expect(screen.queryByText("Hello there")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Call · 00:00" }));
+    expect(screen.getByText("Hello there")).toBeVisible();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1600);
+    });
+    expect(screen.queryByTestId("voice-call")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Call Comma" })).toBeVisible();
+    expect(screen.getByRole("article", { name: "Call transcript" })).toBeVisible();
+    expect(screen.getByText("Hello there")).toBeVisible();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("shows microphone denial without starting a paid call", async () => {

@@ -63,12 +63,14 @@ export function VoiceCallControl({
   surfaceActive = true,
   onOpen,
   onTranscript,
+  onBarVisibilityChange,
 }: {
   api: CommaApiClient;
   workspaceId: string;
   surfaceActive?: boolean;
   onOpen?: (() => void) | undefined;
   onTranscript?: ((transcript: CallTranscript) => void) | undefined;
+  onBarVisibilityChange?: ((visible: boolean) => void) | undefined;
 }) {
   const m = useCommaMessages();
   const [phase, setPhase] = useState<CallPhase>("idle");
@@ -126,6 +128,12 @@ export function VoiceCallControl({
     const timer = setTimeout(() => setPhase("idle"), phase === "failed" ? 6000 : 1600);
     return () => clearTimeout(timer);
   }, [phase]);
+
+  const barVisible = phase !== "idle";
+  useLayoutEffect(() => {
+    onBarVisibilityChange?.(barVisible);
+    return () => onBarVisibilityChange?.(false);
+  }, [barVisible, onBarVisibilityChange]);
 
   const requestClose = useCallback(
     (mine: Attempt) => {

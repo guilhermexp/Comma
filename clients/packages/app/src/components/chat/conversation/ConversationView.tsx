@@ -176,6 +176,7 @@ export const ConversationView = memo(function ConversationView({
   inlineTaskLinkAdapter,
   leadingPanel,
   headerControls,
+  callBarVisible = false,
   messageListTails,
   state,
   surfaceActive = true,
@@ -202,6 +203,7 @@ export const ConversationView = memo(function ConversationView({
   inlineTaskLinkAdapter?: InlineTaskLinkAdapter | undefined;
   leadingPanel?: ReactNode;
   headerControls?: ReactNode;
+  callBarVisible?: boolean;
   messageListTails?: readonly import("../thread/ConversationThread").AnchoredTail[];
   onComposerContentHeightChange?: (height: number) => void;
   onComposerNoticeHeightChange?: (height: number) => void;
@@ -1380,7 +1382,10 @@ export const ConversationView = memo(function ConversationView({
         {variant === "home" ? (
           <HomeLayout>
             {leadingPanel}
-            <div className="comma-home-chat relative">
+            <div
+              className="comma-home-chat relative"
+              data-call-active={callBarVisible ? "true" : undefined}
+            >
               {headerControls || browserTrigger ? (
                 <div className="absolute inset-x-0 top-4 z-20 flex items-center justify-end gap-sm px-xl">
                   {headerControls}

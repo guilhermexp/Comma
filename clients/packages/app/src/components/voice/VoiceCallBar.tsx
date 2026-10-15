@@ -105,7 +105,7 @@ export function VoiceCallBar({
       data-compact={compact}
       className="relative flex flex-col items-center"
     >
-      <div className="flex items-center gap-1.5 rounded-full bg-primary p-1.5 ring-1 ring-border-secondary shadow-lg">
+      <div className="flex items-center gap-1.5 rounded-full bg-primary p-1.5 ring-1 ring-border-secondary shadow-md">
         <Tooltip content={m.voice_call_return({ agent: name })} isDisabled={!compact}>
           <Button
             aria-label={m.voice_call_return({ agent: name })}
