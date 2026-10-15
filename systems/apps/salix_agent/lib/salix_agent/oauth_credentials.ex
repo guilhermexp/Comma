@@ -79,18 +79,35 @@ defmodule SalixAgent.OAuthCredentials do
   def resolve(_agent_id, [], _opts), do: {:ok, %{}}
 
   def resolve(agent_id, entries, opts) do
+    with {:ok, env, _binding_ids} <- resolve_with_bindings(agent_id, entries, opts),
+         do: {:ok, env}
+  end
+
+  @doc "Resolve like `resolve/3` and also return the OAuth binding ids used."
+  def resolve_with_bindings(_agent_id, [], _opts), do: {:ok, %{}, []}
+
+  def resolve_with_bindings(agent_id, entries, opts) when is_list(entries) do
     with {:ok, refs} <- normalize_entries(entries),
          {:ok, %{tenant: tenant, group_id: group_id}} <- agent_context(agent_id),
          {:ok, bindings} <- group_bindings(group_id),
          {:ok, record} <- agent_record(agent_id) do
-      Enum.reduce_while(refs, {:ok, %{}}, fn ref, {:ok, acc} ->
+      Enum.reduce_while(refs, {:ok, %{}, []}, fn ref, {:ok, acc, ids} ->
         case resolve_one(ref, tenant, bindings, record, opts) do
-          {:ok, value} -> {:cont, {:ok, Map.put(acc, ref.env_var, value)}}
-          {:error, reason} -> {:halt, {:error, resolve_error(ref, reason)}}
+          {:ok, value, binding_id} ->
+            {:cont, {:ok, Map.put(acc, ref.env_var, value), [binding_id | ids]}}
+
+          {:error, reason} ->
+            {:halt, {:error, resolve_error(ref, reason)}}
         end
       end)
+      |> case do
+        {:ok, env, ids} -> {:ok, env, ids |> Enum.uniq() |> Enum.sort()}
+        error -> error
+      end
     end
   end
+
+  def resolve_with_bindings(agent_id, entries, opts), do: resolve(agent_id, entries, opts)
 
   # ---- entry normalization (willow ResolveExecCredentials) ----
 
@@ -176,7 +193,7 @@ defmodule SalixAgent.OAuthCredentials do
          :ok <- validate_value(adapter, ref.value, conn),
          {:ok, conn} <- maybe_refresh(adapter, tenant, ref.provider, conn_id, conn, opts) do
       case adapter.resolve_credential_value(conn, ref.value) do
-        {:ok, value} -> {:ok, value}
+        {:ok, value} -> {:ok, value, to_string(binding["binding_id"] || "")}
         {:error, reason} -> {:error, format_reason(reason)}
       end
     end

@@ -337,14 +337,20 @@ reads the person only from the sealed origin of the current source message. The 
 and the activation must name the same non-empty source. The
 [Comma composition](../../systems/apps/comma_web/lib/comma_web/agent_management.ex)
 then rechecks the active owner of the Group's ready workspace. Salix without Comma
-refuses these tools. Existing tools, such as `agent.update`, keep their Router-only rule.
+refuses these tools. In a Comma Group, `agent.create_worker`, `agent.update`,
+`agent.rebind_runtime` and `agent.archive` need the same current owner request.
+Archive also keeps its irreversibility confirmation. Other products keep the
+Router-only rule for those four tools. An unreadable Group refuses them.
 [Configuration](../../systems/apps/salix_agent/lib/salix_agent/agent_management/configuration.ex)
 writes instructions, `disabled_tools`, the cloud VM and connector access at the Agent
 record CAS. Model choice uses
 [AgentModelSelection](../../systems/apps/salix_agent/lib/salix_agent/agent_model_selection.ex),
 which Comma's model route also uses. Worker skills are entries in the Worker's own
 [SkillStore](../../systems/apps/salix_agent/lib/salix_agent/skill_store.ex) layer.
-`agent.get` reads back the saved configuration and the effective model.
+Model choice reads the Agent again under the tenant catalog lock, so a concurrent
+choice cannot produce a stale result or keep the wrong template.
+`agent.get` reads back the saved configuration, the effective model and the saved
+selection: kind, model, reasoning effort, `allow_paid` and `profile_id`.
 
 [ConnectorAccess](../../systems/apps/salix_agent/lib/salix_agent/connector_access.ex)
 stores `connector_access` on the Worker record. A record without it inherits.
@@ -360,13 +366,22 @@ armed trigger delivery in [Loops](../../systems/apps/salix_agent/lib/salix_agent
 [OAuth credential resolution](../../systems/apps/salix_agent/lib/salix_agent/oauth_credentials.ex)
 for `env.exec`, `compute.exec`, `process.start`, `web.http_request` and Loop scripts;
 and the [MCP provider](../../systems/apps/salix_mcp/lib/salix_mcp/provider.ex) for
-disclosure, tool calls, resources and prompts. An MCP binding also needs every managed
-OAuth binding that it carries. External runtimes use the same tool dispatch, so these
+disclosure, tool calls, resources, prompts and binding lifecycle. An MCP binding also
+needs every managed OAuth binding that it carries. Creating, updating, enabling,
+refreshing or authorizing a binding is checked before any credential is resolved or
+sent. Resource and prompt calls read the exact binding first; a failed read denies.
+Under per-account access, shared Composio actions must belong to the pinned account's
+toolkit, and reserved `COMPOSIO_*` meta-tools are refused. `process.start` records the
+OAuth bindings whose values it injects. `process.write` to that process rechecks them;
+`process.tail` and `process.stop` stay available. A Worker loses the right to change a
+shared Composio trigger with the account, but it can still unbind its own Loop. External runtimes use the same tool dispatch, so these
 points also apply to them. Personal Composio stays on the
 [ComposioBroker](../../systems/apps/salix_agent/lib/salix_agent/composio_broker.ex) grants.
 Limits: a connected Device runtime's model is set by its binding and has no write path.
 Compute targets require a Bridge for Teams project. Device logins follow `agent.rebind_runtime`.
-Revocation does not stop an MCP call or a Composio action that has already started.
+Revocation does not stop an MCP call, a Composio action or a process that has already
+started. A running process keeps the credential value it received, and anything it
+does on its own is outside Comma's control.
 
 ## 3. Conversations and messages
 

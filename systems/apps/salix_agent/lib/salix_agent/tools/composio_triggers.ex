@@ -164,13 +164,15 @@ defmodule SalixAgent.Tools.ComposioTriggers do
     if action not in ["enable", "disable", "delete"], do: raise("Invalid trigger action")
 
     with {:ok, trigger} <- owned_trigger(settings, group, id, action in ["disable", "delete"]),
+         # Every provider-level trigger change is use of the trigger's account;
+         # a trigger can serve sibling Workers' Loops. Unsubscribing the
+         # caller's own Loop stays available through composio bind.
          true <-
-           (action != "enable" or
-              SalixAgent.ConnectorAccess.agent_allowed?(
-                ctx.agent_id,
-                "composio_shared",
-                to_string(trigger["connected_account_id"])
-              )) || {:error, :not_found},
+           SalixAgent.ConnectorAccess.agent_allowed?(
+             ctx.agent_id,
+             "composio_shared",
+             to_string(trigger["connected_account_id"])
+           ) || {:error, :not_found},
          {:ok, _} <- client().manage_trigger(settings, group, id, action) do
       result({:ok, %{"trigger_id" => id, "status" => action}}, ctx)
     else
@@ -229,8 +231,7 @@ defmodule SalixAgent.Tools.ComposioTriggers do
   end
 
   # Arming or re-binding a trigger is use of the account: the Agent must hold
-  # access to it (SalixAgent.ConnectorAccess). Cleanup of an existing trigger
-  # (disable/delete) stays available so a revoked Worker can stop events.
+  # access to it (SalixAgent.ConnectorAccess).
   defp owned_account(settings, group, id, active?, agent_id) do
     if SalixAgent.ConnectorAccess.agent_allowed?(agent_id, "composio_shared", to_string(id)),
       do: owned_account(settings, group, id, active?),

@@ -6188,11 +6188,7 @@ defmodule CommaWeb.RouterTest do
                    "Exercise an independent Worker with the user-selected BYOK model",
                  "runtime" => %{"kind" => "internal"}
                },
-               %{
-                 agent_id: workspace["router_agent_id"],
-                 session_id: "byok-session",
-                 tool_call_id: "byok-create"
-               }
+               byok_owner_ctx(workspace, login)
              )
 
     task_worker_id = created_worker["agent"]["agent_id"]
@@ -9710,5 +9706,29 @@ defmodule CommaWeb.RouterTest do
 
     @impl true
     def revoke_api_key(_workspace_id, _key_id), do: {:error, {:retryable, :unused}}
+  end
+
+  # In a Comma Group, Router Worker writes need the owner's own current message.
+  defp byok_owner_ctx(workspace, login) do
+    owner = if is_map(login["user"]), do: login["user"]["id"], else: login["user"]
+    source = "groupconv:byok:msg-1:ptp-1"
+
+    %{
+      agent_id: workspace["router_agent_id"],
+      session_id: "byok-session",
+      tool_call_id: "byok-create",
+      source_message_id: source,
+      trusted_origin: %{
+        "provider" => "internal",
+        "source_message_id" => source,
+        "source_actor_type" => "user",
+        "agent_group_id" => workspace["default_group_id"],
+        "principal_ref" => %{
+          "namespace" => "comma_user",
+          "tenant_id" => workspace["salix_tenant_id"],
+          "subject_id" => owner
+        }
+      }
+    }
   end
 end

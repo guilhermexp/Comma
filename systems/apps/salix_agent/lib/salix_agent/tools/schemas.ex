@@ -1298,6 +1298,63 @@ defmodule SalixAgent.Tools.Schemas do
       },
       "required" => ["tool_slug"]
     },
+    # ---- personal Composio broker (composio_broker.ex) ----
+    "composio.personal_accounts" => %{
+      "type" => "object",
+      "properties" => %{
+        "cursor" => %{
+          "type" => ["string", "null"],
+          "description" => "next_cursor from a previous page."
+        }
+      },
+      "required" => []
+    },
+    "composio.personal_search" => %{
+      "type" => "object",
+      "properties" => %{
+        "account_id" => %{
+          "type" => "string",
+          "description" => "account_id from composio.personal_accounts."
+        },
+        "query" => %{"type" => "string", "minLength" => 1, "maxLength" => 500},
+        "cursor" => %{"type" => ["string", "null"]}
+      },
+      "required" => ["account_id", "query"]
+    },
+    "composio.personal_schema" => %{
+      "type" => "object",
+      "properties" => %{
+        "account_id" => %{"type" => "string"},
+        "tool_slugs" => %{
+          "type" => "array",
+          "minItems" => 1,
+          "maxItems" => 50,
+          "items" => %{"type" => "string"}
+        }
+      },
+      "required" => ["account_id", "tool_slugs"]
+    },
+    "composio.personal_execute" => %{
+      "type" => "object",
+      "properties" => %{
+        "account_id" => %{"type" => "string"},
+        "tools" => %{
+          "type" => "array",
+          "minItems" => 1,
+          "maxItems" => 50,
+          "items" => %{
+            "type" => "object",
+            "properties" => %{
+              "tool_slug" => %{"type" => "string"},
+              "arguments" => %{"type" => "object"}
+            },
+            "required" => ["tool_slug", "arguments"],
+            "additionalProperties" => false
+          }
+        }
+      },
+      "required" => ["account_id", "tools"]
+    },
     # ---- owner email (tools/owner_email.ex) ----
     "email.send_to_owners" => %{
       "type" => "object",

@@ -85,6 +85,9 @@ defmodule CommaWeb.RouterWorkerAccessIngressTest do
       end
     end
 
+    def list_tools(_settings, opts),
+      do: {:ok, [%{"slug" => opts[:tool_slugs], "toolkit" => %{"slug" => "gmail"}}]}
+
     def execute_tool(_settings, slug, group, _arguments, opts) do
       send(
         Application.fetch_env!(:comma_web, :ingress_test_pid),

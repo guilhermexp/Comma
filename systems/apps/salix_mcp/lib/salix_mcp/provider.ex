@@ -79,35 +79,42 @@ defmodule SalixMCP.Provider do
 
   @impl true
   def create_binding(agent_id, attrs) do
-    with {:ok, scope} <- Store.scope_for_agent(agent_id) do
+    with {:ok, scope} <- Store.scope_for_agent(agent_id),
+         :ok <- admit_dependencies(scope, %{}, attrs) do
       Gateway.create_binding(scope.tenant_id, scope.group_id, attrs)
     end
   end
 
   @impl true
   def update_binding(agent_id, binding_id, attrs) do
-    with {:ok, scope} <- Store.scope_for_agent(agent_id) do
+    with {:ok, scope} <- Store.scope_for_agent(agent_id),
+         {:ok, binding} <- scoped_binding(scope, binding_id),
+         :ok <- permit(scope, binding),
+         :ok <- admit_dependencies(scope, binding, attrs) do
       Gateway.update_binding(scope.tenant_id, scope.group_id, binding_id, attrs)
     end
   end
 
   @impl true
   def set_binding_enabled(agent_id, binding_id, enabled) do
-    with {:ok, scope} <- Store.scope_for_agent(agent_id) do
+    with {:ok, scope} <- Store.scope_for_agent(agent_id),
+         :ok <- permit_id(scope, binding_id) do
       Gateway.set_binding_enabled(scope.tenant_id, scope.group_id, binding_id, enabled)
     end
   end
 
   @impl true
   def refresh_binding(agent_id, binding_id) do
-    with {:ok, scope} <- Store.scope_for_agent(agent_id) do
+    with {:ok, scope} <- Store.scope_for_agent(agent_id),
+         :ok <- permit_id(scope, binding_id) do
       Gateway.refresh_binding(scope.tenant_id, scope.group_id, binding_id)
     end
   end
 
   @impl true
   def authorize_binding(agent_id, binding_id, params) do
-    with {:ok, scope} <- Store.scope_for_agent(agent_id) do
+    with {:ok, scope} <- Store.scope_for_agent(agent_id),
+         :ok <- permit_id(scope, binding_id) do
       Credentials.start_remote_authorization(
         scope.tenant_id,
         scope.group_id,
@@ -199,10 +206,44 @@ defmodule SalixMCP.Provider do
       else: {:error, "MCP binding is not granted to this Worker"}
   end
 
+  # Gateway operations address a binding by its exact id in this Group, so the
+  # decision reads that same record. Every lookup failure denies.
   defp permit_id(scope, binding_id) do
-    case Store.find_binding_by_alias(scope.tenant_id, scope.group_id, binding_id) do
-      {:ok, binding} -> permit(scope, binding)
-      _ -> :ok
+    with {:ok, binding} <- scoped_binding(scope, binding_id), do: permit(scope, binding)
+  end
+
+  defp scoped_binding(scope, binding_id) when is_binary(binding_id) and binding_id != "" do
+    case Store.get_binding(scope.tenant_id, scope.group_id, binding_id) do
+      {:ok, %{"tenant_id" => tenant, "group_id" => group, "binding_id" => ^binding_id} = binding}
+      when tenant == scope.tenant_id and group == scope.group_id ->
+        {:ok, binding}
+
+      _ ->
+        {:error, "MCP binding is not available to this Worker"}
+    end
+  end
+
+  defp scoped_binding(_scope, _binding_id),
+    do: {:error, "MCP binding is not available to this Worker"}
+
+  # Creating, updating or reconnecting a binding resolves the managed OAuth
+  # credentials it carries and sends them to its endpoint. A restricted Worker
+  # may do that only with every OAuth binding the result would carry.
+  defp admit_dependencies(scope, existing, attrs) do
+    proposed = Map.merge(existing, stringify(attrs || %{}))
+
+    if SalixAgent.ConnectorAccess.restricted?(scope.agent) do
+      case SalixAgent.ConnectorAccess.mcp_oauth_binding_ids(proposed, oauth_bindings(scope)) do
+        {:ok, ids} ->
+          if Enum.all?(ids, &SalixAgent.ConnectorAccess.allowed?(scope.agent, "oauth", &1)),
+            do: :ok,
+            else: {:error, "MCP binding carries an OAuth credential not granted to this Worker"}
+
+        _ ->
+          {:error, "MCP binding carries an OAuth credential not granted to this Worker"}
+      end
+    else
+      :ok
     end
   end
 

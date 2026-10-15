@@ -148,11 +148,15 @@ defmodule SalixAgent.AgentManagement.Configuration do
   end
 
   def set_model(scope, record, %{"selection" => selection}) do
-    with {:ok, updated} <- AgentModelSelection.apply(record, scope.tenant_id, selection) do
+    with {:ok, %{record: updated, previous: previous}} <-
+           AgentModelSelection.apply(record, scope.tenant_id, selection) do
       {:ok,
        %{
          "result" =>
-           if(updated["template_id"] == record["template_id"], do: "unchanged", else: "applied"),
+           if(updated["template_id"] == previous["template_id"],
+             do: "unchanged",
+             else: "applied"
+           ),
          "agent" => Projection.detail(updated),
          "effect" => model_effect(updated)
        }}

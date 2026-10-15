@@ -14,6 +14,10 @@ defmodule SalixAgent.AgentManagement do
   # Privileged configuration: only the current workspace owner's own request.
   @owner_operations ~w(configure model_choices set_model skill_add skill_remove access_list access_set)a
   @read_operations ~w(list get model_choices access_list)a
+  # Existing Router writes are Worker administration too. In a Comma workspace
+  # Group they need the same current owner request; other products keep their
+  # Router-only rule.
+  @comma_owner_writes ~w(create update rebind archive)a
   alias SalixStore.{CasRecord, Ids, Keys}
 
   def run(operation, args, ctx) do
@@ -113,8 +117,28 @@ defmodule SalixAgent.AgentManagement do
   end
 
   defp dispatch(operation, args, ctx, caller) do
-    command(%{tenant_id: caller["tenant_id"], group_id: caller["group_id"]}, operation, args, ctx)
+    scope = %{tenant_id: caller["tenant_id"], group_id: caller["group_id"]}
+
+    with :ok <- comma_owner_write(operation, scope, ctx),
+         do: command(scope, operation, args, ctx)
   end
+
+  # Comma is identified by the Group's authoritative billing owner. An
+  # unreadable Group refuses the write instead of falling back to Router-only.
+  defp comma_owner_write(operation, scope, ctx) when operation in @comma_owner_writes do
+    case SalixAgent.GroupContext.get(scope.group_id, scope.tenant_id) do
+      {:ok, %{"billing_owner" => %{"surface" => "comma"}}} ->
+        with {:ok, _owner} <- OwnerAuthority.current_owner(scope, ctx), do: :ok
+
+      {:ok, _group} ->
+        :ok
+
+      _ ->
+        {:error, :management_unavailable}
+    end
+  end
+
+  defp comma_owner_write(_operation, _scope, _ctx), do: :ok
 
   defp configuration(:configure, scope, record, args, _ctx, _owner),
     do: Configuration.configure(scope, record, args)

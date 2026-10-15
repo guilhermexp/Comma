@@ -213,6 +213,13 @@ defmodule SalixStore.Keys do
 
   def ctl_composio_default_settings, do: "ctl/composio/default.json"
 
+  @doc "Managed OAuth bindings whose credentials a Compute process received at start."
+  def ctl_compute_process_credentials(workload_id, process_id),
+    do:
+      "ctl/compute/process_credentials/" <>
+        Base.url_encode64(workload_id, padding: false) <>
+        "/" <> Base.url_encode64(process_id, padding: false) <> ".json"
+
   # Prefix of the per-tenant Composio settings objects (the deployment default
   # is a single object outside this prefix). Used only by the S3→Postgres
   # cutover enumeration (docs/storage-search.md).

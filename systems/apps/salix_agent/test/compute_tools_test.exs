@@ -356,6 +356,100 @@ defmodule SalixAgent.ComputeToolsTest do
     end
   end
 
+  test "process input rechecks the OAuth access the process was started with", context do
+    previous = Application.get_env(:salix_agent, :oauth_store_mod)
+    Application.put_env(:salix_agent, :oauth_store_mod, OAuthStore)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:salix_agent, :oauth_store_mod, previous),
+        else: Application.delete_env(:salix_agent, :oauth_store_mod)
+    end)
+
+    :ok = SalixStore.OAuth.put("compute-oauth", %{"access_token" => "tok", "status" => "active"})
+    tenant = SalixAgent.TestSupport.new_tenant_id()
+
+    worker =
+      SalixAgent.TestSupport.create_control_agent_in_group!(
+        tenant,
+        SalixStore.Ids.new_group_id(tenant),
+        %{"connector_access_policy" => "new"}
+      )
+
+    {:ok, _} =
+      SalixAgent.Control.configure_connector_access(
+        worker["agent_id"],
+        tenant,
+        "oauth:oauth-compute",
+        "allow"
+      )
+
+    {:ok, grant} =
+      Compute.issue_grant(%{
+        id: "grant-process-oauth",
+        tenant_id: "tenant",
+        environment_id: context.environment.id,
+        workload_id: context.workload.id,
+        principal_type: "agent",
+        principal_id: worker["agent_id"],
+        permissions: ["workspace", "service_route", "runtime"],
+        expires_at: DateTime.add(DateTime.utc_now(), 300, :second)
+      })
+
+    ctx = %{
+      tenant_id: "tenant",
+      agent_id: worker["agent_id"],
+      environment_id: context.environment.id,
+      workload_grant_id: grant.id,
+      compute_adapter: Adapter,
+      plugin_projection: %{},
+      tool_call_id: "process-oauth-call"
+    }
+
+    tool = fn name -> elem(Enum.find(ComputeTools.defs(), &(elem(&1, 0) == name)), 3) end
+
+    ref = %{
+      "env_var" => "GH_TOKEN",
+      "provider" => "github",
+      "alias" => "github",
+      "value" => "access_token"
+    }
+
+    started =
+      tool.("process.start").(%{"command" => ["sh"], "credential_env" => [ref]}, ctx)
+      |> Jason.decode!()
+
+    # The process id is pinned to the runtime's request-derived id.
+    process_id = started["args"]["process_id"]
+    assert process_id == "process-request-" <> started["args"]["request_id"]
+    write = %{"process_id" => process_id, "data_base64" => Base.encode64("echo hi\n")}
+
+    assert %{"operation" => "process.write"} =
+             tool.("process.write").(write, ctx) |> Jason.decode!()
+
+    {:ok, _} =
+      SalixAgent.Control.configure_connector_access(
+        worker["agent_id"],
+        tenant,
+        "oauth:oauth-compute",
+        "default"
+      )
+
+    # New input to the credential-holding process is refused; stopping it is not.
+    assert_raise RuntimeError, ~r/not granted to this Worker/, fn ->
+      tool.("process.write").(write, %{ctx | compute_adapter: MustNotRunAdapter})
+    end
+
+    assert %{"operation" => "process.stop"} =
+             tool.("process.stop").(%{"process_id" => process_id}, ctx) |> Jason.decode!()
+
+    # A process started without credentials takes input as before.
+    plain = %{"process_id" => "process-plain", "data_base64" => Base.encode64("x")}
+
+    assert %{"operation" => "process.write"} =
+             tool.("process.write").(plain, ctx) |> Jason.decode!()
+  end
+
   test "plugin visibility never invokes or revokes a resource", context do
     projection = %{
       "revision" => 1,

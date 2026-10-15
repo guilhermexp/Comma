@@ -454,14 +454,17 @@ defmodule SalixAgent.Tools.Composio do
           "connected_account_id is required for this Worker; choose one from composio.list_connections"
         )
 
-    if connected_account_id do
-      case owned_permitted_account(ctx, settings, connected_account_id, group_id) do
-        {:ok, %{"status" => "ACTIVE"}} -> :ok
-        {:ok, _} -> raise "Composio account is not active"
-        :not_found -> raise "Composio account not found in this group"
-        {:error, _} -> raise "Composio account lookup failed"
+    account =
+      if connected_account_id do
+        case owned_permitted_account(ctx, settings, connected_account_id, group_id) do
+          {:ok, %{"status" => "ACTIVE"} = account} -> account
+          {:ok, _} -> raise "Composio account is not active"
+          :not_found -> raise "Composio account not found in this group"
+          {:error, _} -> raise "Composio account lookup failed"
+        end
       end
-    end
+
+    if ConnectorAccess.restricted?(record), do: restricted_action!(settings, tool_slug, account)
 
     opts = put_opt([], :connected_account_id, connected_account_id)
 
@@ -540,6 +543,29 @@ defmodule SalixAgent.Tools.Composio do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  # Under per-account access the action must belong to the pinned account's
+  # toolkit. Reserved COMPOSIO_* meta-tools can carry nested account selectors
+  # (for example COMPOSIO_MULTI_EXECUTE_TOOL's per-tool `account`), so they are
+  # refused rather than trusted to honor the pinned account.
+  defp restricted_action!(settings, tool_slug, account) do
+    if String.starts_with?(tool_slug, "COMPOSIO_"),
+      do: raise("Composio meta-tools are not available to this Worker")
+
+    toolkit = to_string(get_in(account, ["toolkit", "slug"]) || "")
+
+    case client().list_tools(settings, tool_slugs: tool_slug, limit: 1) do
+      {:ok, [%{"slug" => ^tool_slug} = tool | _]} ->
+        if to_string(get_in(tool, ["toolkit", "slug"]) || "") != toolkit or toolkit == "",
+          do: raise("composio tool #{tool_slug} does not belong to the account's toolkit")
+
+      {:ok, _} ->
+        raise "composio tool #{tool_slug} not found; search with composio.list_tools"
+
+      {:error, _} ->
+        raise "composio tool lookup failed"
     end
   end
 

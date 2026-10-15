@@ -246,7 +246,7 @@ defmodule CommaWeb.SalixClient do
     observe_salix(:salix_boundary, fn ->
       with {:ok, scope} <- resolve_workspace_scope(workspace),
            {:ok, agent} <- model_target(scope, target),
-           {:ok, updated} <-
+           {:ok, %{record: updated}} <-
              AgentModelSelection.apply(agent, scope["salix_tenant_id"], selection) do
         workspace_worker_model(updated)
       end

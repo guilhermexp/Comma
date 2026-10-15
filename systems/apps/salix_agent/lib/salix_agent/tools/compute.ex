@@ -61,13 +61,9 @@ defmodule SalixAgent.Tools.Compute do
              agent_id,
              permission(operation)
            ),
-         {:ok, result} <-
-           dispatch(
-             adapter,
-             operation,
-             prepare_args(operation, stringify(args), ctx),
-             workload.id
-           ) do
+         args = prepare_args(operation, stringify(args), ctx, workload.id),
+         :ok <- authorize_process_input(operation, args, workload.id, agent_id),
+         {:ok, result} <- dispatch(adapter, operation, args, workload.id) do
       Jason.encode!(result)
     else
       false -> raise "compute is unavailable for this Workload"
@@ -196,11 +192,13 @@ defmodule SalixAgent.Tools.Compute do
   defp property_type(key) when key in ~w(port expected_revision), do: "integer"
   defp property_type(_), do: "string"
 
-  defp prepare_args(operation, args, ctx) when operation in [:compute_exec, :process_start] do
+  defp prepare_args(operation, args, ctx, workload_id)
+       when operation in [:compute_exec, :process_start] do
     {entries, args} = Map.pop(args, "credential_env", [])
+    agent_id = required_context(ctx, :agent_id)
 
-    case SalixAgent.OAuthCredentials.resolve(required_context(ctx, :agent_id), entries) do
-      {:ok, resolved} ->
+    case SalixAgent.OAuthCredentials.resolve_with_bindings(agent_id, entries, []) do
+      {:ok, resolved, binding_ids} ->
         args =
           if map_size(resolved) == 0 do
             args
@@ -212,14 +210,62 @@ defmodule SalixAgent.Tools.Compute do
             )
           end
 
-        normalize_args(operation, args, ctx)
+        args = normalize_args(operation, args, ctx)
+
+        if operation == :process_start and binding_ids != [],
+          do: record_process_credentials!(args, workload_id, agent_id, binding_ids),
+          else: args
 
       {:error, message} ->
         raise message
     end
   end
 
-  defp prepare_args(operation, args, ctx), do: normalize_args(operation, args, ctx)
+  defp prepare_args(operation, args, ctx, _workload_id), do: normalize_args(operation, args, ctx)
+
+  # A long-lived process keeps the credentials it was started with. Later input
+  # is new Comma-mediated use, so process.write rechecks the caller's current
+  # access to every OAuth binding the process received (SalixAgent.ConnectorAccess).
+  # The record is written before the process starts; its id is pinned to the
+  # runtime's own request-derived id. Revocation cannot withdraw a value the
+  # running process already holds, and tail/stop stay available.
+  defp record_process_credentials!(args, workload_id, agent_id, binding_ids) do
+    process_id = args["process_id"] || "process-request-" <> args["request_id"]
+    key = SalixStore.Keys.ctl_compute_process_credentials(workload_id, process_id)
+    record = %{"agent_id" => agent_id, "oauth_binding_ids" => binding_ids}
+
+    case SalixStore.S3.put(key, Jason.encode!(record), []) do
+      {:ok, _} -> Map.put(args, "process_id", process_id)
+      _ -> raise "process credentials could not be recorded; the process was not started"
+    end
+  end
+
+  defp authorize_process_input(
+         :process_write,
+         %{"process_id" => process_id},
+         workload_id,
+         agent_id
+       )
+       when is_binary(process_id) do
+    key = SalixStore.Keys.ctl_compute_process_credentials(workload_id, process_id)
+
+    case SalixStore.S3.get(key) do
+      {:error, :not_found} ->
+        :ok
+
+      {:ok, %{body: body}} ->
+        ids = Jason.decode!(body)["oauth_binding_ids"] || []
+
+        if Enum.all?(ids, &SalixAgent.ConnectorAccess.agent_allowed?(agent_id, "oauth", &1)),
+          do: :ok,
+          else: raise("this process holds an OAuth credential not granted to this Worker")
+
+      _ ->
+        raise "process credential access could not be checked"
+    end
+  end
+
+  defp authorize_process_input(_operation, _args, _workload_id, _agent_id), do: :ok
 
   defp normalize_args(:process_start, %{"request_id" => request_id} = args, _ctx)
        when is_binary(request_id) do

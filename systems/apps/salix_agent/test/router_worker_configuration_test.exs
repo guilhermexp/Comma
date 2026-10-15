@@ -60,6 +60,39 @@ defmodule SalixAgent.RouterWorkerConfigurationTest do
       end
     end
 
+    # The catalog names each action's toolkit by its slug prefix.
+    def list_tools(_settings, opts) do
+      slug = opts[:tool_slugs]
+
+      toolkit =
+        cond do
+          String.starts_with?(slug, "GMAIL_") -> "gmail"
+          String.starts_with?(slug, "GOOGLECALENDAR_") -> "googlecalendar"
+          true -> "composio"
+        end
+
+      {:ok, [%{"slug" => slug, "toolkit" => %{"slug" => toolkit}}]}
+    end
+
+    def list_triggers(_settings, group, trigger_id: id) do
+      {:ok,
+       %{
+         "items" => [
+           %{
+             "id" => id,
+             "user_id" => group,
+             "connected_account_id" => "ca_mail",
+             "trigger_name" => "GMAIL_NEW"
+           }
+         ]
+       }}
+    end
+
+    def manage_trigger(_settings, _group, id, action) do
+      send(Application.get_env(:salix_agent, :test_pid), {:manage_trigger, id, action})
+      {:ok, %{}}
+    end
+
     def execute_tool(_settings, slug, group, _args, opts) do
       send(Application.get_env(:salix_agent, :test_pid), {:composio_execute, group, slug, opts})
       {:ok, %{"successful" => true, "data" => %{"ok" => true}}}
@@ -298,7 +331,8 @@ defmodule SalixAgent.RouterWorkerConfigurationTest do
   end
 
   defp shared_execute(agent, account) do
-    args = %{"tool_slug" => "GMAIL_FETCH_EMAILS", "arguments" => %{}}
+    slug = if account == "ca_cal", do: "GOOGLECALENDAR_EVENTS_LIST", else: "GMAIL_FETCH_EMAILS"
+    args = %{"tool_slug" => slug, "arguments" => %{}}
     args = if account, do: Map.put(args, "connected_account_id", account), else: args
     SharedComposio.execute(args, %{agent_id: agent["agent_id"], group_id: agent["group_id"]})
   end
@@ -407,6 +441,241 @@ defmodule SalixAgent.RouterWorkerConfigurationTest do
       # The read-back settles the ambiguity.
       assert {:ok, %{"agent" => %{"configuration" => %{"instructions" => "Ship"}}}} =
                run(c, :get, %{"agent_id" => c.worker["agent_id"]})
+    end
+  end
+
+  describe "existing Router writes in Comma Groups" do
+    setup c do
+      comma =
+        owned_group!(c, %{
+          "surface" => "comma",
+          "product_owner_type" => "workspace",
+          "product_owner_id" => "ws-owner-writes"
+        })
+
+      Application.put_env(:salix_agent, :test_owners, [{c.group, "owner"}, {comma, "owner"}])
+      router = agent!(c.tenant, comma, %{"role" => "router"})
+      worker = agent!(c.tenant, comma, %{"name" => "Comma Worker"})
+      %{comma: comma, comma_router: router, comma_worker: worker}
+    end
+
+    defp comma_run(c, op, args, origin_overrides) do
+      origin =
+        if origin_overrides == :none,
+          do: nil,
+          else: origin(c, Map.merge(%{"agent_group_id" => c.comma}, origin_overrides))
+
+      run(c, op, args, caller: c.comma_router, origin: origin)
+    end
+
+    test "update, rebind, create and archive need the current owner's own request", c do
+      update = %{"agent_id" => c.comma_worker["agent_id"], "name" => "Renamed"}
+
+      member = %{
+        "principal_ref" => %{
+          "namespace" => "comma_user",
+          "tenant_id" => c.tenant,
+          "subject_id" => "member"
+        }
+      }
+
+      assert {:error, %{"code" => "current_owner_request_required"}} =
+               comma_run(c, :update, update, :none)
+
+      assert {:error, %{"code" => "current_owner_request_required"}} =
+               comma_run(c, :update, update, %{"task_schedule" => %{"schedule_id" => "s1"}})
+
+      assert {:error, %{"code" => "current_owner_request_required"}} =
+               run(c, :update, update,
+                 caller: c.comma_router,
+                 origin: origin(c, %{"agent_group_id" => c.comma}),
+                 source: "groupconv:conv:older:ptp-1"
+               )
+
+      assert {:error, %{"code" => "owner_required"}} = comma_run(c, :update, update, member)
+      assert {:ok, %{"agent" => %{"name" => "Renamed"}}} = comma_run(c, :update, update, %{})
+
+      create = %{
+        "name" => "Scheduled",
+        "purpose" => "x",
+        "creation_reason" => "y",
+        "runtime" => %{"kind" => "internal"}
+      }
+
+      assert {:error, %{"code" => "current_owner_request_required"}} =
+               comma_run(c, :create, create, %{"provider" => "schedule"})
+
+      assert {:ok, %{"result" => "applied"}} = comma_run(c, :create, create, %{})
+
+      assert {:error, %{"code" => "current_owner_request_required"}} =
+               comma_run(
+                 c,
+                 :rebind,
+                 %{
+                   "agent_id" => c.comma_worker["agent_id"],
+                   "target" => %{"kind" => "connected", "device_runtime_id" => "drt"},
+                   "expected_binding_revision" => 0
+                 },
+                 %{"source_actor_type" => "agent"}
+               )
+
+      archive = %{"agent_id" => c.comma_worker["agent_id"], "user_confirmed" => true}
+
+      assert {:error, %{"code" => "current_owner_request_required"}} =
+               comma_run(c, :archive, archive, %{"provider" => "loop"})
+
+      # Archive keeps its irreversibility confirmation even for the owner.
+      assert {:error, %{"code" => "user_confirmation_required"}} =
+               comma_run(c, :archive, %{archive | "user_confirmed" => false}, %{})
+
+      assert {:ok, %{"agent" => %{"lifecycle" => "archived"}}} =
+               comma_run(c, :archive, archive, %{})
+    end
+
+    test "Groups of other products keep the Router-only rule", c do
+      assert {:ok, %{"agent" => %{"name" => "Still Router-only"}}} =
+               run(
+                 c,
+                 :update,
+                 %{"agent_id" => c.legacy["agent_id"], "name" => "Still Router-only"},
+                 origin: nil
+               )
+    end
+  end
+
+  describe "Composio triggers" do
+    test "a Worker without the account cannot change a shared trigger but can unsubscribe its Loop",
+         c do
+      ctx = %{agent_id: c.worker["agent_id"], session_id: Ids.new_session_id(), group_id: c.group}
+      manage = %{"trigger_id" => "trig-1", "action" => "delete"}
+
+      for action <- ~w(delete disable enable) do
+        assert_raise RuntimeError, ~r/not_found/, fn ->
+          SalixAgent.Tools.ComposioTriggers.manage(%{manage | "action" => action}, ctx)
+        end
+      end
+
+      refute_received {:manage_trigger, _, _}
+
+      set!(c, c.worker, "composio_shared", "ca_mail", "allow")
+      SalixAgent.Tools.ComposioTriggers.manage(manage, ctx)
+      assert_received {:manage_trigger, "trig-1", "delete"}
+
+      # Unsubscribing its own Loop needs no account access.
+      set!(c, c.worker, "composio_shared", "ca_mail", "default")
+
+      SalixStore.Repo.query!("DELETE FROM agent_loops WHERE agent_id = $1", [c.worker["agent_id"]])
+
+      elf = <<0x7F, ?E, ?L, ?F, 1, 2, 3>>
+
+      {:ok, event} =
+        SalixAgent.AgentWorkspace.prepare_write(c.worker["agent_id"], "/loops/a.elf", elf)
+
+      {:ok, _} =
+        SalixAgent.AgentWorkspace.seed_operation(c.worker["agent_id"], "trigger-test", %{}, [
+          event
+        ])
+
+      {:ok, loop} =
+        SalixAgent.Loops.create(
+          Map.put(ctx, :ifc_evidence, %{
+            "requester" => "comma_user|owner",
+            "sources_label" => ["public"]
+          }),
+          %{"path" => "/loops/a.elf"}
+        )
+
+      result =
+        SalixAgent.Tools.ComposioTriggers.bind(%{"loop_id" => loop["loop_id"] || loop["id"]}, ctx)
+
+      refute match?({:tool_failure, _, _, _, _, _}, result)
+    end
+  end
+
+  describe "model readback and concurrent choices" do
+    test "the saved choice, including a forced paid API-key Profile, reads back without secrets",
+         c do
+      id = c.worker["agent_id"]
+
+      model =
+        Enum.find(
+          SalixAgent.Models.list(),
+          &(&1["efforts"] not in [nil, []] and Map.has_key?(&1["routes"], "openrouter"))
+        )
+
+      {:ok, profile} =
+        SalixAgent.AccountPool.create(c.tenant, %{
+          "credential_kind" => "provider_api_key",
+          "source" => "openrouter",
+          "api_key" => "sk-or-v1-secretsecret0123"
+        })
+
+      selection = %{
+        "kind" => "catalog",
+        "model" => model["id"],
+        "allow_paid" => false,
+        "reasoning_effort" => hd(model["efforts"]),
+        "profile_id" => profile["id"]
+      }
+
+      expected = %{selection | "allow_paid" => true}
+
+      assert {:ok, %{"agent" => %{"model" => set}}} =
+               run(c, :set_model, %{"agent_id" => id, "selection" => selection})
+
+      assert set["selection"] == expected
+      assert set["reasoning_effort"] == hd(model["efforts"])
+      assert {:ok, %{"agent" => %{"model" => got}}} = run(c, :get, %{"agent_id" => id})
+      assert got["selection"] == expected
+      assert {:ok, %{"current" => current}} = run(c, :model_choices, %{"agent_id" => id})
+      assert current["selection"] == expected
+      refute inspect([set, got, current]) =~ "secretsecret"
+
+      assert {:ok, %{"agent" => %{"model" => %{"selection" => %{"kind" => "builtin"}}}}} =
+               run(c, :set_model, %{"agent_id" => id, "selection" => %{"kind" => "builtin"}})
+    end
+
+    test "a stale lookup cannot report or keep the wrong choice after a competing write", c do
+      id = c.worker["agent_id"]
+      # A reads the Worker while it follows the builtin default.
+      {:ok, _} = Control.configure(id, %{"template_id" => nil}, c.tenant)
+      {:ok, %{"template_id" => nil} = stale} = Control.get(id, c.tenant)
+      model = Enum.find(SalixAgent.Models.list(), &Map.has_key?(&1["routes"], "openrouter"))
+      catalog = %{"kind" => "catalog", "model" => model["id"], "allow_paid" => false}
+
+      # B writes a catalog choice after A looked the Agent up.
+      _ = SalixAgent.AgentModelSelection.apply(stale, c.tenant, catalog)
+      {:ok, %{"template_id" => catalog_template}} = Control.get_record(id)
+      assert is_binary(catalog_template)
+
+      # A applies builtin with its stale record: the transition is catalog -> builtin.
+      result = SalixAgent.AgentModelSelection.apply(stale, c.tenant, %{"kind" => "builtin"})
+      assert {:ok, %{"template_id" => nil}} = Control.get_record(id)
+      assert {:ok, %{record: record, previous: previous}} = result
+      assert previous["template_id"] == catalog_template
+      assert record["template_id"] == nil
+      # The replaced private template has no Agent left and is released.
+      assert {:error, :not_found} = SalixAgent.Templates.get(catalog_template, c.tenant)
+    end
+  end
+
+  describe "shared Composio action contract" do
+    test "a Worker under per-account access cannot use meta-tools or another toolkit's action",
+         c do
+      set!(c, c.worker, "composio_shared", "ca_mail", "allow")
+
+      exec = fn slug ->
+        SharedComposio.execute(
+          %{"tool_slug" => slug, "connected_account_id" => "ca_mail", "arguments" => %{}},
+          %{agent_id: c.worker["agent_id"]}
+        )
+      end
+
+      assert_raise RuntimeError, ~r/meta-tools/, fn -> exec.("COMPOSIO_MULTI_EXECUTE_TOOL") end
+      assert_raise RuntimeError, ~r/toolkit/, fn -> exec.("GOOGLECALENDAR_EVENTS_LIST") end
+      refute_received {:composio_execute, _, _, _}
+      exec.("GMAIL_FETCH_EMAILS")
+      assert_received {:composio_execute, _, "GMAIL_FETCH_EMAILS", _}
     end
   end
 

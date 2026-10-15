@@ -12,13 +12,22 @@ defmodule SalixAgent.AgentModelSelection do
 
   alias SalixAgent.{Control, Templates}
 
-  @doc "Apply a selection to an existing Agent record. Returns the updated record."
+  @doc """
+  Apply a selection to an existing Agent. `agent` names the target; its
+  current record is read again under the tenant catalog lock, so the checks,
+  the result and the released template follow the actual transition.
+  Returns `{:ok, %{record: updated, previous: current}}`.
+  """
   def apply(agent, tenant_id, %{"kind" => "runtime"} = selection) do
     with {:ok, model, effort} <- runtime_selection(selection),
-         {:ok, provider} <- runtime_model_writable(agent),
-         {:ok, updated} <- assign_runtime_choice(agent, provider, model, effort, tenant_id) do
-      release_replaced(agent, updated, tenant_id)
-      {:ok, updated}
+         {:ok, transition} <-
+           locked(agent, tenant_id, fn current ->
+             with {:ok, provider} <- runtime_model_writable(current),
+                  {:ok, template} <-
+                    Templates.resolve_private_runtime(provider, model, effort, tenant_id),
+                  do: {:ok, template["template_id"]}
+           end) do
+      {:ok, transition}
     else
       {:error, :invalid_model_configuration} -> {:error, :invalid_runtime_model}
       error -> error
@@ -26,12 +35,51 @@ defmodule SalixAgent.AgentModelSelection do
   end
 
   def apply(agent, tenant_id, selection) do
-    with {:ok, resolve} <- selection_template(selection),
-         :ok <- template_model_writable(agent),
-         :ok <- own_login_choice_allowed(agent, selection["kind"] == "builtin"),
-         {:ok, updated} <- assign_selection(agent, resolve, tenant_id) do
-      release_replaced(agent, updated, tenant_id)
-      {:ok, updated}
+    with {:ok, resolve} <- selection_template(selection) do
+      locked(agent, tenant_id, fn current ->
+        with :ok <- template_model_writable(current),
+             :ok <- own_login_choice_allowed(current, selection["kind"] == "builtin"),
+             do: resolve.(tenant_id)
+      end)
+    end
+  end
+
+  # Resolve and assign under the catalog lock: a release that checks the
+  # template's Agents in between would find none and delete it, and a
+  # concurrent choice for this Agent cannot interleave. A template the Agent
+  # did not take is released again, so no orphan stays.
+  defp locked(agent, tenant_id, resolve) do
+    result =
+      Templates.with_catalog_lock(tenant_id, fn ->
+        with {:ok, current} <- current(agent, tenant_id),
+             {:ok, template_id} <- resolve.(current) do
+          case assign(current, template_id, tenant_id) do
+            {:ok, updated} ->
+              {:ok, %{record: updated, previous: current}}
+
+            error ->
+              if template_id, do: Templates.release_private_catalog(template_id, tenant_id)
+              error
+          end
+        end
+      end)
+
+    with {:ok, %{record: updated, previous: previous}} <- result do
+      if previous["template_id"] != updated["template_id"],
+        do: Templates.release_private_catalog(previous["template_id"], tenant_id)
+
+      result
+    end
+  end
+
+  # The same Agent, still visible, in the same Group with the same role.
+  defp current(agent, tenant_id) do
+    {group, role} = {agent["group_id"], agent["role"]}
+
+    case Control.get(agent["agent_id"], tenant_id) do
+      {:ok, %{"group_id" => ^group, "role" => ^role} = current} -> {:ok, current}
+      {:ok, _} -> {:error, :not_found}
+      error -> error
     end
   end
 
@@ -115,48 +163,10 @@ defmodule SalixAgent.AgentModelSelection do
 
   defp present?(value), do: is_binary(value) and String.trim(value) != ""
 
-  # The same lock as `assign_selection/3`: a concurrent release must not delete
-  # the runtime template before the Agent takes it.
-  defp assign_runtime_choice(agent, provider, model, effort, tenant_id) do
-    Templates.with_catalog_lock(tenant_id, fn ->
-      with {:ok, template} <-
-             Templates.resolve_private_runtime(provider, model, effort, tenant_id) do
-        assign_or_release(agent, template["template_id"], tenant_id)
-      end
-    end)
-  end
-
-  # Resolve and assign under the catalog lock: a release that checks the
-  # template's Agents in between would find none and delete it. A template
-  # that the Agent did not take is released again, so no orphan stays.
-  defp assign_selection(agent, resolve, tenant_id) do
-    Templates.with_catalog_lock(tenant_id, fn ->
-      with {:ok, template_id} <- resolve.(tenant_id) do
-        assign_or_release(agent, template_id, tenant_id)
-      end
-    end)
-  end
-
-  defp assign_or_release(agent, template_id, tenant_id) do
-    case assign(agent, template_id, tenant_id) do
-      {:ok, updated} ->
-        {:ok, updated}
-
-      error ->
-        if template_id, do: Templates.release_private_catalog(template_id, tenant_id)
-        error
-    end
-  end
-
   defp assign(agent, template_id, tenant_id) do
     if agent["template_id"] == template_id,
       do: {:ok, agent},
       else: Control.configure(agent["agent_id"], %{"template_id" => template_id}, tenant_id)
-  end
-
-  defp release_replaced(agent, updated, tenant_id) do
-    if agent["template_id"] != updated["template_id"],
-      do: Templates.release_private_catalog(agent["template_id"], tenant_id)
   end
 
   defp selection_template(%{"kind" => "builtin"} = selection) when map_size(selection) == 1,

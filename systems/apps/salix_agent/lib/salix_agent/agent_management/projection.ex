@@ -93,13 +93,50 @@ defmodule SalixAgent.AgentManagement.Projection do
           "template_id" => template["template_id"],
           "model_id" => config["runtime_model"] || config["catalog_model"] || template["model"],
           "provider" => template["provider"],
-          "reasoning_effort" => config["reasoning_effort"]
+          "reasoning_effort" => config["reasoning_effort"],
+          "selection" => selection(record, template)
         }
 
       _ ->
         %{"source" => "unavailable"}
     end
   end
+
+  defp pinned_template(%{"template_id" => id, "tenant_id" => tenant}) when is_binary(id) do
+    case Templates.get(id, tenant) do
+      {:ok, template} -> template
+      _ -> nil
+    end
+  end
+
+  defp pinned_template(_record), do: nil
+
+  # The saved choice in agent.set_model's shape. Private catalog and runtime
+  # templates carry only these non-secret choice fields; an API-key Profile is
+  # stored with allow_paid true. Other pinned templates are named by id.
+  defp selection(%{"template_id" => nil}, _template), do: %{"kind" => "builtin"}
+
+  defp selection(record, _template) when not is_map_key(record, "template_id"),
+    do: %{"kind" => "builtin"}
+
+  defp selection(_record, %{"provider_config" => %{"catalog_model" => model} = config})
+       when is_binary(model) do
+    %{
+      "kind" => "catalog",
+      "model" => model,
+      "reasoning_effort" => config["reasoning_effort"],
+      "allow_paid" => config["allow_paid"] == true,
+      "profile_id" => config["profile_id"]
+    }
+  end
+
+  defp selection(_record, %{"provider_config" => %{"runtime_model" => model} = config})
+       when is_binary(model) do
+    %{"kind" => "runtime", "model" => model, "reasoning_effort" => config["reasoning_effort"]}
+  end
+
+  defp selection(record, _template),
+    do: %{"kind" => "template", "template_id" => record["template_id"]}
 
   defp bound_model(record) do
     if Control.external_runtime?(record) do
@@ -117,12 +154,16 @@ defmodule SalixAgent.AgentManagement.Projection do
       # default; the remaining fields always describe the effective template.
       case Templates.resolve_public_template_for_record(record) do
         {:ok, template, source} ->
+          selection = selection(record, pinned_template(record))
+
           %{
             "source" => Atom.to_string(source),
             "template_id" => template["template_id"],
             "name" => template["name"],
             "model_id" => template["model"],
-            "provider" => template["provider"]
+            "provider" => template["provider"],
+            "reasoning_effort" => selection["reasoning_effort"],
+            "selection" => selection
           }
 
         _ ->
