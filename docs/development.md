@@ -313,7 +313,7 @@ one. Revoking the current key ends the connection. Use `/quit` to exit without
 revoking the key.
 
 The staging and production release configurations expose SSH through a TCP
-LoadBalancer. See [Kubernetes setup](../k8s/comma/README.md#ssh-terminal-endpoint).
+LoadBalancer. See [SSH access](identity-security.md#ssh-account-access).
 Deploy only through the approved mainline release flow.
 
 Run the focused tests from `systems/`:

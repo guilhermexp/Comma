@@ -272,7 +272,6 @@ Read `Comma.Release.runtime_release_status()` through release RPC for a page of 
 Pass its `next_cursor` to the next call. Each item reports `complete`, `waiting`, or `failed`, its phase, and its last error.
 This is a paged observation, not an atomic fleet snapshot or a proof of native task continuation.
 Use an affected task to verify the live path after rollout.
-The [VMM operations skill](../.codex/skills/vmm-ops/SKILL.md) gives exact retry, cancel, and forward-repair commands.
 
 ## Self-hosting with Compose
 
