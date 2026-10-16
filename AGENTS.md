@@ -206,6 +206,11 @@ opt-in/narrow. Extend `ScrollArea`; no edge-axis controls, per-instance
 
 Before using a base component, follow its `GUIDE.md` if present.
 
+Slash control commands use existing rich editor tokens. Keep command names in
+labels and arguments editable outside them. Selecting a label must not send.
+Preserve draft restoration and serialize commands only at submission through
+`clients/packages/app/src/components/chat/composer/controlCommands.ts`.
+
 ## External integrations
 
 - Prefer official SDKs, then maintained popular libraries. Before handwriting

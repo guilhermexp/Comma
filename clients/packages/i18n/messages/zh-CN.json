@@ -866,6 +866,7 @@
   "chat_connector_reconfiguration_required": "请使用新签发的令牌重新连接此工作区的 Comma Connector，然后再次选择文件。",
   "chat_command_menu": "命令与技能",
   "chat_control_commands_group": "Agent 命令",
+  "chat_command_new": "用同一智能体开始新会话",
   "chat_command_status": "查看模型与上下文用量",
   "chat_command_compact": "压缩会话上下文",
   "chat_command_emergency_compact": "遮蔽历史大消息",

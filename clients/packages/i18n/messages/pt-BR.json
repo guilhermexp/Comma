@@ -866,6 +866,7 @@
   "chat_connector_reconfiguration_required": "Reconecte o Comma Connector deste espaço de trabalho com um token recém-emitido e selecione o arquivo novamente.",
   "chat_command_menu": "Comandos e habilidades",
   "chat_control_commands_group": "Comandos do agente",
+  "chat_command_new": "Iniciar uma nova sessão com o mesmo agente",
   "chat_command_status": "Mostrar modelo e uso de contexto",
   "chat_command_compact": "Resumir o contexto da sessão",
   "chat_command_emergency_compact": "Mascarar mensagens grandes do histórico",

@@ -206,7 +206,7 @@ test("external channel activity stays readable in an empty Side Chat in both the
   }
 });
 
-test("Salix slash commands insert editable text and send only on confirmation", async ({
+test("Salix slash commands insert pills with editable arguments and send only on confirmation", async ({
   page,
   handoffBaseURL,
 }) => {
@@ -214,6 +214,7 @@ test("Salix slash commands insert editable text and send only on confirmation", 
   const editor = page.getByRole("textbox");
   await editor.fill("/");
   for (const command of [
+    "new",
     "status",
     "compact",
     "emergency-compact",
@@ -240,33 +241,89 @@ test("Salix slash commands insert editable text and send only on confirmation", 
   expect(spacing.token).toBe(4);
   expect(spacing.gap).toBeCloseTo(spacing.token, 1);
   await page.screenshot({ path: test.info().outputPath("salix-slash-menu.png") });
+  const lastSent = () =>
+    page.evaluate(() => (window as unknown as { lastSentText?: string }).lastSentText);
+  const pills = editor.locator("[data-ai-input-token]");
+
+  // Every command becomes a pill naming only the command; choosing one never sends.
+  for (const command of [
+    "new",
+    "status",
+    "compact",
+    "emergency-compact",
+    "help",
+    "ls",
+    "cat",
+  ]) {
+    await editor.fill(`/${command}`);
+    await expect(
+      page.getByRole("option", { name: new RegExp(`^/${command}\\b`) })
+    ).toBeVisible();
+    await editor.press("Enter");
+    await expect(pills).toHaveCount(1);
+    await expect(pills).toHaveText(command);
+    await expect(editor).not.toContainText("salix-command");
+  }
+  expect(await lastSent()).toBeUndefined();
+
+  // Backspace removes the pill like any other token.
+  await editor.press("Backspace");
+  await expect(pills).toHaveCount(0);
+
   await editor.fill("/status");
-  await expect(
-    page.getByRole("option", { name: "/status", exact: false })
-  ).toBeVisible();
   await editor.press("Enter");
-  await expect(editor).toHaveText("<salix-command>status</salix-command>");
-  expect(
-    await page.evaluate(
-      () => (window as unknown as { lastSentText?: string }).lastSentText
-    )
-  ).toBeUndefined();
   await editor.press("Enter");
-  await expect
-    .poll(() =>
-      page.evaluate(() => (window as unknown as { lastSentText?: string }).lastSentText)
-    )
-    .toBe("<salix-command>status</salix-command>");
+  await expect.poll(lastSent).toBe("<salix-command>status</salix-command>");
   await expect(
     page.locator('[data-message-id="sent-0"] .comma-chat-user-bubble')
   ).toHaveText("/status");
 
+  // /new keeps the exact plain text the Router accepts.
+  await editor.fill("/new");
+  await editor.press("Enter");
+  await expect(pills).toHaveText("new");
+  expect(await lastSent()).toBe("<salix-command>status</salix-command>");
+  await editor.press("Enter");
+  await expect.poll(lastSent).toBe("/new");
+
+  // Arguments are ordinary text after the pill, chosen with the mouse here.
   await editor.fill("/cat");
   await page.getByRole("option", { name: "/cat", exact: false }).click();
-  await expect(editor).toHaveText("<salix-command>cat /path/to/file</salix-command>");
-  await expect(editor.locator("[data-ai-input-token]")).toHaveCount(0);
-  await editor.fill("<salix-command>cat /notes.md</salix-command>");
-  await expect(editor).toHaveText("<salix-command>cat /notes.md</salix-command>");
+  await expect(pills).toHaveText("cat");
+  // A "/" in an argument opens no menu, so Enter cannot pick a colliding row.
+  await editor.pressSequentially("/status");
+  await expect(page.getByRole("option")).toHaveCount(0);
+  await expect(page.getByText("No results")).toBeHidden();
+  await editor.press("Enter");
+  await expect.poll(lastSent).toBe("<salix-command>cat /status</salix-command>");
+
+  await editor.fill("/cat");
+  await editor.press("Enter");
+  await editor.pressSequentially("/notes.mdx");
+  await editor.press("Backspace");
+  await expect(editor).toHaveText(/cat\s*\/notes\.md$/);
+  await expect(page.getByRole("option")).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath("salix-command-pill.png") });
+  await editor.press("Enter");
+  await expect.poll(lastSent).toBe("<salix-command>cat /notes.md</salix-command>");
+
+  // Typed text that only looks like a command stays ordinary prose.
+  await editor.fill("/cat /notes.md");
+  await expect(pills).toHaveCount(0);
+  await editor.press("Enter");
+  await expect.poll(lastSent).toBe("/cat /notes.md");
+
+  // A draft restored after leaving the conversation keeps its pill and argument.
+  await show(page, { draft: "<salix-command>ls</salix-command> /artifacts" });
+  await expect(pills).toHaveText("ls");
+  await expect(editor).toHaveText(/ls\s*\/artifacts$/);
+  await page.screenshot({ path: test.info().outputPath("salix-command-restored.png") });
+  const box = (await editor.boundingBox())!;
+  await editor.click({ position: { x: box.width - 4, y: box.height / 2 } });
+  await editor.pressSequentially("/x");
+  await expect(page.getByRole("option")).toHaveCount(0);
+  await editor.press("Enter");
+  await expect.poll(lastSent).toBe("<salix-command>ls /artifacts/x</salix-command>");
 });
 
 test("Salix sent commands display like skills after history reload", async ({
@@ -306,6 +363,8 @@ test("Salix slash commands are not advertised in Task conversations", async ({
   await expect(page.getByRole("option", { name: "/status", exact: false })).toHaveCount(
     0
   );
+  await page.getByRole("textbox").fill("/new");
+  await expect(page.getByRole("option", { name: /^\/new\b/ })).toHaveCount(0);
 });
 
 const user = message("user-1", "user", "Please explain how the reply should appear.");

@@ -2,6 +2,7 @@ import { useApplicationMenu } from "../../application-menu/useApplicationMenu";
 import {
   AiInput,
   AI_INPUT_SMALL_TEXTAREA_MIN_HEIGHT_PX,
+  CodeIcon,
   GlobeIcon,
   isImeKeyEvent,
   PaperclipIcon,
@@ -34,6 +35,14 @@ import type { CommaSkill } from "../../../api";
 import { chatQuoteLabel, type ChatDraftQuote } from "./draftQuotes";
 import { useComposerDraft, type ComposerDraftSource } from "./conversationDraft";
 import { deriveMentionedSkills } from "./mentions";
+import {
+  CONTROL_COMMAND_MENU_ID,
+  controlCommandPlainText,
+  controlCommandWireText,
+  isControlCommandArgument,
+  projectControlCommands,
+  type ControlCommandTokenData,
+} from "./controlCommands";
 import {
   linkMentionPlainText,
   taskMentionPlainText,
@@ -122,6 +131,10 @@ function PluginMentionIcon({
     </span>
   );
 }
+
+/** A Router chat's draft text back into its Task mention and command pills. */
+const projectComposerDraft = (text: string) =>
+  projectControlCommands(projectMentionTokens(text));
 
 /**
  * The ref a draft image renders its own thumbnail from, if it has one. An
@@ -537,8 +550,11 @@ export const Composer = memo(function Composer({
     ) {
       return;
     }
-    onSend(value, {
-      skills: deriveMentionedSkills(value, skills),
+    const wire = controlCommandsEnabled
+      ? controlCommandWireText(projectComposerDraft(value))
+      : value;
+    onSend(wire, {
+      skills: deriveMentionedSkills(wire, skills),
     });
   };
 
@@ -644,8 +660,11 @@ export const Composer = memo(function Composer({
     // Always registered: "/" with no configured skills answers with the
     // panel's "No results" state instead of silently ignoring the keystroke.
     registrations.push({
-      id: "skills",
+      id: CONTROL_COMMAND_MENU_ID,
       trigger: "/",
+      ...(controlCommandsEnabled
+        ? { shouldOpen: (context) => !isControlCommandArgument(context) }
+        : {}),
       label: skillMenuLabel,
       maxItems: Number.POSITIVE_INFINITY,
       groups: [
@@ -656,24 +675,26 @@ export const Composer = memo(function Composer({
                 label: messages.chat_control_commands_group(),
                 items: (
                   [
-                    ["status", messages.chat_command_status(), "status"],
-                    ["compact", messages.chat_command_compact(), "compact"],
-                    [
-                      "emergency-compact",
-                      messages.chat_command_emergency_compact(),
-                      "emergency-compact",
-                    ],
-                    ["help", messages.chat_command_help(), "help"],
-                    ["ls", messages.chat_command_ls(), "ls /"],
-                    ["cat", messages.chat_command_cat(), "cat /path/to/file"],
+                    ["new", messages.chat_command_new()],
+                    ["status", messages.chat_command_status()],
+                    ["compact", messages.chat_command_compact()],
+                    ["emergency-compact", messages.chat_command_emergency_compact()],
+                    ["help", messages.chat_command_help()],
+                    ["ls", messages.chat_command_ls()],
+                    ["cat", messages.chat_command_cat()],
                   ] as const
-                ).map(([command, description, body]) => ({
+                ).map(([command, description]) => ({
                   id: `salix-${command}`,
                   label: `/${command}`,
+                  tokenLabel: command,
                   description,
                   descriptionPlacement: "inline" as const,
                   searchText: `salix-command ${command}`,
-                  insertText: `<salix-command>${body}</salix-command>`,
+                  icon: <CodeIcon className="size-4!" />,
+                  // A pill like a skill's; arguments are the text typed after
+                  // it, and sending builds the command (controlCommands.ts).
+                  plainText: controlCommandPlainText(command),
+                  data: { controlCommand: command } satisfies ControlCommandTokenData,
                 })),
               },
             ]
@@ -939,7 +960,9 @@ export const Composer = memo(function Composer({
         onKeyDown={handleComposerKeyDown}
         onSubmit={submit}
         onValueChange={onDraftChange}
-        richValueFromText={projectMentionTokens}
+        richValueFromText={
+          controlCommandsEnabled ? projectComposerDraft : projectMentionTokens
+        }
         {...(onAttachFiles || onPickAttachments
           ? { onAttachPress: handleAttachPress }
           : {})}
