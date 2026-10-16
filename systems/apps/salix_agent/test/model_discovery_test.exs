@@ -6,6 +6,12 @@ defmodule SalixAgent.ModelDiscoveryTest do
     import Plug.Conn
     def init(state), do: state
 
+    # Discovery addresses 127.0.0.1. A local tool probing the listener under
+    # another Host (observed: `HEAD /` with `Host: localhost:<port>`) is not a
+    # discovery request and is neither recorded nor answered as the provider.
+    def call(%Plug.Conn{host: host} = conn, _state) when host != "127.0.0.1",
+      do: send_resp(conn, 421, "")
+
     def call(conn, state) do
       conn = fetch_query_params(conn)
 
@@ -92,6 +98,7 @@ defmodule SalixAgent.ModelDiscoveryTest do
     {:ok, {_, port}} = ThousandIsland.listener_info(server)
 
     %{
+      port: port,
       state: state,
       input: %{"base_url" => "http://127.0.0.1:#{port}/v1", "api_key" => "discovery-secret"}
     }
@@ -158,6 +165,27 @@ defmodule SalixAgent.ModelDiscoveryTest do
   test "ignores malformed model entries", %{input: input, state: state} do
     Agent.update(state, &%{&1 | mode: :malformed})
     assert {:ok, %{"data" => [%{"id" => "valid"}]}} = ModelDiscovery.discover(input)
+  end
+
+  test "a local port probe is not counted as a provider request", %{
+    input: input,
+    port: port,
+    state: state
+  } do
+    {:ok, socket} = :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: false])
+
+    :ok =
+      :gen_tcp.send(
+        socket,
+        "HEAD / HTTP/1.1\r\nHost: localhost:#{port}\r\nConnection: close\r\n\r\n"
+      )
+
+    assert {:ok, "HTTP/1.1 421" <> _} = :gen_tcp.recv(socket, 0, 1_000)
+    :gen_tcp.close(socket)
+    assert Agent.get(state, & &1.calls) == []
+
+    assert {:ok, _result} = ModelDiscovery.discover(input)
+    assert length(Agent.get(state, & &1.calls)) == 1
   end
 
   test "a slow stream returns an actionable timeout within the overall budget", %{
