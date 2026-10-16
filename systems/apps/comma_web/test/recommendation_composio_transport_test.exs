@@ -13,6 +13,12 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
     import Plug.Conn
     def init(state), do: state
 
+    # The code under test addresses 127.0.0.1. A local tool probing the
+    # listener under another Host (observed: `HEAD /` with
+    # `Host: localhost:<port>`) is neither a provider call nor a root probe.
+    def call(%Plug.Conn{host: host} = conn, _state) when host != "127.0.0.1",
+      do: send_resp(conn, 421, "")
+
     def call(conn, state) do
       {:ok, raw, conn} = read_body(conn)
 
@@ -643,6 +649,20 @@ defmodule CommaWeb.RecommendationComposioTransportTest do
       |> URI.to_string()
 
     assert {:ok, %{status: 404}} = Req.get(base, retry: false)
+    assert Agent.get(c.state, & &1.calls) == []
+
+    # The exact probe a local port scanner sent during the broad test run.
+    %URI{port: port} = URI.parse(base)
+    {:ok, socket} = :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: false])
+
+    :ok =
+      :gen_tcp.send(
+        socket,
+        "HEAD / HTTP/1.1\r\nHost: localhost:#{port}\r\nConnection: close\r\n\r\n"
+      )
+
+    assert {:ok, "HTTP/1.1 421" <> _} = :gen_tcp.recv(socket, 0, 1_000)
+    :gen_tcp.close(socket)
     assert Agent.get(c.state, & &1.calls) == []
 
     assert Enum.any?(
