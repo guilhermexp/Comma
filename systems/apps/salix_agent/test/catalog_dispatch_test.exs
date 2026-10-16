@@ -62,14 +62,14 @@ defmodule SalixAgent.CatalogDispatchTest do
 
   test "a catalog route reaches the model through another provider's key", %{tenant: tenant} do
     {:ok, _} = key(tenant, "openrouter", "sk-or-v1-0123456789abcdef")
-    route = route(tenant, "gpt-5.5", true)
+    route = route(tenant, "gpt-6-astra", true)
 
     assert AccountPool.catalog_route?(route)
 
     assert {:ok, opts} = AccountPool.dispatch(route, &{:ok, &1})
     assert opts["base_url"] == "https://openrouter.ai/api/v1"
     assert opts["protocol"] == "chat_completions"
-    assert opts["model"] == "openai/gpt-5.5"
+    assert opts["model"] == "openai/gpt-6-astra"
     assert opts["api_key"] == "sk-or-v1-0123456789abcdef"
     assert opts["credential_scope"] == "tenant"
     assert opts["reasoning_effort"] == "high"
@@ -79,11 +79,11 @@ defmodule SalixAgent.CatalogDispatchTest do
     {:ok, _} = key(tenant, "openai", "sk-proj-0123456789abcdef")
 
     assert {:error, error} =
-             AccountPool.dispatch(route(tenant, "gpt-5.5", false), fn _ ->
+             AccountPool.dispatch(route(tenant, "gpt-6-astra", false), fn _ ->
                flunk("a pay-per-use key must not be called")
              end)
 
-    assert error["body"] =~ "no enabled profile serves gpt-5.5"
+    assert error["body"] =~ "no enabled profile serves gpt-6-astra"
   end
 
   test "a disabled Profile is skipped", %{tenant: tenant} do
@@ -96,7 +96,7 @@ defmodule SalixAgent.CatalogDispatchTest do
       })
 
     assert {:error, _} =
-             AccountPool.dispatch(route(tenant, "gpt-5.5", true), fn _ ->
+             AccountPool.dispatch(route(tenant, "gpt-6-astra", true), fn _ ->
                flunk("a disabled profile must not be called")
              end)
   end
@@ -106,7 +106,7 @@ defmodule SalixAgent.CatalogDispatchTest do
   } do
     {:ok, _} = key(tenant, "openai", "sk-proj-0123456789abcdef")
     {:ok, _} = key(tenant, "openrouter", "sk-or-v1-0123456789abcdef")
-    route = route(tenant, "gpt-5.5", true)
+    route = route(tenant, "gpt-6-astra", true)
     calls = :counters.new(1, [])
 
     fail_first = fn opts ->
@@ -147,7 +147,7 @@ defmodule SalixAgent.CatalogDispatchTest do
       :counters.put(calls, 1, 0)
 
       assert {:error, ^error} =
-               AccountPool.dispatch(route(tenant, "gpt-5.5", true), fn _ ->
+               AccountPool.dispatch(route(tenant, "gpt-6-astra", true), fn _ ->
                  :counters.add(calls, 1, 1)
                  {:error, error}
                end)
@@ -167,12 +167,15 @@ defmodule SalixAgent.CatalogDispatchTest do
     assert profile["models"] == ["team-model"]
 
     assert {:error, _} =
-             AccountPool.dispatch(route(tenant, "gpt-5.5", true), fn _ ->
+             AccountPool.dispatch(route(tenant, "gpt-6-astra", true), fn _ ->
                flunk("Custom must not serve an unlisted model")
              end)
 
     {:ok, custom} =
-      AccountPool.resolve_config(%{"catalog_model" => "gpt-5.5", "allow_paid" => true}, tenant)
+      AccountPool.resolve_config(
+        %{"catalog_model" => "gpt-6-astra", "allow_paid" => true},
+        tenant
+      )
 
     assert {:ok, opts} =
              AccountPool.dispatch(%{custom | "catalog_model" => "team-model"}, &{:ok, &1})
@@ -340,7 +343,7 @@ defmodule SalixAgent.CatalogDispatchTest do
     {:ok, _router} = key(tenant, "openrouter", "sk-or-v1-0123456789abcdef")
 
     # Keeping to a key is choosing to pay for it, whatever allow_paid says.
-    pinned = route(tenant, "gpt-5.5", false) |> Map.put("profile_id", openai["id"])
+    pinned = route(tenant, "gpt-6-astra", false) |> Map.put("profile_id", openai["id"])
     assert {:ok, opts} = AccountPool.dispatch(pinned, &{:ok, &1})
     assert opts["base_url"] == "https://api.openai.com/v1"
 
@@ -355,22 +358,22 @@ defmodule SalixAgent.CatalogDispatchTest do
     assert :counters.get(calls, 1) == 1
 
     subscription = subscription(tenant, "codex")
-    kept = route(tenant, "gpt-5.5", true) |> Map.put("profile_id", subscription["id"])
+    kept = route(tenant, "gpt-6-astra", true) |> Map.put("profile_id", subscription["id"])
     assert {:ok, opts} = AccountPool.dispatch(kept, &{:ok, &1})
     assert opts["base_url"] == "subscription://worker/v1"
 
     # A plan pinned for a model it does not serve fails without a call or a crash.
     gemini = subscription(tenant, "gemini")
-    refute AccountPool.profile_serves?(tenant, gemini["id"], "gpt-5.5")
+    refute AccountPool.profile_serves?(tenant, gemini["id"], "gpt-6-astra")
 
     assert {:error, _} =
-             route(tenant, "gpt-5.5", false)
+             route(tenant, "gpt-6-astra", false)
              |> Map.put("profile_id", gemini["id"])
              |> AccountPool.dispatch(fn _ -> flunk("must not dispatch") end)
 
-    assert AccountPool.profile_serves?(tenant, openai["id"], "gpt-5.5")
+    assert AccountPool.profile_serves?(tenant, openai["id"], "gpt-6-astra")
     refute AccountPool.profile_serves?(tenant, openai["id"], "claude-opus-5")
-    refute AccountPool.profile_serves?(tenant, "missing", "gpt-5.5")
+    refute AccountPool.profile_serves?(tenant, "missing", "gpt-6-astra")
 
     assert {:error, :invalid_model_configuration} =
              SalixAgent.Templates.resolve_private_catalog(
@@ -424,7 +427,7 @@ defmodule SalixAgent.CatalogDispatchTest do
       :persistent_term.put({StreamThenOverloaded, :test}, {calls, kind})
 
       opts =
-        route(tenant, "gpt-5.5", true)
+        route(tenant, "gpt-6-astra", true)
         |> Map.merge(%{
           "metering_disabled" => true,
           "on_tool_delta" => fn _ -> :ok end,
@@ -478,7 +481,7 @@ defmodule SalixAgent.CatalogDispatchTest do
 
       case opts["transport"] do
         transport when is_function(transport, 2) ->
-          transport.("subscription://worker/v1/responses", json: %{"model" => "gpt-5.5"})
+          transport.("subscription://worker/v1/responses", json: %{"model" => "gpt-6-astra"})
           {:error, %{"status" => 529}}
 
         _ ->
@@ -487,7 +490,7 @@ defmodule SalixAgent.CatalogDispatchTest do
     end
 
     assert {:error, %{"status" => 529}} =
-             AccountPool.dispatch(route(tenant, "gpt-5.5", true), call)
+             AccountPool.dispatch(route(tenant, "gpt-6-astra", true), call)
 
     assert :counters.get(calls, 1) == 1
   end
@@ -508,13 +511,15 @@ defmodule SalixAgent.CatalogDispatchTest do
       )
 
     assert {:error, %{"status" => 503}} =
-             route(tenant, "gpt-5.5", false)
+             route(tenant, "gpt-6-astra", false)
              |> Map.put("profile_id", account["id"])
              |> AccountPool.dispatch(fn _ -> flunk("an exhausted pin must not be called") end)
   end
 
   test "a release waits while a selection holds the catalog lock", %{tenant: tenant} do
-    {:ok, choice} = SalixAgent.Templates.resolve_private_catalog("gpt-5.5", "high", false, tenant)
+    {:ok, choice} =
+      SalixAgent.Templates.resolve_private_catalog("gpt-6-astra", "high", false, tenant)
+
     parent = self()
 
     holder =
@@ -546,7 +551,7 @@ defmodule SalixAgent.CatalogDispatchTest do
     on_reasoning = fn _ -> :reasoning end
 
     request =
-      route(tenant, "gpt-5.5", false)
+      route(tenant, "gpt-6-astra", false)
       |> Map.merge(%{
         "on_tool_delta" => on_tool,
         "on_reasoning_delta" => on_reasoning,
@@ -665,7 +670,7 @@ defmodule SalixAgent.CatalogDispatchTest do
   # account. Only account-level failures cool the account down.
   test "a model-level rejection leaves the account ready; a 429 cools it", %{tenant: tenant} do
     account = subscription(tenant, "codex")
-    request = route(tenant, "gpt-5.5", false)
+    request = route(tenant, "gpt-6-astra", false)
 
     for status <- [400, 403, 404] do
       assert {:error, %{"status" => ^status}} =
@@ -686,7 +691,7 @@ defmodule SalixAgent.CatalogDispatchTest do
   describe "accounts that reject a model" do
     setup %{tenant: tenant} do
       {:ok, pool} =
-        AccountPool.resolve_config(%{"account_pool" => "codex", "model" => "gpt-5.5"}, tenant)
+        AccountPool.resolve_config(%{"account_pool" => "codex", "model" => "gpt-6-astra"}, tenant)
 
       {:ok, pool: pool}
     end
@@ -737,9 +742,9 @@ defmodule SalixAgent.CatalogDispatchTest do
     subscription(tenant, "codex")
     {:ok, _} = key(tenant, "openai", "sk-proj-0123456789abcdef")
 
-    assert {:ok, opts} = AccountPool.dispatch(route(tenant, "gpt-5.5", true), &{:ok, &1})
+    assert {:ok, opts} = AccountPool.dispatch(route(tenant, "gpt-6-astra", true), &{:ok, &1})
     assert opts["base_url"] == "subscription://worker/v1"
-    assert opts["model"] == "gpt-5.5"
+    assert opts["model"] == "gpt-6-astra"
     assert is_function(opts["transport"], 2)
   end
 
@@ -752,7 +757,7 @@ defmodule SalixAgent.CatalogDispatchTest do
 
     assert {:error, {:bad_request, _}} =
              AccountPool.resolve_config(
-               %{"catalog_model" => "gpt-5.5", "allow_paid" => true},
+               %{"catalog_model" => "gpt-6-astra", "allow_paid" => true},
                nil
              )
   end
@@ -762,14 +767,20 @@ defmodule SalixAgent.CatalogDispatchTest do
     subscription = subscription(tenant, "codex")
 
     {:ok, pinned} =
-      SalixAgent.Templates.resolve_private_catalog("gpt-5.5", nil, false, tenant, openai["id"])
+      SalixAgent.Templates.resolve_private_catalog(
+        "gpt-6-astra",
+        nil,
+        false,
+        tenant,
+        openai["id"]
+      )
 
     assert pinned["provider_config"]["allow_paid"] == true
 
     # Asking again with false finds the same choice.
     assert {:ok, %{"template_id" => same}} =
              SalixAgent.Templates.resolve_private_catalog(
-               "gpt-5.5",
+               "gpt-6-astra",
                nil,
                false,
                tenant,
@@ -780,7 +791,7 @@ defmodule SalixAgent.CatalogDispatchTest do
 
     {:ok, plan} =
       SalixAgent.Templates.resolve_private_catalog(
-        "gpt-5.5",
+        "gpt-6-astra",
         nil,
         false,
         tenant,
@@ -791,16 +802,21 @@ defmodule SalixAgent.CatalogDispatchTest do
   end
 
   test "a catalog choice reuses its private template", %{tenant: tenant} do
-    {:ok, first} = SalixAgent.Templates.resolve_private_catalog("gpt-5.5", "high", false, tenant)
-    {:ok, again} = SalixAgent.Templates.resolve_private_catalog("gpt-5.5", "high", false, tenant)
-    {:ok, paid} = SalixAgent.Templates.resolve_private_catalog("gpt-5.5", "high", true, tenant)
+    {:ok, first} =
+      SalixAgent.Templates.resolve_private_catalog("gpt-6-astra", "high", false, tenant)
+
+    {:ok, again} =
+      SalixAgent.Templates.resolve_private_catalog("gpt-6-astra", "high", false, tenant)
+
+    {:ok, paid} =
+      SalixAgent.Templates.resolve_private_catalog("gpt-6-astra", "high", true, tenant)
 
     assert first["template_id"] == again["template_id"]
     refute paid["template_id"] == first["template_id"]
-    assert first["model_display_name"] == "GPT-5.5"
+    assert first["model_display_name"] == "GPT-6 Astra"
 
     assert {:error, :invalid_model_configuration} =
-             SalixAgent.Templates.resolve_private_catalog("gpt-5.5", "ultra", false, tenant)
+             SalixAgent.Templates.resolve_private_catalog("gpt-6-astra", "ultra", false, tenant)
 
     assert {:ok, llm} =
              SalixAgent.Templates.resolve_llm_for_template(first["template_id"], tenant)
@@ -810,7 +826,8 @@ defmodule SalixAgent.CatalogDispatchTest do
   end
 
   test "releasing a catalog choice deletes it only when no Agent uses it", %{tenant: tenant} do
-    {:ok, choice} = SalixAgent.Templates.resolve_private_catalog("gpt-5.5", "high", false, tenant)
+    {:ok, choice} =
+      SalixAgent.Templates.resolve_private_catalog("gpt-6-astra", "high", false, tenant)
 
     assert :ok = SalixAgent.Templates.release_private_catalog(choice["template_id"], tenant)
     assert {:error, :not_found} = SalixAgent.Templates.get(choice["template_id"], tenant)
@@ -822,9 +839,9 @@ defmodule SalixAgent.CatalogDispatchTest do
   } do
     alias SalixAgent.Templates
 
-    {:ok, codex} = Templates.resolve_private_runtime("codex", "gpt-5.5", "high", tenant)
-    {:ok, again} = Templates.resolve_private_runtime("codex", "gpt-5.5", "high", tenant)
-    {:ok, default} = Templates.resolve_private_runtime("codex", "gpt-5.5", nil, tenant)
+    {:ok, codex} = Templates.resolve_private_runtime("codex", "gpt-6-astra", "high", tenant)
+    {:ok, again} = Templates.resolve_private_runtime("codex", "gpt-6-astra", "high", tenant)
+    {:ok, default} = Templates.resolve_private_runtime("codex", "gpt-6-astra", nil, tenant)
 
     assert again["template_id"] == codex["template_id"]
     refute default["template_id"] == codex["template_id"]
@@ -834,22 +851,23 @@ defmodule SalixAgent.CatalogDispatchTest do
     assert {:ok, llm} = Templates.resolve_llm_for_template(codex["template_id"], tenant)
 
     assert {llm["model"], llm["provider"], llm["reasoning_effort"]} ==
-             {"gpt-5.5", "openai", "high"}
+             {"gpt-6-astra", "openai", "high"}
 
     # Codex and Claude Code run only what their own subscription serves. Pi
     # needs a Pi provider id that the catalog does not name.
     for {runtime, model, effort} <- [
           {"codex", "claude-opus-5", nil},
-          {"claude", "gpt-5.5", nil},
-          {"codex", "gpt-5.5", "ultra"},
+          {"claude", "gpt-6-astra", nil},
+          {"codex", "gpt-6-astra", "ultra"},
           {"pi", "claude-opus-5", nil},
-          {"kimi", "gpt-5.5", nil}
+          {"kimi", "gpt-6-astra", nil}
         ] do
       assert {:error, :invalid_model_configuration} =
                Templates.resolve_private_runtime(runtime, model, effort, tenant)
     end
 
-    assert {:ok, _} = Templates.resolve_private_runtime("claude", "claude-opus-5", "max", tenant)
+    assert {:ok, _} =
+             Templates.resolve_private_runtime("claude", "claude-opus-5-5", "max", tenant)
 
     assert :ok = Templates.release_private_catalog(codex["template_id"], tenant)
     assert {:error, :not_found} = Templates.get(codex["template_id"], tenant)

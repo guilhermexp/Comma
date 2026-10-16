@@ -110,12 +110,13 @@ Unset platform roles use built-in `default` (`gpt-test`). Selectors show one `De
 Concrete platform-default templates remain selectable without following later pointer changes.
 
 Comma Model & API lists profiles and gives each Agent one picker: models by family, effort, and account (automatic or one profile).
-A Worker on a Codex or Claude Code compute runtime picks among its plan's models, with no account. Earlier template choices show until replaced.
+Claude plans offer Opus, Sonnet, Haiku 5.5, and Fable 5.1. ChatGPT plans offer GPT-6 and GPT-6.1.
+A Codex or Claude Code compute Worker picks its plan's models, with no account. Earlier template choices show until replaced.
 Salix and BFT selectors show the model display name or ID. Template names are aliases. Model/connection edits clear display metadata unless replacements are supplied.
 `SalixAgent.ModelDiscovery` serves Comma, Salix, and BFT with each surface's authorization and credential scope.
 API-key discovery retains these bounds and manual entry on failure. Salix scrolls returned matches. BFT shows up to 50. Search uses returned data.
 Discovery retains at most 32 efforts per Codex model.
-Comma Custom and Ollama profiles list the endpoint's models once, when they connect. Visits, retries, or profile changes reload the catalog, profiles, and Agents without polling.
+Comma Custom and Ollama profiles list endpoint models once, on connection. Visits, retries, or profile changes reload the catalog, profiles, and Agents without polling.
 Failure preserves choices and allows retry. A model no enabled profile serves is not offered.
 
 Migration `20260922000001_agent_creation_defaults` copies Tenant templates into empty Agent choices in pages of 100 conditional writes.
@@ -230,9 +231,9 @@ To follow the automatic rule, leave **Default / custom configuration** empty. Su
 The template owner determines the pool tenant. User-supplied tenant fields, endpoints, keys, and headers cannot change that route.
 Global templates/Claude image pools are unsupported. Empty/unavailable pools fail without platform fallback.
 
-`image.generate` uses the existing SDK image operation for `gpt-image-2`.
+`image.generate` uses the SDK image operation for `gpt-image-2`.
 Reference images select the SDK's JSON image-edit operation. Size, quality, and output format come from the tool arguments.
-The existing account selection reads at most three candidates per call. No image-specific polling or account scan is added.
+Account selection reads at most three candidates per call. No image-specific polling or account scan is added.
 Limits remain: 120 seconds/tool, 10 MB/output file, 16 MiB/worker input frame, 32 MiB/worker output.
 Subscription image calls use the existing provider archive and usage metering seam. They do not charge Comma model credits.
 After receiving response bytes, the host never retries another account, including on parse failure.

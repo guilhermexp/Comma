@@ -4,11 +4,11 @@ defmodule SalixAgent.ModelsTest do
   alias SalixAgent.Models
 
   test "one catalog model carries each source's own request id" do
-    assert {:ok, %{"model" => "gpt-5.5", "protocol" => "responses"}} =
-             Models.route("gpt-5.5", "openai")
+    assert {:ok, %{"model" => "gpt-6-astra", "protocol" => "responses"}} =
+             Models.route("gpt-6-astra", "openai")
 
-    assert {:ok, %{"model" => "openai/gpt-5.5"}} = Models.route("gpt-5.5", "openrouter")
-    assert {:ok, %{"model" => "gpt-5.5"}} = Models.route("gpt-5.5", "codex")
+    assert {:ok, %{"model" => "openai/gpt-6-astra"}} = Models.route("gpt-6-astra", "openrouter")
+    assert {:ok, %{"model" => "gpt-6-astra"}} = Models.route("gpt-6-astra", "codex")
     assert {:ok, %{"kind" => "subscription"}} = Models.source("codex")
   end
 
@@ -34,6 +34,18 @@ defmodule SalixAgent.ModelsTest do
     assert Enum.any?(served, &(&1["id"] == "deepseek-v4-pro"))
     refute Enum.any?(served, &(&1["vendor"] == "openai"))
     assert Models.served_by([]) == []
+  end
+
+  test "the Claude and ChatGPT plans offer only their current models" do
+    offered = fn plan -> plan |> List.wrap() |> Models.served_by() |> Enum.map(& &1["id"]) end
+
+    assert Enum.sort(offered.("claude")) ==
+             ~w(claude-fable-5-1 claude-haiku-5-5 claude-opus-5-5 claude-sonnet-5-5)
+
+    assert Enum.sort(offered.("codex")) == ~w(gpt-6-astra gpt-6-luna gpt-6-sol gpt-6.1-sol)
+
+    # Older models keep their other sources.
+    assert {:ok, _} = Models.route("claude-opus-5", "anthropic")
   end
 
   test "every route names a source and a protocol Salix speaks" do

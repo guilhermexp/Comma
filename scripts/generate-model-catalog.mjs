@@ -10,6 +10,11 @@
 // The Gemini plan runs on Antigravity, whose model ids are not AI Studio's.
 // Its routes come from scripts/antigravity-models.json, extracted from the
 // pinned CLIProxyAPI SDK registry. Refresh it when the SDK pin changes.
+//
+// The Claude and ChatGPT plans read scripts/subscription-models.json: pi's
+// `anthropic` and `openai-codex` data copied verbatim from the pi-ai release
+// named in its `source` and `integrity`. Each plan offers only the models its
+// `offers` rule names. API-key sources keep the installed pi-ai data.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -20,6 +25,7 @@ const piRoot = join(root, "node_modules/@earendil-works/pi-ai");
 const piVersion = JSON.parse(readFileSync(join(piRoot, "package.json"), "utf8")).version;
 const dataDir = join(piRoot, "dist", "providers", "data");
 const output = join(root, "systems/apps/salix_agent/priv/model_catalog.json");
+const subscriptionData = JSON.parse(readFileSync(join(root, "scripts/subscription-models.json"), "utf8"));
 
 // pi wire APIs that Salix speaks, as Salix template protocols.
 const protocols = {
@@ -80,9 +86,24 @@ const sources = {
   nvidia: { name: "NVIDIA", kind: "api_key", pi: "nvidia" },
   baseten: { name: "Baseten", kind: "api_key", pi: "baseten" },
   // Subscriptions sign in to a consumer plan; the subscription worker holds
-  // the credential and serves the plan's models.
-  codex: { name: "ChatGPT", kind: "subscription", pi: "openai-codex", vendor: "openai" },
-  claude: { name: "Claude", kind: "subscription", pi: "anthropic", vendor: "anthropic" },
+  // the credential and serves the plan's models. `snapshot` reads the pi data
+  // from scripts/subscription-models.json; `offers` names the plan's models.
+  codex: {
+    name: "ChatGPT",
+    kind: "subscription",
+    pi: "openai-codex",
+    vendor: "openai",
+    snapshot: true,
+    offers: (id) => /^gpt-6(\.1)?-/.test(id),
+  },
+  claude: {
+    name: "Claude",
+    kind: "subscription",
+    pi: "anthropic",
+    vendor: "anthropic",
+    snapshot: true,
+    offers: (id) => ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"].includes(id),
+  },
   gemini: { name: "Google AI", kind: "subscription", vendor: "google" },
   grok: { name: "SuperGrok", kind: "subscription", pi: "xai", vendor: "xai" },
   "kimi-code": { name: "Kimi Code", kind: "subscription", pi: "kimi-coding", vendor: "kimi" },
@@ -176,8 +197,12 @@ function vendorOf(source, id) {
 function efforts(entry) {
   if (!entry.reasoning) return [];
   const map = entry.thinkingLevelMap ?? {};
+  // pi sends a level mapped to another of these levels as that other level,
+  // so the model does not accept the mapped one (Codex `minimal` becomes
+  // `low`). A provider's own value, such as Gemini `LOW`, is the level itself.
+  const accepts = (value, level) => value !== null && (value === level || !effortOrder.includes(value));
   return effortOrder.filter((level) =>
-    level in map ? map[level] !== null : ["low", "medium", "high"].includes(level)
+    level in map ? accepts(map[level], level) : ["low", "medium", "high"].includes(level)
   );
 }
 
@@ -217,7 +242,9 @@ const canonicalFirst = Object.entries(sources).sort(
 
 for (const [source, config] of canonicalFirst) {
   if (!config.pi) continue;
-  const data = JSON.parse(readFileSync(join(dataDir, `${config.pi}.json`), "utf8"));
+  const data = config.snapshot
+    ? subscriptionData.providers[config.pi]
+    : JSON.parse(readFileSync(join(dataDir, `${config.pi}.json`), "utf8"));
   for (const [api, entries] of Object.entries(data)) {
     const protocol = config.protocol ?? protocols[api];
     if (!protocol) continue;
@@ -226,6 +253,7 @@ for (const [source, config] of canonicalFirst) {
       (endpoints[source] ??= {})[protocol] ??= base;
     }
     for (const entry of Object.values(entries)) {
+      if (config.offers && !config.offers(entry.id)) continue;
       if (entry.id.includes(":") || skipped.test(entry.id.toLowerCase())) continue;
       if (tiers.test(entry.id) || /\((fast|free)\)/i.test(entry.name ?? "")) continue;
       if (aliases.has(tail(entry.id).toLowerCase())) continue;

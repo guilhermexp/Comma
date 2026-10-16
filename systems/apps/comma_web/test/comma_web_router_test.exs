@@ -5762,12 +5762,12 @@ defmodule CommaWeb.RouterTest do
 
     assert Map.take(workers.()[codex["agent_id"]], Map.keys(runtime_default)) == runtime_default
 
-    selection = %{"kind" => "runtime", "model" => "gpt-5.5", "reasoning_effort" => "high"}
+    selection = %{"kind" => "runtime", "model" => "gpt-6-astra", "reasoning_effort" => "high"}
     chosen = codex |> choose.(selection) |> expect_json(200)
 
     assert chosen["selection"] == selection
     assert chosen["runtime"] == %{"kind" => "compute", "provider" => "codex"}
-    assert {chosen["model"], chosen["reasoning_effort"]} == {"gpt-5.5", "high"}
+    assert {chosen["model"], chosen["reasoning_effort"]} == {"gpt-6-astra", "high"}
 
     listed = workers.()[codex["agent_id"]]
     assert listed["selection"] == selection
@@ -5862,7 +5862,7 @@ defmodule CommaWeb.RouterTest do
     # A choice made for another runtime (as after a rebind) is not sent, so the
     # page shows the runtime default.
     {:ok, claude_choice} =
-      SalixAgent.Templates.resolve_private_runtime("claude", "claude-opus-5", "high", tenant)
+      SalixAgent.Templates.resolve_private_runtime("claude", "claude-opus-5-5", "high", tenant)
 
     stale = compute.("Rebound Codex VM", %{"provider" => "codex"})
 
