@@ -95,6 +95,8 @@ export default defineConfig({
           name: "node",
           environment: "node",
           include: ["{apps,packages}/**/test/**/*.test.ts", "scripts/**/*.test.ts"],
+          // Files may opt into jsdom with `@vitest-environment jsdom`.
+          setupFiles: ["./packages/test-utils/src/setup-web-storage.ts"],
           exclude: testExclude,
         },
       },
@@ -104,7 +106,10 @@ export default defineConfig({
           name: "jsdom",
           environment: "jsdom",
           include: ["{apps,packages}/**/test/**/*.test.tsx"],
-          setupFiles: ["./packages/test-utils/src/setup-dom.ts"],
+          setupFiles: [
+            "./packages/test-utils/src/setup-web-storage.ts",
+            "./packages/test-utils/src/setup-dom.ts",
+          ],
           exclude: testExclude,
         },
       },
