@@ -1766,7 +1766,16 @@ defmodule SalixAgent.ExternalSessionActor do
           params["connector_run_id"],
           record_id,
           params["event"],
-          fn -> admitted_execution(data.agent_id, data.session_id) end
+          fn -> admitted_execution(data.agent_id, data.session_id) end,
+          fn before, limit ->
+            SalixAgent.ExternalSessionRecords.tail(
+              data.agent_id,
+              data.session_id,
+              data.records,
+              limit,
+              before
+            )
+          end
         )
 
       %{data | activity: activity}

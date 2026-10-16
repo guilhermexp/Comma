@@ -868,6 +868,121 @@ defmodule SalixAgent.ExternalSessionStoreTest do
     assert_receive {:DOWN, ^ref, :process, _pid, :normal}, @receive_budget_ms
   end
 
+  test "unavailable status evidence hides the frame and proven authority restores it" do
+    with_activity_cadence(40, 30)
+    {agent_id, pid, _agent, request} = open_task_dispatch()
+    capability = request.binding["runtime_capability"]
+    status_key = Keys.agent_external_runtime_session_status(agent_id, @session_id)
+    on_exit(fn -> S3.Fake.clear_blackhole() end)
+
+    start =
+      journal_event(
+        request,
+        claude_operation(request, "execution-one", "op-1", "started", 1_790_002_000),
+        ULID.generate()
+      )
+
+    assert {:ok, %{"ok" => true}} =
+             ExternalSessionActor.commit_connector_event(pid, capability, start)
+
+    assert %{"tool_call_id" => "op-1", "started_at" => 1_790_002_000} = shown_activity(agent_id)
+
+    # One outage of the status read: fail closed, keep the admitted state.
+    :ok = S3.Fake.blackhole({:fail, 503, :get, status_key})
+    assert eventually(fn -> is_nil(shown_activity(agent_id)) end)
+    assert Process.alive?(pid)
+    :ok = S3.Fake.clear_blackhole()
+
+    assert eventually(fn ->
+             match?(
+               %{"tool_call_id" => "op-1", "started_at" => 1_790_002_000},
+               shown_activity(agent_id)
+             )
+           end)
+
+    # Another outage while the call ends: the end applies when journaled
+    # (now or on its retry) and the call never comes back after it.
+    :ok = S3.Fake.blackhole({:fail, 503, :get, status_key})
+    assert eventually(fn -> is_nil(shown_activity(agent_id)) end)
+
+    stop =
+      journal_event(
+        request,
+        claude_operation(request, "execution-one", "op-1", "completed", 1_790_002_001),
+        ULID.generate(start["event_id"])
+      )
+
+    _during_outage = ExternalSessionActor.commit_connector_event(pid, capability, stop)
+    :ok = S3.Fake.clear_blackhole()
+
+    assert {:ok, %{"ok" => true}} =
+             ExternalSessionActor.commit_connector_event(pid, capability, stop)
+
+    assert eventually(fn -> match?(%{"phase" => "thinking"}, shown_activity(agent_id)) end)
+    renewed = shown_activity(agent_id)["sequence"]
+    assert eventually(fn -> shown_activity(agent_id)["sequence"] > renewed + 1 end)
+    assert %{"phase" => "thinking"} = shown_activity(agent_id)
+
+    # Restoration never replaces another response's frame.
+    :ok = S3.Fake.blackhole({:fail, 503, :get, status_key})
+    assert eventually(fn -> is_nil(shown_activity(agent_id)) end)
+
+    other =
+      task_origin("cnv1_activity_owner", "msg1_0000000000000000802", "par1_0000000000000000801")
+
+    other_scope =
+      SalixAgent.ActivityScope.derive(
+        agent_id,
+        @session_id,
+        :another_owner,
+        ["groupconv:cnv1_activity_owner:msg1_0000000000000000802:par1_0000000000000000801"],
+        [other]
+      )
+
+    :ok = SalixAgent.ActivityEvent.thinking(agent_id, @session_id, nil, other_scope)
+    :ok = S3.Fake.clear_blackhole()
+    foreign = other_scope["response_identity"]
+    refute_receive :never, 200
+    assert %{"response_key" => ^foreign} = shown_activity(agent_id)
+  end
+
+  test "a running call journaled after another call's end presents; the ended call does not" do
+    {agent_id, pid, _agent, request} = open_task_dispatch()
+    capability = request.binding["runtime_capability"]
+    a_start_id = ULID.generate()
+    b_start_id = ULID.generate(a_start_id)
+    a_end_id = ULID.generate(b_start_id)
+
+    commit = fn op, status, created_at, event_id ->
+      assert {:ok, %{"results" => [{:ok, _}]}} =
+               ExternalSessionActor.commit_connector_event(pid, capability, %{
+                 connector_event_batch: [
+                   journal_event(
+                     request,
+                     claude_operation(request, "execution-one", op, status, created_at),
+                     event_id
+                   )
+                 ]
+               })
+    end
+
+    commit.("op-a", "started", 1_790_003_000, a_start_id)
+    assert %{"tool_call_id" => "op-a"} = shown_activity(agent_id)
+
+    # B's start was emitted before A's end but its delivery is late.
+    commit.("op-a", "completed", 1_790_003_002, a_end_id)
+    assert %{"phase" => "thinking"} = shown_activity(agent_id)
+
+    commit.("op-b", "started", 1_790_003_001, b_start_id)
+
+    assert %{"tool_call_id" => "op-b", "started_at" => 1_790_003_001} =
+             shown = shown_activity(agent_id)
+
+    # A's own start, replayed or late, stays ended.
+    commit.("op-a", "started", 1_790_003_000, a_start_id)
+    assert shown_activity(agent_id) == shown
+  end
+
   test "a start journaled after its own end and over 512 later ends never presents" do
     {agent_id, pid, _agent, request} = open_task_dispatch()
     capability = request.binding["runtime_capability"]

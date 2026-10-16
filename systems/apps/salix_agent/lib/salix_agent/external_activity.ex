@@ -20,19 +20,28 @@ defmodule SalixAgent.ExternalActivity do
 
   Each runtime's tool start and end come from its adapter's explicit status
   pair. An end advances the presentation's ended frontier to its record id.
-  A start whose record id is not above that frontier is older in the journal
-  than an applied end, so it is never presented: a start emitted before its
-  own end cannot reopen it, however late it is journaled. Memory is the
-  running operations and that one frontier. The most recently started
+  A start above that frontier is newer in the journal than every applied end
+  and presents at once. A start at or below it is ambiguous (journaled late,
+  for example a backfill): the journal itself decides. A bounded newest-first
+  read (`@journal_pages` pages of `@journal_page` records, stopping at the
+  start's own id) looks for an end of that exact operation, dispatch and
+  execution after the start. Found: the call ended and never reopens. Not
+  found: the call is still running and presents with its own start.
+  Undecided within the budget or unreadable: it does not present. Memory is
+  the running operations and that one frontier. The most recently started
   running operation is shown with its start evidence (the Connector's
   observation time); when it ends, the latest remaining one is shown, else
   thinking.
 
-  The owner renews the shown frame each `ActivityEvent.renew_interval_ms/0`
-  while the canonical status still proves the exact admitted execution
-  active with a valid observation (`ExternalSessionStore.presentation_authority/2`).
-  A settled or failed turn, a failed dispatch, or lost authority (another
-  dispatch or execution, a finished, unknown or unobservable status) ends it.
+  The owner renews the frame each `ActivityEvent.renew_interval_ms/0` while
+  the canonical status proves the exact admitted execution active with a
+  valid observation (`ExternalSessionStore.presentation_authority/2`). A
+  settled or failed turn, a failed dispatch, or proven loss (another dispatch
+  or execution, a finished or unobserved status) ends it. Unavailable
+  evidence only hides it: the frame is retired fail closed, the admitted
+  state keeps following journaled events without presenting, and the next
+  renewal with proven authority restores the current call and its original
+  start, unless the surface shows another response.
   """
 
   alias SalixAgent.{ActivityEvent, ActivityScope, ToolCallProvenance}
@@ -74,6 +83,7 @@ defmodule SalixAgent.ExternalActivity do
           scope: scope,
           running: %{},
           ended_frontier: nil,
+          hidden: false,
           next_index: 0
         }
 
@@ -82,14 +92,29 @@ defmodule SalixAgent.ExternalActivity do
     end
   end
 
+  @journal_page 200
+  @journal_pages 10
+
   @doc """
   Apply one journaled Connector event (`record_id` is its journal id).
   `admitted_execution` returns the canonical `{dispatch_id, execution_id}`,
-  read only until this dispatch's execution is known.
+  read only until this dispatch's execution is known. `journal` pages the
+  Session journal newest first (`before`, `limit`), as
+  `ExternalSessionRecords.tail/5` does; it is read only for ambiguous starts.
   """
-  def observe(nil, _agent_id, _session_id, _run, _record_id, _event, _admitted), do: nil
+  def observe(nil, _agent_id, _session_id, _run, _record_id, _event, _admitted, _journal),
+    do: nil
 
-  def observe(state, agent_id, session_id, run, record_id, %{} = event, admitted_execution)
+  def observe(
+        state,
+        agent_id,
+        session_id,
+        run,
+        record_id,
+        %{} = event,
+        admitted_execution,
+        journal
+      )
       when is_binary(record_id) do
     event_execution = event["execution_id"]
 
@@ -97,7 +122,7 @@ defmodule SalixAgent.ExternalActivity do
          (is_nil(state.connector_run_id) or run == state.connector_run_id) do
       case with_admitted_execution(state, admitted_execution) do
         %{execution_id: ^event_execution} = admitted ->
-          apply_event(admitted, agent_id, session_id, record_id, event)
+          apply_event(admitted, agent_id, session_id, record_id, event, journal)
 
         %{} = admitted ->
           admitted
@@ -110,37 +135,46 @@ defmodule SalixAgent.ExternalActivity do
     end
   end
 
-  def observe(state, _agent_id, _session_id, _run, _record_id, _event, _admitted), do: state
+  def observe(state, _agent_id, _session_id, _run, _record_id, _event, _admitted, _journal),
+    do: state
 
   @doc """
-  Renew the shown frame while `authority` (from
-  `ExternalSessionStore.presentation_authority/2`) proves this exact
-  execution active; otherwise end the presentation.
+  Renew or restore the frame from `authority`
+  (`ExternalSessionStore.presentation_authority/2`): proven active keeps or
+  restores it, proven otherwise ends it, `:unknown` hides it and keeps the
+  admitted state for the next renewal.
   """
   def renew(nil, _agent_id, _session_id, _authority), do: nil
 
+  def renew(state, agent_id, session_id, :unknown) do
+    unless state.hidden,
+      do: ActivityEvent.retire(agent_id, session_id, state.scope["response_identity"])
+
+    %{state | hidden: true}
+  end
+
   def renew(state, agent_id, session_id, authority) do
     if authoritative?(state, authority) do
-      case Map.values(state.running) do
-        [] -> renew_thinking(state, agent_id, session_id)
-        running -> ActivityEvent.renew_tool_calls(agent_id, session_id, running, state.scope)
+      response_key = state.scope["response_identity"]
+
+      # Re-emit the current call (or thinking) only over this response's own
+      # frame or an empty surface, never over another response.
+      case SalixAgent.ActivitySurface.get_session(agent_id, session_id) do
+        nil -> present_current(state, agent_id, session_id)
+        %{"response_key" => ^response_key} -> present_current(state, agent_id, session_id)
+        _other_response -> :ok
       end
 
-      state
+      %{state | hidden: false}
     else
       finish(state, agent_id, session_id)
     end
   end
 
-  defp renew_thinking(state, agent_id, session_id) do
-    response_key = state.scope["response_identity"]
-
-    case SalixAgent.ActivitySurface.get_session(agent_id, session_id) do
-      %{"phase" => "thinking", "response_key" => ^response_key} ->
-        ActivityEvent.thinking(agent_id, session_id, nil, state.scope)
-
-      _moved_on ->
-        :ok
+  defp present_current(state, agent_id, session_id) do
+    case Map.values(state.running) do
+      [] -> ActivityEvent.thinking(agent_id, session_id, nil, state.scope)
+      running -> ActivityEvent.settle_tool_calls(agent_id, session_id, running, state.scope)
     end
   end
 
@@ -183,7 +217,14 @@ defmodule SalixAgent.ExternalActivity do
     end
   end
 
-  defp apply_event(state, agent_id, session_id, _record_id, %{"work_state" => work_state})
+  defp apply_event(
+         state,
+         agent_id,
+         session_id,
+         _record_id,
+         %{"work_state" => work_state},
+         _journal
+       )
        when work_state in ["settled", "failed"],
        do: finish(state, agent_id, session_id)
 
@@ -192,13 +233,16 @@ defmodule SalixAgent.ExternalActivity do
          agent_id,
          session_id,
          record_id,
-         %{"type" => "operation", "operation_id" => id, "status" => status} = event
+         %{"type" => "operation", "operation_id" => id, "status" => status} = event,
+         journal
        )
        when is_binary(id) and id != "" and is_binary(status) do
     {starts, ends} = Map.get(@tool_statuses, event["provider"], {[], []})
 
     cond do
-      status in starts and after_frontier?(state, record_id) ->
+      status in starts and
+          (after_frontier?(state, record_id) or
+             journal_end(state, journal, id, record_id, ends) == :running) ->
         start(state, agent_id, session_id, id, event)
 
       status in ends ->
@@ -210,7 +254,43 @@ defmodule SalixAgent.ExternalActivity do
     end
   end
 
-  defp apply_event(state, _agent_id, _session_id, _record_id, _event), do: state
+  defp apply_event(state, _agent_id, _session_id, _record_id, _event, _journal), do: state
+
+  # Whether the journal holds an end of this exact operation, dispatch and
+  # execution after `start_id`. Newest first, early exit, fixed budget.
+  defp journal_end(state, journal, operation_id, start_id, ends),
+    do: journal_end(state, journal, operation_id, start_id, ends, nil, @journal_pages)
+
+  defp journal_end(_state, _journal, _operation_id, _start_id, _ends, _before, 0), do: :unknown
+
+  defp journal_end(state, journal, operation_id, start_id, ends, before, pages) do
+    case journal.(before, @journal_page) do
+      {:ok, records, more?, next_before} ->
+        newer = Enum.filter(records, &(&1["id"] > start_id))
+
+        cond do
+          Enum.any?(newer, &ends_operation?(&1, state, operation_id, ends)) ->
+            :ended
+
+          length(newer) < length(records) or not more? ->
+            :running
+
+          true ->
+            journal_end(state, journal, operation_id, start_id, ends, next_before, pages - 1)
+        end
+
+      _unreadable ->
+        :unknown
+    end
+  end
+
+  defp ends_operation?(%{"data" => %{"event" => event}}, state, operation_id, ends) do
+    event["type"] == "operation" and event["operation_id"] == operation_id and
+      event["status"] in ends and event["dispatch_id"] == state.dispatch_id and
+      event["execution_id"] == state.execution_id
+  end
+
+  defp ends_operation?(_record, _state, _operation_id, _ends), do: false
 
   defp after_frontier?(%{ended_frontier: nil}, _record_id), do: true
   defp after_frontier?(%{ended_frontier: frontier}, record_id), do: record_id > frontier
@@ -235,12 +315,14 @@ defmodule SalixAgent.ExternalActivity do
           next_index: state.next_index + 1
       }
 
-      ActivityEvent.settle_tool_calls(
-        agent_id,
-        session_id,
-        Map.values(state.running),
-        state.scope
-      )
+      unless state.hidden,
+        do:
+          ActivityEvent.settle_tool_calls(
+            agent_id,
+            session_id,
+            Map.values(state.running),
+            state.scope
+          )
 
       state
     end
@@ -255,7 +337,7 @@ defmodule SalixAgent.ExternalActivity do
         shown = latest(state.running)
         state = %{state | running: running}
 
-        if shown.call["id"] == id,
+        if shown.call["id"] == id and not state.hidden,
           do:
             ActivityEvent.settle_tool_calls(
               agent_id,
