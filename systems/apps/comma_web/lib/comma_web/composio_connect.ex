@@ -418,7 +418,14 @@ defmodule CommaWeb.ComposioConnect do
     requested = Map.get(params, "toolkits", [])
 
     if is_list(requested) and length(requested) <= 50 do
-      built_in = if params["scoped"], do: [], else: ["googledrive"]
+      # Connect lists accounts only for named toolkits. Unscoped reads also name
+      # the product-recognized member sources, so accounts authorized outside a
+      # Comma consent converge without a catalog visit; still one batched read.
+      built_in =
+        if params["scoped"],
+          do: [],
+          else: CommaWeb.RecommendationSourceCatalog.supported_composio_toolkits()
+
       toolkits = Enum.uniq(requested ++ Enum.map(consents, & &1["toolkit"]) ++ built_in)
 
       if length(toolkits) <= 100 and

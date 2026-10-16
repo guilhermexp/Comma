@@ -354,6 +354,37 @@ defmodule CommaWeb.GoogleDriveBrowserTest do
              ComposioAccess.grants(c.tenant, c.group, c.w["router_agent_id"])
   end
 
+  @tag :account_adoption
+  test "list reconciliation finds a remotely connected product source toolkit without consent or catalog visibility",
+       c do
+    Agent.update(
+      c.provider,
+      &Map.put(&1, :toolkit_accounts, %{
+        "googledrive" => %{"accounts" => []},
+        "googlecalendar" => %{"accounts" => [%{"id" => "calendar-remote", "status" => "ACTIVE"}]}
+      })
+    )
+
+    # The visible catalog page names an unrelated toolkit; no Calendar consent exists.
+    conn = reconcile(c, %{"toolkits" => ["airtable"]})
+    assert conn.status == 200
+
+    assert Enum.any?(
+             Jason.decode!(conn.resp_body)["accounts"],
+             &(&1["id"] == "calendar-remote" and &1["toolkit"] == "googlecalendar" and
+                 &1["enabled"])
+           )
+
+    assert [%{"params" => %{"name" => "COMPOSIO_MANAGE_CONNECTIONS"} = params}] =
+             Agent.get(c.provider, & &1.requests)
+
+    assert %{"name" => "googlecalendar", "action" => "list"} in params["arguments"]["toolkits"]
+
+    # Discovery is not sharing: no Agent receives the adopted account.
+    assert {:ok, %{"items" => []}} =
+             ComposioAccess.grants(c.tenant, c.group, c.w["router_agent_id"])
+  end
+
   @tag :review_regression
   test "catalog adoption keeps a valid toolkit when another toolkit is absent or unsupported",
        c do

@@ -702,7 +702,10 @@ The client reads local account pages of at most 50 records serially and resolves
 metadata in batches of at most 20 exact toolkit slugs against the public catalog cache.
 For personal Connect, initial load and an explicit refresh trigger one batched
 remote read. Later catalog loads add a remote read only for newly seen slugs,
-plus up to 50 stored consent toolkits and the built-in Google Drive source.
+plus up to 50 stored consent toolkits and the product-recognized member source
+toolkits in `RecommendationSourceCatalog`. Connect lists accounts only for named
+toolkits, so these sources converge on initial load even when the member
+authorized them outside a Comma consent.
 Search readiness changes alone do not repeat provider reconciliation. An aborted
 read does not record its slugs as discovered; the next catalog trigger can retry
 them. A settled result or error consumes the trigger until explicit refresh.
