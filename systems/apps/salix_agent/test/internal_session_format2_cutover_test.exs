@@ -13,7 +13,9 @@ defmodule SalixAgent.InternalSessionFormat2CutoverTest do
 
     assert :ok = InternalSessionFormat2Cutover.run()
     assert S3.Fake.put_log() == []
-    assert S3.Fake.read_log() == []
+    # The Fake is shared: Agents left by earlier tests may still read their own
+    # state. Only reads made by the entrypoint's caller belong to this run.
+    assert S3.Fake.read_log(self()) == []
     refute InternalSessionFormat2Cutover.marker_present?()
   end
 end
