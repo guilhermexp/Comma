@@ -784,17 +784,28 @@ defmodule SalixAgent.ExternalSessionStoreTest do
     assert %{"tool_call_id" => "op-new", "detail" => "op-new.md"} = shown_activity(agent_id)
   end
 
-  test "a quiet operation outlives the idle timeout and an expired hold retires its frame" do
+  defp with_activity_cadence(renew_ms, idle_ms) do
     previous_idle = Application.get_env(:salix_agent, :session_actor_idle_ms)
-    previous_hold = Application.get_env(:salix_agent, :external_activity_hold_ms)
-    Application.put_env(:salix_agent, :session_actor_idle_ms, 30)
-    Application.put_env(:salix_agent, :external_activity_hold_ms, 60_000)
+    previous_renew = Application.get_env(:salix_agent, :activity_renew_ms)
+    Application.put_env(:salix_agent, :session_actor_idle_ms, idle_ms)
+    Application.put_env(:salix_agent, :activity_renew_ms, renew_ms)
 
     on_exit(fn ->
       restore_env(:session_actor_idle_ms, previous_idle)
-      restore_env(:external_activity_hold_ms, previous_hold)
+      restore_env(:activity_renew_ms, previous_renew)
     end)
+  end
 
+  defp journal_event(request, event, event_id) do
+    %{
+      "event_id" => event_id,
+      "connector_run_id" => request.binding["connector_run_id"],
+      "event" => event
+    }
+  end
+
+  test "a quiet operation keeps its frame renewed until the runtime is no longer observed" do
+    with_activity_cadence(40, 30)
     {agent_id, pid, _agent, request} = open_task_dispatch()
     ref = Process.monitor(pid)
 
@@ -805,25 +816,176 @@ defmodule SalixAgent.ExternalSessionStoreTest do
                claude_operation(request, "execution-one", "op-quiet", "started", 1_790_000_700)
              )
 
-    # Several idle periods pass with no event: the owner stays and so does
-    # the frame it can still vouch for.
-    refute_receive {:DOWN, ^ref, :process, _pid, _reason}, 200
-    assert %{"tool_call_id" => "op-quiet"} = shown_activity(agent_id)
+    assert %{"tool_call_id" => "op-quiet", "started_at" => 1_790_000_700} =
+             first = shown_activity(agent_id)
+
+    # Idle periods and renewals pass without events: the owner stays and
+    # renews the same call with its original start.
+    assert eventually(fn -> shown_activity(agent_id)["sequence"] > first["sequence"] + 2 end)
+
+    assert %{"tool_call_id" => "op-quiet", "started_at" => 1_790_000_700} =
+             shown_activity(agent_id)
+
+    refute_received {:DOWN, ^ref, :process, _pid, _reason}
+
+    # The Connector disconnects: the exact execution is no longer observed.
+    :persistent_term.put(@runtime_availability_key, %{"status" => "disconnected"})
+    assert eventually(fn -> is_nil(shown_activity(agent_id)) end)
+    assert_receive {:DOWN, ^ref, :process, _pid, :normal}, @receive_budget_ms
+  end
+
+  test "completion keeps renewing thinking and the settled turn retires it" do
+    with_activity_cadence(40, 30)
+    {agent_id, pid, _agent, request} = open_task_dispatch()
+    ref = Process.monitor(pid)
+
+    for status <- ["started", "completed"] do
+      assert {:ok, _} =
+               commit_runtime_event(
+                 pid,
+                 request,
+                 claude_operation(request, "execution-one", "op-done", status, 1_790_000_710)
+               )
+    end
+
+    assert %{"phase" => "thinking"} = thinking = shown_activity(agent_id)
+    assert eventually(fn -> shown_activity(agent_id)["sequence"] > thinking["sequence"] end)
+    assert shown_activity(agent_id)["phase"] == "thinking"
 
     assert {:ok, _} =
-             commit_runtime_event(
-               pid,
+             commit_runtime_event(pid, request, %{
+               "type" => "status",
+               "provider" => "claude",
+               "name" => "turn.ended",
+               "state" => "completed",
+               "created_at" => 1_790_000_711,
+               "dispatch_id" => request.dispatch_id,
+               "execution_id" => "execution-one",
+               "work_state" => "settled"
+             })
+
+    refute shown_activity(agent_id)
+    assert_receive {:DOWN, ^ref, :process, _pid, :normal}, @receive_budget_ms
+  end
+
+  test "a start journaled after its own end and over 512 later ends never presents" do
+    {agent_id, pid, _agent, request} = open_task_dispatch()
+    capability = request.binding["runtime_capability"]
+    # The start's id predates its end; its delivery fails and it is backfilled.
+    late_start_id = ULID.generate()
+
+    late_start =
+      journal_event(
+        request,
+        claude_operation(request, "execution-one", "op-late", "started", 1_790_000_900),
+        late_start_id
+      )
+
+    late_end =
+      journal_event(
+        request,
+        claude_operation(request, "execution-one", "op-late", "completed", 1_790_000_903),
+        ULID.generate(late_start_id)
+      )
+
+    {journal, _last} =
+      Enum.reduce(1..520, {[], late_end["event_id"]}, fn index, {acc, last} ->
+        start_id = ULID.generate(last)
+        end_id = ULID.generate(start_id)
+
+        {[
+           journal_event(
+             request,
+             claude_operation(
                request,
-               claude_operation(request, "execution-one", "op-quiet", "completed", 1_790_000_701)
-             )
+               "execution-one",
+               "op-#{index}",
+               "completed",
+               1_790_000_902
+             ),
+             end_id
+           ),
+           journal_event(
+             request,
+             claude_operation(request, "execution-one", "op-#{index}", "started", 1_790_000_901),
+             start_id
+           )
+           | acc
+         ], end_id}
+      end)
+
+    for chunk <- Enum.chunk_every([late_end | Enum.reverse(journal)], 100) do
+      assert {:ok, %{"results" => results}} =
+               ExternalSessionActor.commit_connector_event(pid, capability, %{
+                 connector_event_batch: chunk
+               })
+
+      assert Enum.all?(results, &match?({:ok, _}, &1))
+    end
+
+    assert %{"phase" => "thinking"} = settled = shown_activity(agent_id)
+
+    assert {:ok, %{"results" => [{:ok, _}]}} =
+             ExternalSessionActor.commit_connector_event(pid, capability, %{
+               connector_event_batch: [late_start]
+             })
+
+    assert shown_activity(agent_id) == settled
+
+    # A later legitimate start still presents.
+    assert {:ok, %{"results" => [{:ok, _}]}} =
+             ExternalSessionActor.commit_connector_event(pid, capability, %{
+               connector_event_batch: [
+                 journal_event(
+                   request,
+                   claude_operation(request, "execution-one", "op-new", "started", 1_790_000_950),
+                   ULID.generate()
+                 )
+               ]
+             })
+
+    assert %{"tool_call_id" => "op-new", "started_at" => 1_790_000_950} = shown_activity(agent_id)
+  end
+
+  test "an end journaled before a failed projection applies when its retry settles" do
+    {agent_id, pid, _agent, request} = open_task_dispatch()
+    capability = request.binding["runtime_capability"]
+
+    start =
+      journal_event(
+        request,
+        claude_operation(request, "execution-one", "op-1", "started", 1_790_001_000),
+        ULID.generate()
+      )
+
+    assert {:ok, %{"ok" => true}} =
+             ExternalSessionActor.commit_connector_event(pid, capability, start)
+
+    assert %{"tool_call_id" => "op-1"} = shown = shown_activity(agent_id)
+
+    stop =
+      journal_event(
+        request,
+        claude_operation(request, "execution-one", "op-1", "completed", 1_790_001_001),
+        ULID.generate(start["event_id"])
+      )
+
+    session_key = Keys.agent_external_runtime_session(agent_id, @session_id)
+    :ok = S3.Fake.blackhole({:fail, 503, :put, session_key})
+    on_exit(fn -> S3.Fake.clear_blackhole() end)
+
+    assert {:error, _projection_failed} =
+             ExternalSessionActor.commit_connector_event(pid, capability, stop)
+
+    assert shown_activity(agent_id) == shown
+    :ok = S3.Fake.clear_blackhole()
+
+    # The Connector retries the same event: a journal duplicate, ACKed once
+    # its projection succeeds, and now presented.
+    assert {:ok, %{"ok" => true}} =
+             ExternalSessionActor.commit_connector_event(pid, capability, stop)
 
     assert %{"phase" => "thinking"} = shown_activity(agent_id)
-
-    # Once the hold passes without events, the frame is retired and the
-    # owner may passivate.
-    Application.put_env(:salix_agent, :external_activity_hold_ms, 0)
-    assert_receive {:DOWN, ^ref, :process, _pid, :normal}, @receive_budget_ms
-    refute shown_activity(agent_id)
   end
 
   test "a new owner incarnation retires a frame it never admitted and ignores its old events" do

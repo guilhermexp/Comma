@@ -266,10 +266,59 @@ defmodule SalixAgent.ActivityEvent do
   def tool_call_ended(_agent_id, _session_id, _running, _activation_scope), do: :ok
 
   @doc """
+  How often an owner renews the frame of a call it can still prove is running.
+  Below the client's Activity TTL (150 s) and `SalixAgent.ActivitySurface`'s
+  staleness (10 min), so a quiet call keeps its identity and start; one
+  renewal per presented Session per interval.
+  """
+  def renew_interval_ms, do: Application.get_env(:salix_agent, :activity_renew_ms, 60_000)
+
+  @doc """
+  Renew the shown frame when it still names one of `running`, the calls of
+  `activation_scope`'s response that the owner proves are still running. The
+  renewal re-emits exactly that shown call with its own start, never another
+  one, so subscribers and reconnecting clients keep its identity and elapsed
+  time. A surface that moved on is left alone.
+  """
+  @spec renew_tool_calls(String.t(), String.t(), [map()], map() | nil) :: :ok
+  def renew_tool_calls(agent_id, session_id, [_ | _] = running, activation_scope)
+      when is_map(activation_scope) do
+    response_key = activation_scope["response_identity"] || activation_scope[:response_identity]
+
+    case SalixAgent.ActivitySurface.get_session(agent_id, session_id) do
+      %{
+        "phase" => "execution",
+        "status" => "running",
+        "response_key" => ^response_key,
+        "tool_call_id" => shown
+      }
+      when is_binary(response_key) ->
+        case Enum.find(running, &(tool_call_identity(&1[:call]) == shown)) do
+          %{call: call} = current ->
+            tool_calls_started(
+              agent_id,
+              session_id,
+              [call],
+              activation_scope,
+              current[:started_at]
+            )
+
+          nil ->
+            :ok
+        end
+
+      _moved_on ->
+        :ok
+    end
+  end
+
+  def renew_tool_calls(_agent_id, _session_id, _running, _activation_scope), do: :ok
+
+  @doc """
   Retire the frame the surface holds for this Session when its owner can no
   longer vouch for it: a new owner incarnation that did not admit it
-  (`expected` is `:any`), or an expired presentation of `expected`'s
-  response. A frame of another response is left alone.
+  (`expected` is `:any`), or a presentation of `expected`'s response that
+  lost its authority. A frame of another response is left alone.
   """
   @spec retire(String.t(), String.t(), String.t() | :any) :: :ok
   def retire(agent_id, session_id, expected) do

@@ -45,6 +45,7 @@ defmodule SalixAgent.ExternalSessionActor do
     # Presentation of the dispatch admitted in this incarnation
     # (`SalixAgent.ExternalActivity`); never durable state.
     activity: nil,
+    activity_renew_timer: nil,
     # Supervisor of this session's outbound SSH sessions, started on the
     # first ssh.open and linked to this actor (`SalixAgent.SSH.Sessions`).
     ssh_sessions: nil
@@ -727,15 +728,16 @@ defmodule SalixAgent.ExternalSessionActor do
   end
 
   def handle_info(:timeout, data) do
-    data =
-      if work_idle?(data) and ExternalActivity.expired?(data.activity),
-        do: %{
-          data
-          | activity: ExternalActivity.release(data.activity, data.agent_id, data.session_id)
-        },
-        else: data
-
     if idle?(data), do: {:stop, :normal, data}, else: noreply(data)
+  end
+
+  def handle_info(:activity_renew, data) do
+    authority =
+      if data.activity,
+        do: ExternalSessionStore.presentation_authority(data.agent_id, data.session_id)
+
+    activity = ExternalActivity.renew(data.activity, data.agent_id, data.session_id, authority)
+    noreply(schedule_activity_renewal(%{data | activity: activity, activity_renew_timer: nil}))
   end
 
   def handle_info(_message, data), do: noreply(data)
@@ -1037,18 +1039,19 @@ defmodule SalixAgent.ExternalSessionActor do
                data.records.last_id,
                source_ids
              ) do
-        data = %{
-          data
-          | activity:
-              ExternalActivity.begin(
-                data.agent_id,
-                data.session_id,
-                request.dispatch_id,
-                binding["connector_run_id"],
-                selected,
-                source_ids
-              )
-        }
+        data =
+          schedule_activity_renewal(%{
+            data
+            | activity:
+                ExternalActivity.begin(
+                  data.agent_id,
+                  data.session_id,
+                  request.dispatch_id,
+                  binding["connector_run_id"],
+                  selected,
+                  source_ids
+                )
+          })
 
         case projection do
           {:ok, status} ->
@@ -1701,8 +1704,8 @@ defmodule SalixAgent.ExternalSessionActor do
   defp terminal_async?(status), do: status in ["completed", "failed", "cancelled"]
 
   # An open Activity presentation keeps its owner resident through quiet
-  # operations; `:timeout` re-checks it each idle period until it ends or its
-  # hold expires.
+  # operations; its renewal timer re-checks canonical authority and ends it
+  # once the exact admitted execution is no longer active and observed.
   defp idle?(data), do: work_idle?(data) and is_nil(data.activity)
 
   defp work_idle?(data),
@@ -1748,18 +1751,20 @@ defmodule SalixAgent.ExternalSessionActor do
 
   defp value(_map, _key), do: nil
 
-  # Only events this call newly journaled move the presentation, in journal
-  # order: the journal's event-id deduplication keeps a replay from moving it.
-  # The execution comes from the canonical status owner, which admits one
-  # execution per dispatch (`ExternalSessionStatus.apply_work_state/4`).
+  # Every journaled event of this call reaches the presentation in journal
+  # order with its record id, replays included; application is idempotent
+  # (`SalixAgent.ExternalActivity`). The execution comes from the canonical
+  # status owner, which admits one per dispatch
+  # (`ExternalSessionStatus.apply_work_state/4`).
   defp present_committed_events(data, appended) do
-    Enum.reduce(appended, data, fn params, data ->
+    Enum.reduce(appended, data, fn {params, record_id}, data ->
       activity =
         ExternalActivity.observe(
           data.activity,
           data.agent_id,
           data.session_id,
           params["connector_run_id"],
+          record_id,
           params["event"],
           fn -> admitted_execution(data.agent_id, data.session_id) end
         )
@@ -1767,6 +1772,16 @@ defmodule SalixAgent.ExternalSessionActor do
       %{data | activity: activity}
     end)
   end
+
+  # One renewal timer while a presentation is open (`ExternalActivity.renew/4`).
+  defp schedule_activity_renewal(%{activity: %{}, activity_renew_timer: nil} = data) do
+    timer =
+      Process.send_after(self(), :activity_renew, SalixAgent.ActivityEvent.renew_interval_ms())
+
+    %{data | activity_renew_timer: timer}
+  end
+
+  defp schedule_activity_renewal(data), do: data
 
   defp admitted_execution(agent_id, session_id) do
     case ExternalSessionStatus.get(agent_id, session_id) do

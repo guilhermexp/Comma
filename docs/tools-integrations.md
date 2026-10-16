@@ -203,13 +203,12 @@ a transaction across Conversation and Participant owners. Absent status keeps
 the previous projection. A stopped Participant clears visible activity
 immediately; an active one can continue after a progress reply.
 
-A tool frame is emitted when its call really starts, with `tool_call_id` and
-`started_at`; clients time the action only from them. When the shown call ends,
-the latest running call of the response takes over, else thinking. `detail` is
-a file, program or host name from one known argument, else the public tool
-name; raw arguments stay private. Task activations and admitted external
-dispatches present under an `ActivityScope` from trusted origins; it grants no
-draft or send.
+A tool frame is emitted when its call starts, with `tool_call_id` and
+`started_at`, which clients time from. Its owner renews it while it proves the
+call runs; when the shown call ends, the latest running one takes over, else
+thinking. `detail` is a file, program or host name from a known argument,
+else the public tool name; raw arguments stay private. Task activations and
+admitted external dispatches use an `ActivityScope` from trusted origins; it grants no draft or send.
 
 ### Ownership and failure
 

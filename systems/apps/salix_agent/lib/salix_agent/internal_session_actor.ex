@@ -68,6 +68,8 @@ defmodule SalixAgent.InternalSessionActor do
     durable_marked: false,
     llm_retry_timer: nil,
     session_retry_timer: nil,
+    # One renewal timer for the presented frame of parked tool calls.
+    activity_renew_timer: nil,
     session_retry_attempt: 0,
     session_recovery: nil,
     # Wall clock of the processing entry that led to the current
@@ -911,6 +913,28 @@ defmodule SalixAgent.InternalSessionActor do
     opts = [result_source_message_id: inbound_source_message_id(entry)]
 
     noreply(start_compaction(data, :compact, context, opts, {:control, entry}))
+  end
+
+  def handle_info(:activity_renew, data) do
+    data = %{data | activity_renew_timer: nil}
+
+    data.pending_async_tools
+    |> Map.values()
+    |> Enum.flat_map(fn
+      %{activity: activity} -> [activity]
+      _not_presented -> []
+    end)
+    |> Enum.group_by(& &1.scope)
+    |> Enum.each(fn {scope, running} ->
+      SalixAgent.ActivityEvent.renew_tool_calls(
+        data.agent_id,
+        data.session_id,
+        running,
+        scope
+      )
+    end)
+
+    noreply(schedule_activity_renewal(data))
   end
 
   def handle_info(:residency_evict, data) do
@@ -1842,6 +1866,7 @@ defmodule SalixAgent.InternalSessionActor do
 
     %{data | pending_async_tools: pending_async_tools}
     |> stop_cancelled_pending_async_tools(context)
+    |> schedule_activity_renewal()
     |> reply_direct_round_waiter({:ok, context, outcome})
   end
 
@@ -3084,6 +3109,23 @@ defmodule SalixAgent.InternalSessionActor do
       end
     end)
   end
+
+  # A parked call this owner presents is still running exactly while it is in
+  # `pending_async_tools`, so only then is its frame renewed (one timer).
+  defp schedule_activity_renewal(%{activity_renew_timer: nil} = data) do
+    if Enum.any?(data.pending_async_tools, fn {_ref, pending} ->
+         Map.has_key?(pending, :activity)
+       end) do
+      timer =
+        Process.send_after(self(), :activity_renew, SalixAgent.ActivityEvent.renew_interval_ms())
+
+      %{data | activity_renew_timer: timer}
+    else
+      data
+    end
+  end
+
+  defp schedule_activity_renewal(data), do: data
 
   # This call's dependency ended (result, crash or timeout), possibly before
   # its batch's other calls. The calls still parked here for the same

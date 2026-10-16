@@ -691,7 +691,7 @@ defmodule SalixAgent.ExternalSessionStore do
 
       case result do
         :ok ->
-          {:ok, %{"ok" => true}, records, appended([{params, status}])}
+          {:ok, %{"ok" => true}, records, appended([{params, record, status}])}
 
         {:error, reason} ->
           # ExternalRuntimeEventProjection's RetryProjection starts after the
@@ -703,9 +703,40 @@ defmodule SalixAgent.ExternalSessionStore do
     end
   end
 
-  # The events this call newly journaled, in journal order, for the Session
-  # owner's transient presentation. Replays are already presented or retired.
-  defp appended(entries), do: for({params, :committed} <- entries, do: params)
+  # The journaled events this call settled, each with its journal record id
+  # (the canonical order), for the Session owner's transient presentation.
+  # A replay is included: the journal deduplicates storage, not presentation,
+  # which applies every journaled event idempotently.
+  defp appended(entries),
+    do:
+      for(
+        {params, %{"id" => record_id}, status} <- entries,
+        status in [:committed, :duplicate],
+        do: {params, record_id}
+      )
+
+  @doc """
+  Whether the exact execution a presentation shows is still canonically
+  active: the same reads as the public Session status (current projection,
+  runtime binding availability, lost-observation invalidation), plus the
+  admitted dispatch and execution identity. `:unknown` when unprovable.
+  """
+  def presentation_authority(agent_id, session_id) do
+    with {:ok, agent} <- AgentControl.get_record(agent_id),
+         {:ok, state} <- get_session_record(agent_id, session_id),
+         {:ok, status} <- ExternalSessionStatus.get(agent_id, session_id),
+         true <- status_projection_current?(status, state["status_projection_target"]),
+         {:ok, availability} when is_map(availability) <- read_runtime_availability(agent, state) do
+      {:ok,
+       %{
+         "status" => ExternalSessionStatus.public(status, availability)["status"],
+         "dispatch_id" => status["dispatch_id"],
+         "execution_id" => status["execution_id"]
+       }}
+    else
+      _unprovable -> :unknown
+    end
+  end
 
   # Modeled in tla/salix/ExternalRuntimeEventBatch.tla and
   # tla/salix/ExternalRuntimeEventSegmentPartitions.tla. One Connector transport
@@ -784,7 +815,7 @@ defmodule SalixAgent.ExternalSessionStore do
         |> Enum.zip(append_results)
         |> Enum.zip(results)
         |> Enum.flat_map(fn
-          {{{params, _record}, status}, {:ok, _}} -> [{params, status}]
+          {{{params, record}, status}, {:ok, _}} -> [{params, record, status}]
           _failed -> []
         end)
         |> appended()

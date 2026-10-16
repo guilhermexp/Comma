@@ -1000,6 +1000,14 @@ describe("Current action", () => {
     expect(line(view.container)).toBe("Using a tool · mcpToolCall · 1s");
   });
 
+  it("keeps the original start of a call renewed for 52 minutes", () => {
+    const view = render(slot(command));
+    vi.setSystemTime(T0 + 52 * 60_000);
+    view.rerender(slot({ ...command, sequence: 99 }));
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(line(view.container)).toBe("Running a command · git · 52m 1s");
+  });
+
   it("retires the running claim when the owner stops or the tool fails", () => {
     const view = render(slot(command));
     expect(shown(view.container, "live-action")).toBeInTheDocument();

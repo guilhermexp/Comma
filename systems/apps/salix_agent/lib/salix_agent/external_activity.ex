@@ -10,32 +10,32 @@ defmodule SalixAgent.ExternalActivity do
   admitted input (`SalixAgent.ActivityScope`). A dispatch without a provable
   scope presents nothing beyond generic Participant status.
 
-  Only events the journal newly committed reach `observe/6`; its event-id
-  deduplication keeps replays out. An event moves the presentation only when
-  it names the admitted dispatch, the Connector run, and the execution that
-  the canonical status owner admitted for that dispatch
-  (`ExternalSessionStatus`); until that owner has admitted one, nothing
-  moves. Each runtime's tool start and end come from its own adapter's
-  explicit status pair; other operations do not present. An end is final:
-  an ended id is never reopened while remembered, and the journal's
-  deduplication covers replays of older ids. The most recently started
+  Every journaled event reaches `observe/7` with its journal record id, the
+  journal's canonical order, including replays: deduplication is storage,
+  not presentation, so an end that was journaled before a failed projection
+  still applies when its retry settles as a duplicate. Application is
+  idempotent. An event moves the presentation only when it names the
+  admitted dispatch, the Connector run, and the execution that the canonical
+  status owner admitted for the dispatch (`ExternalSessionStatus`).
+
+  Each runtime's tool start and end come from its adapter's explicit status
+  pair. An end advances the presentation's ended frontier to its record id.
+  A start whose record id is not above that frontier is older in the journal
+  than an applied end, so it is never presented: a start emitted before its
+  own end cannot reopen it, however late it is journaled. Memory is the
+  running operations and that one frontier. The most recently started
   running operation is shown with its start evidence (the Connector's
   observation time); when it ends, the latest remaining one is shown, else
-  thinking. A settled or failed turn of the admitted execution, or a failed
-  dispatch, ends the presentation with idle.
+  thinking.
 
-  The owner keeps an open presentation resident through quiet operations
-  until it ends or `hold_ms/0` passes without an event, when the frame is
-  retired. A new owner incarnation retires a frame it did not admit.
+  The owner renews the shown frame each `ActivityEvent.renew_interval_ms/0`
+  while the canonical status still proves the exact admitted execution
+  active with a valid observation (`ExternalSessionStore.presentation_authority/2`).
+  A settled or failed turn, a failed dispatch, or lost authority (another
+  dispatch or execution, a finished, unknown or unobservable status) ends it.
   """
 
   alias SalixAgent.{ActivityEvent, ActivityScope, ToolCallProvenance}
-
-  # Ended ids remembered per dispatch, oldest forgotten first. A forgotten id
-  # is still protected against replay by the journal's event-id dedup; only a
-  # never-journaled start arriving after this many later ends could reopen it.
-  @ended_limit 512
-  @default_hold_ms 10 * 60_000
 
   # {start statuses, end statuses} per Connector adapter (salix-connect
   # claude_runtime.go, main.go Codex, pi_runtime.go, kimi_runtime.go).
@@ -45,9 +45,6 @@ defmodule SalixAgent.ExternalActivity do
     "pi" => {~w(start), ~w(end)},
     "kimi" => {~w(tool.call.started shell.started), ~w(tool.result)}
   }
-
-  @doc "How long an open presentation stays without any event."
-  def hold_ms, do: Application.get_env(:salix_agent, :external_activity_hold_ms, @default_hold_ms)
 
   @doc "The presentation for a dispatch the Session CAS just admitted, or nil."
   def begin(agent_id, session_id, dispatch_id, connector_run_id, input_messages, source_ids) do
@@ -76,9 +73,8 @@ defmodule SalixAgent.ExternalActivity do
           execution_id: nil,
           scope: scope,
           running: %{},
-          ended: {MapSet.new(), :queue.new()},
-          next_index: 0,
-          touched_ms: now_ms()
+          ended_frontier: nil,
+          next_index: 0
         }
 
       nil ->
@@ -87,20 +83,21 @@ defmodule SalixAgent.ExternalActivity do
   end
 
   @doc """
-  Apply one newly committed Connector event. `admitted_execution` returns the
-  canonical `{dispatch_id, execution_id}`, read only until this dispatch's
-  execution is known.
+  Apply one journaled Connector event (`record_id` is its journal id).
+  `admitted_execution` returns the canonical `{dispatch_id, execution_id}`,
+  read only until this dispatch's execution is known.
   """
-  def observe(nil, _agent_id, _session_id, _connector_run_id, _event, _admitted), do: nil
+  def observe(nil, _agent_id, _session_id, _run, _record_id, _event, _admitted), do: nil
 
-  def observe(state, agent_id, session_id, connector_run_id, %{} = event, admitted_execution) do
+  def observe(state, agent_id, session_id, run, record_id, %{} = event, admitted_execution)
+      when is_binary(record_id) do
     event_execution = event["execution_id"]
 
     if event["dispatch_id"] == state.dispatch_id and
-         (is_nil(state.connector_run_id) or connector_run_id == state.connector_run_id) do
+         (is_nil(state.connector_run_id) or run == state.connector_run_id) do
       case with_admitted_execution(state, admitted_execution) do
         %{execution_id: ^event_execution} = admitted ->
-          apply_event(%{admitted | touched_ms: now_ms()}, agent_id, session_id, event)
+          apply_event(admitted, agent_id, session_id, record_id, event)
 
         %{} = admitted ->
           admitted
@@ -113,27 +110,65 @@ defmodule SalixAgent.ExternalActivity do
     end
   end
 
-  def observe(state, _agent_id, _session_id, _connector_run_id, _event, _admitted), do: state
+  def observe(state, _agent_id, _session_id, _run, _record_id, _event, _admitted), do: state
 
-  @doc "The dispatch failed before or without a terminal Connector event."
+  @doc """
+  Renew the shown frame while `authority` (from
+  `ExternalSessionStore.presentation_authority/2`) proves this exact
+  execution active; otherwise end the presentation.
+  """
+  def renew(nil, _agent_id, _session_id, _authority), do: nil
+
+  def renew(state, agent_id, session_id, authority) do
+    if authoritative?(state, authority) do
+      case Map.values(state.running) do
+        [] -> renew_thinking(state, agent_id, session_id)
+        running -> ActivityEvent.renew_tool_calls(agent_id, session_id, running, state.scope)
+      end
+
+      state
+    else
+      finish(state, agent_id, session_id)
+    end
+  end
+
+  defp renew_thinking(state, agent_id, session_id) do
+    response_key = state.scope["response_identity"]
+
+    case SalixAgent.ActivitySurface.get_session(agent_id, session_id) do
+      %{"phase" => "thinking", "response_key" => ^response_key} ->
+        ActivityEvent.thinking(agent_id, session_id, nil, state.scope)
+
+      _moved_on ->
+        :ok
+    end
+  end
+
+  @doc "The dispatch failed, ended or lost authority."
   def finish(nil, _agent_id, _session_id), do: nil
 
   def finish(state, agent_id, session_id) do
-    ActivityEvent.idle(agent_id, session_id, state.scope)
-    nil
-  end
-
-  @doc "No event for `hold_ms/0`: the presentation can no longer be vouched for."
-  def expired?(nil), do: true
-  def expired?(state), do: now_ms() - state.touched_ms > hold_ms()
-
-  @doc "Retire an expired presentation's frame unless the surface moved on."
-  def release(nil, _agent_id, _session_id), do: nil
-
-  def release(state, agent_id, session_id) do
     ActivityEvent.retire(agent_id, session_id, state.scope["response_identity"])
     nil
   end
+
+  # Before the runtime's first lifecycle event, the dispatch is starting
+  # without an admitted execution.
+  defp authoritative?(state, {:ok, %{"dispatch_id" => dispatch_id} = status})
+       when dispatch_id == state.dispatch_id do
+    case {status["status"], state.execution_id} do
+      {"running", execution_id} when is_binary(execution_id) ->
+        status["execution_id"] == execution_id
+
+      {"starting", nil} ->
+        true
+
+      _ended_lost_or_other ->
+        false
+    end
+  end
+
+  defp authoritative?(_state, _authority), do: false
 
   defp with_admitted_execution(%{execution_id: id} = state, _admitted) when is_binary(id),
     do: state
@@ -148,7 +183,7 @@ defmodule SalixAgent.ExternalActivity do
     end
   end
 
-  defp apply_event(state, agent_id, session_id, %{"work_state" => work_state})
+  defp apply_event(state, agent_id, session_id, _record_id, %{"work_state" => work_state})
        when work_state in ["settled", "failed"],
        do: finish(state, agent_id, session_id)
 
@@ -156,82 +191,86 @@ defmodule SalixAgent.ExternalActivity do
          state,
          agent_id,
          session_id,
+         record_id,
          %{"type" => "operation", "operation_id" => id, "status" => status} = event
        )
        when is_binary(id) and id != "" and is_binary(status) do
     {starts, ends} = Map.get(@tool_statuses, event["provider"], {[], []})
 
     cond do
-      ended?(state, id) -> state
-      status in starts -> start(state, agent_id, session_id, id, event)
-      status in ends -> stop(state, agent_id, session_id, id)
-      true -> state
+      status in starts and after_frontier?(state, record_id) ->
+        start(state, agent_id, session_id, id, event)
+
+      status in ends ->
+        state = %{state | ended_frontier: max_id(state.ended_frontier, record_id)}
+        stop(state, agent_id, session_id, id)
+
+      true ->
+        state
     end
   end
 
-  defp apply_event(state, _agent_id, _session_id, _event), do: state
+  defp apply_event(state, _agent_id, _session_id, _record_id, _event), do: state
+
+  defp after_frontier?(%{ended_frontier: nil}, _record_id), do: true
+  defp after_frontier?(%{ended_frontier: frontier}, record_id), do: record_id > frontier
+
+  defp max_id(nil, record_id), do: record_id
+  defp max_id(frontier, record_id), do: max(frontier, record_id)
 
   defp start(state, agent_id, session_id, id, event) do
-    running =
-      Map.get_lazy(state.running, id, fn ->
-        %{
-          call: %{"id" => id, "name" => event["name"], "args" => event["input"] || %{}},
-          started_at: started_at(event["created_at"]),
-          call_index: state.next_index
-        }
-      end)
-
-    state = %{
+    if Map.has_key?(state.running, id) do
+      # A replayed start of a running call keeps its identity and start.
       state
-      | running: Map.put(state.running, id, running),
-        next_index: state.next_index + 1
-    }
+    else
+      running = %{
+        call: %{"id" => id, "name" => event["name"], "args" => event["input"] || %{}},
+        started_at: started_at(event["created_at"]),
+        call_index: state.next_index
+      }
 
-    ActivityEvent.settle_tool_calls(agent_id, session_id, Map.values(state.running), state.scope)
-    state
+      state = %{
+        state
+        | running: Map.put(state.running, id, running),
+          next_index: state.next_index + 1
+      }
+
+      ActivityEvent.settle_tool_calls(
+        agent_id,
+        session_id,
+        Map.values(state.running),
+        state.scope
+      )
+
+      state
+    end
   end
 
   defp stop(state, agent_id, session_id, id) do
-    shown = latest(state.running)
+    case Map.pop(state.running, id) do
+      {nil, _running} ->
+        state
 
-    state = %{
-      state
-      | running: Map.delete(state.running, id),
-        ended: remember_ended(state.ended, id)
-    }
+      {_ended, running} ->
+        shown = latest(state.running)
+        state = %{state | running: running}
 
-    if shown && shown.call["id"] == id,
-      do:
-        ActivityEvent.settle_tool_calls(
-          agent_id,
-          session_id,
-          Map.values(state.running),
-          state.scope
-        )
+        if shown.call["id"] == id,
+          do:
+            ActivityEvent.settle_tool_calls(
+              agent_id,
+              session_id,
+              Map.values(running),
+              state.scope
+            )
 
-    state
+        state
+    end
   end
-
-  defp latest(running) when map_size(running) == 0, do: nil
 
   defp latest(running),
     do: running |> Map.values() |> Enum.max_by(&{&1.started_at || 0, &1.call_index})
 
-  defp ended?(%{ended: {ids, _order}}, id), do: MapSet.member?(ids, id)
-
-  defp remember_ended({ids, order}, id) do
-    {ids, order} = {MapSet.put(ids, id), :queue.in(id, order)}
-
-    if MapSet.size(ids) > @ended_limit do
-      {{:value, oldest}, order} = :queue.out(order)
-      {MapSet.delete(ids, oldest), order}
-    else
-      {ids, order}
-    end
-  end
-
   defp started_at(seconds) when is_integer(seconds) and seconds > 0, do: seconds
   defp started_at(_seconds), do: nil
-
-  defp now_ms, do: System.monotonic_time(:millisecond)
 end

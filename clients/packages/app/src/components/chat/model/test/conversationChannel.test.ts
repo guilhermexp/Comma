@@ -3339,6 +3339,35 @@ describe("ConversationChannel", () => {
     channel.stop();
   });
 
+  it("keeps a quiet call past the local TTL while its owner renews it", async () => {
+    vi.useFakeTimers();
+    const api = createConversationApi();
+    const channel = createChannel(api);
+
+    channel.start();
+    api.emit(
+      0,
+      { type: "snapshot", messages: [message("msg_user", "user", "hello")] },
+      "snapshot"
+    );
+    const call = { started_at: 1_790_000_000, tool_call_id: "call_quiet" };
+    // 52 minutes of renewals, one per owner interval, well past the 150 s TTL.
+    for (let minute = 0; minute < 52; minute += 1) {
+      api.emit(0, activityEvent({ ...call, sequence: 200 + minute }), "activity");
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(channel.getSnapshot().activity).toMatchObject({
+        startedAt: 1_790_000_000,
+        toolCallId: "call_quiet",
+      });
+    }
+
+    // Without renewal (the owner retired or lost it), the TTL still clears.
+    await vi.advanceTimersByTimeAsync(150_000);
+    expect(channel.getSnapshot().activity).toBeUndefined();
+    channel.stop();
+    vi.useRealTimers();
+  });
+
   it("keeps the still-running call after the shown call ends, despite a late replay", () => {
     const api = createConversationApi();
     const channel = createChannel(api);

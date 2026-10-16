@@ -1208,12 +1208,15 @@ defmodule SalixAgent.RoundActivityTest do
     test name, %{agent: a} do
       previous_visible_reply = Application.get_env(:salix_agent, :visible_reply_mod)
       previous_mcp = Application.get_env(:salix_agent, :mcp_provider_mod)
+      previous_renew = Application.get_env(:salix_agent, :activity_renew_ms)
       Application.put_env(:salix_agent, :visible_reply_mod, TestVisibleReply)
       Application.put_env(:salix_agent, :mcp_provider_mod, GatedMCP)
+      Application.put_env(:salix_agent, :activity_renew_ms, 40)
 
       on_exit(fn ->
         restore(:salix_agent, :visible_reply_mod, previous_visible_reply)
         restore(:salix_agent, :mcp_provider_mod, previous_mcp)
+        restore(:salix_agent, :activity_renew_ms, previous_renew)
       end)
 
       session_id = "ses1_0000000000000000931"
@@ -1255,7 +1258,7 @@ defmodule SalixAgent.RoundActivityTest do
 
       # Both run; the latest started call is shown, each with its own start.
       assert eventually(fn -> match?(%{"tool_call_id" => "gate-b"}, shown.()) end, 200)
-      starts = execution_starts(collect_activities(a))
+      starts = execution_starts(activities_within(a, 100))
       assert %{"gate-a" => a_start, "gate-b" => _b_start} = starts
 
       send(gate_b, {:gate_release, "b", unquote(Macro.escape(b_outcome))})
@@ -1272,12 +1275,35 @@ defmodule SalixAgent.RoundActivityTest do
              )
 
       assert shown.()["started_at"] == a_start
-      after_b = collect_activities(a)
-      refute Enum.any?(after_b, &(&1["tool_call_id"] == "gate-b" and &1["status"] == "running"))
+      handed_off = shown.()["sequence"]
 
+      # A stays quiet: its owner renews the same call and start while the
+      # call is still parked, past any client or cache TTL by cadence.
+      assert eventually(fn -> shown.()["sequence"] > handed_off + 2 end, 300)
+      assert %{"tool_call_id" => "gate-a", "started_at" => ^a_start} = shown.()
+
+      # B's own renewals precede the handoff; nothing names B after it.
+      after_b = activities_within(a, 200)
+
+      refute Enum.any?(
+               after_b,
+               &(&1["tool_call_id"] == "gate-b" and &1["status"] == "running" and
+                   &1["sequence"] > handed_off)
+             )
+
+      released = shown.()["sequence"]
       send(gate_a, {:gate_release, "a", {:ok, %{"content" => "a done"}}})
       activities = collect_activities_until(a, "idle")
-      refute Enum.any?(activities, &(&1["phase"] == "execution" and &1["status"] == "running"))
+      later = Enum.filter(activities, &(&1["sequence"] > released))
+
+      # Once the surface leaves A, no running call is named again.
+      settled = Enum.find_index(later, &(&1["phase"] != "execution"))
+      assert settled
+
+      refute later
+             |> Enum.drop(settled)
+             |> Enum.any?(&(&1["phase"] == "execution" and &1["status"] == "running"))
+
       assert List.last(activities)["phase"] == "idle"
     end
   end
@@ -1620,6 +1646,25 @@ defmodule SalixAgent.RoundActivityTest do
   # §3.4): fixtures commit through the public rpc ingress instead. A wakeable
   # delivery now runs its round at deliver time (the rpc itself is the wake);
   # the explicit wake/settle each test already performs awaits the outcome.
+  defp activities_within(agent, window_ms) do
+    deadline = System.monotonic_time(:millisecond) + window_ms
+    activities_until(agent, deadline, [])
+  end
+
+  defp activities_until(agent, deadline, acc) do
+    remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+
+    receive do
+      {:notified, ^agent, {:activity, activity}} ->
+        activities_until(agent, deadline, [activity | acc])
+
+      {:notified, ^agent, _other} ->
+        activities_until(agent, deadline, acc)
+    after
+      remaining -> Enum.reverse(acc)
+    end
+  end
+
   defp execution_starts(activities) do
     for %{"phase" => "execution", "status" => "running", "tool_call_id" => id} = frame <-
           activities,
