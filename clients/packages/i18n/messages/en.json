@@ -11,9 +11,7 @@
         "input sender",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} file from {sender}",
         "countPlural=other": "{formattedCount} files from {sender}"
@@ -29,9 +27,7 @@
         "input sender",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Receiving {formattedCount} file from {sender}",
         "countPlural=other": "Receiving {formattedCount} files from {sender}"
@@ -48,9 +44,7 @@
         "input chat",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Added {formattedCount} file to “{chat}”",
         "countPlural=other": "Added {formattedCount} files to “{chat}”"
@@ -64,9 +58,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} file couldn’t be added",
         "countPlural=other": "{formattedCount} files couldn’t be added"
@@ -640,9 +632,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} notification deleted",
         "countPlural=other": "{formattedCount} notifications deleted"
@@ -659,9 +649,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} notification",
         "countPlural=other": "{formattedCount} notifications"
@@ -719,9 +707,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} task",
         "countPlural=other": "{formattedCount} tasks"
@@ -826,9 +812,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} Task",
         "countPlural=other": "{formattedCount} Tasks"
@@ -919,9 +903,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} task",
         "countPlural=other": "{formattedCount} tasks"
@@ -1125,9 +1107,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} new message",
         "countPlural=other": "{formattedCount} new messages"
@@ -2339,9 +2319,7 @@
         "input formattedCount",
         "local countPlural = count: plural"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{formattedCount} file is public.",
         "countPlural=other": "{formattedCount} files are public."
@@ -2494,13 +2472,8 @@
   "settings_providers_reauth_hint": "Sign in again with the same account. Agents keep using this profile.",
   "settings_providers_reset_menu": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Reset quota ({count} reset left)",
         "countPlural=other": "Reset quota ({count} resets left)"
@@ -2963,13 +2936,8 @@
   "drive_catalog_listing_stalled": "Drive listing did not advance. Try again.",
   "local_files_too_many": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Select at most {count} more local file.",
         "countPlural=other": "Select at most {count} more local files."
@@ -2978,13 +2946,8 @@
   ],
   "local_files_too_many_chat": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Select at most {count} more file.",
         "countPlural=other": "Select at most {count} more files."
