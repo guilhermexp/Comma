@@ -3290,7 +3290,8 @@ defmodule CommaWeb.RouterTest do
     # The PIN and its hash never leave Salix.
     refute with_pin.resp_body =~ "pbkdf2"
     refute with_pin.resp_body =~ "pin_hash"
-    refute with_pin.resp_body =~ "2468"
+    # Generated IDs in the body can contain these digits; compare JSON values.
+    refute "2468" in json_leaf_strings(Jason.decode!(with_pin.resp_body))
 
     assert %{"error" => _} =
              :put
@@ -9731,4 +9732,13 @@ defmodule CommaWeb.RouterTest do
       }
     }
   end
+
+  defp json_leaf_strings(value) when is_map(value),
+    do: value |> Map.values() |> Enum.flat_map(&json_leaf_strings/1)
+
+  defp json_leaf_strings(value) when is_list(value),
+    do: Enum.flat_map(value, &json_leaf_strings/1)
+
+  defp json_leaf_strings(nil), do: []
+  defp json_leaf_strings(value), do: [to_string(value)]
 end
