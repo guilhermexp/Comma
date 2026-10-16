@@ -149,6 +149,12 @@ defmodule SalixIM.SlackRouterStatusTest do
 
     def init(opts), do: opts
 
+    # Slack calls address 127.0.0.1. A local tool probing the listener under
+    # another Host (observed: `HEAD /` with `Host: localhost:<port>`) is not a
+    # Slack request and is not recorded.
+    def call(%Plug.Conn{host: host} = conn, _opts) when host != "127.0.0.1",
+      do: send_resp(conn, 421, "")
+
     def call(conn, _opts) do
       {:ok, raw_body, conn} = read_body(conn)
       method = Enum.join(conn.path_info, "/")
