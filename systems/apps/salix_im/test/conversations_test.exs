@@ -8083,7 +8083,15 @@ defmodule SalixIM.ConversationsTest do
                    )
       end
 
-      assert [_current, _stale] = conversation_list_index_records(group_id, conversation_id)
+      # A message append to a Conversation with a delivery log defers its list
+      # projection to the store's repair task; wait for the current key.
+      assert [_current, _stale] =
+               eventually_value(fn ->
+                 case conversation_list_index_records(group_id, conversation_id) do
+                   [_, _] = records -> records
+                   _ -> nil
+                 end
+               end)
 
       assert {:ok, owner} = ConversationPlacement.ensure_started(group_id, conversation_id)
       store_pid = :sys.get_state(owner).store_pid
