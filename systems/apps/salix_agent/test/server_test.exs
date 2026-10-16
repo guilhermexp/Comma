@@ -4801,17 +4801,15 @@ defmodule SalixAgent.ServerTest do
 
     {:parked, _owned} = wake_and_settle(a)
 
+    # The durable snapshot can look settled after the inputs materialize while
+    # the owner still commits the wakeable input's round; wait for its reply.
+    await_assistant_content!(a, "ses1_0000000000000000920", "wakeable handled after context")
     session = read_session!(a, "ses1_0000000000000000920")
 
     input_contents =
       Enum.map(Enum.take(SalixAgent.InternalSession.get(session, :messages), 101), & &1.content)
 
     assert input_contents == contexts ++ ["wakeable after context"]
-
-    assert Enum.any?(
-             SalixAgent.InternalSession.get(session, :messages),
-             &(&1.content == "wakeable handled after context")
-           )
 
     assert SalixAgent.InternalSession.get(session, :queue_ack_id) == 101
     assert SalixAgent.InternalSession.get(session, :input_queue) == []
