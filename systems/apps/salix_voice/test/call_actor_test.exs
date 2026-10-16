@@ -50,7 +50,7 @@ defmodule SalixVoice.CallActorTest do
         end
       end
 
-      for pid <- :pg.get_members(@pg, :calls), do: Process.exit(pid, :kill)
+      SalixVoice.TestCalls.stop_all()
       S3.delete(Keys.ctl_system_voice())
       SalixCluster.NodeLifecycle.clear_draining()
     end)
