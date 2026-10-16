@@ -90,6 +90,8 @@ defmodule SalixAgent.Round do
   @visible_reply_draft_key {__MODULE__, :visible_reply_draft}
   @send_message_draft_stream_key {__MODULE__, :send_message_draft_stream}
   @reasoning_activity_key {__MODULE__, :reasoning_activity}
+  # The visible-reply scope the latest round of this Session presented under.
+  @presented_activity_scope_key {__MODULE__, :presented_activity_scope}
 
   # Live Thinking refreshes only from provider-designated public summaries:
   # keep the tail and emit at most ~2 activities/second.
@@ -457,10 +459,16 @@ defmodule SalixAgent.Round do
           trusted_origin: trusted_origin
         })
 
-      # Home keeps its visible-reply scope. Without one, a Task activation may
-      # still present its own Activity from its admitted trusted origins.
+      # Home presents under its visible-reply scope. After its own progress
+      # reply the kernel derives no visible-reply scope for the rest of the
+      # activation (drafts stay off), so later rounds of that same activation
+      # keep presenting under the scope they already presented under. A Task
+      # activation presents from its admitted trusted origins. Neither grants
+      # a draft or a send.
+      carried_scope = carried_activity_scope(visible_reply_scope, source_message_ids)
+
       activity_scope =
-        visible_reply_scope ||
+        visible_reply_scope || carried_scope ||
           task_activity_scope(context.agent_id, session_id, session, source_message_ids)
 
       context =
@@ -468,6 +476,7 @@ defmodule SalixAgent.Round do
         |> Map.put(:visible_reply_phase, visible_reply_phase)
         |> Map.put(:visible_reply_scope, visible_reply_scope)
         |> Map.put(:activity_scope, activity_scope)
+        |> Map.put(:activity_scope_carried, is_map(carried_scope))
         |> Map.put(
           :guard_tool_config,
           Map.take(session_config, [
@@ -639,6 +648,7 @@ defmodule SalixAgent.Round do
          visible_reply_guard: visible_reply_guard,
          visible_reply_scope: visible_reply_scope,
          activity_scope: activity_scope,
+         activity_scope_carried: is_map(carried_scope),
          specs: specs,
          platform: platform,
          on_delta: on_delta,
@@ -672,6 +682,7 @@ defmodule SalixAgent.Round do
       visible_reply_guard: visible_reply_guard,
       visible_reply_scope: visible_reply_scope,
       activity_scope: activity_scope,
+      activity_scope_carried: activity_scope_carried,
       specs: specs,
       platform: platform,
       on_delta: on_delta,
@@ -793,6 +804,7 @@ defmodule SalixAgent.Round do
             visible_reply_guard: visible_reply_guard,
             visible_reply_scope: visible_reply_scope,
             activity_scope: activity_scope,
+            activity_scope_carried: activity_scope_carried,
             phase_activation_key: activation_key,
             stream_progress: stream_progress
           }
@@ -1051,6 +1063,7 @@ defmodule SalixAgent.Round do
       |> Map.put(:visible_reply_phase, pending[:visible_reply_phase] || :clean)
       |> Map.put(:visible_reply_scope, pending[:visible_reply_scope])
       |> Map.put(:activity_scope, pending[:activity_scope] || pending[:visible_reply_scope])
+      |> Map.put(:activity_scope_carried, pending[:activity_scope_carried] == true)
 
     with :ok <- require_session_context(context, session_id),
          {:ok, context} <- require_revision(context, session_id) do
@@ -1182,8 +1195,29 @@ defmodule SalixAgent.Round do
   defp visible_scope(host), do: host.context[:visible_reply_scope]
   defp activity_scope(host), do: host.context[:activity_scope] || visible_scope(host)
 
-  # A Task activation's presentation scope (`SalixAgent.ActivityScope`). Home
-  # chat keeps exactly its visible-reply scope, so only Task kinds qualify.
+  # Remember the visible-reply scope a round presents under; a later round of
+  # the same activation (exact same sources) without one carries it. Kept in
+  # the Session owner's process, so another activation, or a restarted owner,
+  # never carries a scope.
+  defp carried_activity_scope(%{} = visible_reply_scope, _source_message_ids) do
+    Process.put(@presented_activity_scope_key, visible_reply_scope)
+    nil
+  end
+
+  defp carried_activity_scope(nil, [_ | _] = source_message_ids) do
+    case Process.get(@presented_activity_scope_key) do
+      %{} = scope ->
+        if (scope["source_message_ids"] || scope[:source_message_ids]) == source_message_ids,
+          do: scope
+
+      _none ->
+        nil
+    end
+  end
+
+  defp carried_activity_scope(_visible_reply_scope, _source_message_ids), do: nil
+
+  # A Task activation's presentation scope (`SalixAgent.ActivityScope`).
   defp task_activity_scope(agent_id, session_id, session, source_message_ids) do
     SalixAgent.ActivityScope.derive(
       agent_id,
@@ -1406,8 +1440,15 @@ defmodule SalixAgent.Round do
           status
         )
 
+      # A carried scope only retires a frame it still shows; the reply
+      # settlement already idled that response otherwise.
       {:activity, :idle} ->
-        ActivityEvent.idle(agent_id, session_id, activity_scope(host))
+        if host.context[:activity_scope_carried] do
+          scope = activity_scope(host)
+          ActivityEvent.retire(agent_id, session_id, scope["response_identity"])
+        else
+          ActivityEvent.idle(agent_id, session_id, activity_scope(host))
+        end
 
       {:activity, :idle_unscoped} ->
         ActivityEvent.idle(agent_id, session_id)

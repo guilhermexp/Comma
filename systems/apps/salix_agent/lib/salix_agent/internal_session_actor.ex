@@ -1709,7 +1709,7 @@ defmodule SalixAgent.InternalSessionActor do
         data.agent_id,
         data.session_id,
         nil,
-        llm[:visible_reply_scope]
+        llm[:activity_scope] || llm[:visible_reply_scope]
       )
 
     send(llm.pid, {:persistence_fence, gate, true})

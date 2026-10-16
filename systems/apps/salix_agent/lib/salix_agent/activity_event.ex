@@ -323,8 +323,10 @@ defmodule SalixAgent.ActivityEvent do
   @spec retire(String.t(), String.t(), String.t() | :any) :: :ok
   def retire(agent_id, session_id, expected) do
     case SalixAgent.ActivitySurface.get_session(agent_id, session_id) do
-      %{"response_key" => response_key, "source_message_ids" => [_ | _] = ids} = frame
-      when is_binary(response_key) and (expected == :any or expected == response_key) ->
+      %{"response_key" => response_key, "source_message_ids" => [_ | _] = ids, "phase" => phase} =
+          frame
+      when is_binary(response_key) and (expected == :any or expected == response_key) and
+             phase != "idle" ->
         idle(agent_id, session_id, %{
           "agent_group_id" => frame["agent_group_id"],
           "conversation_id" => frame["conversation_id"],

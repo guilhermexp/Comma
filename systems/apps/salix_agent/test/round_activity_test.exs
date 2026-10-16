@@ -553,7 +553,11 @@ defmodule SalixAgent.RoundActivityTest do
     assert phase_index(activities, "thinking") < phase_index(activities, "messaging")
     assert phase_index(activities, "messaging") < phase_index(activities, "idle")
 
-    assert Enum.map(v2_frames, & &1["phase"]) == ["thinking", "messaging", "idle"]
+    # The reply's settlement idles its draft; the activation's next model
+    # round is still this response's work and ends with its own idle.
+    assert Enum.map(v2_frames, & &1["phase"]) ==
+             ["thinking", "messaging", "idle", "thinking", "idle"]
+
     assert Enum.all?(v2_frames, &(&1["response_key"] == response_identity))
     assert Enum.all?(v2_frames, &(&1["source_message_ids"] == [encoded_source]))
     assert Enum.all?(v2_frames, &(&1["agent_group_id"] == group_id))
@@ -1406,6 +1410,96 @@ defmodule SalixAgent.RoundActivityTest do
              %{"phase" => "execution"},
              SalixAgent.ActivitySurface.get_session(a, session_id)
            )
+  end
+
+  test "a Home Router that announces its plan keeps presenting its later tool calls", %{agent: a} do
+    previous_im_provider = Application.get_env(:salix_agent, :im_provider_mod)
+    previous_visible_reply = Application.get_env(:salix_agent, :visible_reply_mod)
+    Application.put_env(:salix_agent, :im_provider_mod, TestIMProvider)
+    Application.put_env(:salix_agent, :visible_reply_mod, TestVisibleReply)
+    TestIMProvider.set_owner(self())
+
+    on_exit(fn ->
+      TestIMProvider.clear()
+      restore(:salix_agent, :im_provider_mod, previous_im_provider)
+      restore(:salix_agent, :visible_reply_mod, previous_visible_reply)
+    end)
+
+    session_id = "ses1_0000000000000000934"
+    conversation_id = "conv-home-progress"
+    source_message_id = "msg1_0000000000000000934"
+    participant_id = "par1_0000000000000000934"
+    encoded_source = "groupconv:#{conversation_id}:#{source_message_id}:#{participant_id}"
+
+    tool = fn id ->
+      %{id: id, name: "call", args: %{"tool" => "help", "params" => %{"tool" => "fs.read_file"}}}
+    end
+
+    Mock.script([
+      # The Router announces its plan to the source, then works alone.
+      {:assistant, "",
+       [
+         %{
+           id: "progress-reply",
+           name: "call",
+           args: %{
+             "tool" => "im_api.internal.send_message",
+             "params" => %{
+               "connect_id" => "internal",
+               "conversation_id" => conversation_id,
+               "content" => [%{"type" => "text", "text" => "I will run them myself."}]
+             }
+           }
+         }
+       ]},
+      {:assistant, "", [tool.("first-get")]},
+      {:assistant, "", [tool.("second-get")]},
+      {:final, "all three done"}
+    ])
+
+    {:ok, _pid} = Fleet.ensure_started(a, create: true)
+
+    {:ok, :created} =
+      deliver(a, encoded_source, %{
+        content: "run the requests yourself",
+        session_id: session_id,
+        trusted_origin: %{
+          "provider" => "internal",
+          "conversation_id" => conversation_id,
+          "conversation_kind" => "user_chat",
+          "message_id" => source_message_id,
+          "participant_id" => participant_id,
+          "source_actor_type" => "user",
+          "agent_group_id" => "grp1_0000000000000000934"
+        }
+      })
+
+    {:parked, _owned} = wake_and_settle(a)
+    assert_receive {:im_provider_call, ^a, "internal", "internal.send_message", _args}, 1_000
+
+    # The settled activation's whole stream: the progress reply's own idle
+    # comes before the later calls.
+    activities = activities_within(a, 1_500)
+    [first | _] = Enum.filter(activities, &Map.has_key?(&1, "response_key"))
+    response_key = first["response_key"]
+
+    # After the progress reply the kernel retires the draft scope; each later
+    # call still reaches the exact source-bound surface with the activation's
+    # one response identity.
+    for id <- ["first-get", "second-get"] do
+      assert %{
+               "response_key" => ^response_key,
+               "conversation_id" => ^conversation_id,
+               "participant_id" => ^participant_id,
+               "source_message_ids" => [^encoded_source]
+             } =
+               Enum.find(activities, &(&1["tool_call_id"] == id and &1["status"] == "running"))
+    end
+
+    scoped = Enum.filter(activities, &Map.has_key?(&1, "response_key"))
+    assert Enum.all?(scoped, &(&1["response_key"] == response_key))
+    assert List.last(scoped)["phase"] == "idle"
+    refute SalixAgent.ActivitySurface.get_session(a, session_id)
   end
 
   test "a source activation keeps one response identity across tool and final rounds", %{agent: a} do
