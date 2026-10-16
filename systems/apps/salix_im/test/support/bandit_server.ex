@@ -14,7 +14,12 @@ defmodule SalixIM.TestSupport.BanditServer do
     {Bandit, opts} = spec_fun.(port)
     # Bind the same address used by test requests. On macOS a wildcard bind can
     # coexist with another listener on loopback and send requests to that daemon.
-    spec = {Bandit, Keyword.put(opts, :ip, {127, 0, 0, 1})}
+    opts =
+      opts
+      |> Keyword.put(:ip, {127, 0, 0, 1})
+      |> Keyword.update!(:plug, &{__MODULE__.TestRequestsOnly, &1})
+
+    spec = {Bandit, opts}
 
     case ExUnit.Callbacks.start_supervised(spec, id: {:bandit, port}) do
       {:ok, _pid} ->
@@ -47,5 +52,22 @@ defmodule SalixIM.TestSupport.BanditServer do
       :aborted -> raise "test Bandit port allocation lock aborted"
       port -> port
     end
+  end
+
+  defmodule TestRequestsOnly do
+    @moduledoc false
+    # Test clients address mocks as 127.0.0.1. Local tools probe every new
+    # loopback listener under another Host (observed: `HEAD /` with
+    # `Host: localhost:<port>` every few seconds). Such a request is not from
+    # the code under test, so it never reaches the test plug.
+    @behaviour Plug
+
+    @impl true
+    def init({plug, opts}) when is_atom(plug), do: {plug, plug.init(opts)}
+    def init(plug) when is_atom(plug), do: init({plug, []})
+
+    @impl true
+    def call(%Plug.Conn{host: "127.0.0.1"} = conn, {plug, opts}), do: plug.call(conn, opts)
+    def call(conn, _plug), do: Plug.Conn.send_resp(conn, 421, "")
   end
 end

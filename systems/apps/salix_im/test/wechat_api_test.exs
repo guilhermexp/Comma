@@ -134,28 +134,7 @@ defmodule SalixIM.WeChatAPITest do
     {:ok, port} = :inet.port(listen)
     test = self()
 
-    pid =
-      spawn_link(fn ->
-        Stream.iterate(1, &(&1 + 1))
-        |> Enum.each(fn attempt ->
-          {:ok, socket} = :gen_tcp.accept(listen)
-          send(test, {:wechat_request, read_json_body(socket)})
-
-          if close_first == :all or attempt <= close_first do
-            :gen_tcp.close(socket)
-          else
-            body = ~s({"ret":0})
-
-            :gen_tcp.send(
-              socket,
-              "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n" <>
-                "content-length: #{byte_size(body)}\r\nconnection: close\r\n\r\n" <> body
-            )
-
-            :gen_tcp.close(socket)
-          end
-        end)
-      end)
+    pid = spawn_link(fn -> serve_flaky(listen, test, close_first, 1) end)
 
     on_exit(fn -> Process.exit(pid, :kill) end)
 
@@ -173,16 +152,62 @@ defmodule SalixIM.WeChatAPITest do
     {"http://127.0.0.1:#{port}", requests}
   end
 
-  defp read_json_body(socket, acc \\ "") do
-    {:ok, data} = :gen_tcp.recv(socket, 0, 5_000)
-    acc = acc <> data
+  defp serve_flaky(listen, test, close_first, attempt) do
+    {:ok, socket} = :gen_tcp.accept(listen)
 
-    with [headers, body] <- String.split(acc, "\r\n\r\n", parts: 2),
-         [_, length] <- Regex.run(~r/content-length: (\d+)/i, headers),
-         true <- byte_size(body) >= String.to_integer(length) do
-      Jason.decode!(body)
-    else
-      _ -> read_json_body(socket, acc)
+    case read_request(socket) do
+      {:ok, body} ->
+        send(test, {:wechat_request, Jason.decode!(body)})
+
+        if close_first == :all or attempt <= close_first do
+          :gen_tcp.close(socket)
+        else
+          body = ~s({"ret":0})
+
+          :gen_tcp.send(
+            socket,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n" <>
+              "content-length: #{byte_size(body)}\r\nconnection: close\r\n\r\n" <> body
+          )
+
+          :gen_tcp.close(socket)
+        end
+
+        serve_flaky(listen, test, close_first, attempt + 1)
+
+      :foreign ->
+        # A local tool probing the port, not the WeChat client: not an attempt.
+        :gen_tcp.close(socket)
+        serve_flaky(listen, test, close_first, attempt)
+    end
+  end
+
+  # The client under test addresses 127.0.0.1; local port probes (observed:
+  # `HEAD /` with `Host: localhost:<port>`) do not and may close at any time.
+  defp read_request(socket, acc \\ "") do
+    case :gen_tcp.recv(socket, 0, 5_000) do
+      {:ok, data} -> parse_request(socket, acc <> data)
+      {:error, _reason} -> :foreign
+    end
+  end
+
+  defp parse_request(socket, acc) do
+    case String.split(acc, "\r\n\r\n", parts: 2) do
+      [headers, body] ->
+        length =
+          case Regex.run(~r/content-length: (\d+)/i, headers) do
+            [_, length] -> String.to_integer(length)
+            nil -> 0
+          end
+
+        cond do
+          not Regex.match?(~r/^host: 127\.0\.0\.1(:\d+)?\r?$/im, headers) -> :foreign
+          byte_size(body) >= length -> {:ok, body}
+          true -> read_request(socket, acc)
+        end
+
+      [_partial] ->
+        read_request(socket, acc)
     end
   end
 
