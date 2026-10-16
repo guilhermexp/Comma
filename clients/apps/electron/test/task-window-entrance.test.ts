@@ -1,26 +1,41 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, it } from "vitest";
 
-it.skipIf(process.platform !== "darwin")(
+const appDir = resolve(import.meta.dirname, "..");
+const electronExecutable = resolve(appDir, "../../../node_modules/.bin/electron");
+// Like the native backdrop test, this needs built artifacts: the backdrop addon
+// (`build:native`) and the Main window renderer (`vite.renderer.config.ts`).
+const addonPath = [
+  process.env.COMMA_SIDE_CHAT_BACKDROP_PATH,
+  resolve(
+    appDir,
+    "native/macos/SideChatBackdrop/build/Debug/comma_side_chat_backdrop.node"
+  ),
+  resolve(
+    appDir,
+    "native/macos/SideChatBackdrop/build/Release/comma_side_chat_backdrop.node"
+  ),
+  resolve(appDir, "dist/native/macos/comma-side-chat-backdrop.node"),
+]
+  .filter((candidate): candidate is string => Boolean(candidate))
+  .find(existsSync);
+const canRunRealEntrance =
+  process.platform === "darwin" &&
+  existsSync(electronExecutable) &&
+  existsSync(resolve(appDir, ".vite/renderer/main_window/index.html")) &&
+  addonPath !== undefined;
+
+it.skipIf(!canRunRealEntrance)(
   "paints an opaque source before moving in real cold and repeated Electron windows",
   async () => {
-    const appDir = resolve(import.meta.dirname, "..");
     const { ELECTRON_RUN_AS_NODE: _, ...env } = process.env;
     const output = await new Promise<string>((resolveOutput, reject) => {
       const child = spawn(
-        resolve(appDir, "../../../node_modules/.bin/electron"),
+        electronExecutable,
         [resolve(import.meta.dirname, "fixtures/task-window-entrance.cjs")],
-        {
-          cwd: appDir,
-          env: {
-            ...env,
-            COMMA_SIDE_CHAT_BACKDROP_PATH: resolve(
-              appDir,
-              "native/macos/SideChatBackdrop/build/Debug/comma_side_chat_backdrop.node"
-            ),
-          },
-        }
+        { cwd: appDir, env: { ...env, COMMA_SIDE_CHAT_BACKDROP_PATH: addonPath } }
       );
       let capturedOutput = "";
       child.stdout.on("data", (chunk) => {

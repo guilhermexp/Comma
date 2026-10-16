@@ -13,7 +13,19 @@ const compiled = ts.transpileModule(readFileSync(filename, "utf8"), {
 const hostExports = {};
 runInNewContext(compiled, { exports: hostExports });
 const { presentSideChatTaskHost } = hostExports;
-const addon = require(process.env.COMMA_SIDE_CHAT_BACKDROP_PATH);
+// Electron keeps a main process that throws during load alive behind an error
+// dialog, so arm the watchdog and report load failures before anything else.
+setTimeout(() => {
+  console.error("Task entrance timed out");
+  app.exit(1);
+}, 20000).unref();
+let addon;
+try {
+  addon = require(process.env.COMMA_SIDE_CHAT_BACKDROP_PATH);
+} catch (error) {
+  console.error(error);
+  app.exit(1);
+}
 const results = [];
 app.on("window-all-closed", () => {});
 let active;
@@ -110,7 +122,3 @@ requestAnimationFrame(sample);
   console.error(error);
   app.exit(1);
 });
-setTimeout(() => {
-  console.error("Task entrance timed out");
-  app.exit(1);
-}, 20000).unref();
