@@ -110,6 +110,59 @@ defmodule SalixAgent.RoundActivityTest do
     defp participant_draft_notification?(_blocked_phase, _agent_id, _event), do: false
   end
 
+  # Two MCP tools that run until the test releases them, so a batch keeps
+  # real concurrent calls that end in a chosen order.
+  defmodule GatedMCP do
+    @moduledoc false
+    def provider_state(_agent_id), do: {:ok, %{}}
+
+    def dynamic_disclosure_entries(_agent_id) do
+      {:ok,
+       for name <- ~w(a b) do
+         %{
+           "name" => "mcp.gate.#{name}",
+           "summary" => "Gated test tool #{name}.",
+           "manual" => "Gated test tool #{name}.",
+           "input_schema" => %{"type" => "object", "properties" => %{}}
+         }
+       end}
+    end
+
+    def list_bindings(_agent_id) do
+      {:ok,
+       [
+         %{
+           "binding_id" => "binding-gate",
+           "alias" => "gate",
+           "enabled" => true,
+           "connection" => %{
+             "status" => "connected",
+             "discovered" => %{
+               "tools" => [
+                 %{"name" => "a", "operation_id" => "mcp.gate.a"},
+                 %{"name" => "b", "operation_id" => "mcp.gate.b"}
+               ]
+             }
+           }
+         }
+       ]}
+    end
+
+    def call_tool(_agent_id, "gate", name, _args, _ctx) do
+      send(:persistent_term.get({SalixAgent.RoundActivityTest, :test_pid}), {
+        :gate_started,
+        name,
+        self()
+      })
+
+      receive do
+        {:gate_release, ^name, outcome} -> outcome
+      after
+        10_000 -> {:ok, %{"content" => "gate timeout"}}
+      end
+    end
+  end
+
   defmodule TestVisibleReply do
     @moduledoc false
     @behaviour SalixAgent.VisibleReply
@@ -1067,12 +1120,23 @@ defmodule SalixAgent.RoundActivityTest do
     assert_receive {:activity_blocked, activity_pid}, 2_000
 
     try do
+      # The execution frame marks the tool's real start. A speculative batch
+      # starts its tools while the admission fence commits the running
+      # record, its auto-wait and the round boundary; that fence completes
+      # while the tool still runs, so the durable session then waits on it.
+      assert eventually(
+               fn ->
+                 {:ok, session} =
+                   SalixAgent.InternalSessionStore.read(a, "ses1_0000000000000000901")
+
+                 SalixAgent.InternalSession.status(session) == :idle
+               end,
+               200
+             )
+
       assert {:ok, session} =
                SalixAgent.InternalSessionStore.read(a, "ses1_0000000000000000901")
 
-      # Admission commits the running record, its auto-wait and the round
-      # boundary in one fence before the tool is dispatched, so the durable
-      # session already waits on the tool while its execution activity runs.
       assert SalixAgent.InternalSession.status(session) == :idle
       assert %{"source" => "auto_wait"} = SalixAgent.InternalSession.wait(session)
 
@@ -1133,6 +1197,189 @@ defmodule SalixAgent.RoundActivityTest do
            |> Enum.drop(last_execution + 1)
            |> Enum.map(& &1["phase"])
            |> Enum.member?("thinking")
+  end
+
+  for {name, b_outcome} <- [
+        {"the surface moves to a still-running call when the shown call ends first",
+         {:ok, %{"content" => "b done"}}},
+        {"a failed shown call hands the surface to the call that still runs",
+         {:ok, %{"content" => "b failed", "status" => "error"}}}
+      ] do
+    test name, %{agent: a} do
+      previous_visible_reply = Application.get_env(:salix_agent, :visible_reply_mod)
+      previous_mcp = Application.get_env(:salix_agent, :mcp_provider_mod)
+      Application.put_env(:salix_agent, :visible_reply_mod, TestVisibleReply)
+      Application.put_env(:salix_agent, :mcp_provider_mod, GatedMCP)
+
+      on_exit(fn ->
+        restore(:salix_agent, :visible_reply_mod, previous_visible_reply)
+        restore(:salix_agent, :mcp_provider_mod, previous_mcp)
+      end)
+
+      session_id = "ses1_0000000000000000931"
+      conversation_id = "conv-parallel-tools"
+      source_message_id = "msg1_0000000000000000931"
+      participant_id = "par1_0000000000000000931"
+
+      Mock.script([
+        {:assistant, "running both",
+         [
+           %{id: "gate-a", name: "call", args: %{"tool" => "mcp.gate.a", "params" => %{}}},
+           %{id: "gate-b", name: "call", args: %{"tool" => "mcp.gate.b", "params" => %{}}}
+         ]},
+        {:final, "both finished"}
+      ])
+
+      {:ok, _pid} = Fleet.ensure_started(a, create: true)
+
+      {:ok, :created} =
+        deliver(a, "groupconv:#{conversation_id}:#{source_message_id}:#{participant_id}", %{
+          content: "run both tools",
+          session_id: session_id,
+          trusted_origin: %{
+            "provider" => "internal",
+            "conversation_id" => conversation_id,
+            "conversation_kind" => "user_chat",
+            "message_id" => source_message_id,
+            "participant_id" => participant_id,
+            "source_actor_type" => "user",
+            "agent_group_id" => "grp1_0000000000000000931"
+          }
+        })
+
+      Server.wake(a)
+      assert_receive {:gate_started, "a", gate_a}, 5_000
+      assert_receive {:gate_started, "b", gate_b}, 5_000
+
+      shown = fn -> SalixAgent.ActivitySurface.get_session(a, session_id) end
+
+      # Both run; the latest started call is shown, each with its own start.
+      assert eventually(fn -> match?(%{"tool_call_id" => "gate-b"}, shown.()) end, 200)
+      starts = execution_starts(collect_activities(a))
+      assert %{"gate-a" => a_start, "gate-b" => _b_start} = starts
+
+      send(gate_b, {:gate_release, "b", unquote(Macro.escape(b_outcome))})
+
+      # B ended while A still blocks: A owns the surface with its first start.
+      assert eventually(
+               fn ->
+                 match?(
+                   %{"phase" => "execution", "status" => "running", "tool_call_id" => "gate-a"},
+                   shown.()
+                 )
+               end,
+               300
+             )
+
+      assert shown.()["started_at"] == a_start
+      after_b = collect_activities(a)
+      refute Enum.any?(after_b, &(&1["tool_call_id"] == "gate-b" and &1["status"] == "running"))
+
+      send(gate_a, {:gate_release, "a", {:ok, %{"content" => "a done"}}})
+      activities = collect_activities_until(a, "idle")
+      refute Enum.any?(activities, &(&1["phase"] == "execution" and &1["status"] == "running"))
+      assert List.last(activities)["phase"] == "idle"
+    end
+  end
+
+  for {name, origin_conversation, scoped?} <- [
+        {"a Task activation presents its Activity in its exact admitted scope",
+         "conv-task-activity", true},
+        {"a Task activation whose origin names another Conversation presents no scope",
+         "conv-someone-else", false}
+      ] do
+    test name, %{agent: a} do
+      session_id = "ses1_0000000000000000933"
+      conversation_id = "conv-task-activity"
+      source_message_id = "msg1_0000000000000000933"
+      participant_id = "par1_0000000000000000933"
+      encoded_source = "groupconv:#{conversation_id}:#{source_message_id}:#{participant_id}"
+
+      Mock.script([
+        {:assistant, "checking",
+         [
+           %{
+             id: "task-tool",
+             name: "call",
+             args: %{"tool" => "help", "params" => %{"tool" => "fs.read_file"}}
+           }
+         ]},
+        {:final, "reported to the Task"}
+      ])
+
+      {:ok, _pid} = Fleet.ensure_started(a, create: true)
+
+      {:ok, :created} =
+        deliver(a, encoded_source, %{
+          content: "work on the Task",
+          session_id: session_id,
+          trusted_origin: %{
+            "provider" => "internal",
+            "conversation_id" => unquote(origin_conversation),
+            "conversation_kind" => "agent_task",
+            "message_id" => source_message_id,
+            "participant_id" => participant_id,
+            "source_actor_type" => "agent",
+            "agent_group_id" => "grp1_0000000000000000933"
+          }
+        })
+
+      {:parked, _owned} = wake_and_settle(a)
+      activities = collect_activities_until(a, "idle")
+      scoped = Enum.filter(activities, &Map.has_key?(&1, "response_key"))
+
+      if unquote(scoped?) do
+        assert [response_key] = scoped |> Enum.map(& &1["response_key"]) |> Enum.uniq()
+        assert SalixAgent.VisibleReplyScope.valid_response_identity?(response_key)
+
+        assert Enum.any?(
+                 scoped,
+                 &(&1["phase"] == "execution" and &1["tool_call_id"] == "task-tool")
+               )
+
+        assert Enum.all?(
+                 scoped,
+                 &(&1["conversation_id"] == conversation_id and
+                     &1["participant_id"] == participant_id and
+                     &1["source_message_ids"] == [encoded_source])
+               )
+
+        # A Task never gains a draft from this presentation scope.
+        refute_received {:participant_draft, ^a, _draft}
+      else
+        assert scoped == []
+      end
+    end
+  end
+
+  test "an ended call never revives a surface that already moved on", %{agent: a} do
+    scope = %{
+      "agent_group_id" => "grp1_0000000000000000932",
+      "conversation_id" => "conv-moved-on",
+      "participant_id" => "par1_0000000000000000932",
+      "response_identity" =>
+        "rsp_" <> Base.url_encode64(:crypto.strong_rand_bytes(18), padding: false),
+      "source_message_ids" => [
+        "groupconv:conv-moved-on:msg1_0000000000000000932:par1_0000000000000000932"
+      ]
+    }
+
+    session_id = "ses1_0000000000000000932"
+    call = fn id -> %{"id" => id, "name" => "fs.read_file", "args" => %{"path" => "a.md"}} end
+    running = [%{call: call.("still"), started_at: 1_790_000_000.0, call_index: 0}]
+
+    :ok = SalixAgent.ActivityEvent.tool_calls_started(a, session_id, [call.("ended")], scope, 1.0)
+    # Stop clears the turn before the dependency reports its end.
+    :ok = SalixAgent.ActivityEvent.idle(a, session_id, scope)
+    _ = collect_activities(a)
+
+    :ok = SalixAgent.ActivityEvent.tool_call_ended(a, session_id, running, scope)
+    assert collect_activities(a) == []
+
+    refute match?(
+             %{"phase" => "execution"},
+             SalixAgent.ActivitySurface.get_session(a, session_id)
+           )
   end
 
   test "a source activation keeps one response identity across tool and final rounds", %{agent: a} do
@@ -1373,6 +1620,13 @@ defmodule SalixAgent.RoundActivityTest do
   # §3.4): fixtures commit through the public rpc ingress instead. A wakeable
   # delivery now runs its round at deliver time (the rpc itself is the wake);
   # the explicit wake/settle each test already performs awaits the outcome.
+  defp execution_starts(activities) do
+    for %{"phase" => "execution", "status" => "running", "tool_call_id" => id} = frame <-
+          activities,
+        into: %{},
+        do: {id, frame["started_at"]}
+  end
+
   defp deliver(agent, source_id, payload, opts \\ []) do
     SalixAgent.deliver(agent, payload, Keyword.put(opts, :source_message_id, source_id))
   end

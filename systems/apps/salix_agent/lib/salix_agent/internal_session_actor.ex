@@ -1880,7 +1880,7 @@ defmodule SalixAgent.InternalSessionActor do
       )
     end
 
-    activity_scope = pending[:visible_reply_scope]
+    activity_scope = pending[:activity_scope] || pending[:visible_reply_scope]
     SalixAgent.ActivityEvent.llm_failed(data.agent_id, pending.session_id, activity_scope)
     SalixAgent.ActivityEvent.idle(data.agent_id, pending.session_id, activity_scope)
     notify_session_updated(data)
@@ -3046,6 +3046,8 @@ defmodule SalixAgent.InternalSessionActor do
   end
 
   defp begin_async_tool_terminal(data, ref, pending, result) do
+    settle_ended_tool_activity(data, ref, pending)
+
     SalixStore.ReadScope.run(fn ->
       prefetch_round_refresh(data)
       pickup_started_ms = async_result_completed_ms(pending, result)
@@ -3082,6 +3084,20 @@ defmodule SalixAgent.InternalSessionActor do
       end
     end)
   end
+
+  # This call's dependency ended (result, crash or timeout), possibly before
+  # its batch's other calls. The calls still parked here for the same
+  # response are the ones really running.
+  defp settle_ended_tool_activity(data, ref, %{activity: %{scope: scope}} = pending) do
+    running =
+      for {other_ref, %{activity: %{scope: ^scope} = activity}} <- data.pending_async_tools,
+          other_ref != ref,
+          do: activity
+
+    SalixAgent.ActivityEvent.tool_call_ended(data.agent_id, pending.session_id, running, scope)
+  end
+
+  defp settle_ended_tool_activity(_data, _ref, _pending), do: :ok
 
   defp stage_async_tool_terminal(data, ref, pending, result, revision) do
     data

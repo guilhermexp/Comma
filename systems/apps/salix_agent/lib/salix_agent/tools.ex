@@ -420,6 +420,7 @@ defmodule SalixAgent.Tools do
                   tool_name: call[:name] || call["name"],
                   call_index: call[:call_index] || call["call_index"],
                   started_at: started_at,
+                  activity_started_ms: call_ctx[:tool_activity_started_ms],
                   auto_wait_seconds: auto_wait_seconds,
                   trace_ctx: ctx[:trace_ctx],
                   observability_link: SystemsObservability.Context.inject(observability_context),
@@ -482,6 +483,7 @@ defmodule SalixAgent.Tools do
   defp prepare_tool_dependency(call, ctx, observability_context) do
     case SalixAgent.ToolCallProvenance.select(call, ctx) do
       {:ok, call_ctx} ->
+        call_ctx = observe_tool_start(call, call_ctx)
         {call, call_ctx, start_tool_dependency(call, call_ctx, observability_context)}
 
       {:error, reason} ->
@@ -493,6 +495,29 @@ defmodule SalixAgent.Tools do
               reason,
             reason
           )}}
+    end
+  end
+
+  # The real start of one top-level call: an inline call runs right after this,
+  # and a dependency starts at once or fails at admission (it never queues).
+  # A caller that presents activity passes `:tool_activity`; leaves of an
+  # admitted script are part of their outer call and are not reported.
+  defp observe_tool_start(call, ctx) do
+    case ctx do
+      %{tool_activity: observe} when is_function(observe, 2) ->
+        # A guidance call is a refusal (not callable, invalid input): it does
+        # no work, so it never reaches the surface as a running action.
+        if is_reference(Map.get(ctx, @dependency_admission_context_key)) or
+             guidance_call?(call) do
+          ctx
+        else
+          started_ms = System.system_time(:millisecond)
+          observe.(call, started_ms)
+          Map.put(ctx, :tool_activity_started_ms, started_ms)
+        end
+
+      _no_presentation ->
+        ctx
     end
   end
 

@@ -719,18 +719,34 @@ describe("ParticipantStatusSlot", () => {
     expect(currentSummary(read.container)).toHaveTextContent("正在使用 Slack");
     read.unmount();
 
+    // A public tool without wording names itself as the technical detail.
     const unworded = render(
-      slotView({ ...execution, summary: "Working", toolName: "help" })
+      slotView({ ...execution, summary: "Working", toolName: "agent.access_set" })
     );
-    expect(currentSummary(unworded.container)).toHaveTextContent("正在处理");
-    expect(unworded.container).not.toHaveTextContent("help");
+    expect(currentSummary(unworded.container)).toHaveTextContent(
+      "正在使用工具 · agent.access_set"
+    );
     unworded.unmount();
 
-    // Activity precedes dispatch, so a model-invented name reaches the client.
-    const invented = render(
-      slotView({ ...execution, summary: "Working", toolName: "toString" })
+    // Without a name, or with prose instead of an identifier, nothing is shown
+    // beyond the generic line.
+    for (const toolName of [undefined, "Run the deploy script now"]) {
+      const unnamed = render(slotView({ ...execution, summary: "Working", toolName }));
+      expect(currentSummary(unnamed.container)?.textContent).toBe("正在处理");
+      unnamed.unmount();
+    }
+
+    // A generic frame never shows a tool name, even if one is present.
+    const generic = render(
+      slotView({
+        ...execution,
+        phase: "thinking",
+        summaryClass: "generic",
+        summary: "Thinking",
+        toolName: "agent.access_set",
+      })
     );
-    expect(currentSummary(invented.container)).toHaveTextContent("正在处理");
+    expect(generic.container).not.toHaveTextContent("agent.access_set");
   });
 
   it("keeps a canonical non-model error ahead of a failed presentation frame", () => {
@@ -967,6 +983,23 @@ describe("Current action", () => {
     expect(line(view.container)).toBe("Reading files");
   });
 
+  it("words external runtime tools and names an unknown one by its identifier", () => {
+    const view = render(slot({ ...command, toolName: "Bash", toolCallId: "toolu_1" }));
+    expect(line(view.container)).toBe("Running a command · git · 0s");
+
+    view.rerender(
+      slot({
+        ...command,
+        detail: undefined,
+        toolCallId: "call_mcp",
+        toolName: "mcpToolCall",
+        sequence: 7,
+      })
+    );
+    settle();
+    expect(line(view.container)).toBe("Using a tool · mcpToolCall · 1s");
+  });
+
   it("retires the running claim when the owner stops or the tool fails", () => {
     const view = render(slot(command));
     expect(shown(view.container, "live-action")).toBeInTheDocument();
@@ -1004,21 +1037,34 @@ describe("Current action", () => {
     settle();
     expect(line(view.container)).toBe("Worker · Reading files · notes.md · 3s");
 
-    // The Router's thinking is its own; the first with actual Activity speaks.
-    view.rerender(
-      statusView([
-        {
-          ...router,
-          activity: { ...workerActivity, phase: "thinking", summaryClass: "generic" },
-        },
-        { ...worker, activity: workerActivity },
-      ])
-    );
+    // A running tool call speaks before another Participant's thinking, by
+    // its real owner; a repeated snapshot keeps the same line and time.
+    const routerThinking = {
+      ...router,
+      activity: {
+        phase: "thinking" as const,
+        responseKey: "rsp_r",
+        status: "running" as const,
+        summaryClass: "generic" as const,
+        summary: "Thinking",
+      },
+    };
+    const both = [routerThinking, { ...worker, activity: workerActivity }];
+    view.rerender(statusView(both));
     settle();
-    expect(line(view.container)).toMatch(/· Thinking$/);
+    expect(line(view.container)).toBe("Worker · Reading files · notes.md · 4s");
+    view.rerender(statusView(both.map((item) => ({ ...item, updatedAt: 9 }))));
+    expect(line(view.container)).toBe("Worker · Reading files · notes.md · 4s");
     expect(view.getByTestId("participant-status-slot").title).toContain(
       "Worker · Reading files · notes.md"
     );
+
+    // The Worker's call ends: the remaining true state is the Router's
+    // thinking, not a waiting claim invented from it.
+    view.rerender(statusView([routerThinking, { ...worker, activity: undefined }]));
+    settle();
+    expect(line(view.container)).toMatch(/· Thinking$/);
+    expect(line(view.container)).not.toMatch(/Waiting|Worker ·/);
 
     // An idle Participant has no action left to claim.
     view.rerender(statusView([{ ...worker, activity: undefined }]));

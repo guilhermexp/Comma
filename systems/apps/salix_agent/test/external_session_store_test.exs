@@ -530,6 +530,137 @@ defmodule SalixAgent.ExternalSessionStoreTest do
     :ok
   end
 
+  for {provider, expected} <- [
+        {"claude",
+         [
+           [{"toolu_01Read", "Read", "notes.md", 1_790_000_001}],
+           [{"toolu_01Bash", "Bash", "git", 1_790_000_001}],
+           [:thinking],
+           [:idle]
+         ]},
+        {"codex",
+         [
+           [{"call_cmd", "commandExecution", "pnpm", 1_790_000_101}],
+           [{"call_mcp", "mcpToolCall", nil, 1_790_000_102}],
+           [{"call_cmd", "commandExecution", "pnpm", 1_790_000_101}],
+           [:thinking],
+           [:idle]
+         ]}
+      ] do
+    test "a #{provider} Task dispatch presents its real operations in the admitted scope" do
+      {agent_id, pid, _agent} = start_external_session()
+      conversation = "cnv1_activity_#{unquote(provider)}"
+      participant = "par1_0000000000000000801"
+      message = "msg1_0000000000000000801"
+      source = "groupconv:#{conversation}:#{message}:#{participant}"
+
+      assert {:ok, :committed} =
+               stage(pid, source, "run the tools",
+                 trusted_origin: task_origin(conversation, message, participant)
+               )
+
+      assert_receive {:runtime_request, runtime_pid, request}, @receive_budget_ms
+
+      # The admitted dispatch starts its presentation in the exact scope.
+      assert %{"phase" => "thinking", "response_key" => response_key} = shown_activity(agent_id)
+
+      assert %{"conversation_id" => ^conversation, "participant_id" => ^participant} =
+               shown_activity(agent_id)
+
+      assert shown_activity(agent_id)["source_message_ids"] == [source]
+      send(runtime_pid, {:runtime_return, accepted(request, %{})})
+
+      events =
+        unquote(provider)
+        |> native_activity_events()
+        |> Enum.map(fn events ->
+          Enum.map(events, &Map.put(&1, "dispatch_id", request.dispatch_id))
+        end)
+
+      for {batch, [expectation]} <- Enum.zip(events, unquote(Macro.escape(expected))) do
+        for event <- batch,
+            do: assert({:ok, %{"ok" => true}} = commit_runtime_event(pid, request, event))
+
+        case expectation do
+          {id, tool, detail, started_at} ->
+            assert %{
+                     "phase" => "execution",
+                     "status" => "running",
+                     "tool_call_id" => ^id,
+                     "tool_name" => ^tool,
+                     "started_at" => ^started_at,
+                     "response_key" => ^response_key
+                   } = shown = shown_activity(agent_id)
+
+            assert shown["detail"] == detail
+            refute inspect(shown) =~ "/Users/dev"
+            refute inspect(shown) =~ "--short"
+
+          :thinking ->
+            assert %{"phase" => "thinking", "response_key" => ^response_key} =
+                     shown_activity(agent_id)
+
+          :idle ->
+            refute shown_activity(agent_id)
+        end
+      end
+
+      # Replays after the terminal event cannot revive any operation.
+      for event <- List.flatten(events),
+          do: assert({:ok, %{"ok" => true}} = commit_runtime_event(pid, request, event))
+
+      refute shown_activity(agent_id)
+    end
+  end
+
+  test "external operations outside the admitted dispatch, run or origin never present" do
+    {agent_id, pid, _agent} = start_external_session()
+    conversation = "cnv1_activity_fence"
+    participant = "par1_0000000000000000801"
+    message = "msg1_0000000000000000801"
+    source = "groupconv:#{conversation}:#{message}:#{participant}"
+
+    assert {:ok, :committed} =
+             stage(pid, source, "run",
+               trusted_origin: task_origin(conversation, message, participant)
+             )
+
+    assert_receive {:runtime_request, runtime_pid, request}, @receive_budget_ms
+    send(runtime_pid, {:runtime_return, accepted(request, %{})})
+    assert %{"phase" => "thinking"} = before = shown_activity(agent_id)
+
+    [[bash, _read] | _] = native_activity_events("claude")
+    stale_dispatch = Map.put(bash, "dispatch_id", "an-older-dispatch")
+    assert {:ok, _} = commit_runtime_event(pid, request, stale_dispatch)
+
+    other_run = Map.put(bash, "dispatch_id", request.dispatch_id)
+    _ = commit_runtime_event(pid, request, other_run, "another-connector-run")
+
+    assert shown_activity(agent_id)["phase"] == "thinking"
+    assert shown_activity(agent_id)["sequence"] == before["sequence"]
+
+    # An origin that is not an internal origin of the source's own
+    # Conversation and Participant gives no scope at all.
+    {other_agent, other_pid, _agent} = start_external_session()
+
+    assert {:ok, :committed} =
+             stage(other_pid, source, "run",
+               trusted_origin: task_origin("cnv1_someone_else", message, participant)
+             )
+
+    assert_receive {:runtime_request, other_runtime, other_request}, @receive_budget_ms
+    send(other_runtime, {:runtime_return, accepted(other_request, %{})})
+
+    assert {:ok, _} =
+             commit_runtime_event(
+               other_pid,
+               other_request,
+               Map.put(bash, "dispatch_id", other_request.dispatch_id)
+             )
+
+    refute shown_activity(other_agent)
+  end
+
   test "Conversation admission atomically tracks independent sources across a lost CAS reply" do
     {agent_id, pid, _agent} = start_external_session()
 
@@ -7261,6 +7392,44 @@ defmodule SalixAgent.ExternalSessionStoreTest do
       "owner_scope" => %{"type" => "project", "id" => project_id}
     }
   end
+
+  @activity_fixture Path.expand(
+                      "../../../connector/salix-connect/testdata/activity_native_events.json",
+                      __DIR__
+                    )
+
+  defp native_activity_events(provider) do
+    @activity_fixture
+    |> File.read!()
+    |> Jason.decode!()
+    |> Map.fetch!(provider)
+    |> Enum.map(& &1["expected"])
+  end
+
+  defp task_origin(conversation, message, participant) do
+    %{
+      "provider" => "internal",
+      "conversation_kind" => "agent_task",
+      "conversation_id" => conversation,
+      "message_id" => message,
+      "participant_id" => participant,
+      "agent_group_id" => "grp1_0000000000000000801",
+      "source_actor_type" => "agent"
+    }
+  end
+
+  defp commit_runtime_event(pid, request, event, connector_run_id \\ nil) do
+    ExternalSessionActor.commit_connector_event(
+      pid,
+      request.binding["runtime_capability"],
+      %{
+        "connector_run_id" => connector_run_id || request.binding["connector_run_id"],
+        "event" => event
+      }
+    )
+  end
+
+  defp shown_activity(agent_id), do: SalixAgent.ActivitySurface.get_session(agent_id, @session_id)
 
   defp start_external_session(runtime_kind \\ "external") do
     agent_id = SalixAgent.TestSupport.new_agent_id()

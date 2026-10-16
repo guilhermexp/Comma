@@ -1064,6 +1064,7 @@
   "chat_tool_imessage_use_failed": "无法使用 iMessage",
   "chat_tool_email": "正在发送邮件",
   "chat_tool_email_failed": "无法发送邮件",
+  "chat_tool_generic": "正在使用工具",
   "chat_tool_plugin_use": "正在使用插件",
   "chat_tool_plugin_use_failed": "无法使用插件",
   "chat_tool_plugins_setup": "正在设置插件",

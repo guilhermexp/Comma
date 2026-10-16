@@ -20,6 +20,7 @@ defmodule SalixAgent.ExternalSessionActor do
     AsyncToolResults,
     ContextProviders,
     DependencyJob,
+    ExternalActivity,
     ExternalRuntime,
     ExternalSessionLifecycleObservation,
     ExternalSessionStatus,
@@ -41,6 +42,9 @@ defmodule SalixAgent.ExternalSessionActor do
     pending_async_tools: %{},
     pending_async_tool_commits: %{},
     startup_recovery_pending: false,
+    # Presentation of the dispatch admitted in this incarnation
+    # (`SalixAgent.ExternalActivity`); never durable state.
+    activity: nil,
     # Supervisor of this session's outbound SSH sessions, started on the
     # first ssh.open and linked to this actor (`SalixAgent.SSH.Sessions`).
     ssh_sessions: nil
@@ -354,7 +358,7 @@ defmodule SalixAgent.ExternalSessionActor do
     if capability["agent_id"] == data.agent_id and capability["session_id"] == data.session_id do
       case ExternalSessionStore.commit_connector_event(capability, params, data.records) do
         {:ok, response, records} ->
-          data = %{data | records: records}
+          data = %{data | records: records} |> present_committed_events(params, response)
           reply({:ok, response}, data)
 
         {:error, reason, records} ->
@@ -1021,6 +1025,19 @@ defmodule SalixAgent.ExternalSessionActor do
                data.records.last_id,
                source_ids
              ) do
+        data = %{
+          data
+          | activity:
+              ExternalActivity.begin(
+                data.agent_id,
+                data.session_id,
+                request.dispatch_id,
+                binding["connector_run_id"],
+                selected,
+                source_ids
+              )
+        }
+
         case projection do
           {:ok, status} ->
             schedule_starting_deadline(status)
@@ -1233,6 +1250,16 @@ defmodule SalixAgent.ExternalSessionActor do
   end
 
   defp handle_runtime_result(data, pending, result, duration_ms) do
+    dispatch_id = pending.dispatch_id
+
+    data =
+      if match?({:accepted, %{"dispatch_id" => ^dispatch_id}}, result),
+        do: data,
+        else: %{
+          data
+          | activity: ExternalActivity.finish(data.activity, data.agent_id, data.session_id)
+        }
+
     CommaLog.log("external_runtime_input_result", %{
       agent_id: data.agent_id,
       session_id: pending.session_id,
@@ -1703,4 +1730,28 @@ defmodule SalixAgent.ExternalSessionActor do
     do: Map.get(map, key) || Map.get(map, String.to_atom(key))
 
   defp value(_map, _key), do: nil
+
+  # Only events the journal now holds move the presentation, in commit order.
+  defp present_committed_events(data, %{connector_event_batch: batch}, %{"results" => results})
+       when is_list(batch) and is_list(results) do
+    batch
+    |> Enum.zip(results)
+    |> Enum.reduce(data, fn
+      {params, {:ok, _}}, data -> present_committed_events(data, params, %{})
+      {_params, _failed}, data -> data
+    end)
+  end
+
+  defp present_committed_events(data, %{} = params, _response) do
+    activity =
+      ExternalActivity.observe(
+        data.activity,
+        data.agent_id,
+        data.session_id,
+        params["connector_run_id"],
+        params["event"]
+      )
+
+    %{data | activity: activity}
+  end
 end

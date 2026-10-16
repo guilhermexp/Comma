@@ -1064,6 +1064,7 @@
   "chat_tool_imessage_use_failed": "Não foi possível usar o iMessage",
   "chat_tool_email": "Enviando um e-mail",
   "chat_tool_email_failed": "Não foi possível enviar o e-mail",
+  "chat_tool_generic": "Usando uma ferramenta",
   "chat_tool_plugin_use": "Usando um plugin",
   "chat_tool_plugin_use_failed": "Não foi possível usar o plugin",
   "chat_tool_plugins_setup": "Configurando plugins",

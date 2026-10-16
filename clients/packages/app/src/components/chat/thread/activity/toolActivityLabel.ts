@@ -95,6 +95,22 @@ const toolWork = new Map<string, ToolWork>([
   ["memory.get", "memoryRead"],
   ["memory.write", "memoryWrite"],
   ["wait_for", "wait"],
+  // Native tools of external runtimes (Claude Code, Codex) as the Connector
+  // names their operations.
+  ["Bash", "command"],
+  ["commandExecution", "command"],
+  ["Read", "filesRead"],
+  ["Glob", "filesRead"],
+  ["Grep", "filesRead"],
+  ["LS", "filesRead"],
+  ["Write", "filesEdit"],
+  ["Edit", "filesEdit"],
+  ["MultiEdit", "filesEdit"],
+  ["NotebookEdit", "filesEdit"],
+  ["fileChange", "filesEdit"],
+  ["WebFetch", "webRead"],
+  ["WebSearch", "webSearch"],
+  ["webSearch", "webSearch"],
 ]);
 
 // Families whose every operation does the same kind of work. MCP plugin
@@ -133,8 +149,9 @@ function toolWorkFor(toolName: string): ToolWork | undefined {
 
 /**
  * Plain wording, in the reader's language, for the work behind a tool call.
- * A tool identifier is never copy: a tool without wording returns undefined
- * so the caller shows its generic line.
+ * A tool identifier is never wording: a tool without wording returns
+ * undefined, and the indicator shows a generic line with the public
+ * identifier as its technical detail.
  */
 export function toolActivityLabel(
   messages: CommaMessages,

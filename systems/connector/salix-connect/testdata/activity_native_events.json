@@ -1,0 +1,308 @@
+{
+  "claude": [
+    {
+      "created_at": 1790000001,
+      "expected": [
+        {
+          "created_at": 1790000001,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "input": {
+            "command": "git status --short"
+          },
+          "name": "Bash",
+          "operation_id": "toolu_01Bash",
+          "provider": "claude",
+          "status": "started",
+          "type": "operation",
+          "work_state": "running"
+        },
+        {
+          "created_at": 1790000001,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "input": {
+            "file_path": "/Users/dev/project/notes.md"
+          },
+          "name": "Read",
+          "operation_id": "toolu_01Read",
+          "provider": "claude",
+          "status": "started",
+          "type": "operation",
+          "work_state": "running"
+        }
+      ],
+      "native": {
+        "message": {
+          "content": [
+            {
+              "id": "toolu_01Bash",
+              "input": {
+                "command": "git status --short",
+                "description": "Show working tree changes"
+              },
+              "name": "Bash",
+              "type": "tool_use"
+            },
+            {
+              "id": "toolu_01Read",
+              "input": {
+                "file_path": "/Users/dev/project/notes.md"
+              },
+              "name": "Read",
+              "type": "tool_use"
+            }
+          ],
+          "role": "assistant"
+        },
+        "type": "assistant"
+      },
+      "work_state": "running"
+    },
+    {
+      "created_at": 1790000003,
+      "expected": [
+        {
+          "created_at": 1790000003,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "name": "tool_result",
+          "operation_id": "toolu_01Read",
+          "output": {
+            "json_bytes": 9,
+            "omitted": true
+          },
+          "provider": "claude",
+          "status": "completed",
+          "type": "operation",
+          "work_state": "running"
+        }
+      ],
+      "native": {
+        "message": {
+          "content": [
+            {
+              "content": "# Notes",
+              "tool_use_id": "toolu_01Read",
+              "type": "tool_result"
+            }
+          ],
+          "role": "user"
+        },
+        "type": "user"
+      },
+      "work_state": "running"
+    },
+    {
+      "created_at": 1790000006,
+      "expected": [
+        {
+          "created_at": 1790000006,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "name": "tool_result",
+          "operation_id": "toolu_01Bash",
+          "output": {
+            "json_bytes": 13,
+            "omitted": true
+          },
+          "provider": "claude",
+          "status": "completed",
+          "type": "operation",
+          "work_state": "running"
+        }
+      ],
+      "native": {
+        "message": {
+          "content": [
+            {
+              "content": " M notes.md",
+              "tool_use_id": "toolu_01Bash",
+              "type": "tool_result"
+            }
+          ],
+          "role": "user"
+        },
+        "type": "user"
+      },
+      "work_state": "running"
+    },
+    {
+      "created_at": 1790000009,
+      "expected": [
+        {
+          "created_at": 1790000009,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "name": "turn.ended",
+          "provider": "claude",
+          "state": "completed",
+          "type": "status",
+          "work_state": "settled"
+        }
+      ],
+      "native": {
+        "is_error": false,
+        "subtype": "success",
+        "type": "result"
+      },
+      "work_state": "settled"
+    }
+  ],
+  "codex": [
+    {
+      "created_at": 1790000101,
+      "expected": [
+        {
+          "created_at": 1790000101,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "input": {
+            "command": "pnpm test",
+            "cwd": "/repo"
+          },
+          "name": "commandExecution",
+          "operation_id": "call_cmd",
+          "provider": "codex",
+          "status": "inProgress",
+          "type": "operation",
+          "work_state": "running"
+        }
+      ],
+      "native": {
+        "method": "item/started",
+        "params": {
+          "item": {
+            "command": "pnpm test",
+            "cwd": "/repo",
+            "id": "call_cmd",
+            "status": "inProgress",
+            "type": "commandExecution"
+          }
+        }
+      },
+      "work_state": "running"
+    },
+    {
+      "created_at": 1790000102,
+      "expected": [
+        {
+          "created_at": 1790000102,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "name": "mcpToolCall",
+          "operation_id": "call_mcp",
+          "provider": "codex",
+          "status": "inProgress",
+          "type": "operation",
+          "work_state": "running"
+        }
+      ],
+      "native": {
+        "method": "item/started",
+        "params": {
+          "item": {
+            "id": "call_mcp",
+            "server": "docs",
+            "status": "inProgress",
+            "tool": "search",
+            "type": "mcpToolCall"
+          }
+        }
+      },
+      "work_state": "running"
+    },
+    {
+      "created_at": 1790000104,
+      "expected": [
+        {
+          "created_at": 1790000104,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "name": "mcpToolCall",
+          "operation_id": "call_mcp",
+          "provider": "codex",
+          "status": "failed",
+          "type": "operation",
+          "work_state": "running"
+        }
+      ],
+      "native": {
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "id": "call_mcp",
+            "server": "docs",
+            "status": "failed",
+            "tool": "search",
+            "type": "mcpToolCall"
+          }
+        }
+      },
+      "work_state": "running"
+    },
+    {
+      "created_at": 1790000108,
+      "expected": [
+        {
+          "created_at": 1790000108,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "input": {
+            "command": "pnpm test",
+            "cwd": "/repo"
+          },
+          "name": "commandExecution",
+          "operation_id": "call_cmd",
+          "output": {
+            "json_bytes": 4,
+            "omitted": true
+          },
+          "provider": "codex",
+          "status": "completed",
+          "type": "operation",
+          "work_state": "running"
+        }
+      ],
+      "native": {
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "aggregatedOutput": "ok",
+            "command": "pnpm test",
+            "cwd": "/repo",
+            "id": "call_cmd",
+            "status": "completed",
+            "type": "commandExecution"
+          }
+        }
+      },
+      "work_state": "running"
+    },
+    {
+      "created_at": 1790000109,
+      "expected": [
+        {
+          "created_at": 1790000109,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "name": "turn/completed",
+          "provider": "codex",
+          "state": "completed",
+          "type": "status",
+          "work_state": "settled"
+        }
+      ],
+      "native": {
+        "method": "turn/completed",
+        "params": {
+          "turn": {
+            "status": "completed"
+          }
+        }
+      },
+      "work_state": "settled"
+    }
+  ],
+  "comment": "Representative native Claude Code stream-json lines and Codex app-server notifications for one turn with parallel tools, as the Connector parses and canonicalizes them. TestActivityNativeEventsFixture keeps expected in step with the parsers; Salix's ExternalActivity tests replay expected."
+}

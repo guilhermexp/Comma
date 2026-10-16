@@ -3339,6 +3339,34 @@ describe("ConversationChannel", () => {
     channel.stop();
   });
 
+  it("keeps the still-running call after the shown call ends, despite a late replay", () => {
+    const api = createConversationApi();
+    const channel = createChannel(api);
+
+    channel.start();
+    api.emit(
+      0,
+      { type: "snapshot", messages: [message("msg_user", "user", "hello")] },
+      "snapshot"
+    );
+    const callA = { started_at: 1_790_000_000, tool_call_id: "call_a" };
+    const callB = { started_at: 1_790_000_002, tool_call_id: "call_b" };
+    api.emit(0, activityEvent({ ...callA, sequence: 90 }), "activity");
+    api.emit(0, activityEvent({ ...callB, sequence: 91 }), "activity");
+    expect(channel.getSnapshot().activity).toMatchObject({ toolCallId: "call_b" });
+
+    // B ended first: the producer hands the surface back to A, with A's start.
+    api.emit(0, activityEvent({ ...callA, sequence: 92 }), "activity");
+    // A replayed or delayed B frame is older than that handoff.
+    api.emit(0, activityEvent({ ...callB, sequence: 91 }), "activity");
+    api.emit(0, activityEvent({ ...callB, sequence: 89 }), "activity");
+    expect(channel.getSnapshot().activity).toMatchObject({
+      startedAt: 1_790_000_000,
+      toolCallId: "call_a",
+    });
+    channel.stop();
+  });
+
   it("canonicalizes generic product copy and strips non-public payload", () => {
     const api = createConversationApi();
     const channel = createChannel(api);

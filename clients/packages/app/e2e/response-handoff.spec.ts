@@ -3061,6 +3061,49 @@ test("route: the reply indicator names the current action and times only that ac
     path: info.outputPath("task-participant-current-action.png"),
   });
 
+  // The Router thinks while a Worker runs an external tool without wording:
+  // the Worker's real action speaks, named by its public identifier.
+  await show(page, {
+    messages,
+    participantStatus: undefined,
+    activity: undefined,
+    participantStatuses: [
+      {
+        ...owner,
+        actorRole: "router",
+        name: "Router",
+        activity: {
+          phase: "thinking",
+          responseKey: "response-r",
+          status: "running",
+          summaryClass: "generic",
+          summary: "Thinking",
+        },
+      },
+      {
+        ...owner,
+        participantId: "worker",
+        actorRole: "worker",
+        actorId: "actor_worker",
+        name: "Reviewer",
+        activity: {
+          phase: "execution",
+          responseKey: "response-w",
+          startedAt: (T0 + 4_000) / 1000,
+          status: "running",
+          summaryClass: "public",
+          toolCallId: "call-mcp",
+          toolName: "mcpToolCall",
+        },
+      },
+    ],
+  });
+  await page.clock.runFor(1_000);
+  await expect(line).toHaveText("Reviewer · Using a tool · mcpToolCall · 4s");
+  await page.screenshot({
+    path: info.outputPath("task-router-thinking-worker-tool.png"),
+  });
+
   // Stopping retires the action; nothing keeps claiming the tool runs.
   await show(page, {
     messages,

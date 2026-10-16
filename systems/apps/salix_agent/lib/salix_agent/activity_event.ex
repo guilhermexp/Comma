@@ -20,7 +20,8 @@ defmodule SalixAgent.ActivityEvent do
   that cannot localize. Comma clients word tool activity in the reader's
   language from `tool_name`, and show `goal` (the model's own label for an
   `env.exec` call) or else `detail` (a file name, program name or host) when
-  present. A tool identifier is never user copy.
+  present. A tool identifier is never wording; for a tool without wording the
+  client shows its public identifier as technical detail.
 
   Emission is best-effort: `Notifier.notify/2` rescues consumer failures, so a
   bad subscriber never breaks a round.
@@ -211,6 +212,58 @@ defmodule SalixAgent.ActivityEvent do
 
     :ok
   end
+
+  @doc """
+  The surface after tool work ended or a batch settled. `running` lists the
+  calls of one response that are still executing, each as
+  `%{call: call, started_at: seconds, call_index: index}`. The most recently
+  started one owns the surface with its own start (call order breaks a tie),
+  so the surface stays on the call it already shows while that call runs.
+  With none, the Agent is back at the model. Calls that only wait for
+  admission are never in `running`.
+  """
+  @spec settle_tool_calls(String.t(), String.t(), [map()], map() | nil) :: :ok
+  def settle_tool_calls(agent_id, session_id, running, activation_scope) do
+    case Enum.max_by(running, &{&1[:started_at] || 0, &1[:call_index] || 0}, fn -> nil end) do
+      %{call: call} = latest ->
+        tool_calls_started(agent_id, session_id, [call], activation_scope, latest[:started_at])
+
+      nil ->
+        thinking(agent_id, session_id, nil, activation_scope)
+    end
+  end
+
+  @doc """
+  One call's dependency ended. Only when the surface still names a running
+  call of `activation_scope`'s response, and that call is no longer running,
+  does the surface move: to another running call of that response, or back
+  to thinking. A surface that already moved on (a later frame, another
+  response, idle) is left alone, so an ended call cannot revive a turn.
+  """
+  @spec tool_call_ended(String.t(), String.t(), [map()], map() | nil) :: :ok
+  def tool_call_ended(agent_id, session_id, running, activation_scope)
+      when is_map(activation_scope) do
+    response_key = activation_scope["response_identity"] || activation_scope[:response_identity]
+
+    case SalixAgent.ActivitySurface.get_session(agent_id, session_id) do
+      %{
+        "phase" => "execution",
+        "status" => "running",
+        "response_key" => ^response_key,
+        "tool_call_id" => shown
+      }
+      when is_binary(response_key) ->
+        unless Enum.any?(running, &(tool_call_identity(&1[:call]) == shown)),
+          do: settle_tool_calls(agent_id, session_id, running, activation_scope)
+
+        :ok
+
+      _moved_on ->
+        :ok
+    end
+  end
+
+  def tool_call_ended(_agent_id, _session_id, _running, _activation_scope), do: :ok
 
   @doc "The producer clock used for `started_at` and `updated_at`."
   @spec now() :: float()
@@ -410,12 +463,26 @@ defmodule SalixAgent.ActivityEvent do
   @file_detail_tools ~w(fs.read_file fs.write_file fs.edit_file fs.delete_file fs.stat_file
                         compute.workspace.read compute.workspace.write compute.workspace.stat)
   @web_detail_tools ~w(web.read_pages web.http_request)
+  # Native tools of external runtimes, as the Connector's canonical operation
+  # events name them, with the same admitted argument shapes.
+  @external_file_tools ~w(Read Write Edit MultiEdit NotebookEdit)
+  @external_command_tools ~w(Bash commandExecution)
   @detail_max_codepoints 64
 
   defp call_detail(name, call) when name in @file_detail_tools,
     do: file_name_detail(call_args(call)["path"])
 
   defp call_detail("env.exec", call), do: program_detail(call_args(call)["command"])
+
+  defp call_detail(name, call) when name in @external_file_tools do
+    args = call_args(call)
+    file_name_detail(args["file_path"] || args["notebook_path"] || args["path"])
+  end
+
+  defp call_detail(name, call) when name in @external_command_tools,
+    do: program_detail(call_args(call)["command"])
+
+  defp call_detail("WebFetch", call), do: host_detail_of(call_args(call)["url"])
 
   defp call_detail(name, call) when name in @web_detail_tools do
     args = call_args(call)
@@ -427,6 +494,9 @@ defmodule SalixAgent.ActivityEvent do
   end
 
   defp call_detail(_name, _call), do: nil
+
+  defp host_detail_of(url) when is_binary(url), do: host_detail(url)
+  defp host_detail_of(_url), do: nil
 
   defp file_name_detail(path) when is_binary(path) do
     name = path |> String.trim() |> String.trim_trailing("/") |> Path.basename()

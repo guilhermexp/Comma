@@ -90,8 +90,6 @@ defmodule SalixAgent.Round do
   @visible_reply_draft_key {__MODULE__, :visible_reply_draft}
   @send_message_draft_stream_key {__MODULE__, :send_message_draft_stream}
   @reasoning_activity_key {__MODULE__, :reasoning_activity}
-  # Start evidence of the current tool batch: tool_call_id => started_at.
-  @tool_activity_started_key {__MODULE__, :tool_activity_started}
 
   # Live Thinking refreshes only from provider-designated public summaries:
   # keep the tail and emit at most ~2 activities/second.
@@ -459,10 +457,17 @@ defmodule SalixAgent.Round do
           trusted_origin: trusted_origin
         })
 
+      # Home keeps its visible-reply scope. Without one, a Task activation may
+      # still present its own Activity from its admitted trusted origins.
+      activity_scope =
+        visible_reply_scope ||
+          task_activity_scope(context.agent_id, session_id, session, source_message_ids)
+
       context =
         context
         |> Map.put(:visible_reply_phase, visible_reply_phase)
         |> Map.put(:visible_reply_scope, visible_reply_scope)
+        |> Map.put(:activity_scope, activity_scope)
         |> Map.put(
           :guard_tool_config,
           Map.take(session_config, [
@@ -482,7 +487,7 @@ defmodule SalixAgent.Round do
       # durably installs this exact scope before Round starts, so the first
       # Thinking frame and every later frame share the visible-reply identity.
       unless context[:persistence_gate],
-        do: ActivityEvent.thinking(context.agent_id, session_id, nil, visible_reply_scope)
+        do: ActivityEvent.thinking(context.agent_id, session_id, nil, activity_scope)
 
       # A streaming draft reaches the conversation's audience while the model is
       # still writing, which is necessarily before it has finished declaring
@@ -576,7 +581,7 @@ defmodule SalixAgent.Round do
                 context.agent_id,
                 session_id,
                 tail,
-                visible_reply_scope
+                activity_scope
               )
 
               Process.put(@reasoning_activity_key, {tail, now})
@@ -633,6 +638,7 @@ defmodule SalixAgent.Round do
          visible_reply_phase: visible_reply_phase,
          visible_reply_guard: visible_reply_guard,
          visible_reply_scope: visible_reply_scope,
+         activity_scope: activity_scope,
          specs: specs,
          platform: platform,
          on_delta: on_delta,
@@ -665,6 +671,7 @@ defmodule SalixAgent.Round do
       visible_reply_phase: visible_reply_phase,
       visible_reply_guard: visible_reply_guard,
       visible_reply_scope: visible_reply_scope,
+      activity_scope: activity_scope,
       specs: specs,
       platform: platform,
       on_delta: on_delta,
@@ -785,6 +792,7 @@ defmodule SalixAgent.Round do
             visible_reply_phase: visible_reply_phase,
             visible_reply_guard: visible_reply_guard,
             visible_reply_scope: visible_reply_scope,
+            activity_scope: activity_scope,
             phase_activation_key: activation_key,
             stream_progress: stream_progress
           }
@@ -1042,6 +1050,7 @@ defmodule SalixAgent.Round do
       context
       |> Map.put(:visible_reply_phase, pending[:visible_reply_phase] || :clean)
       |> Map.put(:visible_reply_scope, pending[:visible_reply_scope])
+      |> Map.put(:activity_scope, pending[:activity_scope] || pending[:visible_reply_scope])
 
     with :ok <- require_session_context(context, session_id),
          {:ok, context} <- require_revision(context, session_id) do
@@ -1171,6 +1180,20 @@ defmodule SalixAgent.Round do
 
   defp visible_phase(host), do: host.context[:visible_reply_phase] || :clean
   defp visible_scope(host), do: host.context[:visible_reply_scope]
+  defp activity_scope(host), do: host.context[:activity_scope] || visible_scope(host)
+
+  # A Task activation's presentation scope (`SalixAgent.ActivityScope`). Home
+  # chat keeps exactly its visible-reply scope, so only Task kinds qualify.
+  defp task_activity_scope(agent_id, session_id, session, source_message_ids) do
+    SalixAgent.ActivityScope.derive(
+      agent_id,
+      session_id,
+      {:internal_activation, source_message_ids},
+      source_message_ids,
+      current_turn_trusted_origins(session, source_message_ids),
+      ["agent_task"]
+    )
+  end
 
   # ---- the effects of a round ----
   #
@@ -1384,34 +1407,19 @@ defmodule SalixAgent.Round do
         )
 
       {:activity, :idle} ->
-        ActivityEvent.idle(agent_id, session_id, visible_scope(host))
+        ActivityEvent.idle(agent_id, session_id, activity_scope(host))
 
       {:activity, :idle_unscoped} ->
         ActivityEvent.idle(agent_id, session_id)
 
       {:activity, :llm_failed} ->
-        ActivityEvent.llm_failed(agent_id, session_id, visible_scope(host))
+        ActivityEvent.llm_failed(agent_id, session_id, activity_scope(host))
 
-      {:activity, {:tool_calls_started, calls}} ->
-        started_at = ActivityEvent.now()
-
-        Process.put(
-          @tool_activity_started_key,
-          for(
-            call <- calls,
-            id = ActivityEvent.tool_call_identity(call),
-            into: %{},
-            do: {id, started_at}
-          )
-        )
-
-        ActivityEvent.tool_calls_started(
-          agent_id,
-          session_id,
-          VisibleReplyPolicy.sanitize_activity_calls(calls, visible_phase(host)),
-          visible_scope(host),
-          started_at
-        )
+      # The response committed these calls; none runs yet. The executor
+      # reports each call when it really starts (`tool_activity_observer/1`),
+      # so a call that waits behind another is never shown as running.
+      {:activity, {:tool_calls_started, _calls}} ->
+        :ok
 
       {:telemetry, phase} ->
         started =
@@ -1631,6 +1639,7 @@ defmodule SalixAgent.Round do
       trace_ctx: host.trace_ctx,
       billing_context: session_billing_context(session),
       defer_tool_observations: true,
+      tool_activity: tool_activity_observer(host),
       visible_reply_phase: visible_phase(host),
       visible_reply_scope: visible_scope(host)
     }
@@ -1653,9 +1662,10 @@ defmodule SalixAgent.Round do
       host.context.agent_id,
       host.session_id,
       results,
-      visible_scope(host)
+      activity_scope(host)
     )
 
+    pending = annotate_tool_activity(host, pending)
     settle_tool_activity(host, calls, results, pending)
 
     pending =
@@ -1689,41 +1699,64 @@ defmodule SalixAgent.Round do
     {%{host | async_pending: pending, billing_context: ctx.billing_context}, results}
   end
 
-  # The batch's start frames name the last call, which may already be done.
-  # A call that is still running owns the surface: the first in call order,
-  # with its original start. With none running and no failure frame, the round
-  # returns to the model, so the surface stops claiming a finished tool. A
-  # failure frame already retires the running claim and is kept as the outcome.
-  # A batch with a reply call leaves the surface to its messaging frame.
-  defp settle_tool_activity(host, calls, results, pending) do
-    if Enum.any?(calls, &ActivityEvent.activity_call?/1) and
-         not Enum.any?(calls, &ActivityEvent.reply_call?/1),
-       do: settle_tool_activity(host, results, pending)
+  # Each call's real start, reported by the executor that runs it.
+  defp tool_activity_observer(host) do
+    agent_id = host.context.agent_id
+    session_id = host.session_id
+    scope = activity_scope(host)
+    phase = visible_phase(host)
 
-    :ok
+    fn call, started_ms ->
+      ActivityEvent.tool_calls_started(
+        agent_id,
+        session_id,
+        VisibleReplyPolicy.sanitize_activity_calls([call], phase),
+        scope,
+        started_ms / 1000
+      )
+    end
   end
 
-  defp settle_tool_activity(host, results, pending) do
-    %{agent_id: agent_id} = host.context
-    started = Process.get(@tool_activity_started_key, %{})
+  # A parked call keeps what its frame shows, so the Session owner can hand
+  # the surface to it when another call of the same response ends.
+  defp annotate_tool_activity(host, pending) do
+    scope = activity_scope(host)
+    phase = visible_phase(host)
 
-    running = Enum.filter(pending, &ActivityEvent.activity_call?(&1[:call]))
+    Enum.map(pending, fn item ->
+      with %{call: call} <- item,
+           started_ms when is_integer(started_ms) <- item[:activity_started_ms],
+           true <- is_map(scope) and ActivityEvent.activity_call?(call) do
+        Map.put(item, :activity, %{
+          call: hd(VisibleReplyPolicy.sanitize_activity_calls([call], phase)),
+          scope: scope,
+          started_at: started_ms / 1000,
+          call_index: item[:call_index]
+        })
+      else
+        _not_presented -> item
+      end
+    end)
+  end
 
-    case Enum.min_by(running, &(&1[:call_index] || 0), fn -> nil end) do
-      %{call: call} = first ->
-        id = first[:tool_call_id] || ActivityEvent.tool_call_identity(call)
+  # Every call that finished inside the batch is done. A call that is still
+  # running owns the surface: the latest started one, with its own start.
+  # With none running and no failure frame, the round returns to the model.
+  # A failure frame already retires the running claim and is kept as the
+  # outcome. A batch with a reply call leaves the surface to its messaging.
+  defp settle_tool_activity(host, calls, results, pending) do
+    if Enum.any?(calls, &ActivityEvent.activity_call?/1) and
+         not Enum.any?(calls, &ActivityEvent.reply_call?/1) do
+      running = for %{activity: activity} <- pending, do: activity
 
-        ActivityEvent.tool_calls_started(
-          agent_id,
-          host.session_id,
-          VisibleReplyPolicy.sanitize_activity_calls([call], visible_phase(host)),
-          visible_scope(host),
-          Map.get(started, id)
-        )
-
-      nil ->
-        unless Enum.any?(results, &ActivityEvent.errored_result?/1),
-          do: ActivityEvent.thinking(agent_id, host.session_id, nil, visible_scope(host))
+      unless running == [] and Enum.any?(results, &ActivityEvent.errored_result?/1),
+        do:
+          ActivityEvent.settle_tool_calls(
+            host.context.agent_id,
+            host.session_id,
+            running,
+            activity_scope(host)
+          )
     end
 
     :ok
@@ -1935,6 +1968,9 @@ defmodule SalixAgent.Round do
         call = put_call_index(call, index)
 
         if tool_name(call) == "wait_for" do
+          if is_function(ctx[:tool_activity], 2),
+            do: ctx.tool_activity.(call, System.system_time(:millisecond))
+
           {[run_wait_for_call(call, ctx) | waits], executable}
         else
           {waits, [call | executable]}

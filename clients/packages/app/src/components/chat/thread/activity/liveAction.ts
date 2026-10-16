@@ -8,7 +8,10 @@ export type LiveAction = {
   /** Equal for every frame of one action; a new tool call is a new action. */
   identity: string;
   label: string;
-  /** Model-written goal, else the producer-admitted file, program or host. */
+  /**
+   * Model-written goal, else the producer-admitted file, program or host,
+   * else the public tool identifier when no wording names the tool.
+   */
   detail?: string | undefined;
   /** Producer start evidence in epoch milliseconds; absent when unknown. */
   startedAtMs?: number | undefined;
@@ -44,7 +47,11 @@ export function liveExecutionAction(
   ) {
     return undefined;
   }
-  const detail = frame.goal?.trim() || frame.detail?.trim() || undefined;
+  const worded = toolActivityLabel(messages, frame.toolName, "running");
+  // A public execution frame names its tool. Without wording for it, the
+  // identifier itself is the technical detail, never a guess from prose.
+  const identifier = worded ? undefined : toolIdentifier(frame.toolName);
+  const detail = frame.goal?.trim() || frame.detail?.trim() || identifier || undefined;
   const startedAtMs =
     frame.toolCallId !== undefined &&
     frame.startedAt !== undefined &&
@@ -60,11 +67,18 @@ export function liveExecutionAction(
       frame.toolName,
     ]),
     label:
-      toolActivityLabel(messages, frame.toolName, "running") ??
-      messages.chat_activity_working(),
+      worded ??
+      (identifier ? messages.chat_tool_generic() : messages.chat_activity_working()),
     ...(detail ? { detail } : {}),
     ...(startedAtMs !== undefined ? { startedAtMs } : {}),
   };
+}
+
+// Identifier-shaped names only (`env.runtime_targets`, `Bash`,
+// `mcp__docs__search`, `commandExecution`); other text is not shown.
+function toolIdentifier(toolName: string | undefined) {
+  const name = toolName?.trim();
+  return name && /^[A-Za-z0-9_][A-Za-z0-9_.:/-]{0,63}$/.test(name) ? name : undefined;
 }
 
 /** Whole seconds of an action that started at `startedAtMs`, never negative. */

@@ -197,9 +197,11 @@ export function ParticipantStatusSlot({
   const router = named.find((item) => item.actorRole === "router");
   const workingProvider =
     !taskPresentations && errors.length === 0 ? active[0]?.workingProvider : undefined;
-  // Several Task Participants share one line: the first in the slot's order
-  // with actual Activity speaks, and every Participant stays in the title.
-  const currentTask = named.find((item) => item.current);
+  // Several Task Participants share one line: a running tool call speaks
+  // first, then a thinking or typing phase, each by the slot's fixed order.
+  // Every Participant stays in the title.
+  const currentTask =
+    named.find((item) => item.action) ?? named.find((item) => item.current);
   const summary = workingProvider
     ? {
         wechat: messages.chat_activity_working_wechat,

@@ -203,11 +203,13 @@ a transaction across Conversation and Participant owners. Absent status keeps
 the previous projection. A stopped Participant clears visible activity
 immediately; an active one can continue after a progress reply.
 
-Tool Activity frames repeat the call's `tool_call_id` and producer `started_at`;
-clients time the action only from them. `detail` is a file, program or host
-name from one known argument; raw arguments stay private. A settled batch
-yields to a live call or thinking. Task snapshots carry each active
-Participant's Activity. External runtimes lack response identity: no frames.
+A tool frame is emitted when its call really starts, with `tool_call_id` and
+`started_at`; clients time the action only from them. When the shown call ends,
+the latest running call of the response takes over, else thinking. `detail` is
+a file, program or host name from one known argument, else the public tool
+name; raw arguments stay private. Task activations and admitted external
+dispatches present under an `ActivityScope` from trusted origins; it grants no
+draft or send.
 
 ### Ownership and failure
 
@@ -215,12 +217,12 @@ Participant's Activity. External runtimes lack response identity: no frames.
 The kernel builds the terminal-reply scope (`terminal_reply_context`) and admits
 each call (`terminal_reply_admission`); `TerminalReply` supplies only the
 canonical-Router fact. The kernel retains source validation and provider reply defaults. It
-creates a terminal binding for a reply carried by an explicit `end_turn` call.
-It does not create a binding for a standalone model send. The kernel's agent
+binds a reply carried by an explicit `end_turn` call, never a standalone model
+send. The kernel's agent
 loop (`loop_step`) classifies `end_turn`, unwraps its reply for dispatch, and
 builds the runtime failure notice with its own binding and source checks.
-Provider access controls and IFC checks still authorize delivery. No message
-content scanner decides completion.
+Provider access controls and IFC checks still authorize delivery. No content
+scanner decides completion.
 
 Previously dispatched terminal bindings retain their settlement and recovery
 semantics. Runtime-owned failure notices, interactive Telegram cards, and
@@ -235,9 +237,8 @@ the ACK. A retryable model failure keeps the source and its reminder for the
 retry, unless a failure notice already reached the source. A final model failure or an exhausted guard without a destination
 settles locally when no send is pending.
 
-Delivery is not a cross-provider transaction or an exactly-once guarantee.
-An external success followed by a crash before local recording remains ambiguous.
-The runtime does not retry blindly.
+Delivery is not a cross-provider transaction or exactly once. An external
+success then a crash before local recording stays ambiguous; no blind retry.
 
 ### Private diagnostics after repair
 

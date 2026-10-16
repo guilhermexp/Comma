@@ -19,6 +19,18 @@ defmodule SalixAgent.RoundStreamingTest do
     @moduledoc false
     @behaviour SalixAgent.Notifier
 
+    def admitted_session(agent_id, session_id, call_id, retries) do
+      {:ok, session} = SalixAgent.InternalSessionStore.read(agent_id, session_id)
+      exported = SalixAgent.InternalSession.export(session)
+
+      if exported.async_tool_calls[call_id] || retries == 0 do
+        exported
+      else
+        Process.sleep(10)
+        admitted_session(agent_id, session_id, call_id, retries - 1)
+      end
+    end
+
     @impl true
     def notify(agent_id, event) do
       case :persistent_term.get({SalixAgent.RoundStreamingTest, :test_pid}, nil) do
@@ -36,12 +48,13 @@ defmodule SalixAgent.RoundStreamingTest do
                "session_id" => session_id,
                "tool_call_id" => call_id
              }} ->
-              {:ok, session} = SalixAgent.InternalSessionStore.read(agent_id, session_id)
-
+              # The frame marks the dependency's real start. A speculative
+              # batch starts it while the admission fence lands, so read the
+              # Session once that fence holds this call.
               send(
                 pid,
                 {:durable_tool_admission, agent_id, call_id,
-                 SalixAgent.InternalSession.export(session)}
+                 admitted_session(agent_id, session_id, call_id, 200)}
               )
 
             _ ->
@@ -199,8 +212,8 @@ defmodule SalixAgent.RoundStreamingTest do
     assert_completed_tool_round!(msgs, "t1")
     assert List.last(msgs).content == "all done now"
 
-    # Before the dependency starts, the same intent CAS already holds the
-    # assistant, model-facing running result and restart recovery record.
+    # While the dependency runs, the same intent CAS holds the assistant,
+    # model-facing running result and restart recovery record.
     assert_receive {:durable_tool_admission, ^a, "t1", admitted}
     assert admitted.async_tool_calls["t1"]["status"] == "running"
 
