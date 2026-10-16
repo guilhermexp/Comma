@@ -304,5 +304,282 @@
       "work_state": "settled"
     }
   ],
-  "comment": "Representative native Claude Code stream-json lines and Codex app-server notifications for one turn with parallel tools, as the Connector parses and canonicalizes them. TestActivityNativeEventsFixture keeps expected in step with the parsers; Salix's ExternalActivity tests replay expected."
+  "comment": "Representative native Claude Code stream-json lines, Codex app-server notifications, Pi RPC events and Kimi wire events for one turn with parallel tools, as the Connector parses and canonicalizes them. TestActivityNativeEventsFixture keeps expected in step with the parsers; Salix's ExternalActivity tests replay expected.",
+  "kimi": [
+    {
+      "created_at": 1790000301,
+      "expected": [
+        {
+          "created_at": 1790000301,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "input": {
+            "command": "git diff --stat"
+          },
+          "name": "Shell",
+          "operation_id": "kimi_tc_1",
+          "provider": "kimi",
+          "status": "tool.call.started",
+          "type": "operation",
+          "work_state": "running"
+        }
+      ],
+      "native": {
+        "payload": {
+          "args": {
+            "command": "git diff --stat"
+          },
+          "name": "Shell",
+          "toolCallId": "kimi_tc_1"
+        },
+        "type": "tool.call.started"
+      },
+      "work_state": "running"
+    },
+    {
+      "created_at": 1790000302,
+      "expected": [
+        {
+          "created_at": 1790000302,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "input": {
+            "path": "/home/dev/app/main.py"
+          },
+          "name": "ReadFile",
+          "operation_id": "kimi_tc_2",
+          "provider": "kimi",
+          "status": "tool.call.started",
+          "type": "operation",
+          "work_state": "running"
+        }
+      ],
+      "native": {
+        "payload": {
+          "args": {
+            "path": "/home/dev/app/main.py"
+          },
+          "name": "ReadFile",
+          "toolCallId": "kimi_tc_2"
+        },
+        "type": "tool.call.started"
+      },
+      "work_state": "running"
+    },
+    {
+      "created_at": 1790000304,
+      "expected": [
+        {
+          "created_at": 1790000304,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "name": "ReadFile",
+          "operation_id": "kimi_tc_2",
+          "output": {
+            "json_bytes": 10,
+            "omitted": true
+          },
+          "provider": "kimi",
+          "status": "tool.result",
+          "type": "operation",
+          "work_state": "running"
+        }
+      ],
+      "native": {
+        "payload": {
+          "name": "ReadFile",
+          "output": "print(1)",
+          "toolCallId": "kimi_tc_2"
+        },
+        "type": "tool.result"
+      },
+      "work_state": "running"
+    },
+    {
+      "created_at": 1790000307,
+      "expected": [
+        {
+          "created_at": 1790000307,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "name": "Shell",
+          "operation_id": "kimi_tc_1",
+          "output": {
+            "json_bytes": 17,
+            "omitted": true
+          },
+          "provider": "kimi",
+          "status": "tool.result",
+          "type": "operation",
+          "work_state": "running"
+        }
+      ],
+      "native": {
+        "payload": {
+          "name": "Shell",
+          "output": " 1 file changed",
+          "toolCallId": "kimi_tc_1"
+        },
+        "type": "tool.result"
+      },
+      "work_state": "running"
+    },
+    {
+      "created_at": 1790000309,
+      "expected": [
+        {
+          "created_at": 1790000309,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "name": "turn.ended",
+          "provider": "kimi",
+          "state": "completed",
+          "type": "status",
+          "work_state": "settled"
+        }
+      ],
+      "native": {
+        "payload": {
+          "reason": "completed"
+        },
+        "type": "turn.ended"
+      },
+      "work_state": "settled"
+    }
+  ],
+  "pi": [
+    {
+      "created_at": 1790000201,
+      "expected": [
+        {
+          "created_at": 1790000201,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "input": {
+            "command": "ls -la src"
+          },
+          "name": "bash",
+          "operation_id": "pi_call_1",
+          "provider": "pi",
+          "status": "start",
+          "type": "operation",
+          "work_state": "running"
+        }
+      ],
+      "native": {
+        "args": {
+          "command": "ls -la src"
+        },
+        "toolCallId": "pi_call_1",
+        "toolName": "bash",
+        "type": "tool_execution_start"
+      },
+      "work_state": "running"
+    },
+    {
+      "created_at": 1790000202,
+      "expected": [
+        {
+          "created_at": 1790000202,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "input": {
+            "path": "/home/dev/app/README.md"
+          },
+          "name": "read",
+          "operation_id": "pi_call_2",
+          "provider": "pi",
+          "status": "start",
+          "type": "operation",
+          "work_state": "running"
+        }
+      ],
+      "native": {
+        "args": {
+          "path": "/home/dev/app/README.md"
+        },
+        "toolCallId": "pi_call_2",
+        "toolName": "read",
+        "type": "tool_execution_start"
+      },
+      "work_state": "running"
+    },
+    {
+      "created_at": 1790000204,
+      "expected": [
+        {
+          "created_at": 1790000204,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "name": "read",
+          "operation_id": "pi_call_2",
+          "output": {
+            "json_bytes": 19,
+            "omitted": true
+          },
+          "provider": "pi",
+          "status": "end",
+          "type": "operation",
+          "work_state": "running"
+        }
+      ],
+      "native": {
+        "result": {
+          "content": "# App"
+        },
+        "toolCallId": "pi_call_2",
+        "toolName": "read",
+        "type": "tool_execution_end"
+      },
+      "work_state": "running"
+    },
+    {
+      "created_at": 1790000207,
+      "expected": [
+        {
+          "created_at": 1790000207,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "name": "bash",
+          "operation_id": "pi_call_1",
+          "output": {
+            "json_bytes": 21,
+            "omitted": true
+          },
+          "provider": "pi",
+          "status": "end",
+          "type": "operation",
+          "work_state": "running"
+        }
+      ],
+      "native": {
+        "result": {
+          "content": "main.go"
+        },
+        "toolCallId": "pi_call_1",
+        "toolName": "bash",
+        "type": "tool_execution_end"
+      },
+      "work_state": "running"
+    },
+    {
+      "created_at": 1790000209,
+      "expected": [
+        {
+          "created_at": 1790000209,
+          "dispatch_id": "dispatch-fixture",
+          "execution_id": "execution-fixture",
+          "name": "agent_end",
+          "provider": "pi",
+          "state": "agent_end",
+          "type": "status",
+          "work_state": "settled"
+        }
+      ],
+      "native": {
+        "type": "agent_end"
+      },
+      "work_state": "settled"
+    }
+  ]
 }

@@ -176,6 +176,17 @@ defmodule SalixAgent.ActivityEventTest do
           {"an environment assignment before the program fails closed", "env.exec",
            %{"command" => "API_KEY=sk-live-123 curl https://example.com"}, nil},
           {"a substitution fails closed", "env.exec", %{"command" => "$(cat secret)"}, nil},
+          {"an assignment whose value is a path never yields its last segment", "env.exec",
+           %{"command" => "API_KEY=prefix/sk-test-placeholder curl https://example.com"}, nil},
+          {"a Bash assignment with a path fails closed", "Bash",
+           %{"command" => "TOKEN=a/b/sk-test-placeholder git push"}, nil},
+          {"a Codex assignment with a path fails closed", "commandExecution",
+           %{"command" => "SECRET=x/sk-test-placeholder pnpm test"}, nil},
+          {"a quoted path fails closed", "Bash", %{"command" => "\"/opt/my tool/run\" -x"}, nil},
+          {"an absolute executable path names its program", "env.exec",
+           %{"command" => "/usr/bin/git status"}, "git"},
+          {"a relative executable path names its program", "Bash",
+           %{"command" => "./scripts/build.sh --fast"}, "build.sh"},
           {"a URL names its host only", "web.http_request",
            %{"url" => "https://user:pass@API.Example.com:8443/v1?token=abc#x"},
            "api.example.com"},
@@ -200,6 +211,7 @@ defmodule SalixAgent.ActivityEventTest do
         assert activity["detail"] == unquote(expected)
         refute inspect(activity) =~ "token"
         refute inspect(activity) =~ "sk-live"
+        refute inspect(activity) =~ "sk-test-placeholder"
       end
     end
   end

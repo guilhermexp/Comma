@@ -381,8 +381,11 @@ defmodule Comma.Conversations do
       |> Enum.sort_by(fn {id, _} -> id end)
       # Waiting remains active in the runtime, but is not typing in Task UI.
       # Use the Participant's structured wait, never its display-text status.
+      # A wait that parks a running public tool call is that call's work, not
+      # idleness: the Participant stays with its admitted action.
       |> Enum.reject(fn {_id, participant} ->
-        match?(%{"activity" => %{"state" => "active"}, "wait" => %{}}, participant.status)
+        match?(%{"activity" => %{"state" => "active"}, "wait" => %{}}, participant.status) and
+          not running_tool_call?(participant)
       end)
       |> Enum.flat_map(fn {_id, participant} ->
         case public_participant_status(participant.status["activity"], participant) do
@@ -408,6 +411,16 @@ defmodule Comma.Conversations do
       "bound_worker" => bound_worker,
       "participants" => participants
     }
+  end
+
+  defp running_tool_call?(participant) do
+    case public_activity(participant.status["presentation_activity"], participant) do
+      %{"phase" => "execution", "status" => "running", "summary_class" => "public"} = activity ->
+        activity["tool_name"] != "wait_for"
+
+      _not_running ->
+        false
+    end
   end
 
   # The same source-bound projection as the Conversation stream, so each

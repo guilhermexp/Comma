@@ -95,9 +95,13 @@ const toolWork = new Map<string, ToolWork>([
   ["memory.get", "memoryRead"],
   ["memory.write", "memoryWrite"],
   ["wait_for", "wait"],
-  // Native tools of external runtimes (Claude Code, Codex) as the Connector
-  // names their operations.
+  // Native tools of external runtimes (Claude Code, Codex, Pi) as the
+  // Connector names their operations.
   ["Bash", "command"],
+  ["bash", "command"],
+  ["read", "filesRead"],
+  ["write", "filesEdit"],
+  ["edit", "filesEdit"],
   ["commandExecution", "command"],
   ["Read", "filesRead"],
   ["Glob", "filesRead"],

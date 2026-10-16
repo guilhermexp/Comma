@@ -465,7 +465,15 @@ defmodule SalixAgent.ExternalSessionStore do
     end
   end
 
-  defp append_event_record(agent_id, session_id, attrs, %SegmentLog{} = records)
+  defp append_event_record(agent_id, session_id, attrs, %SegmentLog{} = records) do
+    with {:ok, state, record, records, _status} <-
+           append_event_record_with_status(agent_id, session_id, attrs, records),
+         do: {:ok, state, record, records}
+  end
+
+  # The append status is the journal's own event-id deduplication: a replay
+  # of an already journaled event settles as `:duplicate`.
+  defp append_event_record_with_status(agent_id, session_id, attrs, %SegmentLog{} = records)
        when is_map(attrs) do
     token_hash = trim(value(attrs, "token_hash"))
 
@@ -475,9 +483,9 @@ defmodule SalixAgent.ExternalSessionStore do
          {:ok, %{"runtime_config" => runtime}} <- AgentControl.get_record(agent_id),
          :ok <- ensure_writable(state, runtime),
          record = runtime_event_record(agent_id, session_id, attrs, record_floor(state, records)),
-         {:ok, records, _statuses} <-
+         {:ok, records, [status]} <-
            ExternalSessionRecords.append(agent_id, session_id, records, [record]) do
-      {:ok, state, record, records}
+      {:ok, state, record, records, status}
     else
       false -> {:error, :stale_external_runtime_session}
       {:error, :not_found} -> {:error, :unauthorized}
@@ -655,8 +663,8 @@ defmodule SalixAgent.ExternalSessionStore do
     session_id = capability["session_id"]
     event = params["event"] || %{}
 
-    with {:ok, state, record, records} <-
-           append_event_record(
+    with {:ok, state, record, records, status} <-
+           append_event_record_with_status(
              agent_id,
              session_id,
              %{
@@ -683,7 +691,7 @@ defmodule SalixAgent.ExternalSessionStore do
 
       case result do
         :ok ->
-          {:ok, %{"ok" => true}, records}
+          {:ok, %{"ok" => true}, records, appended([{params, status}])}
 
         {:error, reason} ->
           # ExternalRuntimeEventProjection's RetryProjection starts after the
@@ -694,6 +702,10 @@ defmodule SalixAgent.ExternalSessionStore do
       end
     end
   end
+
+  # The events this call newly journaled, in journal order, for the Session
+  # owner's transient presentation. Replays are already presented or retired.
+  defp appended(entries), do: for({params, :committed} <- entries, do: params)
 
   # Modeled in tla/salix/ExternalRuntimeEventBatch.tla and
   # tla/salix/ExternalRuntimeEventSegmentPartitions.tla. One Connector transport
@@ -767,7 +779,17 @@ defmodule SalixAgent.ExternalSessionStore do
       if Enum.any?(append_results, &(&1 in [:committed, :duplicate])),
         do: notify_session_updated(agent_id, session_id)
 
-      {:ok, %{"results" => results}, records}
+      appended =
+        records_with_entries
+        |> Enum.zip(append_results)
+        |> Enum.zip(results)
+        |> Enum.flat_map(fn
+          {{{params, _record}, status}, {:ok, _}} -> [{params, status}]
+          _failed -> []
+        end)
+        |> appended()
+
+      {:ok, %{"results" => results}, records, appended}
     else
       false -> {:error, :stale_external_runtime_session}
       {:error, _} = error -> error

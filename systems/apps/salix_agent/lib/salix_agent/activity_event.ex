@@ -265,6 +265,31 @@ defmodule SalixAgent.ActivityEvent do
 
   def tool_call_ended(_agent_id, _session_id, _running, _activation_scope), do: :ok
 
+  @doc """
+  Retire the frame the surface holds for this Session when its owner can no
+  longer vouch for it: a new owner incarnation that did not admit it
+  (`expected` is `:any`), or an expired presentation of `expected`'s
+  response. A frame of another response is left alone.
+  """
+  @spec retire(String.t(), String.t(), String.t() | :any) :: :ok
+  def retire(agent_id, session_id, expected) do
+    case SalixAgent.ActivitySurface.get_session(agent_id, session_id) do
+      %{"response_key" => response_key, "source_message_ids" => [_ | _] = ids} = frame
+      when is_binary(response_key) and (expected == :any or expected == response_key) ->
+        idle(agent_id, session_id, %{
+          "agent_group_id" => frame["agent_group_id"],
+          "conversation_id" => frame["conversation_id"],
+          "participant_id" => frame["participant_id"],
+          "response_identity" => response_key,
+          "source_message_ids" => ids,
+          "source_messages" => Enum.map(ids, &%{"source_message_id" => &1})
+        })
+
+      _nothing_to_retire ->
+        :ok
+    end
+  end
+
   @doc "The producer clock used for `started_at` and `updated_at`."
   @spec now() :: float()
   def now, do: System.system_time(:millisecond) / 1000
@@ -465,8 +490,8 @@ defmodule SalixAgent.ActivityEvent do
   @web_detail_tools ~w(web.read_pages web.http_request)
   # Native tools of external runtimes, as the Connector's canonical operation
   # events name them, with the same admitted argument shapes.
-  @external_file_tools ~w(Read Write Edit MultiEdit NotebookEdit)
-  @external_command_tools ~w(Bash commandExecution)
+  @external_file_tools ~w(Read Write Edit MultiEdit NotebookEdit read write edit)
+  @external_command_tools ~w(Bash commandExecution bash)
   @detail_max_codepoints 64
 
   defp call_detail(name, call) when name in @file_detail_tools,
@@ -509,11 +534,16 @@ defmodule SalixAgent.ActivityEvent do
 
   defp file_name_detail(_path), do: nil
 
-  # The first word only, when it is a plain lowercase program name. An
-  # environment assignment, quoting, substitution or anything else that is not
-  # a program name fails closed, and nothing after the first word is read.
+  # The first word only, when that whole word is a literal executable name or
+  # path. The word is validated before anything is taken from it, so an
+  # environment assignment (`NAME=a/b cmd`), quoting, substitution, a glob or
+  # any other shell syntax fails closed instead of yielding a fragment. Then
+  # the base name must be a plain lowercase program name. Nothing after the
+  # first word is read.
+  @executable_word ~r/\A(?:\.{0,2}\/)?(?:[A-Za-z0-9._+-]+\/)*[A-Za-z0-9._+-]+\z/
   defp program_detail(command) when is_binary(command) do
     with [word | _rest] <- String.split(String.trim(command), ~r/\s+/, parts: 2),
+         true <- byte_size(word) <= 256 and Regex.match?(@executable_word, word),
          program = Path.basename(word),
          true <- Regex.match?(~r/\A[a-z][a-z0-9._+-]{0,23}\z/, program) do
       program

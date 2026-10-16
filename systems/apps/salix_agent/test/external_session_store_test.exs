@@ -545,6 +545,22 @@ defmodule SalixAgent.ExternalSessionStoreTest do
            [{"call_cmd", "commandExecution", "pnpm", 1_790_000_101}],
            [:thinking],
            [:idle]
+         ]},
+        {"pi",
+         [
+           [{"pi_call_1", "bash", "ls", 1_790_000_201}],
+           [{"pi_call_2", "read", "README.md", 1_790_000_202}],
+           [{"pi_call_1", "bash", "ls", 1_790_000_201}],
+           [:thinking],
+           [:idle]
+         ]},
+        {"kimi",
+         [
+           [{"kimi_tc_1", "Shell", nil, 1_790_000_301}],
+           [{"kimi_tc_2", "ReadFile", nil, 1_790_000_302}],
+           [{"kimi_tc_1", "Shell", nil, 1_790_000_301}],
+           [:thinking],
+           [:idle]
          ]}
       ] do
     test "a #{provider} Task dispatch presents its real operations in the admitted scope" do
@@ -608,6 +624,242 @@ defmodule SalixAgent.ExternalSessionStoreTest do
       # Replays after the terminal event cannot revive any operation.
       for event <- List.flatten(events),
           do: assert({:ok, %{"ok" => true}} = commit_runtime_event(pid, request, event))
+
+      refute shown_activity(agent_id)
+    end
+  end
+
+  defp open_task_dispatch(conversation \\ "cnv1_activity_owner") do
+    {agent_id, pid, agent} = start_external_session()
+    participant = "par1_0000000000000000801"
+    message = "msg1_0000000000000000801"
+    source = "groupconv:#{conversation}:#{message}:#{participant}"
+
+    assert {:ok, :committed} =
+             stage(pid, source, "run",
+               trusted_origin: task_origin(conversation, message, participant)
+             )
+
+    assert_receive {:runtime_request, runtime_pid, request}, @receive_budget_ms
+    send(runtime_pid, {:runtime_return, accepted(request, %{})})
+    assert %{"phase" => "thinking"} = shown_activity(agent_id)
+    {agent_id, pid, agent, request}
+  end
+
+  defp claude_operation(request, execution_id, id, status, created_at) do
+    %{
+      "type" => "operation",
+      "provider" => "claude",
+      "name" => if(status == "started", do: "Read", else: "tool_result"),
+      "operation_id" => id,
+      "status" => status,
+      "input" => %{"file_path" => "/work/#{id}.md"},
+      "created_at" => created_at,
+      "dispatch_id" => request.dispatch_id,
+      "execution_id" => execution_id,
+      "work_state" => "running"
+    }
+  end
+
+  test "only the execution the status owner admitted moves the presentation" do
+    {agent_id, pid, agent, request} = open_task_dispatch()
+
+    assert {:ok, _} =
+             commit_runtime_event(
+               pid,
+               request,
+               claude_operation(request, "execution-one", "op-1", "started", 1_790_000_401)
+             )
+
+    assert %{"tool_call_id" => "op-1"} = before = shown_activity(agent_id)
+
+    # A second execution in the same dispatch and run: the journal ACKs it,
+    # the status owner rejects it, and so does the presentation.
+    for event <- [
+          claude_operation(request, "execution-two", "op-2", "started", 1_790_000_402),
+          Map.merge(
+            claude_operation(request, "execution-two", "op-3", "completed", 1_790_000_403),
+            %{
+              "work_state" => "settled"
+            }
+          ),
+          %{
+            "type" => "status",
+            "provider" => "claude",
+            "name" => "turn.ended",
+            "state" => "failed",
+            "created_at" => 1_790_000_404,
+            "dispatch_id" => request.dispatch_id,
+            "execution_id" => "execution-two",
+            "work_state" => "failed"
+          }
+        ] do
+      assert {:ok, _} = commit_runtime_event(pid, request, event)
+      assert shown_activity(agent_id) == before
+    end
+
+    # Both the canonical status and the Session's projection target keep E1.
+    assert {:ok, %{"status" => "running"}} =
+             ExternalSessionStore.get_session_status(agent, @session_id)
+
+    assert {:ok, %{"execution_id" => "execution-one", "status" => "running"}} =
+             SalixAgent.ExternalSessionStatus.get(agent_id, @session_id)
+
+    assert {:ok, %{"status_projection_target" => %{"execution_id" => "execution-one"}}} =
+             ExternalSessionStore.get_session_record(agent_id, @session_id)
+
+    # The admitted execution still presents and ends normally.
+    assert {:ok, _} =
+             commit_runtime_event(
+               pid,
+               request,
+               claude_operation(request, "execution-one", "op-1", "completed", 1_790_000_405)
+             )
+
+    assert %{"phase" => "thinking"} = shown_activity(agent_id)
+  end
+
+  test "ended operations stay ended beyond the remembered window and replays are journal duplicates" do
+    {agent_id, pid, _agent, request} = open_task_dispatch()
+    capability = request.binding["runtime_capability"]
+    run = request.binding["connector_run_id"]
+
+    {starts, ends, _last} =
+      Enum.reduce(1..520, {[], [], nil}, fn index, {starts, ends, last} ->
+        start_id = ULID.generate(last)
+        end_id = ULID.generate(start_id)
+        op = "op-#{index}"
+
+        {[
+           %{
+             "event_id" => start_id,
+             "connector_run_id" => run,
+             "event" => claude_operation(request, "execution-one", op, "started", 1_790_000_500)
+           }
+           | starts
+         ],
+         [
+           %{
+             "event_id" => end_id,
+             "connector_run_id" => run,
+             "event" => claude_operation(request, "execution-one", op, "completed", 1_790_000_501)
+           }
+           | ends
+         ], end_id}
+      end)
+
+    journal =
+      Enum.zip(Enum.reverse(starts), Enum.reverse(ends))
+      |> Enum.flat_map(fn {start, stop} -> [start, stop] end)
+
+    for chunk <- Enum.chunk_every(journal, 100) do
+      assert {:ok, %{"results" => results}} =
+               ExternalSessionActor.commit_connector_event(pid, capability, %{
+                 connector_event_batch: chunk
+               })
+
+      assert Enum.all?(results, &match?({:ok, _}, &1))
+    end
+
+    assert %{"phase" => "thinking"} = settled = shown_activity(agent_id)
+
+    # Identical replays of every start, including the forgotten oldest ids.
+    for chunk <- Enum.chunk_every(Enum.reverse(starts), 100) do
+      assert {:ok, _} =
+               ExternalSessionActor.commit_connector_event(pid, capability, %{
+                 connector_event_batch: chunk
+               })
+    end
+
+    assert shown_activity(agent_id) == settled
+
+    # A new operation of the same execution still presents.
+    assert {:ok, _} =
+             commit_runtime_event(
+               pid,
+               request,
+               claude_operation(request, "execution-one", "op-new", "started", 1_790_000_600)
+             )
+
+    assert %{"tool_call_id" => "op-new", "detail" => "op-new.md"} = shown_activity(agent_id)
+  end
+
+  test "a quiet operation outlives the idle timeout and an expired hold retires its frame" do
+    previous_idle = Application.get_env(:salix_agent, :session_actor_idle_ms)
+    previous_hold = Application.get_env(:salix_agent, :external_activity_hold_ms)
+    Application.put_env(:salix_agent, :session_actor_idle_ms, 30)
+    Application.put_env(:salix_agent, :external_activity_hold_ms, 60_000)
+
+    on_exit(fn ->
+      restore_env(:session_actor_idle_ms, previous_idle)
+      restore_env(:external_activity_hold_ms, previous_hold)
+    end)
+
+    {agent_id, pid, _agent, request} = open_task_dispatch()
+    ref = Process.monitor(pid)
+
+    assert {:ok, _} =
+             commit_runtime_event(
+               pid,
+               request,
+               claude_operation(request, "execution-one", "op-quiet", "started", 1_790_000_700)
+             )
+
+    # Several idle periods pass with no event: the owner stays and so does
+    # the frame it can still vouch for.
+    refute_receive {:DOWN, ^ref, :process, _pid, _reason}, 200
+    assert %{"tool_call_id" => "op-quiet"} = shown_activity(agent_id)
+
+    assert {:ok, _} =
+             commit_runtime_event(
+               pid,
+               request,
+               claude_operation(request, "execution-one", "op-quiet", "completed", 1_790_000_701)
+             )
+
+    assert %{"phase" => "thinking"} = shown_activity(agent_id)
+
+    # Once the hold passes without events, the frame is retired and the
+    # owner may passivate.
+    Application.put_env(:salix_agent, :external_activity_hold_ms, 0)
+    assert_receive {:DOWN, ^ref, :process, _pid, :normal}, @receive_budget_ms
+    refute shown_activity(agent_id)
+  end
+
+  test "a new owner incarnation retires a frame it never admitted and ignores its old events" do
+    {agent_id, pid, _agent, request} = open_task_dispatch()
+
+    assert {:ok, _} =
+             commit_runtime_event(
+               pid,
+               request,
+               claude_operation(request, "execution-one", "op-old", "started", 1_790_000_800)
+             )
+
+    assert %{"tool_call_id" => "op-old"} = shown_activity(agent_id)
+    :ok = GenServer.stop(pid, :normal)
+
+    assert eventually(fn ->
+             Registry.lookup(SalixAgent.Registry, ExternalSessionActor.key(agent_id, @session_id)) ==
+               []
+           end)
+
+    {:ok, restarted} =
+      ExternalSessionActor.start_link(
+        agent_id: agent_id,
+        session_id: @session_id,
+        process_on_init: false
+      )
+
+    refute shown_activity(agent_id)
+
+    for status <- ["completed", "started"] do
+      assert {:ok, _} =
+               commit_runtime_event(
+                 restarted,
+                 request,
+                 claude_operation(request, "execution-one", "op-old", status, 1_790_000_801)
+               )
 
       refute shown_activity(agent_id)
     end

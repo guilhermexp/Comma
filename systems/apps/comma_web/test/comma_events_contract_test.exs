@@ -704,6 +704,148 @@ defmodule CommaWeb.CommaEventsContractTest do
     refute body =~ "agent_group_id"
   end
 
+  test "Task SSE keeps a Worker whose wait parks its running tool call, until the call ends" do
+    %{workspace: workspace, session: session} = create_fixture("task-async-tool@example.com")
+    {:ok, task} = SalixClientFake.create_group_conversation(workspace, %{"kind" => "agent_task"})
+    task_id = task["conversation_id"]
+    group_id = workspace["default_group_id"]
+    worker_id = SalixStore.Ids.new_participant_id()
+
+    SalixClientFake.put_task_participants(task_id, [
+      %{
+        "participant_id" => worker_id,
+        "name" => "Worker",
+        "agent_id" => workspace["default_worker_agent_id"]
+      }
+    ])
+
+    message_id = SalixStore.Ids.new_message_id()
+    {:ok, source} = SalixIM.ConversationSourceIdentity.encode(task_id, message_id, worker_id)
+    response_key = "rsp_" <> Base.url_encode64(:crypto.strong_rand_bytes(18), padding: false)
+    # The runtime parks an async tool call as a structured auto wait.
+    active = %{"state" => "active", "status" => "is waiting...", "updated_at" => 1}
+    wait = %{"source" => "auto_wait", "reason" => "tool fs.read_file is still running"}
+
+    frame = fn attrs ->
+      Map.merge(
+        %{
+          "phase" => "execution",
+          "status" => "running",
+          "action" => "Reading a file",
+          "summary" => "Reading a file",
+          "summary_class" => "public",
+          "detail" => "notes.md",
+          "tool_name" => "fs.read_file",
+          "tool_call_id" => "call_async",
+          "started_at" => 1_790_000_000.5,
+          "producer_epoch" => "epoch-a",
+          "response_key" => response_key,
+          "sequence" => 7,
+          "source_message_ids" => [source]
+        },
+        attrs
+      )
+    end
+
+    SalixClientFake.put_task_status(workspace, task_id, worker_id, active,
+      wait: wait,
+      presentation_activity: frame.(%{})
+    )
+
+    response_task =
+      Task.async(fn ->
+        user_req(
+          session["token"],
+          :get,
+          "/v1/comma/groups/#{group_id}/conversations/events?conversation_id=#{task_id}&wait=600"
+        )
+      end)
+
+    assert eventually(fn -> SalixClientFake.participant_subscriber_count() == 1 end)
+
+    steps = [
+      # The same parked call, refreshed: same start.
+      {%{active | "updated_at" => 2}, frame.(%{"sequence" => 8})},
+      # Waiting on another Participant is idle waiting, not work.
+      {%{active | "updated_at" => 3},
+       frame.(%{
+         "tool_name" => "wait_for",
+         "tool_call_id" => "call_wait",
+         "detail" => nil,
+         "action" => "Waiting",
+         "summary" => "Waiting",
+         "sequence" => 9
+       })},
+      # An idle frame under a wait never shows.
+      {%{active | "updated_at" => 4},
+       frame.(%{
+         "phase" => "idle",
+         "status" => "idle",
+         "summary_class" => "none",
+         "sequence" => 10
+       })}
+    ]
+
+    for {status, presentation} <- steps do
+      reads = SalixClientFake.participant_status_read_count()
+
+      SalixClientFake.put_task_status(workspace, task_id, worker_id, status,
+        wait: wait,
+        presentation_activity: Map.reject(presentation, fn {_key, value} -> is_nil(value) end)
+      )
+
+      assert eventually(fn -> SalixClientFake.participant_status_read_count() > reads end)
+    end
+
+    # The call ended and the wait cleared: the Worker is back at the model.
+    reads = SalixClientFake.participant_status_read_count()
+
+    SalixClientFake.put_task_status(
+      workspace,
+      task_id,
+      worker_id,
+      %{active | "updated_at" => 5},
+      presentation_activity:
+        frame.(%{
+          "phase" => "thinking",
+          "summary_class" => "generic",
+          "action" => "Thinking",
+          "summary" => "Thinking",
+          "sequence" => 11
+        })
+    )
+
+    assert eventually(fn -> SalixClientFake.participant_status_read_count() > reads end)
+    SalixClientFake.invalidate_task_list(group_id, task_id)
+    body = Task.await(response_task, 2000) |> expect_status(200)
+
+    [parked, refreshed, waiting_for_other, idle_wait, thinking] =
+      sse_payloads(body, "task_participant_statuses")
+
+    for snapshot <- [parked, refreshed] do
+      assert [
+               %{
+                 "participant_id" => ^worker_id,
+                 "activity" => %{
+                   "phase" => "execution",
+                   "tool_call_id" => "call_async",
+                   "started_at" => 1_790_000_000.5,
+                   "detail" => "notes.md"
+                 }
+               }
+             ] = snapshot["participants"]
+    end
+
+    assert waiting_for_other["participants"] == []
+    assert idle_wait["participants"] == []
+
+    assert [%{"activity" => %{"phase" => "thinking", "summary" => "Thinking"} = activity}] =
+             thinking["participants"]
+
+    for key <- ~w(detail tool_name tool_call_id started_at),
+        do: refute(Map.has_key?(activity, key))
+  end
+
   test "Task SSE hides waiting participants and restores them when work resumes" do
     %{workspace: workspace, session: session} = create_fixture("task-waiting@example.com")
     {:ok, task} = SalixClientFake.create_group_conversation(workspace, %{"kind" => "agent_task"})

@@ -155,6 +155,10 @@ defmodule SalixAgent.ExternalSessionActor do
 
       data = %{data | startup_recovery_pending: true}
 
+      # This incarnation admitted no dispatch yet, so a frame on the surface
+      # belongs to a previous owner whose presentation it cannot continue.
+      :ok = SalixAgent.ActivityEvent.retire(agent_id, session_id, :any)
+
       # Startup repair can route through the Agent owner and therefore re-enter
       # FleetSup. Queue it only after init has acknowledged this child to avoid
       # making the shared DynamicSupervisor wait on itself.
@@ -357,8 +361,8 @@ defmodule SalixAgent.ExternalSessionActor do
   def handle_call({:commit_connector_event, capability, params}, _from, data) do
     if capability["agent_id"] == data.agent_id and capability["session_id"] == data.session_id do
       case ExternalSessionStore.commit_connector_event(capability, params, data.records) do
-        {:ok, response, records} ->
-          data = %{data | records: records} |> present_committed_events(params, response)
+        {:ok, response, records, appended} ->
+          data = %{data | records: records} |> present_committed_events(appended)
           reply({:ok, response}, data)
 
         {:error, reason, records} ->
@@ -723,6 +727,14 @@ defmodule SalixAgent.ExternalSessionActor do
   end
 
   def handle_info(:timeout, data) do
+    data =
+      if work_idle?(data) and ExternalActivity.expired?(data.activity),
+        do: %{
+          data
+          | activity: ExternalActivity.release(data.activity, data.agent_id, data.session_id)
+        },
+        else: data
+
     if idle?(data), do: {:stop, :normal, data}, else: noreply(data)
   end
 
@@ -1688,7 +1700,12 @@ defmodule SalixAgent.ExternalSessionActor do
 
   defp terminal_async?(status), do: status in ["completed", "failed", "cancelled"]
 
-  defp idle?(data),
+  # An open Activity presentation keeps its owner resident through quiet
+  # operations; `:timeout` re-checks it each idle period until it ends or its
+  # hold expires.
+  defp idle?(data), do: work_idle?(data) and is_nil(data.activity)
+
+  defp work_idle?(data),
     do:
       is_nil(data.pending_external) and is_nil(data.consultation_job) and
         map_size(data.pending_async_tools) == 0 and
@@ -1724,34 +1741,41 @@ defmodule SalixAgent.ExternalSessionActor do
 
   defp noreply(data), do: {:noreply, data, idle_timeout(data)}
   defp reply(response, data), do: {:reply, response, data, idle_timeout(data)}
-  defp idle_timeout(data), do: if(idle?(data), do: data.idle_ms, else: :infinity)
+  defp idle_timeout(data), do: if(work_idle?(data), do: data.idle_ms, else: :infinity)
 
   defp value(map, key) when is_map(map),
     do: Map.get(map, key) || Map.get(map, String.to_atom(key))
 
   defp value(_map, _key), do: nil
 
-  # Only events the journal now holds move the presentation, in commit order.
-  defp present_committed_events(data, %{connector_event_batch: batch}, %{"results" => results})
-       when is_list(batch) and is_list(results) do
-    batch
-    |> Enum.zip(results)
-    |> Enum.reduce(data, fn
-      {params, {:ok, _}}, data -> present_committed_events(data, params, %{})
-      {_params, _failed}, data -> data
+  # Only events this call newly journaled move the presentation, in journal
+  # order: the journal's event-id deduplication keeps a replay from moving it.
+  # The execution comes from the canonical status owner, which admits one
+  # execution per dispatch (`ExternalSessionStatus.apply_work_state/4`).
+  defp present_committed_events(data, appended) do
+    Enum.reduce(appended, data, fn params, data ->
+      activity =
+        ExternalActivity.observe(
+          data.activity,
+          data.agent_id,
+          data.session_id,
+          params["connector_run_id"],
+          params["event"],
+          fn -> admitted_execution(data.agent_id, data.session_id) end
+        )
+
+      %{data | activity: activity}
     end)
   end
 
-  defp present_committed_events(data, %{} = params, _response) do
-    activity =
-      ExternalActivity.observe(
-        data.activity,
-        data.agent_id,
-        data.session_id,
-        params["connector_run_id"],
-        params["event"]
-      )
+  defp admitted_execution(agent_id, session_id) do
+    case ExternalSessionStatus.get(agent_id, session_id) do
+      {:ok, %{"dispatch_id" => dispatch_id, "execution_id" => execution_id}}
+      when is_binary(dispatch_id) and is_binary(execution_id) and execution_id != "" ->
+        {dispatch_id, execution_id}
 
-    %{data | activity: activity}
+      _unknown ->
+        nil
+    end
   end
 end

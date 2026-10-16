@@ -29,6 +29,13 @@ func TestActivityNativeEventsFixture(t *testing.T) {
 			}
 			return nil
 		},
+		"pi": piStandardEvents,
+		"kimi": func(native map[string]any) []map[string]any {
+			if event := kimiStandardEvent(native); event != nil {
+				return []map[string]any{event}
+			}
+			return nil
+		},
 	}
 	update := os.Getenv("UPDATE_ACTIVITY_FIXTURE") == "1"
 	for provider, parse := range parsers {
