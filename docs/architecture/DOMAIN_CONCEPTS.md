@@ -407,6 +407,8 @@ does on its own is outside Comma's control.
 | Delivery | Sending a committed Message to a Participant target. Message persistence and target receipt are different facts. |
 | Draft | Transient Participant text. It is not a Message, append intent, delivery receipt, or success signal. |
 
+Conversation inline code uses neutral rounded labels in prose and tables; code-block syntax colors stay unchanged.
+
 Owners and entry points:
 [Comma.AssistantChats](../../systems/apps/comma_core/lib/comma/assistant_chats.ex),
 [RouterConversationInput](../../systems/apps/salix_im/lib/salix_im/router_conversation_input.ex),

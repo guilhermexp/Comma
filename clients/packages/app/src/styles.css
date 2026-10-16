@@ -4343,14 +4343,13 @@ button.comma-chat-user-bubble-toggle:focus-visible {
   background-color: var(--color-fg-quinary);
 }
 
-/*
- * Inline code inside an agent bubble, for the same reason: the shared markdown
- * inline-code token is the bubble's own gray in light mode. Figma's
- * inline-code-bg is Gray (light mode) 300 / Gray (dark mode) 600, the pair
- * utility-gray-300 resolves to.
- */
-.comma-chat-thread .markdown-stream-bubble .markdown-stream-inline-code {
-  background-color: var(--color-utility-gray-300);
+/* Neutral inline-code labels across conversation text and tables. */
+.comma-chat-thread .markdown-stream-inline-code {
+  color: var(--color-markdown-text-inline-primary);
+  background-color: var(--color-bg-tertiary);
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: 0 var(--spacing-sm);
 }
 
 .comma-chat-thread .markdown-stream-bubble-block + .markdown-stream-bubble-block {
