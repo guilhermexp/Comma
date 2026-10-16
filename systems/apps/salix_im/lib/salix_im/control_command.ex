@@ -35,7 +35,9 @@ defmodule SalixIM.ControlCommand do
   ## Commands
 
     * `status` — the Router session's model and context usage.
-    * `clear` — start a fresh Router session, preserving the previous transcript.
+    * `new` (alias `clear`) — start a fresh Router session, preserving the
+      previous transcript. Comma Router chats also accept the exact plain text
+      `/new`; see `SalixIM.RouterConversationInput`.
     * `compact` — trigger a compaction of the Router session context.
     * `emergency-compact` — mask historical non-model messages over 1,000 bytes.
     * `ls <path>` — list a path in the Router agent's VFS (`ls /`).
@@ -63,10 +65,15 @@ defmodule SalixIM.ControlCommand do
   (`SlackConversationIngress`) that does not cross this funnel, so a command in
   a worker thread is not recognized there.
 
-  `clear` reuses the dashboard's owner-routed canonical session switch, including
-  its expected-session fence. It affects every chat using this Router, stops the
-  retired session runtime, and preserves its transcript. A lost reply must not
-  be interpreted as a failed clear: check `status` before sending another one.
+  `new`/`clear` reuses the dashboard's owner-routed canonical session switch,
+  including its expected-session fence. It affects every chat using this Router,
+  stops the retired session runtime (and so any Router turn in progress, without
+  undoing effects it already caused), and preserves its transcript. The agent,
+  its configuration, tools, grants, files, Tasks and Loops stay; Loops follow
+  the new session (`SalixAgent.Loops.follow_router_session/2`), and a reply
+  says when some have not moved yet. A lost reply
+  must not be interpreted as a failed clear: check `status` before sending
+  another one.
 
   ## Authority
 
@@ -162,7 +169,7 @@ defmodule SalixIM.ControlCommand do
   @help """
   Supported commands, each sent inside a salix-command block:
   • status — model and context usage
-  • clear — start a fresh Router session (shared by all chats for this Router)
+  • new (or clear) — start a fresh Router session (shared by all chats for this Router)
   • compact — compact the session context
   • emergency-compact — replace historical non-model messages over 1,000 bytes
   • ls PATH — list a workspace path, e.g. ls / or ls /artifacts
@@ -222,7 +229,7 @@ defmodule SalixIM.ControlCommand do
 
     case name do
       "status" -> {:ok, :status}
-      "clear" -> {:ok, :clear}
+      name when name in ["new", "clear"] -> {:ok, :clear}
       "compact" -> {:ok, :compact}
       "emergency-compact" -> {:ok, :emergency_compact}
       "help" -> {:ok, :help}
@@ -446,10 +453,13 @@ defmodule SalixIM.ControlCommand do
 
   defp execute_for_group(group_id, {:ok, :clear}, agent_id, session_id) do
     with {:ok, %{"tenant_id" => tenant_id}} <- GroupDirectory.get_group(group_id),
-         {:ok, %{"router_session_id" => new_session_id}} <-
+         {:ok, %{"router_session_id" => new_session_id} = result} <-
            AgentControl.switch_router_session(agent_id, tenant_id, session_id) do
       "Started a new Router session: #{new_session_id}. " <>
-        "This applies to all chats using this Router; the previous transcript is preserved."
+        "Earlier messages stay visible but are no longer in the agent's context; " <>
+        "its settings, tools, files, tasks and reminders are unchanged. " <>
+        "A reply in progress was stopped; actions it already took are not undone. " <>
+        "This applies to all chats using this Router." <> loops_note(result)
     else
       {:error, {:stale_router_session, _current_session_id}} ->
         "The Router session has already changed. This clear did not start another session."
@@ -461,6 +471,15 @@ defmodule SalixIM.ControlCommand do
 
   defp execute_for_group(_group_id, parsed, agent_id, session_id),
     do: execute(parsed, agent_id, session_id)
+
+  # A Loop the switch could not move keeps its old Session until adoption
+  # retries; the reply must not claim every background watch moved.
+  defp loops_note(%{"loops_rebound" => false}),
+    do:
+      " Some background watches have not moved to the new session yet; " <>
+        "Salix retries automatically within a few minutes."
+
+  defp loops_note(_result), do: ""
 
   defp execute({:error, {:unknown_command, name}}, _agent_id, _session_id),
     do: String.trim("Unknown Salix command: #{display_name(name)}\n\n" <> @help)

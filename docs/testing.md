@@ -17,6 +17,8 @@ Keep tests close to the business or runtime boundary they protect.
 - Bug fixes should add the smallest regression test that fails without the fix:
   Vitest for local logic or components, Playwright when the failure is visible
   only through the app/runtime flow.
+- Before reading durable Session state, Salix provider tests call
+  `SalixAgent.TestSupport.join_session_owner/2`.
 
 ## Local Commands
 

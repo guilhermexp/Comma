@@ -83,7 +83,7 @@ defmodule SalixIM.RouterConversationInput do
     SalixStore.ReadScope.run(fn ->
       with {:ok, conversation} <- ensure(group_id) do
         attrs = stringify(attrs)
-        command_text = command_text(attrs["content"])
+        command_text = attrs["content"] |> command_text() |> plain_command()
         command? = ControlCommand.parse(command_text) != :none
 
         message =
@@ -162,6 +162,12 @@ defmodule SalixIM.RouterConversationInput do
   end
 
   defp command_text(_), do: ""
+
+  # The Comma composer's typed `/new` is the session-reset command. Only the
+  # exact text is a command; anything longer stays an ordinary prompt.
+  defp plain_command(text) do
+    if String.trim(text) == "/new", do: "<salix-command>new</salix-command>", else: text
+  end
 
   @spec desired_spec(String.t()) :: {:ok, map()} | {:error, term()}
   def desired_spec(group_id) do

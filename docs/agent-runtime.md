@@ -50,7 +50,7 @@ See [Storage](storage-search.md) for format 3 sealing and recovery.
 A canonical Router in a generic `wait_for` can yield to a queued human request.
 A running async tool does not own that scheduling slot. Its durable call record and source provenance survive the yield.
 Yield does not cancel the tool, complete the old request successfully, or report the old result as a result of the new request.
-Active rounds, `auto_wait`, reply repair, and blocking provider obligations retain their existing guards.
+Active rounds, `auto_wait`, reply repair, and blocking provider obligations retain their guards.
 Current-source runtime input is processed before a yield. The yield commit rechecks the wait and transcript snapshot.
 This policy does not guarantee progress during storage failure or interrupt a running model request.
 
@@ -71,7 +71,7 @@ Lean commands select each step from observations and return external requests or
 The host retains an opaque authorization checkpoint across failed commits without comparing scopes or selecting presentation identities.
 Round executes complete output and tool-batch plans. Lean selects repair finalization and encodes provider traffic. Tool adapters encode tool observations.
 The request projection selects the compaction prefix, live messages, diagnostic redaction, and source annotations in Lean.
-Later result reads do not replace earlier reader-page bodies. History reduction uses the existing compaction boundary, not per-request page folding.
+Later result reads do not replace earlier reader-page bodies. History reduction uses the compaction boundary, not per-request page folding.
 Single-page envelope limits and diagnostic disclosure rules still apply. This preserves page prefixes, but does not guarantee provider cache hits.
 Round passes its resident Session handle and transient activation facts to the LLM seam.
 Lean projects prompt, context, attachment provenance, and runtime pages into provider JSON without exporting Session or intermediate messages to Elixir.
@@ -158,7 +158,6 @@ Provider deltas and results remain gated until fence success publishes Thinking 
 A completion queues without a wake while a batch sibling runs locally or awaits a terminal commit retry.
 The last settlement wakes and materializes every queued result. Wait deadlines and other input can still wake independently.
 Speculation requires no due sibling settlement, a quiet mailbox, and no LLM, compaction, or reply-backoff hold.
-Configuration prewarm and refresh rules are below.
 
 Terminal results without workspace or skill events use the Session checkpoint as their receipt.
 They do not access the workspace operation ledger. Large results and their reader references share that durable checkpoint.
@@ -167,8 +166,6 @@ A failed fence keeps provider output gated while settlement retry retains the to
 A retry that commits without the speculative activation cancels that provider dependency.
 The next activation uses the committed revision without repeating the completed tool.
 The persistence worker uses the initiating Actor's frozen runtime epoch.
-
-Before reading durable Session state, provider tests call `SalixAgent.TestSupport.join_session_owner/2`.
 
 ### Delivery to first model request
 
@@ -184,13 +181,16 @@ A coalesced `:process` hint can join terminal settlement. Other queued work and 
 `RoundConfigPrewarm` starts configuration after Agent classification for a nonresident Session.
 The claim installs ownership before its lease-index write. Generation binding reads the Session and adopts `RoundConfigCache.prewarm/2`.
 Catalog, skill, plugin, and template reads overlap placement, claim, and delivery commit.
-Snapshots younger than `round_config_refresh_min_age_ms` (default two seconds) are reused. Older snapshots start one background refresh.
-Static skill materialization uses its existing versioned cache and invalidation. Committed configuration events invalidate the round snapshot immediately.
-Each activation resolves live provider credentials alongside the current Agent record. A changed binding discards that preparation and resolves the current record.
+Snapshots younger than `round_config_refresh_min_age_ms` (default 2 s) are reused; older ones start one background refresh.
+Static skill materialization uses its versioned cache and invalidation. Committed configuration events invalidate the round snapshot immediately.
+Each activation resolves live provider credentials with the current Agent record; a changed binding discards that preparation and resolves again.
 Changed runtime or catalog versions rebuild the snapshot. Failed resolution withholds dispatch. Worker source grants bind per activation.
 A cached catalog never grants permission to dispatch a tool.
 
 Router startup checks its canonical Session. Switching stops the actor before retirement.
+Home `/new` (exact) and `new`/`clear` switch once per receipt, not as Router input.
+The new Session is empty; a running turn stops without undoing effects.
+Composer command labels show only names; later same-line text is the argument.
 Stored revisions bypass birth probes. New Sessions retain them.
 A live ownership cell routes locally. A fresh RPC head naming another owner fences that cell at its epoch before retry.
 See the [TLA+ mapping](../tla/salix/README.md).
@@ -220,7 +220,7 @@ itself. It closes its atomic admission gate, checks pending work and its mailbox
 and stops normally only when safe. Admitted calls hold pins through their replies.
 Casts hold pins through enqueue. Dead callers cannot leave permanent pins.
 Commands rejected by a closed gate return `session_actor_retiring` before enqueue.
-Callers must use the existing retry/recovery path, not assume execution occurred.
+Callers must use the retry/recovery path, not assume execution occurred.
 
 Pressure rejects starts of absent internal actors with `session_memory_pressure`.
 Existing actors and supervisor-driven crash recovery remain admitted. Pending
@@ -237,5 +237,5 @@ Existing actors remain available. No Prometheus read is involved.
 The `salix_session_residency_` gauges `pressure`, `resident`, `stalled`, and `observed_at_seconds` report admission, actor count, reclamation stalls, and sample freshness.
 For example, `salix_session_residency_stalled == 1` identifies stalled reclamation. Telemetry failure cannot change residency decisions.
 
-Eviction preserves durable Session data. The existing kernel and ownership fence govern accepted work and commits.
+Eviction preserves durable Session data. The kernel and ownership fence govern accepted work and commits.
 No durable lifecycle state or domain entity is added.

@@ -13,6 +13,15 @@ retired. Old source anchors outside the current roster are historical only.
 Run `make tla`; retain the expected lease and RPC counterexamples rather than
 claiming stronger exclusivity or delivery semantics than the code provides.
 
+## Router Session switches
+
+Route `/new` through the owner-controlled canonical Session switch, not Agent
+recreation or transcript deletion. Preserve the Agent's configuration and tools.
+Serialize Loop rebinding with the switch in `AgentRoleActor`; use Loop adoption
+to retry partial moves and reload stale resident objects. Do not report a partial
+move as complete. See [Agent runtime](../docs/agent-runtime.md) and
+[background Loops](../docs/salix/tasks-background-execution.md#background-loops).
+
 ## Worker administration
 
 Comma Router mutations of Workers require `AgentManagement.OwnerAuthority`.

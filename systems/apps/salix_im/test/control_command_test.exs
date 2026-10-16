@@ -432,6 +432,7 @@ defmodule SalixIM.ControlCommandTest do
   describe "parse/1" do
     test "recognizes the supported commands, with surrounding prose and casing" do
       assert {:ok, :clear} = ControlCommand.parse("<salix-command> CLEAR </salix-command>")
+      assert {:ok, :clear} = ControlCommand.parse("<salix-command>new</salix-command>")
 
       assert {:error, {:unknown_command, "reset"}} =
                ControlCommand.parse("<salix-command>reset</salix-command>")
@@ -783,6 +784,22 @@ defmodule SalixIM.ControlCommandTest do
       refute_router_message(ctx.group_id, "cmd-clear")
     end
 
+    test "clear says when some Loops have not moved to the new session yet", ctx do
+      Agent.update(
+        StubAgentControl,
+        &Map.put(
+          &1,
+          :clear_result,
+          {:ok, %{"router_session_id" => "ses1_0000000000000007003", "loops_rebound" => false}}
+        )
+      )
+
+      assert {:ok, :command} = enqueue(ctx, "<salix-command>new</salix-command>", "cmd-new")
+      text = MockSlack.last_request("chat.postMessage").params["text"]
+      assert text =~ "Started a new Router session: ses1_0000000000000007003"
+      assert text =~ "have not moved to the new session yet"
+    end
+
     test "clear reports stale sessions and runtime failures without retrying", ctx do
       for {reason, expected} <- [
             {{:stale_router_session, "new-session"}, "already changed"},
@@ -829,6 +846,45 @@ defmodule SalixIM.ControlCommandTest do
       assert reply["delivery_filter"] == %{"participant_ids" => []}
       assert hd(reply["content"])["text"] =~ "Started a new Router session"
       assert MockSlack.requests("chat.postMessage") == []
+    end
+
+    test "client plain /new runs the clear command; longer text stays a prompt", ctx do
+      attrs = %{
+        "client_request_id" => "client-plain-new",
+        "content" => [%{"type" => "text", "text" => "/new"}]
+      }
+
+      assert {:ok, first} =
+               SalixIM.RouterConversationInput.append_user_message(ctx.group_id, attrs)
+
+      assert {:ok, retry} =
+               SalixIM.RouterConversationInput.append_user_message(ctx.group_id, attrs)
+
+      refute retry["inserted"]
+
+      assert [{:switch_router_session, _agent_id, _tenant_id, _session_id}] =
+               StubAgentControl.calls()
+
+      assert {:ok, prompt} =
+               SalixIM.RouterConversationInput.append_user_message(ctx.group_id, %{
+                 "client_request_id" => "client-new-prose",
+                 "content" => [%{"type" => "text", "text" => "/new idea for the launch"}]
+               })
+
+      assert length(StubAgentControl.calls()) == 1
+
+      assert {:ok, [command, reply, ordinary]} =
+               SalixIM.Conversations.list_group_conversation_messages(
+                 ctx.group_id,
+                 first["conversation_id"],
+                 limit: 10
+               )
+
+      assert command["message_id"] == first["message_id"]
+      assert command["delivery_filter"] == %{"participant_ids" => []}
+      assert hd(reply["content"])["text"] =~ "Started a new Router session"
+      assert ordinary["message_id"] == prompt["message_id"]
+      assert ordinary["delivery_filter"]["participant_ids"] != []
     end
 
     test "compact triggers a compaction and reports the resulting context", ctx do

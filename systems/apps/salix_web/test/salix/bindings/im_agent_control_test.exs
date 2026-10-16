@@ -54,7 +54,7 @@ defmodule Salix.Bindings.IMAgentControlTest do
     refute reason == :internal_runtime_only
   end
 
-  test "client clear uses the real dashboard switch and preserves the retired session" do
+  test "client /new uses the real dashboard switch and preserves the retired session" do
     previous_control = Application.get_env(:salix_im, :agent_control_mod)
     previous_execution = Application.get_env(:salix_im, :control_command_execution)
     Application.put_env(:salix_im, :agent_control_mod, IMAgentControl)
@@ -103,9 +103,26 @@ defmodule Salix.Bindings.IMAgentControlTest do
 
     {:ok, old_session} = SalixAgent.TestSupport.SessionData.read(agent_id, old_session_id)
 
+    # A Loop the Router created keeps running for the fresh session.
+    {:ok, loop} =
+      SalixStore.Loops.create(%{
+        "id" => SalixStore.Ids.new_loop_id(),
+        "tenant_id" => agent["tenant_id"],
+        "group_id" => group_id,
+        "agent_id" => agent_id,
+        "session_id" => old_session_id,
+        "elf_path" => "/loops/watch.elf",
+        "elf_sha256" => "fixture",
+        "status" => "paused",
+        "paused_by" => "user",
+        "created_at" => System.system_time(:millisecond)
+      })
+
+    on_exit(fn -> SalixStore.Loops.delete_agent_owned(loop["id"], agent_id) end)
+
     attrs = %{
-      "client_request_id" => "real-router-clear",
-      "content" => [%{"type" => "text", "text" => "<salix-command>clear</salix-command>"}]
+      "client_request_id" => "real-router-new",
+      "content" => [%{"type" => "text", "text" => " /new "}]
     }
 
     assert {:ok, first} = SalixIM.RouterConversationInput.append_user_message(group_id, attrs)
@@ -120,6 +137,9 @@ defmodule Salix.Bindings.IMAgentControlTest do
     assert fresh.messages == []
     assert fresh.input_queue == []
 
+    assert {:ok, %{"session_id" => ^new_session_id, "status" => "paused", "paused_by" => "user"}} =
+             SalixStore.Loops.get(loop["id"])
+
     assert {:ok, retry} = SalixIM.RouterConversationInput.append_user_message(group_id, attrs)
     refute retry["inserted"]
 
@@ -133,12 +153,59 @@ defmodule Salix.Bindings.IMAgentControlTest do
                limit: 10
              )
 
+    assert hd(command["content"])["text"] == " /new "
     assert command["delivery_filter"] == %{"participant_ids" => []}
     assert reply["delivery_filter"] == %{"participant_ids" => []}
     assert hd(reply["content"])["text"] =~ new_session_id
 
     assert {:error, {:stale_router_session, ^new_session_id}} =
              IMAgentControl.switch_router_session(agent_id, agent["tenant_id"], old_session_id)
+
+    # The next ordinary message runs in the fresh session only.
+    previous_llm = Application.get_env(:salix_agent, :llm)
+    start_supervised!(SalixAgent.LLM.Mock)
+    Application.put_env(:salix_agent, :llm, SalixAgent.LLM.Mock)
+
+    on_exit(fn ->
+      if previous_llm == nil,
+        do: Application.delete_env(:salix_agent, :llm),
+        else: Application.put_env(:salix_agent, :llm, previous_llm)
+    end)
+
+    SalixAgent.LLM.Mock.script([{:final, "Fresh reply."}])
+
+    assert {:ok, %{"inserted" => true}} =
+             SalixIM.RouterConversationInput.append_user_message(group_id, %{
+               "client_request_id" => "after-new",
+               "content" => [%{"type" => "text", "text" => "Hello after new"}]
+             })
+
+    fresh =
+      await_session(agent_id, new_session_id, fn session ->
+        Enum.any?(session.messages, &(&1[:role] == "assistant"))
+      end)
+
+    texts = Enum.map(fresh.messages, &inspect/1)
+    assert Enum.any?(texts, &(&1 =~ "Hello after new"))
+    assert Enum.any?(texts, &(&1 =~ "Fresh reply."))
+    refute Enum.any?(texts, &(&1 =~ "Keep this previous Router reply."))
+    assert {:ok, ^retired} = SalixAgent.TestSupport.SessionData.read(agent_id, old_session_id)
+  end
+
+  defp await_session(agent_id, session_id, ready?, attempts \\ 250) do
+    {:ok, session} = SalixAgent.TestSupport.SessionData.read(agent_id, session_id)
+
+    cond do
+      ready?.(session) ->
+        session
+
+      attempts == 0 ->
+        flunk("session did not converge: #{inspect(session.messages)}")
+
+      true ->
+        Process.sleep(20)
+        await_session(agent_id, session_id, ready?, attempts - 1)
+    end
   end
 
   defp external_router!() do
