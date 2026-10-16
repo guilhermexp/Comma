@@ -34,7 +34,11 @@ defmodule SalixAgent.ComposioDirectExecutionTest do
           {:effect, tenant, group, user, account["id"], tools}
         )
 
-        {:ok, %{"successful" => true, "data" => %{"messages" => Enum.map(1..4, &%{"id" => "fixture-#{&1}"})}}}
+        {:ok,
+         %{
+           "successful" => true,
+           "data" => %{"messages" => Enum.map(1..4, &%{"id" => "fixture-#{&1}"})}
+         }}
       end
     end
   end
@@ -96,7 +100,8 @@ defmodule SalixAgent.ComposioDirectExecutionTest do
     %{tenant: tenant, group: group, ctx: ctx}
   end
 
-  test "an authorized request returns four provider emails directly without a human decision", c do
+  test "an authorized request returns four provider emails directly without a human decision",
+       c do
     args = %{
       "account_id" => "account-a",
       "tools" => [%{"tool_slug" => "GMAIL_FETCH_EMAILS", "arguments" => %{"max_results" => 4}}]

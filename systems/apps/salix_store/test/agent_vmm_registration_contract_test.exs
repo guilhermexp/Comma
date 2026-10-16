@@ -34,13 +34,17 @@ defmodule SalixStore.AgentVMMRegistrationContractTest do
              Ecto.Migrator.up(
                MigrationRepo,
                1,
-               SalixStore.Repo.Migrations.AddAgentVMMScopedRegistrationIndex, log: false)
+               SalixStore.Repo.Migrations.AddAgentVMMScopedRegistrationIndex,
+               log: false
+             )
 
     assert :ok =
              Ecto.Migrator.up(
                MigrationRepo,
                2,
-               SalixStore.Repo.Migrations.AddAgentVMMActiveRegistrationIndex, log: false)
+               SalixStore.Repo.Migrations.AddAgentVMMActiveRegistrationIndex,
+               log: false
+             )
 
     MigrationRepo.query!(
       "INSERT INTO agent_vmm_registrations VALUES ('old', 'tenant', 'group', 'device', 'revoked')"
