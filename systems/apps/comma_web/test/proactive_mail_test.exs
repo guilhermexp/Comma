@@ -2297,6 +2297,48 @@ defmodule CommaWeb.ProactiveMailTest do
              SalixAgent.InternalSessionStore.read(f.ctx.agent_id, f.ctx.session_id)
   end
 
+  test "a watch stays authorized after the Router starts a new session", f do
+    ready_proactive_router!(f)
+
+    binding =
+      Comma.MemberSourceConsents.binding(f.workspace.id, f.user["id"], "gmail")
+      |> Map.merge(%{
+        "user_id" => f.user["id"],
+        "workspace_id" => f.workspace.id,
+        "toolkit" => "gmail"
+      })
+
+    {:ok, bound} =
+      Loops.update(f.row["id"], fn row ->
+        # Paused, so no fixture object loads; the runtime test covers reload.
+        {:ok,
+         Map.merge(row, %{
+           "config" => %{"comma_proactive" => binding},
+           "status" => "paused",
+           "paused_by" => "user"
+         })}
+      end)
+
+    assert {:ok, %{"router_session_id" => session_id}} =
+             SalixAgent.AgentActor.switch_router_session(
+               f.ctx.agent_id,
+               f.ctx.tenant_id,
+               f.ctx.session_id
+             )
+
+    assert {:ok, %{"session_id" => ^session_id} = rebound} = Loops.get(bound["id"])
+    assert rebound["status"] == bound["status"]
+    assert rebound["config"] == bound["config"]
+    assert rebound["ifc"] == bound["ifc"]
+    assert :ok = CommaWeb.ProactiveWatch.authorize(rebound, "agent.notify", %{})
+
+    # Consent is still checked against the current grant.
+    Comma.MemberSourceConsents.forget_connection(f.workspace.id, "ca_owner")
+
+    assert {:error, :proactive_source_revoked} =
+             CommaWeb.ProactiveWatch.authorize(rebound, "agent.notify", %{})
+  end
+
   test "a watch wake becomes the owner's matter on the one Router handoff path", f do
     binding =
       Comma.MemberSourceConsents.binding(f.workspace.id, f.user["id"], "gmail")

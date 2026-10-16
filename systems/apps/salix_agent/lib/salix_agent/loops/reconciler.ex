@@ -227,13 +227,30 @@ defmodule SalixAgent.Loops.Reconciler do
       with {:ok, _epoch} <- owned?(agent_id),
            %{available: true, session_id: session} <- Host.status(),
            {:ok, loops} <- Store.list_active_by_agent(agent_id) do
-        resident = resident_by_loop(agent_id)
-        active_ids = MapSet.new(loops, & &1["id"])
+        loops = follow_router_session(agent_id, loops)
+        active = Map.new(loops, &{&1["id"], &1})
 
         # Objects whose Loop is no longer active here are stale residents.
-        for {loop_id, object_id} <- resident, not MapSet.member?(active_ids, loop_id) do
-          _ = Host.object_unload(object_id)
-        end
+        # An object whose Loop row names another Session (a Router switch
+        # moved it) is reloaded so its tool context names the current one.
+        resident =
+          agent_id
+          |> resident_objects()
+          |> Enum.reduce(%{}, fn {object_id, ref}, resident ->
+            case active[ref.loop_id] do
+              nil ->
+                _ = Host.object_unload(object_id)
+                resident
+
+              %{"session_id" => session_id} when session_id != ref.session_id ->
+                _ = Host.object_unload(object_id)
+                Loops.end_incarnation(ref.loop_id, ref.incarnation)
+                resident
+
+              _current ->
+                Map.put(resident, ref.loop_id, object_id)
+            end
+          end)
 
         outcome =
           loops
@@ -278,10 +295,30 @@ defmodule SalixAgent.Loops.Reconciler do
     end
   end
 
-  defp resident_by_loop(agent_id) do
-    Host.loop_objects()
-    |> Enum.filter(fn {_object_id, ref} -> ref.agent_id == agent_id end)
-    |> Map.new(fn {object_id, ref} -> {ref.loop_id, object_id} end)
+  defp resident_objects(agent_id) do
+    Enum.filter(Host.loop_objects(), fn {_object_id, ref} -> ref.agent_id == agent_id end)
+  end
+
+  # A Router's Loops follow its canonical Session. A switch rebinds them in
+  # its own owner mailbox entry; a rebind it could not finish (storage error,
+  # owner crash) is finished here, again through that owner, on the next
+  # adoption pass. One control read per adopted Router with active Loops.
+  defp follow_router_session(agent_id, loops) do
+    with [_ | _] <- loops,
+         {:ok, %{"role" => "router"} = agent} <- SalixAgent.Control.get_record(agent_id),
+         {:ok, canonical} <- SalixStore.RuntimeIds.persisted_router_session_id(agent),
+         true <- Enum.any?(loops, &(&1["session_id"] != canonical)),
+         {:ok, _count} <- SalixAgent.AgentActor.follow_router_loops_local(agent_id),
+         {:ok, loops} <- Store.list_active_by_agent(agent_id) do
+      loops
+    else
+      {:error, reason} ->
+        Logger.warning("router loops not rebound for #{agent_id}: #{inspect(reason)}")
+        loops
+
+      _ ->
+        loops
+    end
   end
 
   defp load_loop(loop, host_session) do

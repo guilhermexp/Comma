@@ -55,6 +55,20 @@ defmodule SalixAgent.AgentActor do
   end
 
   @doc """
+  Rebind a Router's Loops to its current canonical Session on this owner node.
+  Used by Loop adoption to finish a rebind a switch could not complete.
+  """
+  @spec follow_router_loops_local(String.t(), timeout()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def follow_router_loops_local(agent_id, timeout \\ 15_000) when is_binary(agent_id) do
+    with {:ok, agent} <- SalixAgent.Control.get_record(agent_id),
+         :ok <- require_role(agent, "router"),
+         {:ok, pid} <- ensure_started(agent) do
+      AgentRoleActor.follow_canonical_loops(pid, timeout)
+    end
+  end
+
+  @doc """
   Read the exact Session Activity and transient presentation surfaces on the
   agent owner node.
 

@@ -40,26 +40,27 @@ The scheduler does not grant a broader disclosure audience than the original req
 
 A Loop is Agent-owned C executed by spinfoam on its lease holder, not a Schedule, Session or Task; it has no occurrences or history.
 Timers, events and host capabilities drive it. Only `agent.notify` wakes its target Session.
-This ordinary delivery uses `loop:<id>:<dedup_key>` to deduplicate guest retries.
+The wake deduplicates guest retries with `loop:<id>:<dedup_key>`.
 
 `loop.build` uses spinfoam's embedded TinyCC-to-eBPF compiler and VM on the owner node.
 `loop.sdk` supplies its `spinfoam.h`, constraints and capabilities, without a template.
-Owner-requested Comma proactive watches use one bundled Loop program. Only integer C is supported: no floating point or signed division/modulo.
+Owner-requested Comma proactive watches use one bundled Loop program. Only integer C: no floating point or signed division/modulo.
 Compilation needs no host toolchain or privilege and has no alternative path.
 `loop.build` writes the ELF once to Agent VFS with the round's audience label.
 `loop.create` records its path, SHA-256, config and creator authority. Loads reread and check the hash; changed/deleted files fail.
 
 `SalixAgent.Server` claims adopt active Loops; passivation/fencing releases them.
 Active Loops keep the Agent resident: idle park renews its lease.
-A stranded active Loop (no object attached, or attached on a departed node) has its owner Server restarted by the next sweep, one bounded page per node per minute.
+The next sweep restarts the owner Server of a stranded active Loop (no object, or one on a departed node), one bounded page per node per minute.
 Every load bumps the Loop's incarnation. A host call from an object that is not the current incarnation is refused.
-A checkpoint written through `loop.state.put` returns as `config.state` on the next load.
+A `loop.state.put` checkpoint returns as `config.state` on the next load.
 A Loop that returns is `paused(exited)`. A fault reloads it from its checkpoint at most three times an hour, then it is `failed`.
 Each terminal outcome notifies the Session once. Archive pauses Loops with reason `archive`; unarchive resumes them.
+The Router owner moves its Loops to each new Session and reloads active ones; Loop adoption retries a failed move.
 
 Capabilities are a closed allowlist: `agent.notify`, `loop.state.put`, `loop.state.get`, `loop.ack`, `loop.log`, registry tools classified `safety: read`, environment tools (`env.*`, `device.*`), SSH tools (`ssh.*`), and `im_api.internal.read_conversation`, `composio.execute`, `web.http_request`, plus `decide`.
 Ordinary Loops may call the allowlist. Product Loops also enforce their pinned source and owner consent. Spinfoam refuses other names.
-`composio.execute` permits provider writes. SSH tools permit commands, terminal interaction, file transfers, and host trust changes. `ssh.download` requires a `/drive` destination. Other writes outside this allowlist are unavailable. Tools run through the same dispatch and IFC boundary as a round, with the Loop's sealed origin and the creator's tool disclosure.
+`composio.execute` permits provider writes. SSH tools permit commands, terminal interaction, file transfers, and host trust changes. `ssh.download` requires a `/drive` destination. Tools run through the same dispatch and IFC boundary as a round, with the Loop's sealed origin and the creator's tool disclosure.
 A Loop acts with its creator's authority through the kernel's delegated-principal wrapper `schedule|loop:<id>|<creator>`.
 `agent.notify` admits six wakes per ten minutes per Loop; an hour of continuous limiting pauses the Loop with reason `budget`.
 
@@ -102,7 +103,7 @@ Post-cutover forward repair must preserve pending events and ACKs.
 Composio trigger events use the provider event ID and trigger slug as the Loop event ID and topic.
 The payload is the V3 event `data` object. See [Composio triggers](../identity-security.md#composio-trigger-authorization).
 
-Quotas: 20 active Loops per Agent, 100 per Group, `spinfoam_max_objects` per node. Every transition into `active` (create, resume, unarchive) is admitted atomically under the Group's lock; an unarchived Loop the quota refuses stays `paused(quota)`. The spinfoam child restarts with backoff at most five times an hour, then the node reports Loops unavailable.
+Quotas: 20 active Loops per Agent, 100 per Group, `spinfoam_max_objects` per node. Create, resume and unarchive into `active` are admitted atomically under the Group's lock; an unarchived Loop the quota refuses stays `paused(quota)`. The spinfoam child restarts with backoff at most five times an hour, then the node reports Loops unavailable.
 Runtime facts: [SalixAgent.Loops](../../systems/apps/salix_agent/lib/salix_agent/loops.ex), [Host](../../systems/apps/salix_agent/lib/salix_agent/loops/host.ex), [Reconciler](../../systems/apps/salix_agent/lib/salix_agent/loops/reconciler.ex), [Capabilities](../../systems/apps/salix_agent/lib/salix_agent/loops/capabilities.ex).
 
 ## Scripts

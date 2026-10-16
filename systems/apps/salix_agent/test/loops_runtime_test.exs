@@ -10,7 +10,7 @@ defmodule SalixAgent.LoopsRuntimeTest do
   use ExUnit.Case, async: false
 
   alias SalixAgent.{AgentWorkspace, Fleet, InternalSession, InternalSessionStore, Loops}
-  alias SalixAgent.Loops.Host
+  alias SalixAgent.Loops.{Host, Reconciler}
   alias SalixAgent.SpinfoamFixture
   alias SalixAgent.LLM.Mock
   alias SalixStore.Loops, as: Store
@@ -368,6 +368,154 @@ defmodule SalixAgent.LoopsRuntimeTest do
     {:ok, record} = Store.get(loop_id)
     assert record["status"] == "active"
     assert record["object_id"] == object_id
+  end
+
+  @tag router: true
+  test "a Router session switch reloads its active loop on the new session", %{ctx: old} do
+    loop = create_loop!(old, SpinfoamFixture.delayed_notify_program(1_500, "followed"))
+    loop_id = loop["loop_id"]
+    object_id = await(fn -> Host.object_for_loop(loop_id) end, &is_binary/1)
+    assert is_binary(object_id)
+    {:ok, original} = Store.get(loop_id)
+
+    assert {:ok, %{"router_session_id" => current, "loops_rebound" => true}} = switch!(old)
+
+    ctx = %{old | session_id: current}
+    assert resident_session(loop_id, current) == current
+    refute Host.object_for_loop(loop_id) == object_id
+
+    {:ok, record} = Store.get(loop_id)
+    assert record["session_id"] == current
+    assert record["status"] == "active"
+    assert record["incarnation"] > original["incarnation"]
+    assert record["checkpoint"] == original["checkpoint"]
+    assert record["ifc"] == original["ifc"]
+
+    assert await(fn -> message_with_source(ctx, "loop:#{loop_id}:followed") end, &(&1 != nil))
+  end
+
+  @tag router: true
+  test "a failed rebind is reported and Loop adoption converges without another switch", %{
+    ctx: old
+  } do
+    loop = create_loop!(old, SpinfoamFixture.delayed_notify_program(1_500, "converged"))
+    loop_id = loop["loop_id"]
+    object_id = await(fn -> Host.object_for_loop(loop_id) end, &is_binary/1)
+    on_exit(fn -> Application.delete_env(:salix_agent, :loop_rebind_test_barrier) end)
+
+    Application.put_env(:salix_agent, :loop_rebind_test_barrier, fn
+      ^loop_id -> {:error, :injected_storage_failure}
+      _other -> :ok
+    end)
+
+    assert {:ok, %{"router_session_id" => current, "loops_rebound" => false}} = switch!(old)
+    assert {:ok, %{"session_id" => stale}} = Store.get(loop_id)
+    assert stale == old.session_id
+    assert Host.object_for_loop(loop_id) == object_id
+
+    # Storage recovers. The periodic sweep's adoption pass finishes the rebind
+    # through the Router owner and reloads the object; no command is sent.
+    Application.delete_env(:salix_agent, :loop_rebind_test_barrier)
+    Reconciler.adopt(old.agent_id)
+
+    assert resident_session(loop_id, current) == current
+    assert {:ok, %{"session_id" => ^current, "status" => "active"}} = Store.get(loop_id)
+    ctx = %{old | session_id: current}
+    assert await(fn -> message_with_source(ctx, "loop:#{loop_id}:converged") end, &(&1 != nil))
+  end
+
+  @tag router: true
+  test "Loop adoption repairs an owner crash before or after the rebind write", %{ctx: old} do
+    before_write = create_loop!(old, SpinfoamFixture.delayed_notify_program(60_000, "a"))
+    after_write = create_loop!(old, SpinfoamFixture.delayed_notify_program(60_000, "b"))
+
+    for loop <- [before_write, after_write],
+        do:
+          assert(is_binary(await(fn -> Host.object_for_loop(loop["loop_id"]) end, &is_binary/1)))
+
+    # The canonical CAS commits and the owner dies before following Loops;
+    # for one Loop it dies after the row write but before the reload.
+    current = SalixStore.Ids.new_session_id()
+
+    {:ok, _} =
+      SalixAgent.AgentControl.switch_router_session_record(
+        old.agent_id,
+        old.session_id,
+        current
+      )
+
+    {:ok, _} =
+      Store.update(after_write["loop_id"], fn row ->
+        {:ok, Map.put(row, "session_id", current)}
+      end)
+
+    assert resident_session(after_write["loop_id"], old.session_id) == old.session_id
+
+    Reconciler.adopt(old.agent_id)
+
+    for loop <- [before_write, after_write] do
+      assert resident_session(loop["loop_id"], current) == current
+      assert {:ok, %{"session_id" => ^current, "status" => "active"}} = Store.get(loop["loop_id"])
+    end
+  end
+
+  @tag router: true
+  test "concurrent switches leave Loops on the last canonical Session", %{ctx: old} do
+    loop = create_loop!(old, SpinfoamFixture.delayed_notify_program(60_000, "c"))
+    loop_id = loop["loop_id"]
+    assert is_binary(await(fn -> Host.object_for_loop(loop_id) end, &is_binary/1))
+    test = self()
+    on_exit(fn -> Application.delete_env(:salix_agent, :loop_rebind_test_barrier) end)
+
+    # The first switch's rebind stalls once, inside whichever process runs it.
+    Application.put_env(:salix_agent, :loop_rebind_test_barrier, fn _loop_id ->
+      if Process.get(:rebind_stalled) do
+        :ok
+      else
+        Process.put(:rebind_stalled, true)
+        send(test, {:rebind_stalled, self()})
+
+        receive do
+          :go -> :ok
+        end
+      end
+    end)
+
+    first = Task.async(fn -> switch!(old) end)
+    assert_receive {:rebind_stalled, stalled}, 5_000
+    {:ok, agent} = SalixAgent.Control.get_record(old.agent_id)
+    middle = agent["router_session_id"]
+    refute middle == old.session_id
+
+    second = Task.async(fn -> switch!(%{old | session_id: middle}) end)
+    refute Task.yield(second, 300)
+    send(stalled, :go)
+
+    assert {:ok, %{"router_session_id" => ^middle}} = Task.await(first, 10_000)
+    assert {:ok, %{"router_session_id" => last}} = Task.await(second, 10_000)
+    assert resident_session(loop_id, last) == last
+    assert {:ok, %{"session_id" => ^last}} = Store.get(loop_id)
+  end
+
+  defp switch!(ctx) do
+    {:ok, agent} = SalixAgent.Control.get_record(ctx.agent_id)
+
+    SalixAgent.AgentActor.switch_router_session(
+      ctx.agent_id,
+      agent["tenant_id"],
+      ctx.session_id
+    )
+  end
+
+  # The Session named by the Loop's resident object, once it equals `expected`.
+  defp resident_session(loop_id, expected) do
+    session = fn ->
+      Enum.find_value(Host.loop_objects(), fn {_object_id, ref} ->
+        if ref.loop_id == loop_id, do: ref.session_id
+      end)
+    end
+
+    await(session, &(&1 == expected))
   end
 
   @tag router: true

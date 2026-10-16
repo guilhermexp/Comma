@@ -764,6 +764,63 @@ defmodule SalixAgent.Loops do
     :ok
   end
 
+  @doc """
+  A Router's Loops follow its canonical Session. Every Loop of the Agent bound
+  to another (retired) Session is rebound to `session_id`; status, checkpoint,
+  pending events, triggers and IFC authority are unchanged. Adoption then
+  reloads each active Loop whose resident object still names the old Session.
+
+  Only the Router owner calls this, from its serialized mailbox and with the
+  canonical Session it just read (`SalixAgent.AgentRoleActor`), so a pass for an
+  already retired target cannot run. A failed rebind is returned, never
+  counted as moved; `SalixAgent.Loops.Reconciler` retries on its next pass.
+  """
+  @spec follow_router_session(String.t(), String.t()) ::
+          {:ok, non_neg_integer()}
+          | {:error, {:loops_not_rebound, [String.t()]}}
+          | {:error, term()}
+  def follow_router_session(agent_id, session_id)
+      when is_binary(agent_id) and is_binary(session_id) do
+    with {:ok, records} <- Store.list_by_agent(agent_id) do
+      results =
+        for %{"session_id" => bound} = record <- records, bound != session_id do
+          {record["id"], rebind_session(record["id"], bound, session_id)}
+        end
+
+      Reconciler.adopt(agent_id)
+
+      case for({loop_id, {:error, _}} <- results, do: loop_id) do
+        [] -> {:ok, length(results)}
+        failed -> {:error, {:loops_not_rebound, failed}}
+      end
+    end
+  end
+
+  defp rebind_session(loop_id, bound, session_id) do
+    with :ok <- run_rebind_test_barrier(loop_id) do
+      Store.update(loop_id, fn
+        %{"session_id" => ^bound} = current ->
+          {:ok, current |> Map.put("session_id", session_id) |> Map.put("updated_at", now_ms())}
+
+        # Another owner write already bound it to the canonical Session.
+        %{"session_id" => ^session_id} = current ->
+          {:unchanged, current}
+
+        _changed ->
+          {:error, :loop_changed}
+      end)
+    end
+  end
+
+  # Deterministic test seam for a failed or delayed rebind. Production has no
+  # configured callback.
+  defp run_rebind_test_barrier(loop_id) do
+    case Application.get_env(:salix_agent, :loop_rebind_test_barrier) do
+      fun when is_function(fun, 1) -> fun.(loop_id)
+      _other -> :ok
+    end
+  end
+
   @doc "Archive: every active Loop of the Agent becomes `paused(archive)`."
   @spec pause_for_archive(String.t()) :: {:ok, non_neg_integer()} | {:error, term()}
   def pause_for_archive(agent_id) do

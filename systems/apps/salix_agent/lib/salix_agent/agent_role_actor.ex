@@ -20,6 +20,8 @@ defmodule SalixAgent.AgentRoleActor do
 
   use GenServer
 
+  require Logger
+
   alias SalixAgent.AgentActor.SessionDelivery
   alias SalixAgent.{AgentControl, InternalSessionActor, InternalSessionStore}
   alias SalixStore.Ids
@@ -106,6 +108,13 @@ defmodule SalixAgent.AgentRoleActor do
   def switch_canonical_session(pid, expected_session_id, timeout \\ :infinity)
       when is_pid(pid) and is_binary(expected_session_id) do
     GenServer.call(pid, {:switch_canonical_session, expected_session_id}, timeout)
+  end
+
+  @doc false
+  def follow_canonical_loops(pid, timeout) when is_pid(pid) do
+    GenServer.call(pid, :follow_canonical_loops, timeout)
+  catch
+    :exit, reason -> {:error, {:router_owner_unavailable, reason}}
   end
 
   @doc false
@@ -228,6 +237,23 @@ defmodule SalixAgent.AgentRoleActor do
       {:error, reason, next_data} -> {:reply, {:error, reason}, next_data}
       {:error, reason} -> {:reply, {:error, reason}, data}
     end
+  end
+
+  def handle_call(:follow_canonical_loops, _from, %{switch_pending: pending} = data)
+      when not is_nil(pending) do
+    {:reply, {:error, :router_session_switching}, data}
+  end
+
+  # Serialized with every canonical switch: the Session read here is the one
+  # Loops follow, and no switch can retire it before this entry returns.
+  def handle_call(:follow_canonical_loops, _from, data) do
+    data = refresh_agent(data)
+
+    result =
+      with {:ok, session_id} <- router_session_id(data),
+           do: SalixAgent.Loops.follow_router_session(data.agent_id, session_id)
+
+    {:reply, result, data}
   end
 
   def handle_call(
@@ -450,10 +476,23 @@ defmodule SalixAgent.AgentRoleActor do
          :ok <- stop_internal_session(data.agent_id, expected_session_id) do
       SalixAgent.RouterRequestMonitor.clear_session(data.agent_id, expected_session_id)
 
+      # The switch is committed. Loops follow it in this same mailbox entry;
+      # what fails here is reported and Loop adoption retries it.
+      loops_rebound =
+        case SalixAgent.Loops.follow_router_session(data.agent_id, new_session_id) do
+          {:ok, _count} ->
+            true
+
+          {:error, reason} ->
+            Logger.warning("router loops not rebound: #{inspect(reason)}")
+            false
+        end
+
       result = %{
         "agent_id" => data.agent_id,
         "previous_session_id" => expected_session_id,
-        "router_session_id" => new_session_id
+        "router_session_id" => new_session_id,
+        "loops_rebound" => loops_rebound
       }
 
       {:ok, result, %{data | agent: updated_agent}}
