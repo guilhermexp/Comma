@@ -97,13 +97,27 @@ defmodule SalixAgent.ExternalActivity do
 
   @doc """
   Apply one journaled Connector event (`record_id` is its journal id).
+  `projected?` is false when the event is durable but its status projection
+  failed: then only its end or terminal is applied, never presented as a new
+  claim (a shown call that ended is retired and the frame stays hidden until
+  a renewal proves authority again); a start waits for the retry.
   `admitted_execution` returns the canonical `{dispatch_id, execution_id}`,
   read only until this dispatch's execution is known. `journal` pages the
   Session journal newest first (`before`, `limit`), as
   `ExternalSessionRecords.tail/5` does; it is read only for ambiguous starts.
   """
-  def observe(nil, _agent_id, _session_id, _run, _record_id, _event, _admitted, _journal),
-    do: nil
+  def observe(
+        nil,
+        _agent_id,
+        _session_id,
+        _run,
+        _record_id,
+        _event,
+        _projected,
+        _admitted,
+        _journal
+      ),
+      do: nil
 
   def observe(
         state,
@@ -112,6 +126,7 @@ defmodule SalixAgent.ExternalActivity do
         run,
         record_id,
         %{} = event,
+        projected?,
         admitted_execution,
         journal
       )
@@ -122,7 +137,9 @@ defmodule SalixAgent.ExternalActivity do
          (is_nil(state.connector_run_id) or run == state.connector_run_id) do
       case with_admitted_execution(state, admitted_execution) do
         %{execution_id: ^event_execution} = admitted ->
-          apply_event(admitted, agent_id, session_id, record_id, event, journal)
+          if projected?,
+            do: apply_event(admitted, agent_id, session_id, record_id, event, journal),
+            else: apply_unprojected(admitted, agent_id, session_id, record_id, event)
 
         %{} = admitted ->
           admitted
@@ -135,8 +152,57 @@ defmodule SalixAgent.ExternalActivity do
     end
   end
 
-  def observe(state, _agent_id, _session_id, _run, _record_id, _event, _admitted, _journal),
-    do: state
+  def observe(
+        state,
+        _agent_id,
+        _session_id,
+        _run,
+        _record_id,
+        _event,
+        _projected,
+        _admitted,
+        _journal
+      ),
+      do: state
+
+  # A durable end or terminal is a fact even when its projection failed.
+  defp apply_unprojected(state, agent_id, session_id, _record_id, %{"work_state" => work_state})
+       when work_state in ["settled", "failed"],
+       do: finish(state, agent_id, session_id)
+
+  defp apply_unprojected(
+         state,
+         agent_id,
+         session_id,
+         record_id,
+         %{"type" => "operation", "operation_id" => id, "status" => status} = event
+       )
+       when is_binary(id) and id != "" and is_binary(status) do
+    {_starts, ends} = Map.get(@tool_statuses, event["provider"], {[], []})
+
+    if status in ends do
+      shown = if map_size(state.running) > 0, do: latest(state.running)
+      state = %{state | ended_frontier: max_id(state.ended_frontier, record_id)}
+
+      state =
+        if Map.has_key?(state.running, id),
+          do: %{state | running: Map.delete(state.running, id)},
+          else: state
+
+      # Nothing new is published without projection; the shown call ended,
+      # so its frame is retired fail closed until authority is proven.
+      if (shown && shown.call["id"] == id) and not state.hidden do
+        ActivityEvent.retire(agent_id, session_id, state.scope["response_identity"])
+        %{state | hidden: true}
+      else
+        state
+      end
+    else
+      state
+    end
+  end
+
+  defp apply_unprojected(state, _agent_id, _session_id, _record_id, _event), do: state
 
   @doc """
   Renew or restore the frame from `authority`

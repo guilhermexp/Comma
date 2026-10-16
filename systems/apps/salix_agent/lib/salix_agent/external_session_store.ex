@@ -691,28 +691,31 @@ defmodule SalixAgent.ExternalSessionStore do
 
       case result do
         :ok ->
-          {:ok, %{"ok" => true}, records, appended([{params, record, status}])}
+          {:ok, %{"ok" => true}, records, appended([{params, record, status, true}])}
 
         {:error, reason} ->
           # ExternalRuntimeEventProjection's RetryProjection starts after the
           # event is durable. Preserve that post-append cache across a derived
           # status-projection failure so the identical event-id retry settles
-          # as a replay instead of attempting a stale tail append.
-          {:error, reason, records}
+          # as a replay instead of attempting a stale tail append. The event is
+          # durable even so; the owner learns it, marked as not projected.
+          {:error, reason, records, appended([{params, record, status, false}])}
       end
     end
   end
 
   # The journaled events this call settled, each with its journal record id
-  # (the canonical order), for the Session owner's transient presentation.
-  # A replay is included: the journal deduplicates storage, not presentation,
-  # which applies every journaled event idempotently.
+  # (the canonical order) and whether its status projection succeeded, for
+  # the Session owner's transient presentation. Durability, projection and
+  # the Connector's ACK are distinct: a replay is included (the journal
+  # deduplicates storage, not presentation), and so is a durable event whose
+  # projection failed.
   defp appended(entries),
     do:
       for(
-        {params, %{"id" => record_id}, status} <- entries,
+        {params, %{"id" => record_id}, status, projected?} <- entries,
         status in [:committed, :duplicate],
-        do: {params, record_id}
+        do: {params, record_id, projected?}
       )
 
   @doc """
@@ -814,9 +817,8 @@ defmodule SalixAgent.ExternalSessionStore do
         records_with_entries
         |> Enum.zip(append_results)
         |> Enum.zip(results)
-        |> Enum.flat_map(fn
-          {{{params, record}, status}, {:ok, _}} -> [{params, record, status}]
-          _failed -> []
+        |> Enum.map(fn {{{params, record}, status}, result} ->
+          {params, record, status, match?({:ok, _}, result)}
         end)
         |> appended()
 

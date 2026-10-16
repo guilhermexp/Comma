@@ -946,6 +946,55 @@ defmodule SalixAgent.ExternalSessionStoreTest do
     assert %{"response_key" => ^foreign} = shown_activity(agent_id)
   end
 
+  test "a durable end with a failed projection is not undone by a renewal before its retry" do
+    with_activity_cadence(40, 30)
+    {agent_id, pid, _agent, request} = open_task_dispatch()
+    capability = request.binding["runtime_capability"]
+    status_key = Keys.agent_external_runtime_session_status(agent_id, @session_id)
+    on_exit(fn -> S3.Fake.clear_blackhole() end)
+
+    start =
+      journal_event(
+        request,
+        claude_operation(request, "execution-one", "op-1", "started", 1_790_004_000),
+        ULID.generate()
+      )
+
+    assert {:ok, %{"ok" => true}} =
+             ExternalSessionActor.commit_connector_event(pid, capability, start)
+
+    assert %{"tool_call_id" => "op-1"} = shown_activity(agent_id)
+
+    # Status unreadable: the frame hides; the end is then journaled but its
+    # projection fails, so the Connector holds it for a retry.
+    :ok = S3.Fake.blackhole({:fail, 503, :get, status_key})
+    assert eventually(fn -> is_nil(shown_activity(agent_id)) end)
+
+    stop =
+      journal_event(
+        request,
+        claude_operation(request, "execution-one", "op-1", "completed", 1_790_004_001),
+        ULID.generate(start["event_id"])
+      )
+
+    assert {:error, _projection_failed} =
+             ExternalSessionActor.commit_connector_event(pid, capability, stop)
+
+    # Storage recovers before the retry: renewals prove authority again and
+    # restore the true state, which no longer holds the ended call.
+    :ok = S3.Fake.clear_blackhole()
+    assert eventually(fn -> match?(%{"phase" => "thinking"}, shown_activity(agent_id)) end)
+    restored = shown_activity(agent_id)["sequence"]
+    assert eventually(fn -> shown_activity(agent_id)["sequence"] > restored + 1 end)
+    assert %{"phase" => "thinking"} = shown_activity(agent_id)
+
+    # The delayed retry settles as a duplicate and changes nothing.
+    assert {:ok, %{"ok" => true}} =
+             ExternalSessionActor.commit_connector_event(pid, capability, stop)
+
+    assert %{"phase" => "thinking"} = shown_activity(agent_id)
+  end
+
   test "a running call journaled after another call's end presents; the ended call does not" do
     {agent_id, pid, _agent, request} = open_task_dispatch()
     capability = request.binding["runtime_capability"]
@@ -1063,6 +1112,7 @@ defmodule SalixAgent.ExternalSessionStoreTest do
   end
 
   test "an end journaled before a failed projection applies when its retry settles" do
+    with_activity_cadence(40, 30)
     {agent_id, pid, _agent, request} = open_task_dispatch()
     capability = request.binding["runtime_capability"]
 
@@ -1076,7 +1126,7 @@ defmodule SalixAgent.ExternalSessionStoreTest do
     assert {:ok, %{"ok" => true}} =
              ExternalSessionActor.commit_connector_event(pid, capability, start)
 
-    assert %{"tool_call_id" => "op-1"} = shown = shown_activity(agent_id)
+    assert %{"tool_call_id" => "op-1"} = shown_activity(agent_id)
 
     stop =
       journal_event(
@@ -1092,11 +1142,14 @@ defmodule SalixAgent.ExternalSessionStoreTest do
     assert {:error, _projection_failed} =
              ExternalSessionActor.commit_connector_event(pid, capability, stop)
 
-    assert shown_activity(agent_id) == shown
+    # The end is durable: the ended call is retired, never shown again; the
+    # next proven renewal presents the true state.
+    refute match?(%{"tool_call_id" => "op-1"}, shown_activity(agent_id))
     :ok = S3.Fake.clear_blackhole()
+    assert eventually(fn -> match?(%{"phase" => "thinking"}, shown_activity(agent_id)) end)
 
     # The Connector retries the same event: a journal duplicate, ACKed once
-    # its projection succeeds, and now presented.
+    # its projection succeeds, and still nothing reopens.
     assert {:ok, %{"ok" => true}} =
              ExternalSessionActor.commit_connector_event(pid, capability, stop)
 

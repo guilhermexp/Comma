@@ -366,8 +366,8 @@ defmodule SalixAgent.ExternalSessionActor do
           data = %{data | records: records} |> present_committed_events(appended)
           reply({:ok, response}, data)
 
-        {:error, reason, records} ->
-          data = %{data | records: records}
+        {:error, reason, records, journaled} ->
+          data = %{data | records: records} |> present_committed_events(journaled)
           reply({:error, reason}, data)
 
         {:error, _} = error ->
@@ -1757,7 +1757,7 @@ defmodule SalixAgent.ExternalSessionActor do
   # status owner, which admits one per dispatch
   # (`ExternalSessionStatus.apply_work_state/4`).
   defp present_committed_events(data, appended) do
-    Enum.reduce(appended, data, fn {params, record_id}, data ->
+    Enum.reduce(appended, data, fn {params, record_id, projected?}, data ->
       activity =
         ExternalActivity.observe(
           data.activity,
@@ -1766,6 +1766,7 @@ defmodule SalixAgent.ExternalSessionActor do
           params["connector_run_id"],
           record_id,
           params["event"],
+          projected?,
           fn -> admitted_execution(data.agent_id, data.session_id) end,
           fn before, limit ->
             SalixAgent.ExternalSessionRecords.tail(
