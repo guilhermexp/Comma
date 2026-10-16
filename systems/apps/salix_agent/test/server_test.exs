@@ -2104,15 +2104,17 @@ defmodule SalixAgent.ServerTest do
 
     {:parked, _owned} = wake_and_settle(a)
 
-    assert_receive {:im_provider_call, ^a, "feishu", "feishu.reply_text",
-                    %{
-                      "connect_id" => "feishu-1",
-                      "params" => %{"message_id" => "om_explicit", "text" => "visible reply"}
-                    }},
-                   1_000
-
+    # The tool may still run after the actor parks; its terminal result is
+    # committed only after the provider call returns.
     terminal = await_tool_terminal!(a, router_session_id(a), "reply-1")
     assert terminal_status(terminal) == "completed"
+
+    assert_received {:im_provider_call, ^a, "feishu", "feishu.reply_text",
+                     %{
+                       "connect_id" => "feishu-1",
+                       "params" => %{"message_id" => "om_explicit", "text" => "visible reply"}
+                     }}
+
     await_assistant_content!(a, router_session_id(a), "done")
 
     session = read_session!(a, router_session_id(a))
