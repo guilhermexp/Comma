@@ -327,14 +327,14 @@ test("device cards keep connection and readiness separate and target management 
   await expect(page.getByRole("dialog", { name: "Connect manually" })).toHaveCount(0);
   await page
     .context()
-    .route("https://comma.surf/**", (route) =>
+    .route("https://github.com/guilhermexp/Comma/releases/**", (route) =>
       route.fulfill({ status: 200, contentType: "text/html", body: "" })
     );
   const [download] = await Promise.all([
     page.waitForEvent("popup"),
     prompt.getByRole("button", { name: "Download" }).click(),
   ]);
-  expect(download.url()).toBe("https://comma.surf/download?start=mac");
+  expect(download.url()).toBe("https://github.com/guilhermexp/Comma/releases/latest");
   await expect(prompt).not.toBeVisible();
 });
 

@@ -36,7 +36,7 @@ describe("Comma web runtime config", () => {
 
   it.each([
     ["staging", "https://salix-staging.comma.surf"],
-    ["prod", "https://salix.comma.surf"],
+    ["prod", "https://xperience-studio.com"],
   ] as const)(
     "binds %s builds to their configured API origin",
     async (flavor, apiBaseUrl) => {

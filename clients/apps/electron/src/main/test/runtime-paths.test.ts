@@ -30,7 +30,7 @@ describe("Comma Electron runtime paths", () => {
   });
 
   it.each([
-    ["prod", "@comma"],
+    ["prod", "@comma-gx"],
     ["staging", "@comma-staging"],
     ["dev", "@comma-dev"],
   ] as const)("resolves %s from its release runtime namespace", (flavor, namespace) => {

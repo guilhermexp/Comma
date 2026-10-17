@@ -16,7 +16,7 @@ describe("Comma web release API binding", () => {
 
   it.each([
     ["staging", "https://salix-staging.comma.surf"],
-    ["prod", "https://salix.comma.surf"],
+    ["prod", "https://xperience-studio.com"],
   ] as const)(
     "ignores and removes a stale local API override in the %s artifact",
     async (flavor, expectedApiBaseUrl) => {

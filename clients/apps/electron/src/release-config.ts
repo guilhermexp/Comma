@@ -5,12 +5,15 @@ import {
 } from "@comma/config";
 
 export type CommaBuildFlavor = CommaChannel;
-export type CommaReleaseChannel = "prod" | "staging";
+export type CommaReleaseChannel = "prod";
 
 declare const COMMA_DEFINED_BUILD_FLAVOR: string | undefined;
 declare const COMMA_DEFINED_R2_PUBLIC_BASE_URL: string | undefined;
 declare const COMMA_DEFINED_UPDATE_URL: string | undefined;
 declare const COMMA_DEFINED_API_BASE_URL: string | undefined;
+
+/** The GitHub repository whose releases carry the desktop app and its feed. */
+export const defaultReleaseRepository = "guilhermexp/Comma";
 
 export interface CommaReleaseConfig {
   flavor: CommaBuildFlavor;
@@ -24,34 +27,36 @@ export interface CommaReleaseConfig {
   appUserModelId: string;
   urlScheme: string;
   apiBaseUrl: string;
-  r2Path?: string;
+  releaseRepository?: string;
   updateUrl?: string;
 }
 
 export type CommaPackableReleaseConfig = CommaReleaseConfig & {
   releaseChannel: CommaReleaseChannel;
-  r2Path: string;
+  releaseRepository: string;
+  updateUrl: string;
 };
 
-const configs: Record<CommaBuildFlavor, Omit<CommaReleaseConfig, "updateUrl">> = {
+const configs: Record<
+  CommaBuildFlavor,
+  Omit<CommaReleaseConfig, "releaseRepository" | "updateUrl">
+> = {
   prod: {
     flavor: "prod",
-    runtimeNamespace: "@comma",
+    runtimeNamespace: "@comma-gx",
     releaseChannel: "prod",
     packageName: "comma",
     productName: "Comma",
     executableName: "comma",
-    packId: "surf.comma.desktop",
-    appBundleId: "surf.comma.desktop",
-    appUserModelId: "surf.comma.desktop",
-    urlScheme: "comma",
+    packId: "com.guilhermexp.comma",
+    appBundleId: "com.guilhermexp.comma",
+    appUserModelId: "com.guilhermexp.comma",
+    urlScheme: "comma-gx",
     apiBaseUrl: getCommaConfig("prod").apiBaseUrl,
-    r2Path: "comma/electron/prod",
   },
   staging: {
     flavor: "staging",
     runtimeNamespace: "@comma-staging",
-    releaseChannel: "staging",
     packageName: "comma-staging",
     productName: "Comma Staging",
     executableName: "comma-staging",
@@ -60,7 +65,6 @@ const configs: Record<CommaBuildFlavor, Omit<CommaReleaseConfig, "updateUrl">> =
     appUserModelId: "surf.comma.desktop.staging",
     urlScheme: "comma-staging",
     apiBaseUrl: getCommaConfig("staging").apiBaseUrl,
-    r2Path: "comma/electron/staging",
   },
   dev: {
     flavor: "dev",
@@ -107,13 +111,21 @@ function joinUrl(baseUrl: string, path: string) {
   return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
+/**
+ * Velopack reads `releases.<channel>.json` and the packages it names relative
+ * to this URL. GitHub redirects `releases/latest/download/<asset>` to the
+ * asset of the newest non-prerelease release, so the feed always follows the
+ * repository's latest desktop release.
+ */
+export function githubReleaseUpdateUrl(repository: string) {
+  return `https://github.com/${repository}/releases/latest/download`;
+}
+
 function assertPackableReleaseConfig(
   config: CommaReleaseConfig
 ): asserts config is CommaPackableReleaseConfig {
-  if (!config.releaseChannel || !config.r2Path) {
-    throw new Error(
-      "Velopack releases are only enabled for COMMA_BUILD_FLAVOR=prod or staging."
-    );
+  if (!config.releaseChannel || !config.releaseRepository || !config.updateUrl) {
+    throw new Error("Velopack releases are only enabled for COMMA_BUILD_FLAVOR=prod.");
   }
 }
 
@@ -122,20 +134,22 @@ export function getCommaReleaseConfig(
 ): CommaReleaseConfig {
   const base = configs[flavor];
   const apiBaseUrl = readEnv("COMMA_API_BASE_URL") || base.apiBaseUrl;
-  const explicitUpdateUrl = readEnv("COMMA_UPDATE_URL");
-  const r2BaseUrl =
-    readEnv("COMMA_R2_PUBLIC_BASE_URL") || readEnv("CLOUDFLARE_R2_PUBLIC_BASE_URL");
-  const updateUrl =
-    explicitUpdateUrl ||
-    (base.r2Path && r2BaseUrl ? joinUrl(r2BaseUrl, base.r2Path) : undefined);
-
   const config: CommaReleaseConfig = {
     ...base,
     apiBaseUrl,
   };
 
-  if (updateUrl) {
-    config.updateUrl = updateUrl;
+  if (base.releaseChannel) {
+    const releaseRepository =
+      readEnv("COMMA_RELEASE_REPOSITORY") || defaultReleaseRepository;
+    config.releaseRepository = releaseRepository;
+    config.updateUrl =
+      readEnv("COMMA_UPDATE_URL") || githubReleaseUpdateUrl(releaseRepository);
+  } else {
+    const explicitUpdateUrl = readEnv("COMMA_UPDATE_URL");
+    if (explicitUpdateUrl) {
+      config.updateUrl = explicitUpdateUrl;
+    }
   }
 
   return config;
@@ -149,6 +163,11 @@ export function getPackableReleaseConfig(): CommaPackableReleaseConfig {
   return config;
 }
 
+/**
+ * Compute Node host artifacts are published outside the desktop release. A
+ * build without `COMMA_R2_PUBLIC_BASE_URL` has no published host; the user
+ * must point `COMMA_VMM_DOWNLOAD_URL` at one instead.
+ */
 export function getPublishedAssetUrl(path: string): string {
   const baseUrl =
     readEnv("COMMA_R2_PUBLIC_BASE_URL") || readEnv("CLOUDFLARE_R2_PUBLIC_BASE_URL");

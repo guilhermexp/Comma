@@ -5,10 +5,11 @@ import { useSyncExternalStore } from "react";
 import { openNativePlatformExternalUrl } from "../runtime-chat/nativePlatformActions";
 
 /**
- * The website's download page. `start=mac` makes the page begin the macOS
- * download as it opens (website/src/main.ts).
+ * The latest desktop release on GitHub. Its page carries the DMG and the
+ * first-open steps for an app that is not notarized.
  */
-export const commaMacDownloadUrl = "https://comma.surf/download?start=mac";
+export const commaMacDownloadUrl =
+  "https://github.com/guilhermexp/Comma/releases/latest";
 
 export type DesktopAppFeature =
   | "browser"

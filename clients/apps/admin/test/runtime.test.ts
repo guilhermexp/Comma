@@ -21,7 +21,7 @@ describe("Comma Admin runtime boundary", () => {
     const channels = [
       ["dev", "http://127.0.0.1:4200"],
       ["staging", "https://salix-staging.comma.surf"],
-      ["prod", "https://salix.comma.surf"],
+      ["prod", "https://xperience-studio.com"],
     ] as const;
 
     for (const [flavor, apiBaseUrl] of channels) {
@@ -53,7 +53,7 @@ describe("Comma Admin runtime boundary", () => {
         COMMA_API_BASE_URL: "   ",
         COMMA_BUILD_FLAVOR: "prod",
       }).define.COMMA_DEFINED_API_BASE_URL
-    ).toBe(JSON.stringify("https://salix.comma.surf"));
+    ).toBe(JSON.stringify("https://xperience-studio.com"));
   });
 
   it("permits an operator-selected API only in an explicit selfhost production build", () => {

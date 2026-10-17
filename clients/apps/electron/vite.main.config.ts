@@ -23,7 +23,7 @@ export default defineConfig({
         process.env.CLOUDFLARE_R2_PUBLIC_BASE_URL ??
         ""
     ),
-    COMMA_DEFINED_UPDATE_URL: JSON.stringify(process.env.COMMA_UPDATE_URL ?? ""),
+    COMMA_DEFINED_UPDATE_URL: JSON.stringify(releaseConfig.updateUrl ?? ""),
     COMMA_DEFINED_API_BASE_URL: JSON.stringify(releaseConfig.apiBaseUrl),
   },
   resolve: {

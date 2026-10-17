@@ -28,7 +28,7 @@ const commaConfigs: Record<CommaChannel, CommaConfig> = {
   prod: {
     channel: "prod",
     productName: "Comma",
-    apiBaseUrl: "https://salix.comma.surf",
+    apiBaseUrl: "https://xperience-studio.com",
   },
 };
 

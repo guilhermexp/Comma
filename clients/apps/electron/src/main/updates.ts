@@ -47,7 +47,7 @@ export function getUpdateStatus() {
       error:
         releaseConfig.flavor === "dev"
           ? "Comma Dev does not use a remote update feed. Set COMMA_UPDATE_URL to test updates locally."
-          : "Set COMMA_UPDATE_URL or COMMA_R2_PUBLIC_BASE_URL to a Velopack release feed before checking for updates.",
+          : `${releaseConfig.productName} builds only check for updates when packaged as COMMA_BUILD_FLAVOR=prod or built with COMMA_UPDATE_URL.`,
     };
   }
 

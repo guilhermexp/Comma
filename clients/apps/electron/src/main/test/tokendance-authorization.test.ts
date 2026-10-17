@@ -142,7 +142,7 @@ function setup(timeoutMs?: number, channel: CommaChannel = "dev") {
 
 describe("TokenDance Responses authorization", () => {
   it.each([
-    ["prod", "app://comma", "Comma"],
+    ["prod", "app://comma-gx", "Comma"],
     ["staging", "app://comma-staging", "Comma Staging"],
     ["dev", "app://comma-dev", "Comma Dev"],
   ] as const)(
