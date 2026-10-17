@@ -887,6 +887,87 @@ defmodule SalixIM.ControlCommandTest do
       assert ordinary["delivery_filter"]["participant_ids"] != []
     end
 
+    # Comma sends composer text without attachments as a plain string, not as
+    # content blocks (`Comma.Conversations.salix_user_content/3`).
+    test "client string /new from Comma runs the clear command", ctx do
+      assert {:ok, first} =
+               SalixIM.RouterConversationInput.append_user_message(ctx.group_id, %{
+                 "client_request_id" => "client-string-new",
+                 "content" => "/new"
+               })
+
+      assert {:ok, _prompt} =
+               SalixIM.RouterConversationInput.append_user_message(ctx.group_id, %{
+                 "client_request_id" => "client-string-prose",
+                 "content" => "/new idea for the launch"
+               })
+
+      assert [{:switch_router_session, _agent_id, _tenant_id, _session_id}] =
+               StubAgentControl.calls()
+
+      assert {:ok, [command, reply, ordinary]} =
+               SalixIM.Conversations.list_group_conversation_messages(
+                 ctx.group_id,
+                 first["conversation_id"],
+                 limit: 10
+               )
+
+      assert command["delivery_filter"] == %{"participant_ids" => []}
+      assert hd(reply["content"])["text"] =~ "Started a new Router session"
+      assert ordinary["delivery_filter"]["participant_ids"] != []
+
+      # The confirmation marks where the Comma chat view starts.
+      assert reply["metadata"]["router_session_reset"] == %{
+               "router_session_id" => "ses1_0000000000000007002",
+               "command_client_request_id" => "client-string-new"
+             }
+
+      assert SalixIM.RouterConversationInput.since_session_reset([command, reply, ordinary]) ==
+               [reply, ordinary]
+    end
+
+    test "client clear confirms in the sender's Comma locale", ctx do
+      assert {:ok, first} =
+               SalixIM.RouterConversationInput.append_user_message(ctx.group_id, %{
+                 "client_request_id" => "client-pt-new",
+                 "content" => "/new",
+                 "metadata" => %{"locale" => "pt-BR"}
+               })
+
+      assert {:ok, [_command, reply]} =
+               SalixIM.Conversations.list_group_conversation_messages(
+                 ctx.group_id,
+                 first["conversation_id"],
+                 limit: 10
+               )
+
+      assert hd(reply["content"])["text"] =~ "Nova sessão do Router iniciada"
+      assert SalixIM.RouterConversationInput.session_reset?(reply)
+    end
+
+    test "a failed client clear writes no session reset marker", ctx do
+      Agent.update(StubAgentControl, &Map.put(&1, :clear_result, {:error, :unavailable}))
+
+      assert {:ok, first} =
+               SalixIM.RouterConversationInput.append_user_message(ctx.group_id, %{
+                 "client_request_id" => "client-failed-new",
+                 "content" => "/new"
+               })
+
+      assert {:ok, [command, reply]} =
+               SalixIM.Conversations.list_group_conversation_messages(
+                 ctx.group_id,
+                 first["conversation_id"],
+                 limit: 10
+               )
+
+      assert hd(reply["content"])["text"] =~ "Router clear failed"
+      refute SalixIM.RouterConversationInput.session_reset?(reply)
+
+      assert SalixIM.RouterConversationInput.since_session_reset([command, reply]) ==
+               [command, reply]
+    end
+
     test "compact triggers a compaction and reports the resulting context", ctx do
       assert {:ok, :command} =
                enqueue(ctx, "<salix-command>compact</salix-command>", "cmd-compact")

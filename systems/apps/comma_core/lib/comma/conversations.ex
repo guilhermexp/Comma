@@ -671,6 +671,12 @@ defmodule Comma.Conversations do
              through_id: message_id,
              limit: 17
            ) do
+      # A Router chat reset ends the history its view can reveal.
+      messages =
+        if binding["kind"] == "user_chat",
+          do: SalixIM.RouterConversationInput.since_session_reset(messages),
+          else: messages
+
       {:ok, messages}
     end
   end
@@ -730,6 +736,11 @@ defmodule Comma.Conversations do
 
     case salix_conversation["messages"] do
       messages when is_list(messages) ->
+        messages =
+          if salix_conversation["kind"] == "user_chat",
+            do: SalixIM.RouterConversationInput.since_session_reset(messages),
+            else: messages
+
         summary
         |> Map.put("messages", messages)
         |> Map.put("final_message_id", final_message_id(messages))
@@ -986,6 +997,8 @@ defmodule Comma.Conversations do
            ),
          true <- salix_conversation["kind"] == "user_chat",
          {:ok, refreshed} <- project_binding_from_salix(binding, salix_conversation) do
+      messages = SalixIM.RouterConversationInput.since_session_reset(messages)
+
       {:ok,
        refreshed
        |> public_summary()

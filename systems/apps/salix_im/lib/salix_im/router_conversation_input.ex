@@ -110,8 +110,12 @@ defmodule SalixIM.RouterConversationInput do
             metadata = %{
               "provider" => "internal",
               "connect_id" => "internal",
+              "group_id" => group_id,
               "conversation_id" => conversation["conversation_id"],
-              "source_message_id" => result["message_id"]
+              "router_participant_id" => conversation["router_participant_id"],
+              "source_message_id" => result["message_id"],
+              "client_request_id" => message["client_request_id"],
+              "locale" => get_in(message, ["metadata", "locale"])
             }
 
             # The committed Message is the at-most-once receipt. Neither it nor
@@ -135,6 +139,25 @@ defmodule SalixIM.RouterConversationInput do
     end)
   end
 
+  @doc """
+  The messages a Comma Router chat shows: those from the latest successful
+  session reset on (`ControlCommand` `new`/`clear` confirmation). Earlier
+  messages stay in the transcript; the view no longer presents them.
+  """
+  @spec since_session_reset([map()]) :: [map()]
+  def since_session_reset(messages) when is_list(messages) do
+    case messages |> Enum.reverse() |> Enum.find_index(&session_reset?/1) do
+      nil -> messages
+      index -> Enum.take(messages, -(index + 1))
+    end
+  end
+
+  @spec session_reset?(map()) :: boolean()
+  def session_reset?(%{"actor_type" => "agent", "metadata" => %{} = metadata}),
+    do: is_map(metadata[ControlCommand.session_reset_key()])
+
+  def session_reset?(_message), do: false
+
   # Provider adapters have already checked the sender and sealed its provenance.
   # The owner persists these facts with the Message, before any Session admission.
   def append_provider_input(group_id, source_message_id, payload, metadata \\ %{}) do
@@ -150,8 +173,11 @@ defmodule SalixIM.RouterConversationInput do
     end
   end
 
-  # Only sender-authored text blocks grant authority; attachment names and
-  # other rich content are never interpreted as instructions.
+  # Only sender-authored text grants authority; attachment names and other rich
+  # content are never interpreted as instructions. Comma sends composer text
+  # without attachments as a plain string.
+  defp command_text(content) when is_binary(content), do: content
+
   defp command_text(content) when is_list(content) do
     content
     |> Enum.flat_map(fn

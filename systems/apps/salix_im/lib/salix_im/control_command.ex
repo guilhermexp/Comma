@@ -16,10 +16,11 @@ defmodule SalixIM.ControlCommand do
   router content — see `intercept/4`.
 
   Comma client Router chats also grant authority at `RouterConversationInput`:
-  only authenticated user text is parsed, after product authorization. The
-  command is recorded with an empty delivery filter, never sent to the Router
-  loop, and only the first committed insertion dispatches it. Replies are
-  ordinary internal Messages with an empty delivery filter as well. As with
+  only authenticated user text, sent as a string or as text blocks, is parsed,
+  after product authorization. The command is recorded with an empty delivery
+  filter, never sent to the Router loop, and only the first committed insertion
+  dispatches it. Replies are Router-authored Messages appended through the
+  Conversation owner with an empty delivery filter as well. As with
   provider commands, a crash after the receipt commits can lose execution; the
   user must send a new command. Task conversations do not grant authority.
 
@@ -37,7 +38,10 @@ defmodule SalixIM.ControlCommand do
     * `status` — the Router session's model and context usage.
     * `new` (alias `clear`) — start a fresh Router session, preserving the
       previous transcript. Comma Router chats also accept the exact plain text
-      `/new`; see `SalixIM.RouterConversationInput`.
+      `/new`; see `SalixIM.RouterConversationInput`. In a Comma Router chat the
+      successful confirmation carries `metadata.router_session_reset`, and the
+      chat view then starts at that confirmation
+      (`SalixIM.RouterConversationInput.since_session_reset/1`).
     * `compact` — trigger a compaction of the Router session context.
     * `emergency-compact` — mask historical non-model messages over 1,000 bytes.
     * `ls <path>` — list a path in the Router agent's VFS (`ls /`).
@@ -68,7 +72,9 @@ defmodule SalixIM.ControlCommand do
   `new`/`clear` reuses the dashboard's owner-routed canonical session switch,
   including its expected-session fence. It affects every chat using this Router,
   stops the retired session runtime (and so any Router turn in progress, without
-  undoing effects it already caused), and preserves its transcript. The agent,
+  undoing effects it already caused), and preserves its transcript. Earlier
+  messages leave the Comma chat view, not the stored Conversation; Slack and
+  Feishu chats keep their own history. The agent,
   its configuration, tools, grants, files, Tasks and Loops stay; Loops follow
   the new session (`SalixAgent.Loops.follow_router_session/2`), and a reply
   says when some have not moved yet. A lost reply
@@ -162,6 +168,11 @@ defmodule SalixIM.ControlCommand do
   # them: Slack caps `text` at 40kB and both providers render a long message as
   # an unreadable slab well before that.
   @cat_max_bytes 8_000
+
+  # Metadata on the internal confirmation of a successful `new`/`clear`. Comma
+  # Router chats show messages from the latest one on. Only this module writes
+  # it: `internal.send_message` does not accept metadata from agents.
+  @session_reset_key "router_session_reset"
   @ls_max_entries 100
 
   # No literal tags: Slack mrkdwn eats `<...>` as an entity and Feishu
@@ -431,15 +442,26 @@ defmodule SalixIM.ControlCommand do
   def run(group_id, parsed, metadata, agent_id, session_id)
       when is_binary(group_id) and is_map(metadata) and is_binary(agent_id) and
              is_binary(session_id) do
-    text = execute_for_group(group_id, parsed, agent_id, session_id)
+    {text, reply_metadata} =
+      case execute_for_group(group_id, parsed, agent_id, session_id, metadata["locale"]) do
+        {text, reply_metadata} -> {text, reply_metadata}
+        text -> {text, %{}}
+      end
+
     log(group_id, parsed, metadata, :executed)
-    respond(agent_id, metadata, text)
+    respond(agent_id, metadata, text, reply_metadata)
   end
 
   # ---- execution ----
 
   # Read the current group setting inside the execution task, not at enqueue time.
-  defp execute_for_group(group_id, {:ok, {command, _path}} = parsed, agent_id, session_id)
+  defp execute_for_group(
+         group_id,
+         {:ok, {command, _path}} = parsed,
+         agent_id,
+         session_id,
+         _locale
+       )
        when command in [:ls, :cat] do
     case GroupDirectory.get_group(group_id) do
       {:ok, %{"control_command_vfs_enabled" => true}} ->
@@ -451,15 +473,12 @@ defmodule SalixIM.ControlCommand do
     end
   end
 
-  defp execute_for_group(group_id, {:ok, :clear}, agent_id, session_id) do
+  defp execute_for_group(group_id, {:ok, :clear}, agent_id, session_id, locale) do
     with {:ok, %{"tenant_id" => tenant_id}} <- GroupDirectory.get_group(group_id),
          {:ok, %{"router_session_id" => new_session_id} = result} <-
            AgentControl.switch_router_session(agent_id, tenant_id, session_id) do
-      "Started a new Router session: #{new_session_id}. " <>
-        "Earlier messages stay visible but are no longer in the agent's context; " <>
-        "its settings, tools, files, tasks and reminders are unchanged. " <>
-        "A reply in progress was stopped; actions it already took are not undone. " <>
-        "This applies to all chats using this Router." <> loops_note(result)
+      text = cleared_text(locale, new_session_id) <> loops_note(result)
+      {text, %{@session_reset_key => %{"router_session_id" => new_session_id}}}
     else
       {:error, {:stale_router_session, _current_session_id}} ->
         "The Router session has already changed. This clear did not start another session."
@@ -469,8 +488,36 @@ defmodule SalixIM.ControlCommand do
     end
   end
 
-  defp execute_for_group(_group_id, parsed, agent_id, session_id),
+  defp execute_for_group(_group_id, parsed, agent_id, session_id, _locale),
     do: execute(parsed, agent_id, session_id)
+
+  # Comma stamps the sender's account language on its Messages; provider
+  # commands carry none and stay in English.
+  defp cleared_text("pt-BR", session_id),
+    do:
+      "Nova sessão do Router iniciada: #{session_id}. " <>
+        "As mensagens anteriores saíram do contexto do agente e este chat agora mostra só esta sessão; " <>
+        "o histórico anterior continua guardado. " <>
+        "Configurações, ferramentas, arquivos, tarefas e lembretes não mudaram. " <>
+        "Uma resposta em andamento foi interrompida; as ações que ela já fez não são desfeitas. " <>
+        "Isso vale para todos os chats que usam este Router."
+
+  defp cleared_text("zh-CN", session_id),
+    do:
+      "已开始新的 Router 会话：#{session_id}。" <>
+        "之前的消息已不在智能体上下文中，此聊天现在只显示本次会话；之前的记录仍会保留。" <>
+        "设置、工具、文件、任务和提醒保持不变。" <>
+        "正在进行的回复已停止；已执行的操作不会撤销。" <>
+        "此变更适用于使用此 Router 的所有聊天。"
+
+  defp cleared_text(_locale, session_id),
+    do:
+      "Started a new Router session: #{session_id}. " <>
+        "Earlier messages are no longer in the agent's context, and the Comma chat " <>
+        "now shows only this session; the earlier transcript is kept. " <>
+        "Its settings, tools, files, tasks and reminders are unchanged. " <>
+        "A reply in progress was stopped; actions it already took are not undone. " <>
+        "This applies to all chats using this Router."
 
   # A Loop the switch could not move keeps its old Session until adoption
   # retries; the reply must not claim every background watch moved.
@@ -763,8 +810,56 @@ defmodule SalixIM.ControlCommand do
 
   # ---- reply ----
 
+  @doc "The message metadata key that marks a successful Router session reset."
+  def session_reset_key, do: @session_reset_key
+
   @doc false
-  def respond(agent_id, metadata, text) do
+  def respond(agent_id, metadata, text, reply_metadata \\ %{})
+
+  # Comma Router chats: the owner appends the reply, so it can carry the reset
+  # marker. It is never agent input.
+  def respond(agent_id, %{"provider" => "internal"} = metadata, text, reply_metadata) do
+    reply_metadata =
+      case metadata["client_request_id"] do
+        request_id
+        when is_binary(request_id) and is_map_key(reply_metadata, @session_reset_key) ->
+          put_in(reply_metadata, [@session_reset_key, "command_client_request_id"], request_id)
+
+        _ ->
+          reply_metadata
+      end
+
+    attrs =
+      %{
+        "kind" => "message",
+        "actor_type" => "agent",
+        "agent_id" => agent_id,
+        "client_request_id" => "salix-command:" <> metadata["source_message_id"],
+        "content" => [%{"type" => "text", "text" => text}],
+        "delivery_filter" => %{"participant_ids" => []}
+      }
+      |> put_present("participant_id", metadata["router_participant_id"])
+      |> then(&if(reply_metadata == %{}, do: &1, else: Map.put(&1, "metadata", reply_metadata)))
+
+    case SalixIM.ConversationServer.append_group_conversation_agent_message(
+           metadata["group_id"],
+           metadata["conversation_id"],
+           agent_id,
+           attrs
+         ) do
+      {:ok, _result} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "salix control command reply failed provider=internal reason=#{inspect(reason)}"
+        )
+
+        :ok
+    end
+  end
+
+  def respond(agent_id, metadata, text, _reply_metadata) do
     case reply_call(metadata, text) do
       {:ok, provider, api, params} ->
         args = %{"connect_id" => trim(metadata["connect_id"]), "params" => params}
@@ -798,19 +893,8 @@ defmodule SalixIM.ControlCommand do
     case trim(metadata["provider"]) do
       "slack" -> slack_reply(metadata, text)
       "feishu" -> feishu_reply(metadata, text)
-      "internal" -> internal_reply(metadata, text)
       _ -> :unsupported
     end
-  end
-
-  defp internal_reply(metadata, text) do
-    {:ok, "internal", "internal.send_message",
-     %{
-       "conversation_id" => metadata["conversation_id"],
-       "request_id" => "salix-command:" <> metadata["source_message_id"],
-       "content" => [%{"type" => "text", "text" => text}],
-       "delivery_filter" => %{"participant_ids" => []}
-     }}
   end
 
   defp slack_reply(metadata, text) do

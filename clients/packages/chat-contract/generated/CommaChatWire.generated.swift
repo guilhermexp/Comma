@@ -999,6 +999,7 @@ public struct CommaChatMessage: Codable, Equatable, Sendable {
     public let refs: [CommaChatConversationRef]
     public let replyToMessageId: String?
     public let role: String
+    public let sessionReset: CommaChatMessageSessionReset?
     public let source: CommaChatMessageSource
     public let status: String?
     public let text: String
@@ -1021,6 +1022,7 @@ public struct CommaChatMessage: Codable, Equatable, Sendable {
         refs: [CommaChatConversationRef],
         replyToMessageId: String? = nil,
         role: String,
+        sessionReset: CommaChatMessageSessionReset? = nil,
         source: CommaChatMessageSource,
         status: String? = nil,
         text: String,
@@ -1042,6 +1044,7 @@ public struct CommaChatMessage: Codable, Equatable, Sendable {
         self.refs = refs
         self.replyToMessageId = replyToMessageId
         self.role = role
+        self.sessionReset = sessionReset
         self.source = source
         self.status = status
         self.text = text
@@ -1066,6 +1069,7 @@ public struct CommaChatMessage: Codable, Equatable, Sendable {
         self.refs = try container.decode([CommaChatConversationRef].self, forKey: .refs)
         self.replyToMessageId = try CommaNativeContractValidation.decodeOptional(String.self, from: container, forKey: .replyToMessageId)
         self.role = try container.decode(String.self, forKey: .role)
+        self.sessionReset = try CommaNativeContractValidation.decodeOptional(CommaChatMessageSessionReset.self, from: container, forKey: .sessionReset)
         self.source = try container.decode(CommaChatMessageSource.self, forKey: .source)
         self.status = try CommaNativeContractValidation.decodeOptional(String.self, from: container, forKey: .status)
         self.text = try container.decode(String.self, forKey: .text)
@@ -1096,6 +1100,7 @@ public struct CommaChatMessage: Codable, Equatable, Sendable {
         try container.encode(self.refs, forKey: .refs)
         try container.encodeIfPresent(self.replyToMessageId, forKey: .replyToMessageId)
         try container.encode(self.role, forKey: .role)
+        try container.encodeIfPresent(self.sessionReset, forKey: .sessionReset)
         try container.encode(self.source, forKey: .source)
         try container.encodeIfPresent(self.status, forKey: .status)
         try container.encode(self.text, forKey: .text)
@@ -1119,6 +1124,7 @@ public struct CommaChatMessage: Codable, Equatable, Sendable {
         case refs = "refs"
         case replyToMessageId = "replyToMessageId"
         case role = "role"
+        case sessionReset = "sessionReset"
         case source = "source"
         case status = "status"
         case text = "text"
@@ -1513,6 +1519,30 @@ public struct CommaChatConversationRef: Codable, Equatable, Sendable {
         case conversationId = "conversationId"
         case kind = "kind"
         case title = "title"
+    }
+}
+
+public struct CommaChatMessageSessionReset: Codable, Equatable, Sendable {
+    public let commandClientRequestId: String?
+
+    public init(
+        commandClientRequestId: String? = nil
+    ) {
+        self.commandClientRequestId = commandClientRequestId
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.commandClientRequestId = try CommaNativeContractValidation.decodeOptional(String.self, from: container, forKey: .commandClientRequestId)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(self.commandClientRequestId, forKey: .commandClientRequestId)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case commandClientRequestId = "commandClientRequestId"
     }
 }
 

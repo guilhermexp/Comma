@@ -2391,6 +2391,7 @@ export function normalizeServerMessages(
       refs: blockViews.refs,
       role,
       platformSource: platformMessage?.provider,
+      sessionReset: sessionResetOf(message),
       source: "server",
       status: "committed",
       text: strippedText,
@@ -2399,6 +2400,9 @@ export function normalizeServerMessages(
     return current && sameMessage(current, next) ? [current] : [next];
   });
 
+  // A Router session reset starts the view over: messages from before it leave
+  // the view, while the server keeps the earlier transcript.
+  dropBeforeSessionReset(normalizedTail);
   const tailById = new Map(
     normalizedTail.map((message) => [message.messageId, message] as const)
   );
@@ -2413,6 +2417,8 @@ export function normalizeServerMessages(
     normalized.push(message);
   }
 
+  dropBeforeSessionReset(normalized);
+
   if (
     normalized.length === previous.length &&
     normalized.every((message, index) => message === previous[index])
@@ -2421,6 +2427,21 @@ export function normalizeServerMessages(
   }
 
   return normalized;
+}
+
+function dropBeforeSessionReset(messages: ChatMessage[]) {
+  const resetIndex = messages.findLastIndex((message) => message.sessionReset);
+  if (resetIndex > 0) messages.splice(0, resetIndex);
+}
+
+function sessionResetOf(message: SalixMessage): ChatMessage["sessionReset"] {
+  const reset = message.metadata?.router_session_reset;
+  if (message.actor_type !== "agent" || typeof reset !== "object" || reset === null) {
+    return undefined;
+  }
+  const commandClientRequestId = (reset as { command_client_request_id?: unknown })
+    .command_client_request_id;
+  return typeof commandClientRequestId === "string" ? { commandClientRequestId } : {};
 }
 
 function canonicalLocalFiles(message: SalixMessage): CommaLocalFileRef[] {
@@ -2472,6 +2493,8 @@ function sameMessage(a: ChatMessage, b: ChatMessage) {
     a.threadRootMessageId === b.threadRootMessageId &&
     a.role === b.role &&
     a.platformSource === b.platformSource &&
+    a.sessionReset?.commandClientRequestId === b.sessionReset?.commandClientRequestId &&
+    Boolean(a.sessionReset) === Boolean(b.sessionReset) &&
     a.source === b.source &&
     a.status === b.status &&
     a.text === b.text
@@ -2777,6 +2800,10 @@ function reconcilePending(pending: PendingSend[], serverMessages: ChatMessage[])
   const seenClientRequestIds = new Set(
     serverMessages.flatMap((message) => {
       const ids = message.clientRequestId ? [message.clientRequestId] : [];
+      // The reset view omits its own command message; its confirmation settles it.
+      if (message.sessionReset?.commandClientRequestId) {
+        ids.push(message.sessionReset.commandClientRequestId);
+      }
       if (message.role === "user") {
         ids.push(message.messageId);
       }

@@ -197,6 +197,10 @@ export const chatMessageSchema = z
     platformSource: z.string().min(1).max(64).optional(),
     refs: z.array(chatConversationRefSchema),
     role: z.string(),
+    /** The Router session reset confirmation; the chat view starts here. */
+    sessionReset: z
+      .object({ commandClientRequestId: z.string().optional() })
+      .optional(),
     source: z.enum(["server", "pending"]),
     status: z.string().optional(),
     text: z.string(),

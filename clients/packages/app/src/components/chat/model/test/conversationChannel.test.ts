@@ -1508,6 +1508,69 @@ describe("ConversationChannel", () => {
     expect(channel.getSnapshot().messages[0]?.refs[0]?.title).toBe("B");
   });
 
+  it("starts the Router chat view at a session reset and keeps it there", async () => {
+    const api = createConversationApi();
+    const channel = createChannel(api, { requestIds: ["req_new"] });
+    channel.start();
+    api.emit(
+      0,
+      {
+        type: "snapshot",
+        messages: [
+          message("msg_old_q", "user", "remember heliotrope"),
+          message("msg_old_a", "assistant", "noted"),
+        ],
+      },
+      "snapshot"
+    );
+
+    const send = channel.send("/new");
+    const confirmation = message(
+      "msg_reset",
+      "assistant",
+      "Started a new Router session: ses_2.",
+      "salix-command:msg_new",
+      {
+        metadata: {
+          router_session_reset: {
+            router_session_id: "ses_2",
+            command_client_request_id: "req_new",
+          },
+        },
+      }
+    );
+    // The server view omits the command message; it starts at the confirmation.
+    api.resolveSend(0, conversation({ status: "active" }, [confirmation]));
+    await send;
+
+    expect(channel.getSnapshot().pending).toEqual([]);
+    expect(channel.getSnapshot().messages).toMatchObject([
+      {
+        messageId: "msg_reset",
+        role: "assistant",
+        sessionReset: { commandClientRequestId: "req_new" },
+      },
+    ]);
+
+    // A later snapshot that still overlaps older history cannot bring it back.
+    api.emit(
+      0,
+      {
+        type: "snapshot",
+        messages: [
+          message("msg_old_a", "assistant", "noted"),
+          confirmation,
+          message("msg_next", "user", "what word did I ask you to remember?"),
+        ],
+      },
+      "snapshot"
+    );
+    expect(channel.getSnapshot().messages.map((item) => item.messageId)).toEqual([
+      "msg_reset",
+      "msg_next",
+    ]);
+  });
+
   it("reconciles optimistic sends by client_request_id and retries with the same id", async () => {
     const api = createConversationApi();
     let clientDeviceId = "device-a";

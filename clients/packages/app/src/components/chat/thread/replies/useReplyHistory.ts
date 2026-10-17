@@ -38,6 +38,8 @@ export function useReplyHistory({
   useEffect(() => () => historyRequest.current?.abort(), [api, historyScope]);
   const historyPrefix = useMemo(() => {
     if (replyHistory?.scope !== historyScope || replyHistory.api !== api) return [];
+    // Nothing from before a Router session reset returns to the view.
+    if (currentMessages[0]?.sessionReset) return [];
     const currentIds = new Set(currentMessages.map((message) => message.messageId));
     return replyHistory.messages.filter(
       (message) => !currentIds.has(message.messageId)

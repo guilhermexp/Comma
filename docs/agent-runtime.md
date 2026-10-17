@@ -190,7 +190,7 @@ A cached catalog never grants permission to dispatch a tool.
 Router startup checks its canonical Session. Switching stops the actor before retirement.
 Home `/new` (exact) and `new`/`clear` switch once per receipt, not as Router input.
 The new Session is empty; a running turn stops without undoing effects.
-Composer command labels show only names; later same-line text is the argument.
+Home then shows Messages from the `metadata.router_session_reset` reply on.
 Stored revisions bypass birth probes. New Sessions retain them.
 A live ownership cell routes locally. A fresh RPC head naming another owner fences that cell at its epoch before retry.
 See the [TLA+ mapping](../tla/salix/README.md).

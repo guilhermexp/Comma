@@ -1671,6 +1671,78 @@ defmodule CommaWeb.CommaApiTest do
     |> expect_status(404)
   end
 
+  test "Home /new switches the Router session and the chat shows only the new session" do
+    user =
+      admin_req(:post, "/v1/comma/admin/users", json: %{"email" => "home-new@example.com"})
+      |> expect_status(201)
+      |> Map.fetch!(:body)
+
+    workspace = create_ready_workspace!(user["id"])
+    issue_billing_grant(workspace)
+
+    session =
+      admin_req(:post, "/v1/comma/admin/users/#{user["id"]}/sessions", json: %{})
+      |> expect_status(201)
+      |> Map.fetch!(:body)
+
+    :ok = CommaWeb.TestConvergence.workspace!(workspace["id"])
+    group_id = workspace["default_group_id"]
+
+    chat =
+      user_req(session["token"], :post, "/v1/comma/groups/#{group_id}/assistant-chat", json: %{})
+      |> expect_status(200)
+      |> Map.fetch!(:body)
+
+    messages_path = "/v1/comma/groups/#{group_id}/conversations/#{chat["id"]}/messages"
+    {:ok, group} = SalixIM.GroupDirectory.get_group(group_id)
+    {:ok, %{"router_session_id" => old_session_id}} = router_record(group["router_agent_id"])
+
+    for {request_id, text} <- [
+          {"home-before", "Remember the word heliotrope"},
+          {"home-new", "/new"}
+        ] do
+      user_req(session["token"], :post, messages_path,
+        json: %{"client_request_id" => request_id, "message" => %{"content" => text}}
+      )
+      |> expect_status(202)
+    end
+
+    [reply] =
+      eventually(fn ->
+        body =
+          user_req(
+            session["token"],
+            :get,
+            "/v1/comma/groups/#{group_id}/conversations/#{chat["id"]}"
+          )
+          |> expect_status(200)
+          |> Map.fetch!(:body)
+
+        if Enum.any?(body["messages"], &get_in(&1, ["metadata", "router_session_reset"])),
+          do: body["messages"]
+      end)
+
+    assert %{"actor_type" => "agent", "metadata" => %{"router_session_reset" => reset}} = reply
+    assert hd(reply["content"])["text"] =~ "Started a new Router session"
+    assert reset["command_client_request_id"] == "home-new"
+
+    assert {:ok, %{"router_session_id" => new_session_id}} =
+             router_record(group["router_agent_id"])
+
+    assert reset["router_session_id"] == new_session_id
+    refute new_session_id == old_session_id
+
+    # The transcript keeps the earlier messages; only the chat view starts over.
+    assert {:ok, transcript} =
+             SalixIM.RouterConversationProjection.list_group_router_messages(group_id)
+
+    assert Enum.map(transcript, & &1["client_request_id"]) |> Enum.take(2) ==
+             ["home-before", "home-new"]
+  end
+
+  defp router_record(agent_id),
+    do: SalixStore.CasRecord.get(SalixStore.Keys.ctl_agent(agent_id))
+
   test "workspace Compute API exposes stable intent without provider identity" do
     suffix = System.unique_integer([:positive])
 
