@@ -201,6 +201,35 @@ describe("real chat Markdown and attachment composition", () => {
     expect(container.querySelector('[data-testid^="chat-inline-task"]')).toBeNull();
   });
 
+  it("starts a Router session reset with an empty thread and no confirmation text", () => {
+    const reset = message("msg_reset", "assistant", "Nova sessão do Router iniciada", {
+      sessionReset: { commandClientRequestId: "req_new" },
+    });
+    const { container, rerender } = render(
+      <ConversationThread
+        groupId="grp_1"
+        workspaceId="wsp_1"
+        messages={[reset]}
+        onDiscard={noop}
+        onRetry={noop}
+      />
+    );
+    expect(container.querySelector('[data-message-id="msg_reset"]')).toBeNull();
+    expect(screen.queryByText(/Nova sessão do Router/)).toBeNull();
+
+    rerender(
+      <ConversationThread
+        groupId="grp_1"
+        workspaceId="wsp_1"
+        messages={[reset, message("msg_after", "user", "oi")]}
+        onDiscard={noop}
+        onRetry={noop}
+      />
+    );
+    expect(container.querySelector('[data-message-id="msg_reset"]')).toBeNull();
+    expect(container.querySelector('[data-message-id="msg_after"]')).not.toBeNull();
+  });
+
   it("identifies external user messages beside the copy action while keeping agent replies visible", async () => {
     const { container } = render(
       <ConversationThread

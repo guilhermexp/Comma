@@ -58,7 +58,12 @@ export function useConversationThread({
     groupId,
     historyScope,
   });
-  const { messages } = history;
+  // A Router session reset starts the thread empty: its marker bounds the view
+  // but is not shown.
+  const messages = useMemo(
+    () => history.messages.filter((message) => !message.sessionReset),
+    [history.messages]
+  );
   const locale = useCommaLocale();
   // Attachment bytes come from the same api and conversation the transcript was
   // read from, so an attachment is addressed by where it arrived rather than by
