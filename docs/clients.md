@@ -32,11 +32,10 @@ Stop/sign-out/session-generation change/exit/parent stdin closure cancel recepti
 
 ### Native helper
 
-Builds use `clients/apps/electron/scripts/opendropkit-release.json`.
-Use an AFK-surf-owned fine-grained `OPENDROPKIT_RELEASE_TOKEN`, limited to private `AFK-surf/OpenDropKit` Contents read.
-Store it in Actions/Dependabot secrets. Each fetch receives it. Dependabot workflows receive only Dependabot secrets.
+Builds use `clients/apps/electron/scripts/opendropkit-release.json`, read from private `AFK-surf/OpenDropKit` with `OPENDROPKIT_RELEASE_TOKEN`.
+Without that token or the override, `build:native` ships no helper and AirDrop reports unavailable. Desktop releases never set either.
 Local fetch: `OPENDROPKIT_RELEASE_TOKEN=$(gh auth token) pnpm --dir clients --filter @comma/electron build:native:airdrop`.
-GitHub API archives must match pinned SHA-256 before extraction. `.native-cache` needs no token. Missing releases/downloads fail builds. No checkout required.
+GitHub API archives must match pinned SHA-256 before extraction. `.native-cache` needs no token. With a token, missing releases/downloads fail builds.
 Packages include helper/GPL-3.0 license without AirDrop identity entitlements. macOS rejects privately entitled helpers without relaxed signature enforcement.
 Override: `COMMA_OPENDROPKIT_BINARY`, beside `OpenDropKit-LICENSE`.
 

@@ -29,6 +29,11 @@ historical branch artifact is not reconciled until a mainline release commits
 successfully. Merge authorization, CI/review gates, stored-data safety, and
 post-rollout convergence still apply.
 
+The macOS desktop app is released from a `v<version>` tag on a `main` commit
+through GitHub Releases of this repository, not through the cluster flow.
+Agents must not push release tags or publish releases without the owner's
+request. See `clients/apps/electron/RELEASE.md`.
+
 ## Salix
 
 For Salix conversations, participants, messages, or delivery, use

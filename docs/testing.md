@@ -105,9 +105,9 @@ and the AppKit-owned menu items, need a run on a Mac.
 
 The `ci:*` scripts are the canonical local/CI entry points for deterministic
 jobs. `ci:build:web` creates production Web and Admin bundles.
-`ci:build:electron` creates an unsigned staging-flavor macOS package; signing,
-notarization, Velopack feed publication, and the GitHub prerelease remain the
-responsibility of the staging release workflow.
+`ci:build:electron` creates an unsigned staging-flavor macOS package. It is a
+build check, not a release. The desktop release is the prod flavor, built and
+published by `Desktop Release`; see [desktop release](../clients/apps/electron/RELEASE.md).
 
 Client workflows run these checks and builds:
 
@@ -119,9 +119,9 @@ Client workflows run these checks and builds:
   Client changes retain both suites and the native checks.
 - `Client Build` creates the production Web/Admin bundles and the unsigned
   staging Electron package.
-- `Electron Release - Staging` runs after relevant merges to `main`, publishes
-  the Velopack staging feed, and creates a GitHub prerelease containing the
-  signed and notarized client artifacts.
+- `Desktop Release` runs for a pushed `v<version>` tag. It builds the ad hoc
+  signed macOS arm64 app and publishes the GitHub release with its DMG and
+  Velopack feed.
 
 Pull requests always receive stable `Required Client CI` and
 `Required Client Build` aggregate checks. Configure both names as required in
@@ -148,9 +148,8 @@ run id, and attempt:
 `Client Build` also uploads downloadable GitHub Actions artifacts for three
 days: `client-web-build-*` contains production Web/Admin bundles and
 `client-electron-macos-staging-*` contains the unsigned staging Electron
-package. These are build-validation artifacts, not releases. The signed and
-notarized installer is attached to the GitHub prerelease after a relevant merge
-to `main`.
+package. These are build-validation artifacts, not releases. The installer is attached
+to the GitHub release that `Desktop Release` publishes for a tag.
 
 CI also supports publishing smoke artifacts to the Comma E2E Reports dashboard
 through Cloudflare R2. The R2 publish step is optional and runs only when the

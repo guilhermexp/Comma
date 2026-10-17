@@ -9,25 +9,10 @@ Recovery may restore a historical branch snapshot, but that snapshot is not a la
 The coordinator fences manifest V2 attempts, applies Helm, verifies the app, then records core success before provider convergence.
 Normal prepare requires positive `deployed` Helm revision `comma`. Installation and adoption are separate. Helm owns desired state. No manual topology shortcuts.
 
-## Marketing website
+## Desktop app
 
-Website CI builds and smoke-tests `website/`. Website-only edits skip client E2E and Electron builds; shared build inputs select both.
-The build installs Chromium and Linux dependencies for the hero capture. Workers Builds cannot install them.
-Main deployment downloads that run's artifact and uses Wrangler. PR builds do not deploy.
-The `prod` environment's `COMMA_WEBSITE_CLOUDFLARE_API_TOKEN` needs Worker and custom-domain permissions for this account and zone.
-
-```text
-Worker: comma-website-static
-Account: 0367b0648b476f564267fd6f4c2d515e
-Domain: comma.surf
-Artifact directory: website/dist
-Workflow: .github/workflows/client-build.yml
-Build command (from repository root): pnpm build:website:cloudflare
-Deploy command (from repository root): pnpm deploy:website
-```
-
-After merge, disconnect Worker Git in Settings > Builds. Keep Worker and domain. No branch deployment.
-Check DNS/routes before domain connection. Wrangler returns 404 for unknown paths. Verify localized pages, docs, downloads, and cache headers.
+The macOS desktop app has its own release path through GitHub Releases.
+See [desktop release](../clients/apps/electron/RELEASE.md). It does not use this cluster flow.
 
 ## Rollout policy and human shutdown approval
 
