@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { arch, platform } from "node:process";
 import { join, resolve } from "node:path";
 import { getPackableReleaseConfig } from "../src/release-config";
+import { resolveMacosSigning } from "./macos-signing";
 
 interface PackageJson {
   version?: string;
@@ -143,35 +144,32 @@ if (mainExe) {
   args.push("--mainExe", mainExe);
 }
 
-if (forgePlatform === "darwin" && process.env.COMMA_MACOS_SIGN === "1") {
-  const signIdentity = process.env.COMMA_MACOS_SIGN_IDENTITY;
-  const keychain = process.env.COMMA_MACOS_KEYCHAIN;
-  const notaryProfile = process.env.COMMA_MACOS_NOTARY_PROFILE;
+if (forgePlatform === "darwin") {
+  // Comma distributes macOS first installs as DMGs, not Velopack PKGs.
+  args.push("--noInst", "true");
 
-  if (!signIdentity || !keychain || !notaryProfile) {
-    throw new Error(
-      "COMMA_MACOS_SIGN=1 requires COMMA_MACOS_SIGN_IDENTITY, COMMA_MACOS_KEYCHAIN, and COMMA_MACOS_NOTARY_PROFILE."
-    );
-  }
-
+  const signing = resolveMacosSigning(process.env);
+  // Velopack adds its updater to the bundle, so it must sign the bundle again.
+  // It signs with the hardened runtime; the ad hoc entitlements disable the
+  // library validation that ad hoc code cannot pass.
   args.push(
     "--signAppIdentity",
-    signIdentity,
+    signing.identity,
     "--signEntitlements",
-    resolve(appDir, "build/entitlements.mac.entitlements"),
+    resolve(
+      appDir,
+      signing.developerId
+        ? "build/entitlements.mac.entitlements"
+        : "build/entitlements.mac.adhoc.entitlements"
+    ),
     "--signDisableDeep",
-    "true",
-    // Comma distributes macOS first-install builds as DMGs, not Velopack PKGs.
-    "--noInst",
-    "true",
-    "--keychain",
-    keychain,
-    "--notaryProfile",
-    notaryProfile
+    "true"
   );
-
-  if (process.env.COMMA_MACOS_INSTALL_SIGN_IDENTITY) {
-    args.push("--signInstallIdentity", process.env.COMMA_MACOS_INSTALL_SIGN_IDENTITY);
+  if (signing.keychain) {
+    args.push("--keychain", signing.keychain);
+  }
+  if (signing.notaryProfile) {
+    args.push("--notaryProfile", signing.notaryProfile);
   }
 }
 
@@ -179,7 +177,7 @@ console.log(`Packing ${packId} ${packVersion} (${releaseConfig.releaseChannel})`
 console.log(`packDir: ${packDir}`);
 console.log(`outputDir: ${outputDir}`);
 
-const result = spawnSync("vpk", args, {
+const result = spawnSync("vpk", [...args, "--skip-updates", "true"], {
   stdio: "inherit",
 });
 

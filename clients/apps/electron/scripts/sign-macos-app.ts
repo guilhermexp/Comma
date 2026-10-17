@@ -10,6 +10,7 @@ import {
   packagedSideChatHostAppPath,
   packagedSleepGuardPath,
 } from "./native-paths";
+import { resolveMacosSigning, type MacosSigning } from "./macos-signing";
 
 const appDir = resolve(import.meta.dirname, "..");
 const repoRoot = resolve(appDir, "../../..");
@@ -79,9 +80,9 @@ function resolveAppBundle() {
   throw new Error(`Cannot find ${bundleName} under ${outDir}`);
 }
 
-function signNestedHelperApp(helperApp: string, identity: string, keychain: string) {
+function signNestedHelperApp(helperApp: string, signing: MacosSigning) {
   if (!existsSync(helperApp)) {
-    throw new Error(`Cannot find CommaComputerUse helper app at ${helperApp}`);
+    throw new Error(`Cannot find helper app at ${helperApp}`);
   }
 
   console.log(`Signing helper app: ${basename(helperApp)}`);
@@ -91,30 +92,20 @@ function signNestedHelperApp(helperApp: string, identity: string, keychain: stri
     "--app-path",
     helperApp,
     "--sign-identity",
-    identity,
-    "--keychain",
-    keychain,
-    "--hardened-runtime",
-    "--timestamp",
+    signing.identity,
+    ...(signing.keychain ? ["--keychain", signing.keychain] : []),
+    ...(signing.developerId ? ["--hardened-runtime", "--timestamp"] : []),
     "--entitlements",
     entitlements,
   ]);
 }
 
 async function main() {
-  if (forgePlatform !== "darwin" || process.env.COMMA_MACOS_SIGN !== "1") {
+  if (forgePlatform !== "darwin") {
     return;
   }
 
-  const identity = process.env.COMMA_MACOS_SIGN_IDENTITY;
-  const keychain = process.env.COMMA_MACOS_KEYCHAIN;
-
-  if (!identity || !keychain) {
-    throw new Error(
-      "COMMA_MACOS_SIGN=1 requires COMMA_MACOS_SIGN_IDENTITY and COMMA_MACOS_KEYCHAIN."
-    );
-  }
-
+  const signing = resolveMacosSigning(process.env);
   const app = resolveAppBundle();
   const notchHost = packagedNotchHostPath(app);
   const computerUseHelper = packagedComputerUseAppPath(app, forgePlatform, forgeArch);
@@ -123,20 +114,28 @@ async function main() {
     existsSync(path)
   );
 
-  signNestedHelperApp(computerUseHelper, identity, keychain);
-  signNestedHelperApp(sideChatHelper, identity, keychain);
+  signNestedHelperApp(computerUseHelper, signing);
+  signNestedHelperApp(sideChatHelper, signing);
 
-  console.log(`Signing ${app}`);
+  console.log(`Signing ${app} ${signing.developerId ? "with Developer ID" : "ad hoc"}`);
   for (const binary of binaries) {
     console.log(`Signing extra binary: ${basename(binary)}`);
   }
 
   await sign({
     app,
-    identity,
-    keychain,
+    identity: signing.identity,
+    // An ad hoc identity is not a keychain certificate to look up.
+    identityValidation: signing.developerId,
+    ...(signing.keychain ? { keychain: signing.keychain } : {}),
     platform: "darwin",
-    optionsForFile: () => ({ hardenedRuntime: true, entitlements }),
+    // Hardened runtime matters only for notarization. Ad hoc code has no team
+    // ID, so library validation would refuse Electron's own frameworks.
+    optionsForFile: () => ({
+      hardenedRuntime: signing.developerId,
+      entitlements,
+      ...(signing.developerId ? {} : { timestamp: "none" }),
+    }),
     preAutoEntitlements: false,
     preEmbedProvisioningProfile: false,
     binaries,

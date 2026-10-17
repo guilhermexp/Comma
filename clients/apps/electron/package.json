@@ -19,10 +19,9 @@
     "profile:local-data:bundle": "vite build --config ./scripts/vite.profile-local-data.config.ts",
     "profile:local-data:self-test": "ELECTRON_RUN_AS_NODE=1 electron --no-warnings --experimental-strip-types ./scripts/profile-local-data.mjs --self-test",
     "pack:velopack": "tsx ./scripts/pack-velopack.ts",
-    "release:version:staging": "tsx ./scripts/resolve-staging-release-version.ts",
-    "release:velopack": "tsx ./scripts/download-release-feed.ts && NODE_ENV=production pnpm build:native && electron-forge package && tsx ./scripts/sign-macos-app.ts && tsx ./scripts/release-velopack.ts",
+    "release:velopack": "tsx ./scripts/download-release-feed.ts && NODE_ENV=production pnpm build:native && pnpm_config_node_linker=hoisted electron-forge package && tsx ./scripts/sign-macos-app.ts && tsx ./scripts/release-velopack.ts",
     "release:velopack:prod": "COMMA_BUILD_FLAVOR=prod pnpm release:velopack",
-    "release:velopack:staging": "COMMA_BUILD_FLAVOR=staging pnpm release:velopack"
+    "release:version": "tsx ./scripts/release-version.ts"
   },
   "dependencies": {
     "@comma/app": "workspace:*",

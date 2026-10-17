@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 import {
+  copyFileSync,
   createReadStream,
   existsSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -28,8 +31,12 @@ export function getReleaseArtifactBaseName(packVersion: string) {
   return `Comma-${packVersion}`;
 }
 
-export function getDmgArtifactName({ packVersion }: { packVersion: string }) {
-  return `${getReleaseArtifactBaseName(packVersion)}.dmg`;
+/**
+ * The DMG keeps one name across versions so the in-app link
+ * `releases/latest/download/<name>` always starts the newest install.
+ */
+export function getDmgArtifactName({ arch }: { arch: string }) {
+  return `Comma-macos-${arch}.dmg`;
 }
 
 function updateJsonFile(path: string, renamedFiles: Map<string, string>) {
@@ -97,10 +104,6 @@ function getNormalizedArtifactName(fileName: string, packVersion: string) {
     return `${baseName}.zip`;
   }
 
-  if (fileName.endsWith(".dmg") && fileName.includes(packVersion)) {
-    return `${baseName}.dmg`;
-  }
-
   return undefined;
 }
 
@@ -166,7 +169,6 @@ export function normalizeReleaseArtifactNames({
     renamedFiles
   );
   updateTextFile(resolve(releaseOutputDir, `RELEASES-${releaseChannel}`), renamedFiles);
-  updateTextFile(resolve(releaseOutputDir, `dmg.${releaseChannel}.txt`), renamedFiles);
 }
 
 function readJson(path: string) {
@@ -358,19 +360,60 @@ export async function validateReleaseArtifacts({
       }
     }
   }
+}
 
-  const dmgPointerPath = resolve(releaseOutputDir, `dmg.${releaseChannel}.txt`);
-  if (existsSync(dmgPointerPath)) {
-    const dmgName = readFileSync(dmgPointerPath, "utf-8").trim();
-    assertLocalArtifactPath(dmgName, dmgPointerPath);
-
-    const dmgPath = resolve(releaseOutputDir, dmgName);
-    if (
-      !dmgName.endsWith(".dmg") ||
-      !existsSync(dmgPath) ||
-      !statSync(dmgPath).isFile()
-    ) {
-      throw new Error(`DMG pointer artifact not found: ${dmgPath}`);
-    }
+/**
+ * Copies one GitHub release's assets into `stageDir`: its feed, the packages
+ * of `packVersion`, the portable zip, and the DMG. Velopack resolves each feed
+ * entry next to the feed (`releases/latest/download/<file>`), and older
+ * packages live in older releases, so the staged feed lists only this
+ * version's packages. A client more than one version behind finds no delta
+ * chain from its version and downloads the full package.
+ */
+export function stageGithubReleaseAssets({
+  releaseOutputDir,
+  releaseChannel,
+  packVersion,
+  dmgName,
+  stageDir,
+}: {
+  releaseOutputDir: string;
+  releaseChannel: string;
+  packVersion: string;
+  dmgName: string;
+  stageDir: string;
+}) {
+  const feedName = `releases.${releaseChannel}.json`;
+  const feed = readJson(resolve(releaseOutputDir, feedName));
+  if (!isRecord(feed) || !Array.isArray(feed.Assets)) {
+    throw new Error(`Release feed must contain an Assets array: ${feedName}`);
   }
+  const current = parseReleaseFeedAssets(resolve(releaseOutputDir, feedName)).filter(
+    (asset) => asset.Version === packVersion
+  );
+  const currentNames = new Set(current.map((asset) => asset.FileName));
+  const portableName = `${getReleaseArtifactBaseName(packVersion)}.zip`;
+  const files = [...currentNames, portableName, dmgName];
+
+  rmSync(stageDir, { force: true, recursive: true });
+  mkdirSync(stageDir, { recursive: true });
+  for (const file of files) {
+    assertLocalArtifactPath(file, feedName);
+    const source = resolve(releaseOutputDir, file);
+    if (!existsSync(source) || !statSync(source).isFile()) {
+      throw new Error(`Release asset not found: ${source}`);
+    }
+    copyFileSync(source, resolve(stageDir, file));
+  }
+  writeFileSync(
+    resolve(stageDir, feedName),
+    `${JSON.stringify({
+      ...feed,
+      Assets: feed.Assets.filter(
+        (asset) => isRecord(asset) && currentNames.has(asset.FileName as string)
+      ),
+    })}\n`
+  );
+
+  return [feedName, ...files];
 }

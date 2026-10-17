@@ -2,7 +2,10 @@
  * The synchronicity release Comma ships. One node daemon per install, bundled
  * the way salix-connect is: a single static binary under
  * `dist/native/<platform>/<arch>/`, fetched from the GitHub release rather
- * than built, because the source tree is not expected to be present.
+ * than built, because the source tree is not expected to be present. The
+ * archives come from a byte-for-byte mirror of the upstream
+ * AFK-surf/synchronicity release, kept as a prerelease of this repository so
+ * it never becomes the latest desktop release.
  *
  * The client and the daemon are the same binary, and the control protocol
  * only speaks to its own build (`x-synch-control-version`), so the version
@@ -17,7 +20,7 @@ export const synchControlProtocol = {
   wireVersion: "6",
 } as const;
 
-export const synchReleaseBaseUrl = `https://github.com/AFK-surf/synchronicity/releases/download/${synchReleaseTag}`;
+export const synchReleaseBaseUrl = `https://github.com/guilhermexp/Comma/releases/download/synch-${synchReleaseTag}`;
 
 type SynchArchive = {
   archive: string;

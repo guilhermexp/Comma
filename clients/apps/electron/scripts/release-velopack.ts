@@ -8,16 +8,18 @@ import {
   rmSync,
   statSync,
   symlinkSync,
-  writeFileSync,
 } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { arch as hostArch, platform as hostPlatform } from "node:process";
 import { tmpdir } from "node:os";
 import { notarize } from "@electron/notarize";
 import { getPackableReleaseConfig } from "../src/release-config";
+import { resolveMacosSigning } from "./macos-signing";
 import {
   getDmgArtifactName,
+  getReleaseArtifactBaseName,
   normalizeReleaseArtifactNames,
+  stageGithubReleaseAssets,
   validateReleaseArtifacts,
 } from "./release-artifacts";
 
@@ -34,11 +36,10 @@ const forgePlatform = process.env.COMMA_FORGE_PLATFORM ?? hostPlatform;
 const forgeArch = process.env.COMMA_FORGE_ARCH ?? hostArch;
 const outDir = process.env.COMMA_FORGE_OUT_DIR ?? resolve(appDir, "out");
 const packVersion = process.env.COMMA_PACK_VERSION ?? packageJson.version ?? "0.0.0";
-const releaseOutputDir = resolve(
-  appDir,
-  process.env.COMMA_RELEASES_DIR ?? "Releases",
-  releaseConfig.releaseChannel
-);
+const releasesDir = resolve(appDir, process.env.COMMA_RELEASES_DIR ?? "Releases");
+const releaseOutputDir = resolve(releasesDir, releaseConfig.releaseChannel);
+/** Exactly the files one GitHub release publishes; see stageGithubReleaseAssets. */
+const githubAssetsDir = resolve(releasesDir, "github");
 
 function listDirectory(path: string) {
   if (!existsSync(path)) {
@@ -113,15 +114,16 @@ function resolvePackDir() {
 }
 
 function findPortableZip() {
-  const portableZip = readdirSync(releaseOutputDir).find((entry) =>
-    entry.endsWith("-Portable.zip")
+  const portableZip = resolve(
+    releaseOutputDir,
+    `${getReleaseArtifactBaseName(packVersion)}.zip`
   );
 
-  if (!portableZip) {
-    throw new Error(`Velopack portable zip not found in ${releaseOutputDir}`);
+  if (!existsSync(portableZip)) {
+    throw new Error(`Velopack portable zip not found: ${portableZip}`);
   }
 
-  return resolve(releaseOutputDir, portableZip);
+  return portableZip;
 }
 
 function findExtractedApp(root: string) {
@@ -136,21 +138,18 @@ function findExtractedApp(root: string) {
   return resolve(root, appBundle);
 }
 
-async function createSignedDmg() {
-  if (forgePlatform !== "darwin" || process.env.COMMA_MACOS_SIGN !== "1") {
-    return;
+/**
+ * Builds the first-install DMG from the Velopack portable app, so the app a
+ * user drags to Applications already carries Velopack's updater. Developer ID
+ * releases also sign the DMG, and notarize and staple it when a notarytool
+ * profile is configured; ad hoc releases ship the DMG unsigned.
+ */
+async function createDmg() {
+  if (forgePlatform !== "darwin") {
+    return undefined;
   }
 
-  const identity = process.env.COMMA_MACOS_SIGN_IDENTITY;
-  const keychain = process.env.COMMA_MACOS_KEYCHAIN;
-  const keychainProfile = process.env.COMMA_MACOS_NOTARY_PROFILE;
-
-  if (!identity || !keychain || !keychainProfile) {
-    throw new Error(
-      "DMG creation requires COMMA_MACOS_SIGN_IDENTITY, COMMA_MACOS_KEYCHAIN, and COMMA_MACOS_NOTARY_PROFILE."
-    );
-  }
-
+  const signing = resolveMacosSigning(process.env);
   const tempDir = mkdtempSync(join(tmpdir(), "comma-dmg-"));
   const stagingDir = resolve(tempDir, "staging");
   const portableDir = resolve(tempDir, "portable");
@@ -160,10 +159,12 @@ async function createSignedDmg() {
     const portableZip = findPortableZip();
 
     run("mkdir", ["-p", portableDir, stagingDir]);
-    run("unzip", ["-q", portableZip, "-d", portableDir]);
+    run("ditto", ["-x", "-k", portableZip, portableDir]);
 
     const portableApp = findExtractedApp(portableDir);
-    run("xcrun", ["stapler", "validate", portableApp]);
+    if (signing.notaryProfile) {
+      run("xcrun", ["stapler", "validate", portableApp]);
+    }
     run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", portableApp]);
 
     const appCopyPath = resolve(stagingDir, basename(portableApp));
@@ -183,32 +184,37 @@ async function createSignedDmg() {
       tempDmgPath,
     ]);
 
-    console.log(`Signing DMG ${tempDmgPath}`);
-    run("codesign", ["--sign", identity, "--timestamp", tempDmgPath]);
+    if (signing.developerId) {
+      console.log(`Signing DMG ${tempDmgPath}`);
+      run("codesign", [
+        "--sign",
+        signing.identity,
+        ...(signing.keychain ? ["--keychain", signing.keychain] : []),
+        "--timestamp",
+        tempDmgPath,
+      ]);
+    }
 
-    console.log(`Notarizing DMG ${tempDmgPath}`);
-    await notarize({
-      appPath: tempDmgPath,
-      keychain,
-      keychainProfile,
-    });
+    if (signing.notaryProfile) {
+      console.log(`Notarizing DMG ${tempDmgPath}`);
+      await notarize({
+        appPath: tempDmgPath,
+        keychainProfile: signing.notaryProfile,
+        ...(signing.keychain ? { keychain: signing.keychain } : {}),
+      });
 
-    console.log(`Stapling DMG ${tempDmgPath}`);
-    run("xcrun", ["stapler", "staple", tempDmgPath]);
-    run("xcrun", ["stapler", "validate", tempDmgPath]);
+      console.log(`Stapling DMG ${tempDmgPath}`);
+      run("xcrun", ["stapler", "staple", tempDmgPath]);
+      run("xcrun", ["stapler", "validate", tempDmgPath]);
+    }
 
     run("mkdir", ["-p", releaseOutputDir]);
 
-    const dmgName = getDmgArtifactName({
-      packVersion,
-    });
+    const dmgName = getDmgArtifactName({ arch: forgeArch });
     const dmgPath = resolve(releaseOutputDir, dmgName);
     renameSync(tempDmgPath, dmgPath);
-    writeFileSync(
-      resolve(releaseOutputDir, `dmg.${releaseConfig.releaseChannel}.txt`),
-      `${dmgName}\n`
-    );
     console.log(`DMG created: ${dmgPath}`);
+    return dmgName;
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -242,7 +248,6 @@ async function main() {
     throw new Error(`pnpm pack:velopack exited with status ${packResult.status}`);
   }
 
-  await createSignedDmg();
   normalizeReleaseArtifactNames({
     releaseOutputDir,
     packVersion,
@@ -253,6 +258,21 @@ async function main() {
     releaseChannel: releaseConfig.releaseChannel,
     packVersion,
   });
+  const dmgName = await createDmg();
+  if (!dmgName) {
+    return;
+  }
+  const files = stageGithubReleaseAssets({
+    releaseOutputDir,
+    releaseChannel: releaseConfig.releaseChannel,
+    packVersion,
+    dmgName,
+    stageDir: githubAssetsDir,
+  });
+  console.log(`GitHub release assets in ${githubAssetsDir}:`);
+  for (const file of files) {
+    console.log(`  ${file}`);
+  }
 }
 
 main().catch((error: unknown) => {

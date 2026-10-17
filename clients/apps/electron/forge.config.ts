@@ -21,7 +21,8 @@ import {
   macosInfoPlistStringsHook,
   macosUsageDescriptions,
 } from "./scripts/macos-info-plist-strings";
-import { sleepGuardLaunchdHook } from "./scripts/sleep-guard-launchd";
+import { resolveMacosSigning } from "./scripts/macos-signing";
+import { shipsSleepGuard, sleepGuardLaunchdHook } from "./scripts/sleep-guard-launchd";
 import { getCommaReleaseConfig } from "./src/release-config";
 
 const require = createRequire(import.meta.url);
@@ -145,7 +146,14 @@ const config: ForgeConfig = {
     afterCopyExtraResources: [
       macosDisplayNameHook(releaseConfig.productName),
       macosInfoPlistStringsHook(releaseConfig.productName),
-      sleepGuardLaunchdHook(releaseConfig.productName, releaseConfig.appBundleId),
+      sleepGuardLaunchdHook(
+        releaseConfig.productName,
+        releaseConfig.appBundleId,
+        shipsSleepGuard({
+          flavor: releaseConfig.flavor,
+          developerId: resolveMacosSigning(process.env).developerId,
+        })
+      ),
     ],
     afterCopy: [
       (buildPath, _electronVersion, platform, arch, callback) => {

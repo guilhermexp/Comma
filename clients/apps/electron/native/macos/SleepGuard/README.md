@@ -73,3 +73,8 @@ persist the status.
 `pnpm build:native` builds the daemon and the addon into `dist/native/macos`.
 Forge packages them through the existing `dist/native` extra resource, and
 `scripts/sign-macos-app.ts` signs the daemon with the app.
+
+A packaged release ships the daemon, the addon, and the LaunchDaemon plist only
+with Developer ID signing (`COMMA_MACOS_SIGN=1`). An ad hoc release has no team
+for the daemon to check, so packaging removes them and the setting reports
+unavailable. Dev builds keep them. See `scripts/sleep-guard-launchd.ts`.

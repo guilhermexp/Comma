@@ -96,13 +96,26 @@ const sideChatBackdropOnly = process.argv.includes("--side-chat-backdrop-only");
 /** Fetch only the synchronicity daemon: no Go, Swift or Xcode needed. */
 const synchOnly = process.argv.includes("--synch-only");
 const airDropOnly = process.argv.includes("--airdrop-only");
-async function buildAirDrop() {
+/**
+ * OpenDropKit comes from a private repository. A build without a token or a
+ * local binary ships no helper, and the app reports AirDrop unavailable.
+ * `--airdrop-only` asks for the helper explicitly and still fails without one.
+ */
+async function buildAirDrop({ required = false }: { required?: boolean } = {}) {
+  const binaryOverride = process.env.COMMA_OPENDROPKIT_BINARY?.trim();
+  const token = process.env.OPENDROPKIT_RELEASE_TOKEN?.trim();
+  if (!required && !binaryOverride && !token) {
+    console.log(
+      "Skipping AirDrop: set OPENDROPKIT_RELEASE_TOKEN or COMMA_OPENDROPKIT_BINARY to bundle OpenDropKit."
+    );
+    return;
+  }
   await fetchOpenDropKit({
     appDir,
     platform,
     arch,
-    binaryOverride: process.env.COMMA_OPENDROPKIT_BINARY,
-    token: process.env.OPENDROPKIT_RELEASE_TOKEN,
+    binaryOverride,
+    token,
   });
 }
 
@@ -477,7 +490,7 @@ function verifyNativeOutputs() {
 
 async function buildNative() {
   if (airDropOnly) {
-    await buildAirDrop();
+    await buildAirDrop({ required: true });
     return;
   }
   verifySynchControlProtocol();

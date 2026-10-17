@@ -11,6 +11,8 @@ clients/.husky/_/
 # Release archives build:native fetches and verifies (synchronicity).
 **/.native-cache/
 **/out/
+# Velopack release output (clients/apps/electron/scripts/release-velopack.ts).
+clients/apps/electron/Releases/
 **/.vite/
 **/storybook-static/
 **/release/

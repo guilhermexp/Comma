@@ -1,11 +1,19 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   getDmgArtifactName,
   normalizeReleaseArtifactNames,
+  stageGithubReleaseAssets,
   validateReleaseArtifacts,
 } from "../scripts/release-artifacts";
 
@@ -36,7 +44,7 @@ function getReleaseAsset({
   version: string;
 }) {
   return {
-    PackageId: "surf.comma.desktop.staging",
+    PackageId: "com.guilhermexp.comma",
     Version: version,
     Type: type,
     FileName: fileName,
@@ -52,38 +60,30 @@ afterEach(() => {
 });
 
 describe("getDmgArtifactName", () => {
-  it("uses the public Comma release artifact name", () => {
-    const name = getDmgArtifactName({
-      packVersion: "1.2.3-staging.abcdef0",
-    });
-
-    expect(name).toBe("Comma-1.2.3-staging.abcdef0.dmg");
-    expect(name).not.toMatch(/[a-f0-9]{64}\.dmg$/);
+  it("keeps one DMG name across versions for the latest-release download link", () => {
+    expect(getDmgArtifactName({ arch: "arm64" })).toBe("Comma-macos-arm64.dmg");
   });
 });
 
 describe("release artifact normalization", () => {
   it("keeps full and delta packages distinct and updates every metadata file", async () => {
     const releaseOutputDir = createReleaseDirectory();
-    const releaseChannel = "staging";
-    const packVersion = "1.2.3-staging.456";
-    const originalFullName = "surf.comma.desktop.staging-1.2.3-staging.456-full.nupkg";
-    const originalDeltaName =
-      "surf.comma.desktop.staging-1.2.3-staging.456-delta.nupkg";
-    const originalPortableName = "surf.comma.desktop.staging-Portable.zip";
-    const normalizedFullName = "Comma-1.2.3-staging.456-full.nupkg";
-    const normalizedDeltaName = "Comma-1.2.3-staging.456-delta.nupkg";
-    const normalizedPortableName = "Comma-1.2.3-staging.456.zip";
-    const dmgName = "Comma-1.2.3-staging.456.dmg";
+    const releaseChannel = "prod";
+    const packVersion = "1.2.3";
+    const originalFullName = "com.guilhermexp.comma-1.2.3-full.nupkg";
+    const originalDeltaName = "com.guilhermexp.comma-1.2.3-delta.nupkg";
+    const originalPortableName = "com.guilhermexp.comma-Portable.zip";
+    const normalizedFullName = "Comma-1.2.3-full.nupkg";
+    const normalizedDeltaName = "Comma-1.2.3-delta.nupkg";
+    const normalizedPortableName = "Comma-1.2.3.zip";
     const fullContent = "full package";
     const deltaContent = "delta package";
 
     writeFileSync(resolve(releaseOutputDir, originalFullName), fullContent);
     writeFileSync(resolve(releaseOutputDir, originalDeltaName), deltaContent);
     writeFileSync(resolve(releaseOutputDir, originalPortableName), "portable");
-    writeFileSync(resolve(releaseOutputDir, dmgName), "dmg");
     writeFileSync(
-      resolve(releaseOutputDir, "releases.staging.json"),
+      resolve(releaseOutputDir, "releases.prod.json"),
       JSON.stringify({
         Assets: [
           getReleaseAsset({
@@ -102,7 +102,7 @@ describe("release artifact normalization", () => {
       })
     );
     writeFileSync(
-      resolve(releaseOutputDir, "assets.staging.json"),
+      resolve(releaseOutputDir, "assets.prod.json"),
       JSON.stringify([
         { RelativeFileName: originalDeltaName, Type: "Delta" },
         { RelativeFileName: originalFullName, Type: "Full" },
@@ -110,10 +110,9 @@ describe("release artifact normalization", () => {
       ])
     );
     writeFileSync(
-      resolve(releaseOutputDir, "RELEASES-staging"),
+      resolve(releaseOutputDir, "RELEASES-prod"),
       `${originalFullName}\n${originalDeltaName}\n`
     );
-    writeFileSync(resolve(releaseOutputDir, "dmg.staging.txt"), `${dmgName}\n`);
 
     normalizeReleaseArtifactNames({
       releaseOutputDir,
@@ -128,7 +127,7 @@ describe("release artifact normalization", () => {
     expect(existsSync(resolve(releaseOutputDir, originalDeltaName))).toBe(false);
 
     const releaseFeed = JSON.parse(
-      readFileSync(resolve(releaseOutputDir, "releases.staging.json"), "utf-8")
+      readFileSync(resolve(releaseOutputDir, "releases.prod.json"), "utf-8")
     ) as { Assets: Array<{ FileName: string; Type: string }> };
     expect(releaseFeed.Assets).toEqual(
       expect.arrayContaining([
@@ -144,14 +143,14 @@ describe("release artifact normalization", () => {
     );
 
     const assetManifest = JSON.parse(
-      readFileSync(resolve(releaseOutputDir, "assets.staging.json"), "utf-8")
+      readFileSync(resolve(releaseOutputDir, "assets.prod.json"), "utf-8")
     ) as Array<{ RelativeFileName: string; Type: string }>;
     expect(assetManifest).toEqual([
       { RelativeFileName: normalizedDeltaName, Type: "Delta" },
       { RelativeFileName: normalizedFullName, Type: "Full" },
       { RelativeFileName: normalizedPortableName, Type: "Portable" },
     ]);
-    expect(readFileSync(resolve(releaseOutputDir, "RELEASES-staging"), "utf-8")).toBe(
+    expect(readFileSync(resolve(releaseOutputDir, "RELEASES-prod"), "utf-8")).toBe(
       `${normalizedFullName}\n${normalizedDeltaName}\n`
     );
 
@@ -166,7 +165,7 @@ describe("release artifact normalization", () => {
 
   it("fails before renaming when two source files would overwrite one artifact", () => {
     const releaseOutputDir = createReleaseDirectory();
-    const packVersion = "1.2.3-staging.456";
+    const packVersion = "1.2.3";
     const firstName = `first-${packVersion}-full.nupkg`;
     const secondName = `second-${packVersion}-full.nupkg`;
 
@@ -177,7 +176,7 @@ describe("release artifact normalization", () => {
       normalizeReleaseArtifactNames({
         releaseOutputDir,
         packVersion,
-        releaseChannel: "staging",
+        releaseChannel: "prod",
       })
     ).toThrow(
       `Release artifact name collision: ${firstName} and ${secondName} both normalize to Comma-${packVersion}-full.nupkg`
@@ -190,19 +189,19 @@ describe("release artifact normalization", () => {
 describe("release artifact validation", () => {
   it("rejects a stale feed without the version being published", async () => {
     const releaseOutputDir = createReleaseDirectory();
-    const fileName = "Comma-1.2.3-staging.455-full.nupkg";
+    const fileName = "Comma-1.2.2-full.nupkg";
     const content = "previous full package";
 
     writeFileSync(resolve(releaseOutputDir, fileName), content);
     writeFileSync(
-      resolve(releaseOutputDir, "releases.staging.json"),
+      resolve(releaseOutputDir, "releases.prod.json"),
       JSON.stringify({
         Assets: [
           getReleaseAsset({
             fileName,
             type: "Full",
             content,
-            version: "1.2.3-staging.455",
+            version: "1.2.2",
           }),
         ],
       })
@@ -211,28 +210,28 @@ describe("release artifact validation", () => {
     await expect(
       validateReleaseArtifacts({
         releaseOutputDir,
-        releaseChannel: "staging",
-        packVersion: "1.2.3-staging.456",
+        releaseChannel: "prod",
+        packVersion: "1.2.3",
       })
     ).rejects.toThrow(
-      "Release feed must contain exactly one Full asset for 1.2.3-staging.456; found 0"
+      "Release feed must contain exactly one Full asset for 1.2.3; found 0"
     );
   });
 
   it("rejects a feed where full and delta point at the same physical file", async () => {
     const releaseOutputDir = createReleaseDirectory();
-    const fileName = "Comma-1.2.3-staging.456.nupkg";
+    const fileName = "Comma-1.2.3.nupkg";
     const content = "full package";
     const fullAsset = getReleaseAsset({
       fileName,
       type: "Full",
       content,
-      version: "1.2.3-staging.456",
+      version: "1.2.3",
     });
 
     writeFileSync(resolve(releaseOutputDir, fileName), content);
     writeFileSync(
-      resolve(releaseOutputDir, "releases.staging.json"),
+      resolve(releaseOutputDir, "releases.prod.json"),
       JSON.stringify({
         Assets: [{ ...fullAsset }, { ...fullAsset, Type: "Delta" }],
       })
@@ -241,8 +240,8 @@ describe("release artifact validation", () => {
     await expect(
       validateReleaseArtifacts({
         releaseOutputDir,
-        releaseChannel: "staging",
-        packVersion: "1.2.3-staging.456",
+        releaseChannel: "prod",
+        packVersion: "1.2.3",
       })
     ).rejects.toThrow(
       `Release feed filename collision: ${fileName} is used by Full and Delta`
@@ -251,18 +250,18 @@ describe("release artifact validation", () => {
 
   it("rejects an artifact whose hash does not match the release feed", async () => {
     const releaseOutputDir = createReleaseDirectory();
-    const fileName = "Comma-1.2.3-staging.456-full.nupkg";
+    const fileName = "Comma-1.2.3-full.nupkg";
     const content = "full package";
     const asset = getReleaseAsset({
       fileName,
       type: "Full",
       content,
-      version: "1.2.3-staging.456",
+      version: "1.2.3",
     });
 
     writeFileSync(resolve(releaseOutputDir, fileName), content);
     writeFileSync(
-      resolve(releaseOutputDir, "releases.staging.json"),
+      resolve(releaseOutputDir, "releases.prod.json"),
       JSON.stringify({
         Assets: [{ ...asset, SHA256: "0".repeat(64) }],
       })
@@ -271,9 +270,98 @@ describe("release artifact validation", () => {
     await expect(
       validateReleaseArtifacts({
         releaseOutputDir,
-        releaseChannel: "staging",
-        packVersion: "1.2.3-staging.456",
+        releaseChannel: "prod",
+        packVersion: "1.2.3",
       })
     ).rejects.toThrow(`Release artifact SHA256 mismatch: ${fileName}`);
+  });
+});
+
+describe("GitHub release asset staging", () => {
+  it("publishes only this version's packages so every feed entry resolves beside the feed", () => {
+    const releaseOutputDir = createReleaseDirectory();
+    const stageDir = resolve(createReleaseDirectory(), "github");
+    const previous = getReleaseAsset({
+      fileName: "Comma-1.2.2-full.nupkg",
+      type: "Full",
+      content: "previous full",
+      version: "1.2.2",
+    });
+    const full = getReleaseAsset({
+      fileName: "Comma-1.2.3-full.nupkg",
+      type: "Full",
+      content: "full",
+      version: "1.2.3",
+    });
+    const delta = getReleaseAsset({
+      fileName: "Comma-1.2.3-delta.nupkg",
+      type: "Delta",
+      content: "delta",
+      version: "1.2.3",
+    });
+    for (const [name, content] of [
+      [previous.FileName, "previous full"],
+      [full.FileName, "full"],
+      [delta.FileName, "delta"],
+      ["Comma-1.2.3.zip", "portable"],
+      ["Comma-macos-arm64.dmg", "dmg"],
+      ["assets.prod.json", "[]"],
+      ["RELEASES-prod", ""],
+    ] as const) {
+      writeFileSync(resolve(releaseOutputDir, name), content);
+    }
+    writeFileSync(
+      resolve(releaseOutputDir, "releases.prod.json"),
+      JSON.stringify({ Assets: [previous, full, delta] })
+    );
+
+    const files = stageGithubReleaseAssets({
+      releaseOutputDir,
+      releaseChannel: "prod",
+      packVersion: "1.2.3",
+      dmgName: "Comma-macos-arm64.dmg",
+      stageDir,
+    });
+
+    expect(readdirSync(stageDir).toSorted()).toEqual(files.toSorted());
+    expect(files.toSorted()).toEqual(
+      [
+        "releases.prod.json",
+        full.FileName,
+        delta.FileName,
+        "Comma-1.2.3.zip",
+        "Comma-macos-arm64.dmg",
+      ].toSorted()
+    );
+    const feed = JSON.parse(
+      readFileSync(resolve(stageDir, "releases.prod.json"), "utf-8")
+    ) as { Assets: unknown[] };
+    expect(feed.Assets).toEqual([full, delta]);
+  });
+
+  it("refuses to stage a release whose DMG was not built", () => {
+    const releaseOutputDir = createReleaseDirectory();
+    const full = getReleaseAsset({
+      fileName: "Comma-1.2.3-full.nupkg",
+      type: "Full",
+      content: "full",
+      version: "1.2.3",
+    });
+    writeFileSync(resolve(releaseOutputDir, full.FileName), "full");
+    writeFileSync(resolve(releaseOutputDir, "Comma-1.2.3.zip"), "portable");
+    writeFileSync(
+      resolve(releaseOutputDir, "releases.prod.json"),
+      JSON.stringify({ Assets: [full] })
+    );
+
+    expect(() =>
+      stageGithubReleaseAssets({
+        releaseOutputDir,
+        releaseChannel: "prod",
+        packVersion: "1.2.3",
+        dmgName: "Comma-macos-arm64.dmg",
+        stageDir: resolve(createReleaseDirectory(), "github"),
+      })
+    ).toThrow("Release asset not found");
   });
 });

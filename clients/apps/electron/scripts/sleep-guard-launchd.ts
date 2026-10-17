@@ -1,17 +1,35 @@
 import type { HookFunction } from "@electron/packager";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sleepGuardPlistName, sleepGuardServiceName } from "../native/macos/SleepGuard";
-import { sleepGuardBinaryName } from "./native-paths";
+import { sleepGuardAddonName, sleepGuardBinaryName } from "./native-paths";
+
+/**
+ * The root daemon accepts a client by its signing team. Ad hoc code has no
+ * team, and its identifier alone is something any local process can claim, so
+ * a packaged release ships the daemon only when it is Developer ID signed.
+ * Dev builds keep the identifier check for local work on the feature.
+ */
+export function shipsSleepGuard({
+  flavor,
+  developerId,
+}: {
+  flavor: string;
+  developerId: boolean;
+}) {
+  return flavor === "dev" || developerId;
+}
 
 /**
  * Writes the LaunchDaemon plist `SMAppService.daemon(plistName:)` looks for in
  * `Contents/Library/LaunchDaemons`. It must exist before signing so the code
- * seal covers it.
+ * seal covers it. Without `ship`, it removes the daemon and its addon instead,
+ * and the app reports lid-closed keep-awake unavailable.
  */
 export function sleepGuardLaunchdHook(
   productName: string,
-  appBundleId: string
+  appBundleId: string,
+  ship = true
 ): HookFunction {
   return (buildPath, _electronVersion, platform, _arch, callback) => {
     if (platform !== "darwin") {
@@ -19,6 +37,20 @@ export function sleepGuardLaunchdHook(
       return;
     }
     try {
+      if (!ship) {
+        const native = join(
+          buildPath,
+          `${productName}.app`,
+          "Contents",
+          "Resources",
+          "native",
+          "macos"
+        );
+        rmSync(join(native, sleepGuardBinaryName), { force: true });
+        rmSync(join(native, sleepGuardAddonName), { force: true });
+        callback();
+        return;
+      }
       const directory = join(
         buildPath,
         `${productName}.app`,

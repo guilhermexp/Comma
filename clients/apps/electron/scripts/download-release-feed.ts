@@ -1,190 +1,89 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { getPackableReleaseConfig } from "../src/release-config";
 
-interface ReleaseAsset {
-  FileName: string;
-  Type: string;
-  Version: string;
-}
-
-interface ParsedVersion {
-  major: number;
-  minor: number;
-  patch: number;
-  stagingBuild: number;
-}
-
-const appDir = resolve(import.meta.dirname, "..");
-const releaseConfig = getPackableReleaseConfig();
-const feedDir = resolve(
-  appDir,
-  process.env.COMMA_RELEASES_DIR ?? "Releases",
-  releaseConfig.releaseChannel
-);
-const metadataFiles = [
-  `releases.${releaseConfig.releaseChannel}.json`,
-  `assets.${releaseConfig.releaseChannel}.json`,
-  `RELEASES-${releaseConfig.releaseChannel}`,
-  `dmg.${releaseConfig.releaseChannel}.txt`,
-];
-
-function requiredEnv(name: string) {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`${name} is required.`);
-  }
-  return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function isReleaseAsset(value: unknown): value is ReleaseAsset {
-  return (
-    isRecord(value) &&
-    typeof value.FileName === "string" &&
-    typeof value.Type === "string" &&
-    typeof value.Version === "string"
-  );
-}
-
-function parseVersion(version: string): ParsedVersion | undefined {
-  const match = version.match(/^(\d+)\.(\d+)\.(\d+)(?:-staging\.(\d+))?$/);
-  if (!match) {
-    return undefined;
-  }
-
-  const [, major, minor, patch, stagingBuild] = match;
-  if (!major || !minor || !patch) {
-    return undefined;
-  }
-
-  return {
-    major: Number.parseInt(major, 10),
-    minor: Number.parseInt(minor, 10),
-    patch: Number.parseInt(patch, 10),
-    stagingBuild: stagingBuild ? Number.parseInt(stagingBuild, 10) : 0,
-  };
-}
-
-function compareVersion(left: ParsedVersion, right: ParsedVersion) {
-  return (
-    left.major - right.major ||
-    left.minor - right.minor ||
-    left.patch - right.patch ||
-    left.stagingBuild - right.stagingBuild
-  );
-}
-
-export function findLatestFullNupkg(feed: unknown) {
-  if (!isRecord(feed) || !Array.isArray(feed.Assets)) {
-    return undefined;
-  }
-
-  return feed.Assets.map((asset) => {
-    if (!isReleaseAsset(asset)) {
-      return undefined;
-    }
-
-    const version = parseVersion(asset.Version);
-    if (
-      asset.Type !== "Full" ||
-      !asset.FileName.endsWith(".nupkg") ||
-      basename(asset.FileName) !== asset.FileName ||
-      !version
-    ) {
-      return undefined;
-    }
-
-    return {
-      fileName: asset.FileName,
-      version,
-    };
-  })
-    .filter((asset) => asset !== undefined)
-    .toSorted((left, right) => compareVersion(right.version, left.version))[0]
-    ?.fileName;
-}
-
-function runAwsCp({
-  endpoint,
-  from,
-  to,
-  required,
+/**
+ * Fetches the latest published release's feed and full package into the
+ * Velopack output directory, so `vpk pack` can build a delta against it. The
+ * first release finds nothing and packs a full package only.
+ *
+ * `COMMA_RELEASE_FEED_URL` reads an HTTP feed laid out like GitHub's
+ * `releases/latest/download` instead, for local update rehearsals.
+ */
+export function releaseFeedDownloadArgs({
+  channel,
+  outputDir,
+  repository,
+  feedUrl,
 }: {
-  endpoint: string;
-  from: string;
-  to: string;
-  required: boolean;
+  channel: string;
+  outputDir: string;
+  repository: string;
+  feedUrl?: string | undefined;
 }) {
-  const result = spawnSync("aws", ["--endpoint-url", endpoint, "s3", "cp", from, to], {
+  const common = ["--channel", channel, "--outputDir", outputDir];
+  if (feedUrl) {
+    return ["download", "http", "--url", feedUrl, ...common];
+  }
+  // vpk reads the token from its argument only; the public repository also
+  // answers without one, at a lower API rate limit.
+  return [
+    "download",
+    "github",
+    "--repoUrl",
+    `https://github.com/${repository}`,
+    ...common,
+  ];
+}
+
+export async function downloadExistingReleaseFeed() {
+  const releaseConfig = getPackableReleaseConfig();
+  const appDir = resolve(import.meta.dirname, "..");
+  const outputDir = resolve(
+    appDir,
+    process.env.COMMA_RELEASES_DIR ?? "Releases",
+    releaseConfig.releaseChannel
+  );
+  mkdirSync(outputDir, { recursive: true });
+
+  const feedUrl = process.env.COMMA_RELEASE_FEED_URL?.trim() || undefined;
+  if (feedUrl) {
+    // `vpk download github` treats a repository without releases as a first
+    // release; `vpk download http` fails on the 404 instead.
+    const feed = `${feedUrl.replace(/\/+$/u, "")}/releases.${releaseConfig.releaseChannel}.json`;
+    const response = await fetch(feed, { method: "HEAD" });
+    if (response.status === 404) {
+      console.log(`No previous release at ${feed}; packing a full package only.`);
+      return;
+    }
+  }
+
+  const args = releaseFeedDownloadArgs({
+    channel: releaseConfig.releaseChannel,
+    outputDir,
+    repository: releaseConfig.releaseRepository,
+    feedUrl,
+  });
+  const token = process.env.GITHUB_TOKEN?.trim();
+  if (token && args[1] === "github") {
+    args.push("--token", token);
+  }
+
+  const result = spawnSync("vpk", [...args, "--skip-updates", "true"], {
     stdio: "inherit",
   });
-
   if (result.error) {
     throw result.error;
   }
-
-  if (result.status !== 0 && required) {
-    throw new Error(`aws s3 cp failed for ${from}`);
-  }
-
   if (result.status !== 0) {
-    console.warn(`Optional release feed object was not downloaded: ${from}`);
+    throw new Error(`vpk download exited with status ${result.status ?? "unknown"}`);
   }
-}
-
-function readExistingReleaseFeed() {
-  const feedPath = resolve(feedDir, `releases.${releaseConfig.releaseChannel}.json`);
-  if (!existsSync(feedPath)) {
-    return undefined;
-  }
-
-  return JSON.parse(readFileSync(feedPath, "utf-8")) as unknown;
-}
-
-export function downloadExistingReleaseFeed() {
-  const accountId = requiredEnv("CLOUDFLARE_R2_ACCOUNT_ID");
-  const bucket = requiredEnv("CLOUDFLARE_R2_BUCKET");
-  const prefix = requiredEnv("R2_PATH_PREFIX").replace(/^\/+|\/+$/g, "");
-  const endpoint = `https://${accountId}.r2.cloudflarestorage.com`;
-  const r2Uri = `s3://${bucket}/${prefix}`;
-
-  mkdirSync(feedDir, { recursive: true });
-
-  for (const metadata of metadataFiles) {
-    runAwsCp({
-      endpoint,
-      from: `${r2Uri}/${metadata}`,
-      to: resolve(feedDir, metadata),
-      required: false,
-    });
-  }
-
-  const latestNupkg = findLatestFullNupkg(readExistingReleaseFeed());
-  if (!latestNupkg) {
-    console.log(`No previous ${releaseConfig.releaseChannel} full package found.`);
-    return;
-  }
-
-  runAwsCp({
-    endpoint,
-    from: `${r2Uri}/${latestNupkg}`,
-    to: resolve(feedDir, latestNupkg),
-    required: true,
-  });
-}
-
-async function main() {
-  downloadExistingReleaseFeed();
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error: unknown) => {
+  downloadExistingReleaseFeed().catch((error: unknown) => {
     console.error(error);
     process.exit(1);
   });
