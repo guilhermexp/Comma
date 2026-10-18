@@ -117,6 +117,19 @@ describe("local backend process supervisor", () => {
     expect(spawned.redis).toHaveLength(7);
   });
 
+  it("restarts after one second again once a process has run for two minutes", async () => {
+    const { latest, spawned, supervisor } = harness();
+    await supervisor.start(spec("redis"));
+
+    for (let index = 0; index < 6; index += 1) {
+      await vi.advanceTimersByTimeAsync(180_000);
+      const before = spawned.redis!.length;
+      latest("redis").crash();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(spawned.redis).toHaveLength(before + 1);
+    }
+  });
+
   it("stops in order, uses each stop signal, and kills a process that ignores it", async () => {
     const { latest, supervisor } = harness({ backend: ["SIGTERM"] });
     await supervisor.start(spec("postgres", { stopSignal: "SIGINT" }));

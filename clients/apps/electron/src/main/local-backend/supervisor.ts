@@ -33,7 +33,6 @@ interface Supervised {
   handle: ChildHandle;
   status: ChildStatus;
   failures: number[];
-  attempt: number;
   restartTimer?: ReturnType<typeof setTimeout> | undefined;
   stopping: boolean;
 }
@@ -92,7 +91,6 @@ export class ProcessSupervisor {
       handle: this.#spawn(spec),
       status: "starting",
       failures: [],
-      attempt: 0,
       stopping: false,
     };
     this.#children.set(spec.name, child);
@@ -147,8 +145,9 @@ export class ProcessSupervisor {
         );
         return;
       }
-      const delay = Math.min(1_000 * 2 ** child.attempt, maxBackoffMs);
-      child.attempt += 1;
+      // The wait grows with the stops of the last two minutes, so a process
+      // that ran steadily since its last stop restarts after one second again.
+      const delay = Math.min(1_000 * 2 ** (child.failures.length - 1), maxBackoffMs);
       child.status = "restarting";
       child.restartTimer = setTimeout(() => {
         child.restartTimer = undefined;
