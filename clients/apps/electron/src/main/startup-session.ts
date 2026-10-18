@@ -17,7 +17,9 @@ interface ElectronStartupSessionFile {
 }
 
 /**
- * Resolves one explicit unpackaged startup Session seed. Local development
+ * Resolves one explicit startup Session seed. A packaged app accepts only the
+ * owner Session that Main minted on its own local backend (local mode);
+ * otherwise it seeds nothing. Local development
  * keeps its seed in a gitignored file so Electron Forge can relaunch Main
  * without losing the login. E2E can still provide the same seed through its
  * isolated process environment. Test-only behavior belongs in separate E2E
@@ -29,6 +31,7 @@ export function resolveElectronStartupSession({
   defaultFilePath,
   env = process.env,
   isPackaged,
+  localOwnerSession,
   fileExists = existsSync,
   readFile = readFileSync,
 }: {
@@ -36,6 +39,7 @@ export function resolveElectronStartupSession({
   defaultFilePath?: string | undefined;
   env?: ElectronStartupSessionEnv;
   isPackaged: boolean;
+  localOwnerSession?: SecureSessionInput | undefined;
   fileExists?: (path: string) => boolean;
   readFile?: (path: string, encoding: "utf8") => string;
 }): SecureSessionInput | undefined {
@@ -44,6 +48,16 @@ export function resolveElectronStartupSession({
   const token = env.COMMA_ELECTRON_STARTUP_SESSION_TOKEN?.trim();
   delete env.COMMA_ELECTRON_STARTUP_SESSION_TOKEN;
 
+  if (localOwnerSession) {
+    if (
+      canonicalAudience(localOwnerSession.audience) !== canonicalAudience(apiBaseUrl)
+    ) {
+      throw new Error(
+        `The local owner Session targets ${localOwnerSession.audience}, but this client targets ${apiBaseUrl}.`
+      );
+    }
+    return localOwnerSession;
+  }
   if (isPackaged) return undefined;
 
   if (filePath && (explicitFilePath || fileExists(filePath))) {

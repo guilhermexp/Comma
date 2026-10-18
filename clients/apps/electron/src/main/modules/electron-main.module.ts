@@ -184,6 +184,10 @@ import {
   createMainSessionFetch,
 } from "./session/main-session-transport";
 import { getCurrentNativeSessionAdmission } from "./session/native-session-admission";
+import {
+  remoteBackendProvider,
+  type LocalBackendProvider,
+} from "../local-backend/provider";
 import { MeetingPresenceService } from "./meeting-presence";
 import { MeetingRecorderService } from "./meeting-recorder";
 import { createMeetingAppIconReader } from "./meeting-presence/app-icon";
@@ -330,6 +334,13 @@ export interface ElectronMainRuntimeDeps {
    * before constructing SessionService, so startup has exactly one reconcile.
    */
   startupSession?: SecureSessionInput | undefined;
+  /**
+   * Local mode: the backend is still starting when the context is created.
+   * Main initializes the Session itself once the owner's Session is stored.
+   */
+  deferSessionInitialize?: boolean | undefined;
+  /** Local mode's startup status and actions; other builds report a remote backend. */
+  localBackend?: LocalBackendProvider | undefined;
   computeNodeAdapter?: ComputeNodeRuntimeAdapter | undefined;
   computeNodeFilePath?: string | undefined;
   computeNodeLifecyclePath?: string | undefined;
@@ -510,6 +521,39 @@ const onboardingWindowNativePermissions = [
       .map(({ permission }) => permission)
   ),
 ];
+/**
+ * Stores a startup Session (an unpackaged development seed or the local
+ * owner's Session) in the secure store before SessionService reconciles it.
+ */
+export async function persistStartupSession(
+  secureSessionStore: SecureSessionStore,
+  startupSession: SecureSessionInput
+) {
+  const vault = secureSessionStore.getVaultSnapshot();
+  const active = vault.status === "readable" ? vault.active : undefined;
+  const alreadyAdopted =
+    active?.token === startupSession.token &&
+    active.audience === canonicalizeSessionAudience(startupSession.audience);
+  // Reconciliation replaces the launcher's placeholder identity with the
+  // server's canonical Session identity. Electron Forge may restart Main
+  // with the same launch bearer. Only a different bearer is a replacement;
+  // otherwise the canonical record would be revoked as "superseded".
+  if (alreadyAdopted) return;
+  const supersededCredentials = active
+    ? [
+        {
+          audience: active.audience,
+          email: active.email,
+          expiresAtEpochSeconds: active.expiresAtEpochSeconds,
+          sessionId: active.sessionId,
+          token: active.token,
+          userId: active.userId,
+        },
+      ]
+    : [];
+  await secureSessionStore.setSession(startupSession, { supersededCredentials });
+}
+
 export async function createElectronMainContext(
   deps: ElectronMainRuntimeDeps
 ): Promise<ElectronMainContext> {
@@ -537,32 +581,7 @@ export async function createElectronMainContext(
   });
   const secureSessionStore = await SecureSessionStore.open(deps.secureSessionFilePath);
   if (deps.startupSession) {
-    const vault = secureSessionStore.getVaultSnapshot();
-    const active = vault.status === "readable" ? vault.active : undefined;
-    const alreadyAdopted =
-      active?.token === deps.startupSession.token &&
-      active.audience === canonicalizeSessionAudience(deps.startupSession.audience);
-    // Reconciliation replaces the launcher's placeholder identity with the
-    // server's canonical Session identity. Electron Forge may restart Main
-    // with the same launch bearer. Only a different bearer is a replacement;
-    // otherwise the canonical record would be revoked as "superseded".
-    if (!alreadyAdopted) {
-      const supersededCredentials = active
-        ? [
-            {
-              audience: active.audience,
-              email: active.email,
-              expiresAtEpochSeconds: active.expiresAtEpochSeconds,
-              sessionId: active.sessionId,
-              token: active.token,
-              userId: active.userId,
-            },
-          ]
-        : [];
-      await secureSessionStore.setSession(deps.startupSession, {
-        supersededCredentials,
-      });
-    }
+    await persistStartupSession(secureSessionStore, deps.startupSession);
   }
   const nativeEventBus = new NativeEventBus({
     ...(deps.logger ? { logger: deps.logger } : {}),
@@ -795,7 +814,7 @@ export async function createElectronMainContext(
     store: secureSessionStore,
     trustedAudience: deps.authApiBaseUrl,
   });
-  await session.initialize();
+  if (!deps.deferSessionInitialize) await session.initialize();
   const localData = await (
     deps.openLocalDataRepository ?? ((input) => openElectronLocalDataRepository(input))
   )({
@@ -1536,6 +1555,7 @@ export function registerNativeBridgeHandlersFromContext(context: ElectronMainCon
       context.connectorRuntime.setScope(workspaceId, scope),
   };
   registerNativeBridgeHandlers({
+    localBackend: context.runtimeDeps.localBackend ?? remoteBackendProvider,
     airDrop: context.airDropReception,
     appPreferences: context.appPreferences,
     computerUse: context.runtimeDeps.computerUse ?? {

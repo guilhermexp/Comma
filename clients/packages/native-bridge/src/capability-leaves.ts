@@ -8279,7 +8279,130 @@ export const applicationMenuCommandEvent = defineNativeEvent({
   target: { role: "main-window", type: "role" },
 });
 
+/**
+ * The local backend of the macOS release app (Postgres, Redis, MinIO and the
+ * `comma` release, supervised by Main). Builds that use a remote backend
+ * report `mode: "remote"` and never show the startup screen.
+ */
+export const localBackendFailureCodeSchema = z.enum([
+  "start_failed",
+  "backup_failed",
+  "migration_failed",
+  "process_stopped",
+  "owner_session_failed",
+]);
+export type LocalBackendFailureCode = z.output<typeof localBackendFailureCodeSchema>;
+
+export const localBackendStatusSchema = z
+  .object({
+    mode: z.enum(["remote", "local"]),
+    phase: z.enum([
+      "idle",
+      "starting",
+      "preparing",
+      "signing_in",
+      "ready",
+      "failed",
+      "stopping",
+      "stopped",
+    ]),
+    failure: z
+      .object({ code: localBackendFailureCodeSchema, message: z.string() })
+      .strict()
+      .optional(),
+    logsDir: z.string().optional(),
+    backupsDir: z.string().optional(),
+    lastBackupPath: z.string().optional(),
+  })
+  .strict();
+export type LocalBackendStatus = z.output<typeof localBackendStatusSchema>;
+
+const remoteBackendStatus: LocalBackendStatus = { mode: "remote", phase: "ready" };
+
+export const localBackendStatusCapability = defineNativeCapability({
+  bridge: { method: "state", namespace: "localBackend" },
+  channel: "comma:local-backend:state",
+  handler: {
+    exportName: "LocalBackendProvider",
+    member: "state",
+    module: "../../../apps/electron/src/main/local-backend/provider",
+    provider: "localBackend",
+  },
+  id: "localBackend.state",
+  input: z.void(),
+  mock: remoteBackendStatus,
+  output: localBackendStatusSchema,
+  permission: "local-backend.read",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Reports whether this Mac's local backend is starting, ready, or failed; it runs before any Session exists.",
+  webFallback: remoteBackendStatus,
+});
+
+export const localBackendStatusChangedEvent = defineNativeEvent({
+  channel: "comma:local-backend:state-changed",
+  id: "localBackend.state.changed",
+  mock: remoteBackendStatus,
+  payload: localBackendStatusSchema,
+  permission: localBackendStatusCapability.permission,
+  target: { type: "all" },
+});
+
+export const localBackendStateLeaf = defineNativeState({
+  bridge: { method: "state", namespace: "localBackend" },
+  get: localBackendStatusCapability,
+  id: "localBackend.state",
+  subscribe: localBackendStatusChangedEvent,
+});
+
+const localBackendActionResultSchema = z.object({ accepted: z.boolean() }).strict();
+
+/** "Try again" on the startup error screen: stops every process and starts again. */
+export const localBackendRetryCapability = defineNativeCapability({
+  bridge: { method: "retry", namespace: "localBackend" },
+  channel: "comma:local-backend:retry",
+  handler: {
+    exportName: "LocalBackendProvider",
+    member: "retry",
+    module: "../../../apps/electron/src/main/local-backend/provider",
+    provider: "localBackend",
+  },
+  id: "localBackend.retry",
+  input: z.void(),
+  mock: { accepted: false },
+  output: localBackendActionResultSchema,
+  permission: "local-backend.control",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Restarts this Mac's local backend from the startup error screen, before any Session exists.",
+  webFallback: { accepted: false },
+});
+
+/** "Show logs" on the startup error screen: reveals the logs folder in Finder. */
+export const localBackendShowLogsCapability = defineNativeCapability({
+  bridge: { method: "showLogs", namespace: "localBackend" },
+  channel: "comma:local-backend:show-logs",
+  handler: {
+    exportName: "LocalBackendProvider",
+    member: "showLogs",
+    module: "../../../apps/electron/src/main/local-backend/provider",
+    provider: "localBackend",
+  },
+  id: "localBackend.showLogs",
+  input: z.void(),
+  mock: { accepted: false },
+  output: localBackendActionResultSchema,
+  permission: "local-backend.control",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Opens this Mac's local backend logs folder from the startup error screen, before any Session exists.",
+  webFallback: { accepted: false },
+});
+
 export const nativeCapabilityRegistry = [
+  localBackendStatusCapability,
+  localBackendRetryCapability,
+  localBackendShowLogsCapability,
   computerUsePermissionsCapability,
   computerUsePermissionFlowCapability,
   applicationMenuUpdateCapability,
@@ -8465,6 +8588,7 @@ export const nativeCapabilityRegistry = [
 ] as const;
 
 export const nativeEventRegistry = [
+  localBackendStatusChangedEvent,
   applicationMenuCommandEvent,
   sitePermissionMenuChangedEvent,
   appPreferencesChangedEvent,
@@ -8494,6 +8618,7 @@ export const nativeEventRegistry = [
 ] as const;
 
 export const nativeStateRegistry = [
+  localBackendStateLeaf,
   sitePermissionMenuStateLeaf,
   appPreferencesStateLeaf,
   connectorRuntimeStateLeaf,

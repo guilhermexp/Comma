@@ -102,6 +102,11 @@ import {
   filesRevealDownloadCapability,
   filesSaveDownloadCapability,
   hostMaintenanceStateCapability,
+  localBackendRetryCapability,
+  localBackendShowLogsCapability,
+  localBackendStateLeaf,
+  localBackendStatusCapability,
+  localBackendStatusChangedEvent,
   localComputeDisposeCapability,
   localComputeOverviewCapability,
   localComputeResumeCapability,
@@ -239,6 +244,9 @@ import type {
 } from "../capability-leaves";
 
 export const generatedNativeCapabilityContracts = {
+  localBackendStatus: localBackendStatusCapability.contract,
+  localBackendRetry: localBackendRetryCapability.contract,
+  localBackendShowLogs: localBackendShowLogsCapability.contract,
   computerUsePermissions: computerUsePermissionsCapability.contract,
   computerUsePermissionFlow: computerUsePermissionFlowCapability.contract,
   applicationMenuUpdate: applicationMenuUpdateCapability.contract,
@@ -431,6 +439,9 @@ export const generatedNativeCapabilityContracts = {
 } as const;
 
 export const generatedNativeWebFallbacks = {
+  localBackendStatus: localBackendStatusCapability.webFallback,
+  localBackendRetry: localBackendRetryCapability.webFallback,
+  localBackendShowLogs: localBackendShowLogsCapability.webFallback,
   computerUsePermissions: computerUsePermissionsCapability.webFallback,
   computerUsePermissionFlow: computerUsePermissionFlowCapability.webFallback,
   applicationMenuUpdate: applicationMenuUpdateCapability.webFallback,
@@ -627,6 +638,11 @@ export const generatedNativeWebFallbacks = {
 } as const;
 
 export const generatedNativePreloadBindings = {
+  localBackend: {
+    state: localBackendStatusCapability.contract,
+    retry: localBackendRetryCapability.contract,
+    showLogs: localBackendShowLogsCapability.contract,
+  },
   computerUse: {
     getPermissions: computerUsePermissionsCapability.contract,
     openPermissionFlow: computerUsePermissionFlowCapability.contract,
@@ -881,6 +897,9 @@ export const generatedNativePreloadBindings = {
 } as const;
 
 export const generatedNativePreloadEventBindings = {
+  localBackend: {
+    state: localBackendStatusChangedEvent,
+  },
   applicationMenu: {
     command: applicationMenuCommandEvent,
   },
@@ -950,6 +969,12 @@ export const generatedNativePreloadEventBindings = {
 } as const;
 
 export const generatedNativeStateBindings = {
+  localBackend: {
+    state: {
+      get: localBackendStatusCapability.contract,
+      subscribe: localBackendStatusChangedEvent,
+    },
+  },
   sitePermissionMenu: {
     state: {
       get: sitePermissionMenuStateCapability.contract,
@@ -1061,6 +1086,30 @@ export const generatedNativeStateBindings = {
 } as const;
 
 export const generatedNativeMainBindingsById = {
+  "localBackend.state": {
+    contract: localBackendStatusCapability.contract,
+    id: localBackendStatusCapability.id,
+    method: "state",
+    provider: "localBackend",
+    sessionAdmission: localBackendStatusCapability.sessionAdmission,
+    sessionAdmissionRationale: localBackendStatusCapability.sessionAdmissionRationale,
+  },
+  "localBackend.retry": {
+    contract: localBackendRetryCapability.contract,
+    id: localBackendRetryCapability.id,
+    method: "retry",
+    provider: "localBackend",
+    sessionAdmission: localBackendRetryCapability.sessionAdmission,
+    sessionAdmissionRationale: localBackendRetryCapability.sessionAdmissionRationale,
+  },
+  "localBackend.showLogs": {
+    contract: localBackendShowLogsCapability.contract,
+    id: localBackendShowLogsCapability.id,
+    method: "showLogs",
+    provider: "localBackend",
+    sessionAdmission: localBackendShowLogsCapability.sessionAdmission,
+    sessionAdmissionRationale: localBackendShowLogsCapability.sessionAdmissionRationale,
+  },
   "computerUse.getPermissions": {
     contract: computerUsePermissionsCapability.contract,
     id: computerUsePermissionsCapability.id,
@@ -2532,6 +2581,36 @@ export const generatedNativeMainBindings = Object.values(
 );
 
 export const generatedNativeCapabilityManifest = [
+  {
+    bridge: localBackendStatusCapability.bridge,
+    channel: localBackendStatusCapability.channel,
+    id: localBackendStatusCapability.id,
+    payloadClass: localBackendStatusCapability.payloadClass,
+    permission: localBackendStatusCapability.permission,
+    sessionAdmission: localBackendStatusCapability.sessionAdmission,
+    sessionAdmissionRationale: localBackendStatusCapability.sessionAdmissionRationale,
+    transport: localBackendStatusCapability.transport,
+  },
+  {
+    bridge: localBackendRetryCapability.bridge,
+    channel: localBackendRetryCapability.channel,
+    id: localBackendRetryCapability.id,
+    payloadClass: localBackendRetryCapability.payloadClass,
+    permission: localBackendRetryCapability.permission,
+    sessionAdmission: localBackendRetryCapability.sessionAdmission,
+    sessionAdmissionRationale: localBackendRetryCapability.sessionAdmissionRationale,
+    transport: localBackendRetryCapability.transport,
+  },
+  {
+    bridge: localBackendShowLogsCapability.bridge,
+    channel: localBackendShowLogsCapability.channel,
+    id: localBackendShowLogsCapability.id,
+    payloadClass: localBackendShowLogsCapability.payloadClass,
+    permission: localBackendShowLogsCapability.permission,
+    sessionAdmission: localBackendShowLogsCapability.sessionAdmission,
+    sessionAdmissionRationale: localBackendShowLogsCapability.sessionAdmissionRationale,
+    transport: localBackendShowLogsCapability.transport,
+  },
   {
     bridge: computerUsePermissionsCapability.bridge,
     channel: computerUsePermissionsCapability.channel,
@@ -4364,6 +4443,12 @@ export const generatedNativeCapabilityManifest = [
 
 export const generatedNativeEventManifest = [
   {
+    channel: localBackendStatusChangedEvent.channel,
+    id: localBackendStatusChangedEvent.id,
+    permission: localBackendStatusChangedEvent.permission,
+    target: localBackendStatusChangedEvent.target,
+  },
+  {
     channel: applicationMenuCommandEvent.channel,
     id: applicationMenuCommandEvent.id,
     permission: applicationMenuCommandEvent.permission,
@@ -4522,6 +4607,23 @@ export const generatedNativeEventManifest = [
 ] as const;
 
 export const generatedNativeStateManifest = [
+  {
+    bridge: localBackendStateLeaf.bridge,
+    get: {
+      channel: localBackendStateLeaf.get.channel,
+      id: localBackendStateLeaf.get.id,
+      permission: localBackendStateLeaf.get.permission,
+      sessionAdmission: localBackendStateLeaf.get.sessionAdmission,
+      sessionAdmissionRationale: localBackendStateLeaf.get.sessionAdmissionRationale,
+    },
+    id: localBackendStateLeaf.id,
+    subscribe: {
+      channel: localBackendStateLeaf.subscribe.channel,
+      id: localBackendStateLeaf.subscribe.id,
+      permission: localBackendStateLeaf.subscribe.permission,
+      target: localBackendStateLeaf.subscribe.target,
+    },
+  },
   {
     bridge: sitePermissionMenuStateLeaf.bridge,
     get: {
@@ -4854,6 +4956,66 @@ export const generatedNativeStateManifest = [
 ] as const;
 
 export const generatedNativeCapabilityIndex = {
+  "localBackend.state": {
+    artifacts: {
+      contract: "localBackendStatusContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["localBackend.state"]',
+      leaf: "localBackendStatusCapability",
+      mainBinding: 'generatedNativeMainBindingsById["localBackend.state"]',
+      mock: "localBackendStatusCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.localBackend.state",
+      webFallback: "generatedNativeWebFallbacks.localBackendStatus",
+    },
+    bridge: localBackendStatusCapability.bridge,
+    channel: localBackendStatusCapability.channel,
+    handler: localBackendStatusCapability.handler,
+    id: localBackendStatusCapability.id,
+    payloadClass: localBackendStatusCapability.payloadClass,
+    permission: localBackendStatusCapability.permission,
+    sessionAdmission: localBackendStatusCapability.sessionAdmission,
+    sessionAdmissionRationale: localBackendStatusCapability.sessionAdmissionRationale,
+    transport: localBackendStatusCapability.transport,
+  },
+  "localBackend.retry": {
+    artifacts: {
+      contract: "localBackendRetryContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["localBackend.retry"]',
+      leaf: "localBackendRetryCapability",
+      mainBinding: 'generatedNativeMainBindingsById["localBackend.retry"]',
+      mock: "localBackendRetryCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.localBackend.retry",
+      webFallback: "generatedNativeWebFallbacks.localBackendRetry",
+    },
+    bridge: localBackendRetryCapability.bridge,
+    channel: localBackendRetryCapability.channel,
+    handler: localBackendRetryCapability.handler,
+    id: localBackendRetryCapability.id,
+    payloadClass: localBackendRetryCapability.payloadClass,
+    permission: localBackendRetryCapability.permission,
+    sessionAdmission: localBackendRetryCapability.sessionAdmission,
+    sessionAdmissionRationale: localBackendRetryCapability.sessionAdmissionRationale,
+    transport: localBackendRetryCapability.transport,
+  },
+  "localBackend.showLogs": {
+    artifacts: {
+      contract: "localBackendShowLogsContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["localBackend.showLogs"]',
+      leaf: "localBackendShowLogsCapability",
+      mainBinding: 'generatedNativeMainBindingsById["localBackend.showLogs"]',
+      mock: "localBackendShowLogsCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.localBackend.showLogs",
+      webFallback: "generatedNativeWebFallbacks.localBackendShowLogs",
+    },
+    bridge: localBackendShowLogsCapability.bridge,
+    channel: localBackendShowLogsCapability.channel,
+    handler: localBackendShowLogsCapability.handler,
+    id: localBackendShowLogsCapability.id,
+    payloadClass: localBackendShowLogsCapability.payloadClass,
+    permission: localBackendShowLogsCapability.permission,
+    sessionAdmission: localBackendShowLogsCapability.sessionAdmission,
+    sessionAdmissionRationale: localBackendShowLogsCapability.sessionAdmissionRationale,
+    transport: localBackendShowLogsCapability.transport,
+  },
   "computerUse.getPermissions": {
     artifacts: {
       contract: "computerUsePermissionsContract",
@@ -8535,6 +8697,16 @@ export const generatedNativeCapabilityIndex = {
 } as const;
 
 export const generatedNativeEventIndex = {
+  "localBackend.state.changed": {
+    artifacts: {
+      leaf: "localBackendStatusChangedEvent",
+      mock: "localBackendStatusChangedEvent.mock",
+    },
+    channel: localBackendStatusChangedEvent.channel,
+    id: localBackendStatusChangedEvent.id,
+    permission: localBackendStatusChangedEvent.permission,
+    target: localBackendStatusChangedEvent.target,
+  },
   "applicationMenu.command": {
     artifacts: {
       leaf: "applicationMenuCommandEvent",
@@ -8798,6 +8970,30 @@ export const generatedNativeEventIndex = {
 } as const;
 
 export const generatedNativeStateIndex = {
+  "localBackend.state": {
+    artifacts: {
+      get: "generatedNativeStateBindings.localBackend.state.get",
+      leaf: "localBackendStateLeaf",
+      mock: "localBackendStateLeaf.mock",
+      subscribe: "generatedNativeStateBindings.localBackend.state.subscribe",
+      webFallback: "localBackendStateLeaf.webFallback",
+    },
+    bridge: localBackendStateLeaf.bridge,
+    get: {
+      channel: localBackendStateLeaf.get.channel,
+      id: localBackendStateLeaf.get.id,
+      permission: localBackendStateLeaf.get.permission,
+      sessionAdmission: localBackendStateLeaf.get.sessionAdmission,
+      sessionAdmissionRationale: localBackendStateLeaf.get.sessionAdmissionRationale,
+    },
+    id: localBackendStateLeaf.id,
+    subscribe: {
+      channel: localBackendStateLeaf.subscribe.channel,
+      id: localBackendStateLeaf.subscribe.id,
+      permission: localBackendStateLeaf.subscribe.permission,
+      target: localBackendStateLeaf.subscribe.target,
+    },
+  },
   "sitePermissionMenu.state": {
     artifacts: {
       get: "generatedNativeStateBindings.sitePermissionMenu.state.get",
@@ -9262,6 +9458,12 @@ export const generatedNativeStateIndex = {
   },
 } as const;
 
+export const localBackendStatusContract =
+  generatedNativeCapabilityContracts.localBackendStatus;
+export const localBackendRetryContract =
+  generatedNativeCapabilityContracts.localBackendRetry;
+export const localBackendShowLogsContract =
+  generatedNativeCapabilityContracts.localBackendShowLogs;
 export const computerUsePermissionsContract =
   generatedNativeCapabilityContracts.computerUsePermissions;
 export const computerUsePermissionFlowContract =
@@ -9591,6 +9793,9 @@ export const synchronicitySetSpaceSettingsContract =
   generatedNativeCapabilityContracts.synchronicitySetSpaceSettings;
 
 export type NativeCapabilityTypeMap = {
+  "localBackend.state": typeof localBackendStatusCapability;
+  "localBackend.retry": typeof localBackendRetryCapability;
+  "localBackend.showLogs": typeof localBackendShowLogsCapability;
   "computerUse.getPermissions": typeof computerUsePermissionsCapability;
   "computerUse.openPermissionFlow": typeof computerUsePermissionFlowCapability;
   "applicationMenu.update": typeof applicationMenuUpdateCapability;
@@ -9776,6 +9981,7 @@ export type NativeCapabilityTypeMap = {
 };
 
 export type NativeEventTypeMap = {
+  "localBackend.state.changed": typeof localBackendStatusChangedEvent;
   "applicationMenu.command": typeof applicationMenuCommandEvent;
   "sitePermissionMenu.changed": typeof sitePermissionMenuChangedEvent;
   "appPreferences.state.changed": typeof appPreferencesChangedEvent;
@@ -9805,6 +10011,7 @@ export type NativeEventTypeMap = {
 };
 
 export type NativeStateTypeMap = {
+  "localBackend.state": typeof localBackendStateLeaf;
   "sitePermissionMenu.state": typeof sitePermissionMenuStateLeaf;
   "appPreferences.state": typeof appPreferencesStateLeaf;
   "connectorRuntime.state": typeof connectorRuntimeStateLeaf;
@@ -9877,6 +10084,11 @@ export type GeneratedNativeStateBridgeMethod<Leaf> =
     : never;
 
 export type GeneratedNativeBridge = {
+  localBackend: {
+    retry: GeneratedNativeCommandBridgeMethod<typeof localBackendRetryCapability>;
+    showLogs: GeneratedNativeCommandBridgeMethod<typeof localBackendShowLogsCapability>;
+    state: GeneratedNativeStateBridgeMethod<typeof localBackendStateLeaf>;
+  };
   computerUse: {
     getPermissions: GeneratedNativeCommandBridgeMethod<
       typeof computerUsePermissionsCapability
@@ -10368,6 +10580,15 @@ export function createGeneratedNativePreloadBridge(
   helpers: GeneratedNativePreloadBridgeHelpers
 ): GeneratedNativeBridge {
   return {
+    localBackend: {
+      retry: () => helpers.invoke(localBackendRetryCapability.contract, undefined),
+      showLogs: () =>
+        helpers.invoke(localBackendShowLogsCapability.contract, undefined),
+      state: helpers.state({
+        get: localBackendStatusCapability.contract,
+        subscribe: localBackendStatusChangedEvent,
+      }),
+    },
     computerUse: {
       getPermissions: () =>
         helpers.invoke(computerUsePermissionsCapability.contract, undefined),
@@ -10980,6 +11201,14 @@ export function createGeneratedNativePreloadBridge(
 
 export function createGeneratedNativeWebBridge(): GeneratedNativeBridge {
   return {
+    localBackend: {
+      retry: async () => localBackendRetryCapability.webFallback,
+      showLogs: async () => localBackendShowLogsCapability.webFallback,
+      state: createGeneratedWebStateBridge<
+        GeneratedNativeStateSnapshot<typeof localBackendStateLeaf>,
+        GeneratedNativeStateGetInput<typeof localBackendStateLeaf>
+      >((_input) => localBackendStateLeaf.webFallback),
+    },
     computerUse: {
       getPermissions: async () => computerUsePermissionsCapability.webFallback,
       openPermissionFlow: async () => computerUsePermissionFlowCapability.webFallback,
@@ -11593,6 +11822,14 @@ export function createGeneratedNativeBridgeMock(
   helpers: GeneratedNativeBridgeMockHelpers
 ): GeneratedNativeBridge {
   return {
+    localBackend: {
+      retry: helpers.command(async () => localBackendRetryCapability.mock),
+      showLogs: helpers.command(async () => localBackendShowLogsCapability.mock),
+      state: helpers.state(
+        (_input: GeneratedNativeStateGetInput<typeof localBackendStateLeaf>) =>
+          localBackendStateLeaf.mock
+      ),
+    },
     computerUse: {
       getPermissions: helpers.command(
         async () => computerUsePermissionsCapability.mock
@@ -12468,6 +12705,10 @@ export function mergeGeneratedNativeBridgeOverrides(
   overrides: GeneratedNativeBridgeOverrides = {}
 ): GeneratedNativeBridge {
   return {
+    localBackend: {
+      ...bridge.localBackend,
+      ...overrides.localBackend,
+    },
     computerUse: {
       ...bridge.computerUse,
       ...overrides.computerUse,

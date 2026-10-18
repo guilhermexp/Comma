@@ -6,11 +6,17 @@ import {
 
 export type CommaBuildFlavor = CommaChannel;
 export type CommaReleaseChannel = "prod";
+/**
+ * `local`: the app starts its own backend on this Mac and Main chooses the API
+ * URL at launch (clients/apps/electron/RELEASE.md). `remote`: a fixed backend.
+ */
+export type CommaBackendMode = "local" | "remote";
 
 declare const COMMA_DEFINED_BUILD_FLAVOR: string | undefined;
 declare const COMMA_DEFINED_R2_PUBLIC_BASE_URL: string | undefined;
 declare const COMMA_DEFINED_UPDATE_URL: string | undefined;
 declare const COMMA_DEFINED_API_BASE_URL: string | undefined;
+declare const COMMA_DEFINED_BACKEND_MODE: string | undefined;
 
 /** The GitHub repository whose releases carry the desktop app and its feed. */
 export const defaultReleaseRepository = "guilhermexp/Comma";
@@ -26,6 +32,8 @@ export interface CommaReleaseConfig {
   appBundleId: string;
   appUserModelId: string;
   urlScheme: string;
+  backendMode: CommaBackendMode;
+  /** Empty in local mode: Main resolves it from the port it chose. */
   apiBaseUrl: string;
   releaseRepository?: string;
   updateUrl?: string;
@@ -39,7 +47,7 @@ export type CommaPackableReleaseConfig = CommaReleaseConfig & {
 
 const configs: Record<
   CommaBuildFlavor,
-  Omit<CommaReleaseConfig, "releaseRepository" | "updateUrl">
+  Omit<CommaReleaseConfig, "releaseRepository" | "updateUrl" | "backendMode">
 > = {
   prod: {
     flavor: "prod",
@@ -98,6 +106,10 @@ function readDefinedValue(name: string) {
       return typeof COMMA_DEFINED_API_BASE_URL === "undefined"
         ? undefined
         : COMMA_DEFINED_API_BASE_URL;
+    case "COMMA_BACKEND_MODE":
+      return typeof COMMA_DEFINED_BACKEND_MODE === "undefined"
+        ? undefined
+        : COMMA_DEFINED_BACKEND_MODE;
     default:
       return undefined;
   }
@@ -133,10 +145,12 @@ export function getCommaReleaseConfig(
   flavor = parseCommaChannelStrict(readEnv("COMMA_BUILD_FLAVOR"))
 ): CommaReleaseConfig {
   const base = configs[flavor];
-  const apiBaseUrl = readEnv("COMMA_API_BASE_URL") || base.apiBaseUrl;
+  const explicitApiBaseUrl = readEnv("COMMA_API_BASE_URL");
+  const backendMode = resolveBackendMode(flavor, explicitApiBaseUrl);
   const config: CommaReleaseConfig = {
     ...base,
-    apiBaseUrl,
+    backendMode,
+    apiBaseUrl: backendMode === "local" ? "" : explicitApiBaseUrl || base.apiBaseUrl,
   };
 
   if (base.releaseChannel) {
@@ -153,6 +167,21 @@ export function getCommaReleaseConfig(
   }
 
   return config;
+}
+
+/**
+ * The prod release runs its own local backend unless the build names a remote
+ * API. Development and staging builds keep their remote backend.
+ */
+function resolveBackendMode(
+  flavor: CommaBuildFlavor,
+  explicitApiBaseUrl: string | undefined
+): CommaBackendMode {
+  const requested = readEnv("COMMA_BACKEND_MODE");
+  if (requested === "local" || requested === "remote") return requested;
+  if (requested)
+    throw new Error(`COMMA_BACKEND_MODE must be local or remote, got ${requested}.`);
+  return flavor === "prod" && !explicitApiBaseUrl ? "local" : "remote";
 }
 
 export function getPackableReleaseConfig(): CommaPackableReleaseConfig {

@@ -13,6 +13,7 @@ describe("desktop release identity", () => {
   it("installs beside the official app and updates from this repository's latest release", () => {
     vi.stubEnv("COMMA_UPDATE_URL", "");
     vi.stubEnv("COMMA_API_BASE_URL", "");
+    vi.stubEnv("COMMA_BACKEND_MODE", "");
     vi.stubEnv("COMMA_RELEASE_REPOSITORY", "");
 
     expect(getCommaReleaseConfig("prod")).toMatchObject({
@@ -21,15 +22,38 @@ describe("desktop release identity", () => {
       packId: "com.guilhermexp.comma",
       urlScheme: "comma-gx",
       runtimeNamespace: "@comma-gx",
-      apiBaseUrl: "https://xperience-studio.com",
       updateUrl: "https://github.com/guilhermexp/Comma/releases/latest/download",
     });
   });
 
+  it("runs the prod app on its own local backend with no fixed API URL", () => {
+    vi.stubEnv("COMMA_API_BASE_URL", "");
+    vi.stubEnv("COMMA_BACKEND_MODE", "");
+
+    expect(getCommaReleaseConfig("prod")).toMatchObject({
+      backendMode: "local",
+      apiBaseUrl: "",
+    });
+  });
+
+  it("keeps development builds on their remote backend", () => {
+    vi.stubEnv("COMMA_API_BASE_URL", "https://salix-staging.comma.surf");
+    vi.stubEnv("COMMA_BACKEND_MODE", "");
+
+    expect(getCommaReleaseConfig("dev")).toMatchObject({
+      backendMode: "remote",
+      apiBaseUrl: "https://salix-staging.comma.surf",
+    });
+    vi.stubEnv("COMMA_API_BASE_URL", "");
+    expect(getCommaReleaseConfig("staging").backendMode).toBe("remote");
+  });
+
   it("lets a build select another API, release repository, or feed", () => {
+    vi.stubEnv("COMMA_BACKEND_MODE", "");
     vi.stubEnv("COMMA_API_BASE_URL", "https://api.example.test");
     vi.stubEnv("COMMA_RELEASE_REPOSITORY", "someone/Comma");
     expect(getCommaReleaseConfig("prod")).toMatchObject({
+      backendMode: "remote",
       apiBaseUrl: "https://api.example.test",
       updateUrl: "https://github.com/someone/Comma/releases/latest/download",
     });

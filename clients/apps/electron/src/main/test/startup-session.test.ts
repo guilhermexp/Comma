@@ -57,6 +57,35 @@ describe("Electron startup Session", () => {
     expect(env).not.toHaveProperty("COMMA_ELECTRON_STARTUP_SESSION_TOKEN");
   });
 
+  it("accepts the local backend's owner Session in a packaged app but no other seed", () => {
+    const env = { COMMA_ELECTRON_STARTUP_SESSION_TOKEN: "must-not-escape" };
+    const localOwnerSession = {
+      audience: "http://127.0.0.1:53001",
+      email: "owner@local.comma",
+      expiresAtEpochSeconds: 4_102_444_800,
+      sessionId: "local-owner-session:user-1",
+      token: "local-owner-token",
+      userId: "local-owner:user-1",
+    };
+
+    expect(
+      resolveElectronStartupSession({
+        apiBaseUrl: "http://127.0.0.1:53001",
+        env,
+        isPackaged: true,
+        localOwnerSession,
+      })
+    ).toEqual(localOwnerSession);
+    expect(env).not.toHaveProperty("COMMA_ELECTRON_STARTUP_SESSION_TOKEN");
+    expect(() =>
+      resolveElectronStartupSession({
+        apiBaseUrl: "http://127.0.0.1:53002",
+        isPackaged: true,
+        localOwnerSession,
+      })
+    ).toThrow("The local owner Session targets http://127.0.0.1:53001");
+  });
+
   it("does nothing without an explicit token", () => {
     expect(
       resolveElectronStartupSession({

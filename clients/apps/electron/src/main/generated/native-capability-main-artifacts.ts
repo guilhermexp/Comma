@@ -3,6 +3,7 @@
 
 import { generatedNativeMainBindings } from "@comma/native-bridge";
 import type { NativeCommandContract } from "@comma/native-bridge";
+import type { LocalBackendProvider } from "../local-backend/provider";
 import type { ComputerUsePermissionProvider } from "../connector";
 import type { ApplicationMenuProvider } from "../application-menu-provider";
 import type {
@@ -56,6 +57,7 @@ export interface NativeSessionAdmissionGuard {
 }
 
 export type NativeCapabilityProviderMap = {
+  localBackend: LocalBackendProvider;
   computerUse: ComputerUsePermissionProvider;
   applicationMenu: ApplicationMenuProvider;
   nativeInfo: NativeInfoProvider;
@@ -93,6 +95,9 @@ export type NativeCapabilityProviderMap = {
 };
 
 export type NativeCapabilityHandlerTypeMap = {
+  "localBackend.state": LocalBackendProvider["state"];
+  "localBackend.retry": LocalBackendProvider["retry"];
+  "localBackend.showLogs": LocalBackendProvider["showLogs"];
   "computerUse.getPermissions": ComputerUsePermissionProvider["getPermissions"];
   "computerUse.openPermissionFlow": ComputerUsePermissionProvider["openComputerUsePermissionFlow"];
   "applicationMenu.update": ApplicationMenuProvider["update"];
@@ -293,6 +298,9 @@ export function registerGeneratedNativeMainBindings({
   sessionAdmissionGuard: NativeSessionAdmissionGuard;
 }) {
   const handlers: NativeCapabilityHandlerMap = {
+    "localBackend.state": async (input) => providers.localBackend.state(input),
+    "localBackend.retry": async (input) => providers.localBackend.retry(input),
+    "localBackend.showLogs": async (input) => providers.localBackend.showLogs(input),
     "computerUse.getPermissions": async (input) =>
       providers.computerUse.getPermissions(input),
     "computerUse.openPermissionFlow": async (input) =>

@@ -2,7 +2,10 @@ import { GOOGLE_DRIVE_PARTITION } from "./modules/browser-sidebar/google-drive-p
 import { isAuthorizationReturnUrl } from "./authorization-return";
 import { installApplicationMenu } from "./application-menu";
 import { applicationMenuProvider } from "./application-menu-provider";
-import { applicationMenuCommandEvent } from "@comma/native-bridge";
+import {
+  applicationMenuCommandEvent,
+  localBackendStatusChangedEvent,
+} from "@comma/native-bridge";
 import { applyBrowserSidebarAppearance } from "./browser-sidebar-appearance";
 import { OpenCommaShortcut } from "./open-comma-shortcut";
 import {
@@ -86,6 +89,10 @@ import { NativeEventBus, WebContentsRegistry, createSenderPolicy } from "./modul
 import { JsonlNativeObservabilitySink } from "./modules/observability";
 import { NativeSurfaceService, NativeWindowCommandService } from "./modules/surfaces";
 import { resolveElectronStartupSession } from "./startup-session";
+import {
+  adoptLocalOwnerSession,
+  createMainLocalBackend,
+} from "./local-backend/main-integration";
 import {
   BROWSER_INSPECTION_COMPOSER_WEB_PREFERENCES,
   BROWSER_SIDEBAR_WEB_PREFERENCES,
@@ -204,7 +211,25 @@ const opaqueWindowBackgrounds = new OpaqueWindowBackgroundController(
   nativeTheme.shouldUseDarkColors
 );
 let electronMainLocale: CommaLocale = defaultLocale;
-const authApiBaseUrl = e2eHooks.apiBaseUrl ?? releaseConfig.apiBaseUrl;
+// Local mode: the app's own backend on this Mac (clients/apps/electron/RELEASE.md).
+// Main chooses its port at launch, so the API URL is set before the context
+// is created, and the owner is signed in once the backend serves.
+const localBackend = createMainLocalBackend({
+  releaseConfig,
+  e2eApiBaseUrl: e2eHooks.apiBaseUrl,
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
+  appPath: app.getAppPath(),
+  appData: app.getPath("appData"),
+  userData: runtimePaths.userData,
+  // The released version (Velopack's), which decides when a backup is due.
+  appVersion: displayVersion,
+  emitStatus: (status) =>
+    appContext?.nativeEventBus.emit(localBackendStatusChangedEvent, status),
+  openPath: (path) => shell.openPath(path),
+  log: (message) => log.info(message),
+});
+let authApiBaseUrl = e2eHooks.apiBaseUrl ?? releaseConfig.apiBaseUrl;
 const startupSession = resolveElectronStartupSession({
   apiBaseUrl: authApiBaseUrl,
   defaultFilePath:
@@ -1722,6 +1747,7 @@ async function createElectronMainContext() {
       // Signed out (or another account) before the onboarding: sign-in needs
       // the main window.
       if (state.phase !== "signed_in") mainWindowOnboardingHold.release();
+      localBackend?.followSessionState(state);
       return onboardingWindow.sessionChanged(state);
     },
     sideChat,
@@ -1825,6 +1851,8 @@ async function createElectronMainContext() {
       e2eHooks.secureSessionFilePath ??
       join(app.getPath("userData"), "secure-session.bin"),
     startupSession,
+    deferSessionInitialize: Boolean(localBackend),
+    localBackend,
     computeNodeLifecyclePath: e2eHooks.computeNodeLifecyclePath,
   });
   await applyElectronE2eHooks(e2eHooks, context.secureSessionStore, context.session);
@@ -1886,7 +1914,16 @@ function startElectronApp() {
           : undefined
       );
       installDynamicUiNetworkSecurity(session.defaultSession);
+      if (localBackend) authApiBaseUrl = (await localBackend.prepare()).apiBaseUrl;
       appContext = await createElectronMainContext();
+      if (localBackend) {
+        const context = appContext;
+        localBackend.attachSession((input) =>
+          adoptLocalOwnerSession(context, authApiBaseUrl, input)
+        );
+        // The window opens on the startup screen while the backend starts.
+        void localBackend.launch();
+      }
       registerNativeBridgeHandlersFromContext(appContext);
       applicationMenu = installApplicationMenu({
         isMainFocused: () => primaryWindow?.isFocused() ?? false,
@@ -2079,11 +2116,20 @@ app.on("before-quit", (event) => {
 
 async function closeMainServices() {
   closingMainServices = true;
+  localBackend?.beginShutdown();
+  // The local backend stops last, after the services that may still call it.
+  // If one of them stalls, the backend stops anyway: no bundled process may
+  // outlive a quit.
+  const localBackendWatchdog = localBackend
+    ? setTimeout(() => void localBackend.stop(), 30_000)
+    : undefined;
   mainWindowInteractionsEnabled = false;
   suspendStatusTrayInteractions();
   try {
     await appContext?.session.close();
   } catch (error) {
+    // Quit is cancelled and the app keeps running with its backend.
+    clearTimeout(localBackendWatchdog);
     closingMainServices = false;
     mainWindowInteractionsEnabled = true;
     enableStatusTrayInteractions();
@@ -2106,6 +2152,9 @@ async function closeMainServices() {
   sideChatBrowserWindow?.destroy();
   sideChatBrowserWindow = undefined;
   await appContext?.close();
+  // Last: the services above may still call the backend while they close.
+  clearTimeout(localBackendWatchdog);
+  await localBackend?.stop();
   notch.dispose();
 }
 

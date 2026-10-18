@@ -679,6 +679,7 @@ describe("native bridge contracts", () => {
 
   it("publishes event leaves as first-class generated manifest entries", () => {
     expect(nativeEventRegistry.map((event) => event.id)).toEqual([
+      "localBackend.state.changed",
       "applicationMenu.command",
       "sitePermissionMenu.changed",
       "appPreferences.state.changed",
@@ -707,6 +708,12 @@ describe("native bridge contracts", () => {
       "driveCatalog.state.changed",
     ]);
     expect(generatedNativeEventManifest).toEqual([
+      {
+        channel: "comma:local-backend:state-changed",
+        id: "localBackend.state.changed",
+        permission: "local-backend.read",
+        target: { type: "all" },
+      },
       {
         channel: "comma:application-menu:command",
         id: "applicationMenu.command",
@@ -896,6 +903,7 @@ describe("native bridge contracts", () => {
 
   it("publishes state leaves with generated get and subscribe bindings", () => {
     expect(nativeStateRegistry.map((state) => state.id)).toEqual([
+      "localBackend.state",
       "sitePermissionMenu.state",
       "appPreferences.state",
       "connectorRuntime.state",
@@ -917,6 +925,24 @@ describe("native bridge contracts", () => {
       "driveCatalog.state",
     ]);
     expect(generatedNativeStateManifest).toEqual([
+      {
+        bridge: { method: "state", namespace: "localBackend" },
+        get: {
+          channel: "comma:local-backend:state",
+          id: "localBackend.state",
+          permission: "local-backend.read",
+          sessionAdmission: "local_only",
+          sessionAdmissionRationale:
+            "Reports whether this Mac's local backend is starting, ready, or failed; it runs before any Session exists.",
+        },
+        id: "localBackend.state",
+        subscribe: {
+          channel: "comma:local-backend:state-changed",
+          id: "localBackend.state.changed",
+          permission: "local-backend.read",
+          target: { type: "all" },
+        },
+      },
       {
         bridge: { method: "state", namespace: "sitePermissionMenu" },
         get: {

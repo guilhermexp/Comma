@@ -25,6 +25,7 @@ export default defineConfig({
     ),
     COMMA_DEFINED_UPDATE_URL: JSON.stringify(releaseConfig.updateUrl ?? ""),
     COMMA_DEFINED_API_BASE_URL: JSON.stringify(releaseConfig.apiBaseUrl),
+    COMMA_DEFINED_BACKEND_MODE: JSON.stringify(releaseConfig.backendMode),
   },
   resolve: {
     alias: {
