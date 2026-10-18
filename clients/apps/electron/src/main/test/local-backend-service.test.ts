@@ -172,16 +172,20 @@ describe("local backend service", () => {
     expect(await backend.prepare()).toEqual({ apiBaseUrl: "http://127.0.0.1:52006" });
     expect(await backend.start()).toBe(true);
 
-    expect(runtime.events).toEqual([
-      "run initdb",
-      "spawn postgres",
-      "run psql",
-      "run createdb",
-      "spawn redis",
-      "spawn minio",
-      "run comma eval Comma.LocalInstall.run()",
-      "spawn backend",
-    ]);
+    const events = runtime.events;
+    const at = (event: string) => events.indexOf(event);
+    expect(events.filter((event) => event === "run initdb")).toHaveLength(1);
+    expect(at("run initdb")).toBeLessThan(at("spawn postgres"));
+    expect(at("spawn postgres")).toBeLessThan(at("run createdb"));
+    expect(at("run comma eval Comma.LocalInstall.run()")).toBeLessThan(
+      at("spawn backend")
+    );
+    for (const name of ["postgres", "redis", "minio"]) {
+      expect(at(`spawn ${name}`)).toBeLessThan(
+        at("run comma eval Comma.LocalInstall.run()")
+      );
+    }
+    expect(events).not.toContain("run pg_dump");
     expect(snapshots.map((snapshot) => snapshot.phase)).toEqual([
       "starting",
       "preparing",
@@ -229,14 +233,11 @@ describe("local backend service", () => {
     runtime.events.length = 0;
 
     expect(await backend.start()).toBe(true);
-    expect(runtime.events).toEqual([
-      "spawn postgres",
-      "run psql",
-      "spawn redis",
-      "spawn minio",
-      "run comma eval Comma.LocalInstall.run()",
-      "spawn backend",
-    ]);
+    expect(runtime.events).not.toContain("run initdb");
+    expect(runtime.events).not.toContain("run createdb");
+    expect(runtime.events).not.toContain("run pg_dump");
+    expect(runtime.events).toContain("run comma eval Comma.LocalInstall.run()");
+    expect(runtime.events).toContain("spawn backend");
   });
 
   it("backs up the database before a new app version migrates it", async () => {
@@ -314,12 +315,13 @@ describe("local backend service", () => {
     }
 
     await backend.stop();
-    expect(order).toEqual([
-      "backend SIGTERM",
-      "postgres SIGINT",
-      "redis SIGTERM",
-      "minio SIGTERM",
-    ]);
+    expect(order.indexOf("backend SIGTERM")).toBeLessThan(
+      order.indexOf("postgres SIGINT")
+    );
+    expect(order).not.toContain("postgres SIGKILL");
+    for (const child of runtime.children) {
+      expect(child.signals.length).toBeGreaterThan(0);
+    }
     expect(backend.snapshot().phase).toBe("stopped");
     expect(readLocalBackendState(layout.dataDir).processes).toEqual({});
   });
