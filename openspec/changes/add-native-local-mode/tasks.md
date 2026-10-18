@@ -33,7 +33,7 @@
 ## 5. Release e CI
 
 - [x] 5.1 Integrar 1.2 a 1.5 ao `build:native`/release: `local-backend/` dentro de `Contents/Resources`, assinatura ad hoc de todos os binários, gate de 1.4 antes do `vpk pack`; verificar com um build local completo e `codesign --verify --deep --strict`
-- [ ] 5.2 Atualizar `.github/workflows/desktop-release.yml`: cache do prefixo nativo pela chave das versões, passos de 1.x, remoção de `COMMA_API_BASE_URL`; verificar com `actionlint` e um `workflow_dispatch` sem publicar (ou uma tag de prerelease aprovada)
+- [x] 5.2 Atualizar `.github/workflows/desktop-release.yml`: cache do prefixo nativo pela chave das versões, passos de 1.x, remoção de `COMMA_API_BASE_URL`; verificar com `actionlint` e um `workflow_dispatch` sem publicar (ou uma tag de prerelease aprovada)
 - [x] 5.3 Atualizar o runbook de release e as instruções de primeira instalação (o que o app faz na primeira abertura, onde ficam os dados e os backups, como apagar a instalação local); verificar com `pnpm docs:check`
 
 ## 6. Integração
