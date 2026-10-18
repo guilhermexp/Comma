@@ -1,0 +1,139 @@
+/* Startup and error screen of the local backend (LocalBackendStartup.tsx).
+   It extends the login shell: same logo, title scale, and actions. */
+
+.local-backend-panel {
+  gap: 24px;
+}
+
+.local-backend-heading {
+  display: grid;
+  width: 100%;
+  gap: 8px;
+  text-align: center;
+  animation: local-backend-heading-in 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.local-backend-copy {
+  padding: 0 4px;
+  text-wrap: pretty;
+}
+
+.local-backend-steps {
+  display: grid;
+  width: 100%;
+  margin: 0;
+  padding: 4px 12px;
+  list-style: none;
+  gap: 2px;
+}
+
+.local-backend-step {
+  display: grid;
+  min-height: 36px;
+  grid-template-columns: 20px 1fr;
+  align-items: center;
+  gap: 12px;
+  color: var(--color-text-tertiary);
+  font-size: 0.875rem;
+  line-height: 1.4;
+  transition: color 200ms ease-out;
+}
+
+.local-backend-step-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--color-fg-quaternary);
+  transition: color 200ms ease-out;
+}
+
+.local-backend-step[data-state="current"] {
+  color: var(--color-text-primary);
+}
+
+.local-backend-step[data-state="current"] .local-backend-step-icon {
+  color: var(--color-text-secondary);
+}
+
+.local-backend-step[data-state="done"] {
+  color: var(--color-text-secondary);
+}
+
+.local-backend-step[data-state="done"] .local-backend-step-icon {
+  color: var(--color-fg-success-primary);
+}
+
+.local-backend-step[data-state="failed"] {
+  color: var(--color-text-primary);
+}
+
+.local-backend-step[data-state="failed"] .local-backend-step-icon {
+  color: var(--color-fg-warning-primary);
+}
+
+.local-backend-failure {
+  display: grid;
+  width: 100%;
+  gap: 16px;
+  padding: 0 8px;
+}
+
+/* Paths and the technical detail are data the person may copy into a
+   support request, so they are selectable and set in the mono face. */
+.local-backend-detail,
+.local-backend-paths dd {
+  -webkit-app-region: no-drag;
+  overflow-wrap: anywhere;
+  user-select: text;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.local-backend-detail {
+  display: block;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+}
+
+.local-backend-paths {
+  display: grid;
+  margin: 0;
+  gap: 8px;
+}
+
+.local-backend-paths > div {
+  display: grid;
+  gap: 2px;
+}
+
+.local-backend-paths dt {
+  color: var(--color-text-tertiary);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.local-backend-paths dd {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+@keyframes local-backend-heading-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    filter: blur(2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .local-backend-heading {
+    animation: none;
+  }
+
+  .local-backend-step,
+  .local-backend-step-icon {
+    transition: none;
+  }
+}

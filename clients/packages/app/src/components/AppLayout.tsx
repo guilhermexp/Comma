@@ -32,6 +32,10 @@ import { AutomaticUpdates } from "./AutomaticUpdates";
 import { DesktopAppPromptHost } from "./DesktopAppPrompt";
 import { AppSettingsRoute } from "./AppSettingsRoute";
 import { CommaAuthGate, useCommaAuth } from "./AuthGate";
+import {
+  LocalBackendGate,
+  LocalBackendStartupScreen,
+} from "./local-backend/LocalBackendStartup";
 import { WindowBar } from "./WindowBar";
 import { ChatConsumerBoundary, ChatSessionProvider } from "./chat/ChatProvider";
 import { RouterIdentityProvider } from "./router-identity/RouterIdentityProvider";
@@ -160,9 +164,27 @@ export function CommaRootLayout() {
 // "Do anything" starter).
 export function CommaAuthenticatedLayout() {
   return (
-    <CommaAuthGate localManagementEntry={<LocalComputeLoginEntry />}>
-      <CommaAuthenticatedSession />
-    </CommaAuthGate>
+    <LocalBackendGate>
+      {(localMode) => (
+        <CommaAuthGate
+          localManagementEntry={<LocalComputeLoginEntry />}
+          // Local mode has no login screen: while Main signs the owner in
+          // again (after Sign out or a rejected Session), the startup
+          // screen stays up instead.
+          {...(localMode
+            ? {
+                signedOutFallback: (
+                  <LocalBackendStartupScreen
+                    status={{ mode: "local", phase: "signing_in" }}
+                  />
+                ),
+              }
+            : {})}
+        >
+          <CommaAuthenticatedSession />
+        </CommaAuthGate>
+      )}
+    </LocalBackendGate>
   );
 }
 

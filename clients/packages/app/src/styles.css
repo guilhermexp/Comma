@@ -5,6 +5,7 @@
 @import "./components/commaCustomThemeStudio.css";
 @import "./components/onboarding/onboarding.css";
 @import "./components/onboarding/window/onboardingWindow.css";
+@import "./components/local-backend/localBackendStartup.css";
 
 @source "./";
 @source "../../../apps/web/src";
