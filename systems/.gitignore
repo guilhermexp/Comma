@@ -40,6 +40,8 @@ erl_crash.dump
 # are tracked.
 /apps/salix_web/priv/static/assets/*
 /apps/salix_web/priv/static/cache_manifest.json
+/apps/salix_web/priv/static/*-[0-9a-f]*.*
+/apps/salix_web/priv/static/*.gz
 
 # Playwright dashboard e2e: deps + run artifacts.
 /apps/bridge_for_teams_web/e2e/node_modules/

@@ -53,10 +53,20 @@ defmodule SalixWeb.MeetingIngressSupervisor do
 
   defp bandit_child do
     {Bandit,
-     plug: SalixWeb.Endpoint,
-     port: SalixWeb.Application.port(),
-     startup_log: false,
-     http_options: [log_exceptions_with_status_codes: [], log_protocol_errors: false],
-     thousand_island_options: [supervisor_options: [name: SalixWeb.HTTPServer]]}
+     [
+       plug: SalixWeb.Endpoint,
+       port: SalixWeb.Application.port(),
+       startup_log: false,
+       http_options: [log_exceptions_with_status_codes: [], log_protocol_errors: false],
+       thousand_island_options: [supervisor_options: [name: SalixWeb.HTTPServer]]
+     ] ++ listen_ip_opts()}
+  end
+
+  # COMMA_LISTEN_IP (config/runtime.exs) binds the listener to one address.
+  defp listen_ip_opts do
+    case Application.get_env(:salix_web, :listen_ip) do
+      nil -> []
+      ip -> [ip: ip]
+    end
   end
 end

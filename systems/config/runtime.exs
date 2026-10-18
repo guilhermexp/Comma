@@ -108,6 +108,36 @@ enabled =
 
 config :comma, enabled_subsystems: enabled
 
+# The macOS desktop app's local backend binds every HTTP listener to loopback
+# and chooses its own metrics port (clients/apps/electron/RELEASE.md).
+case System.get_env("COMMA_LISTEN_IP") do
+  value when value in [nil, ""] ->
+    :ok
+
+  value ->
+    listen_ip =
+      case :inet.parse_address(String.to_charlist(value)) do
+        {:ok, address} -> address
+        {:error, _} -> raise "COMMA_LISTEN_IP must be an IP address, got: #{inspect(value)}"
+      end
+
+    for app <- [:comma_web, :salix_web, :salix_env, :systems_observability] do
+      config app, listen_ip: listen_ip
+    end
+end
+
+case System.get_env("COMMA_METRICS_PORT") do
+  value when value in [nil, ""] -> :ok
+  value -> config :systems_observability, port: String.to_integer(value)
+end
+
+# config.exs fixes the development port 4200, which CommaWeb.Application.port/0
+# prefers over COMMA_WEB_HTTP_PORT; an explicit environment port wins here.
+case System.get_env("COMMA_WEB_HTTP_PORT") do
+  value when value in [nil, ""] -> :ok
+  value -> config :comma_web, port: String.to_integer(value)
+end
+
 redis_required? = Enum.any?(enabled, &(&1 in [:salix, :comma_product, :bridge_for_teams]))
 
 redis_url =
@@ -186,7 +216,16 @@ if comma_environment not in allowed_comma_environments do
 end
 
 local_comma_environment? = comma_environment in ["local", "development", "dev", "test"]
-config :comma_core, selfhost: comma_environment == "selfhost", environment: comma_environment
+
+# The macOS desktop app's local backend (COMMA_ENVIRONMENT=local plus
+# COMMA_DESKTOP_LOCAL=1) is a single-owner instance on one Mac: it has the
+# self-hosted behavior (no cloud VM, unlimited entitlement) while keeping the
+# local environment's loopback-only admin token.
+desktop_local? = comma_environment == "local" and System.get_env("COMMA_DESKTOP_LOCAL") == "1"
+
+config :comma_core,
+  selfhost: comma_environment == "selfhost" or desktop_local?,
+  environment: comma_environment
 
 # Enable staging's explicit preview-only Slack-history flow. Publication and
 # Agent grounding remain off; production and prod remain deny-by-default, and

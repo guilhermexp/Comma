@@ -35,14 +35,16 @@ defmodule CommaWeb.Application do
         CommaWeb.NativePushListener.child_specs() ++
         [
           {Bandit,
-           plug: CommaWeb.Router,
-           port: port(),
-           startup_log: false,
-           http_options: [
-             log_exceptions_with_status_codes: 500..599,
-             log_protocol_errors: false
-           ],
-           thousand_island_options: [supervisor_options: [name: CommaWeb.HTTPServer]]}
+           [
+             plug: CommaWeb.Router,
+             port: port(),
+             startup_log: false,
+             http_options: [
+               log_exceptions_with_status_codes: 500..599,
+               log_protocol_errors: false
+             ],
+             thousand_island_options: [supervisor_options: [name: CommaWeb.HTTPServer]]
+           ] ++ listen_ip_opts()}
         ]
 
     Supervisor.start_link(children, strategy: :one_for_one, name: CommaWeb.Supervisor)
@@ -82,6 +84,15 @@ defmodule CommaWeb.Application do
       v = Application.get_env(:comma_web, :port) -> v
       v = System.get_env("COMMA_WEB_HTTP_PORT") -> String.to_integer(v)
       true -> 4200
+    end
+  end
+
+  # COMMA_LISTEN_IP (config/runtime.exs) binds the listener to one address;
+  # without it Bandit listens on every interface.
+  defp listen_ip_opts do
+    case Application.get_env(:comma_web, :listen_ip) do
+      nil -> []
+      ip -> [ip: ip]
     end
   end
 

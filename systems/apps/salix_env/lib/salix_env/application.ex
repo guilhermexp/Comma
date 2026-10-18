@@ -29,13 +29,23 @@ defmodule SalixEnv.Application do
       {Registry, keys: :unique, name: SalixEnv.VM.Providers.Cloudflare.AttachmentRegistry},
       SalixEnv.VM.Providers.Cloudflare.Attachments,
       {Bandit,
-       plug: SalixEnv.Transfer.Server,
-       port: SalixEnv.Transfer.port(),
-       startup_log: false,
-       http_options: [log_exceptions_with_status_codes: [], log_protocol_errors: false]}
+       [
+         plug: SalixEnv.Transfer.Server,
+         port: SalixEnv.Transfer.port(),
+         startup_log: false,
+         http_options: [log_exceptions_with_status_codes: [], log_protocol_errors: false]
+       ] ++ listen_ip_opts()}
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one, name: SalixEnv.Supervisor)
+  end
+
+  # COMMA_LISTEN_IP (config/runtime.exs) binds the transfer listener to one address.
+  defp listen_ip_opts do
+    case Application.get_env(:salix_env, :listen_ip) do
+      nil -> []
+      ip -> [ip: ip]
+    end
   end
 
   defp connector_remote_read_stream_limit do

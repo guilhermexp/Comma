@@ -130,6 +130,43 @@ After a schema change, recover forward or restore the entire stopped-volume back
 Do not point an older image at a newer schema without a documented downgrade path.
 Test recovery in an isolated Compose project before relying on a backup.
 
+## Desktop local mode
+
+The macOS desktop app runs the `comma` release on the user's Mac, next to its
+own Postgres, Redis, and MinIO. The app's Main process generates the
+configuration and starts every process. The contract and the build are in
+[desktop release](../clients/apps/electron/RELEASE.md#local-backend).
+
+The app prepares the stores before each start. The command is idempotent:
+the first run initializes an empty database, and later runs apply only
+pending migrations.
+
+```sh
+bin/comma eval "Comma.LocalInstall.run()"
+```
+
+`Comma.LocalInstall.run/0` creates the configured storage bucket if it is
+missing (an existing bucket is success) and then runs `Comma.FreshInstall.run/0`.
+It refuses to run unless `COMMA_ENVIRONMENT=local`.
+
+| Variable | Value in local mode | Effect |
+| --- | --- | --- |
+| `COMMA_ENVIRONMENT` | `local` | Local environment. The admin token works only from loopback addresses; other addresses get 403. |
+| `COMMA_DESKTOP_LOCAL` | `1` | Single-owner instance: the self-hosted behavior (no cloud VM, unlimited entitlement). Valid only with `COMMA_ENVIRONMENT=local`. |
+| `COMMA_SUBSYSTEMS` | `salix,comma_product` | The subsystems that serve the app. |
+| `COMMA_LISTEN_IP` | `127.0.0.1` | Binds the Comma, Salix, transfer, and metrics listeners to this address. Unset: every interface. |
+| `COMMA_WEB_HTTP_PORT` | chosen port | Comma API port. It overrides the development port 4200 of `config.exs`. |
+| `COMMA_METRICS_PORT` | chosen port | Metrics listener port (default 9568). |
+| `COMMA_REDIS_URL` | `redis://:<password>@127.0.0.1:<port>/0` | Redis for auth and rate limits. |
+| `SALIX_CONFIG_PATH` | `config.json` in the data folder | Database URLs, storage, Salix ports, and the admin token (`web.api_token`). |
+| `SALIX_SNOWFLAKE_WORKER_ID` | `0` | Single node. |
+| `RELEASE_DISTRIBUTION` | `none` | No Erlang distribution and no EPMD listener. |
+| `RELEASE_COOKIE` | per installation | The release ships no cookie file. |
+| `RELEASE_TMP` | `release-tmp` in the data folder | The app bundle stays read-only. |
+
+`COMMA_RELEASE_JOB=1` is set only for the preparation command.
+Stop the backend with `SIGTERM`; the release shuts down gracefully.
+
 ## Subsystem selection
 
 `COMMA_SUBSYSTEMS` (comma-separated subsystem names; unset = every subsystem in

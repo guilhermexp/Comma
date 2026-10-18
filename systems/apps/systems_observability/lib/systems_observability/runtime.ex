@@ -40,11 +40,17 @@ defmodule SystemsObservability.Runtime do
 
     children = [
       {Bandit,
-       plug: SystemsObservability.Router,
-       scheme: :http,
-       port: Application.get_env(:systems_observability, :port, 9568),
-       http_options: [log_exceptions_with_status_codes: [], log_protocol_errors: false],
-       thousand_island_options: [num_acceptors: 2]},
+       [
+         plug: SystemsObservability.Router,
+         scheme: :http,
+         port: Application.get_env(:systems_observability, :port, 9568),
+         http_options: [log_exceptions_with_status_codes: [], log_protocol_errors: false],
+         thousand_island_options: [num_acceptors: 2]
+       ] ++
+         case Application.get_env(:systems_observability, :listen_ip) do
+           nil -> []
+           ip -> [ip: ip]
+         end},
       {TelemetryMetricsPrometheus.Core,
        name: SystemsObservability.Prometheus, metrics: core_metrics, start_async: false},
       {SystemsObservability.HistogramReporter,

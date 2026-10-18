@@ -50,11 +50,16 @@ defmodule CommaWeb.Auth do
         deny(conn)
 
       CommaWeb.ClientSurface.admin_product_path?(conn.request_path) ->
-        if match?({:bearer, token} when is_binary(token), credential) and
-             admin_token?(elem(credential, 1)) do
-          assign_admin(conn, elem(credential, 1))
-        else
-          deny(conn)
+        cond do
+          not (match?({:bearer, token} when is_binary(token), credential) and
+                   admin_token?(elem(credential, 1))) ->
+            deny(conn)
+
+          not admin_token_origin_allowed?(conn) ->
+            forbid(conn)
+
+          true ->
+            assign_admin(conn, elem(credential, 1))
         end
 
       true ->
@@ -254,6 +259,25 @@ defmodule CommaWeb.Auth do
   end
 
   defp admin_token?(_token), do: false
+
+  # The macOS desktop app's local backend (COMMA_ENVIRONMENT=local) mints its
+  # owner's Sessions with the admin token. That token is accepted only from the
+  # same machine, independent of the 127.0.0.1 listener bind.
+  defp admin_token_origin_allowed?(conn) do
+    Application.get_env(:comma_core, :environment) != "local" or loopback?(conn.remote_ip)
+  end
+
+  defp loopback?({127, _, _, _}), do: true
+  defp loopback?({0, 0, 0, 0, 0, 0, 0, 1}), do: true
+  defp loopback?({0, 0, 0, 0, 0, 0xFFFF, high, _low}), do: div(high, 256) == 127
+  defp loopback?(_address), do: false
+
+  defp forbid(conn) do
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(403, Jason.encode!(%{error: "forbidden"}))
+    |> halt()
+  end
 
   defp normalize_token(value) when is_binary(value) do
     case String.trim(value) do
