@@ -110,7 +110,7 @@ SHA-256. A download with another digest fails the build.
 
 1. `deps`: OpenSSL, libsodium, libopus, and libuv as static archives, then
    Erlang/OTP linked to that OpenSSL, Elixir, Postgres, Redis, and MinIO, all in
-   a prefix under `.tmp/local-backend/` named by the manifest hash. The build
+   a prefix under `.tmp/local-backend/` named by the hash of the manifest and the build scripts. The build
    environment has only `/usr/bin:/bin:/usr/sbin:/sbin` on PATH, plus single
    links to `pkg-config`, `cmake`, `go`, `lean`, and `lake`.
 2. `release`: `MIX_ENV=prod mix release comma` with that Erlang and Elixir.

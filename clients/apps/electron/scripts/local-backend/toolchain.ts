@@ -28,11 +28,21 @@ export function localBackendBuildRoot() {
   );
 }
 
+/**
+ * Names the prefix by the pinned sources and the scripts that build them, so a
+ * changed version, flag, or relocation step never reuses an older prefix.
+ */
 export function manifestKey() {
-  return createHash("sha256")
-    .update(readFileSync(join(import.meta.dirname, "manifest.json")))
-    .digest("hex")
-    .slice(0, 16);
+  const hash = createHash("sha256");
+  for (const file of [
+    "manifest.json",
+    "build-deps.ts",
+    "relocate.ts",
+    "toolchain.ts",
+  ]) {
+    hash.update(readFileSync(join(import.meta.dirname, file)));
+  }
+  return hash.digest("hex").slice(0, 16);
 }
 
 export function prefixDir() {

@@ -14,8 +14,8 @@
 #
 # Local mode: the app ships its own backend (Postgres, Redis, MinIO and the
 # `comma` OTP release) in Contents/Resources/local-backend and has no fixed API
-# URL. The native prefix built from scripts/local-backend/manifest.json is
-# cached by that file's hash. The Mach-O gate fails the build when any binary
+# URL. The native prefix built from scripts/local-backend/ is cached by the
+# hash of that folder (the manifest and the build scripts). The Mach-O gate fails the build when any binary
 # loads a library from outside the app and the system.
 name: Desktop Release
 
@@ -97,7 +97,7 @@ jobs:
             .tmp/local-backend/prefix-*
             .tmp/local-backend/downloads
             .tmp/local-backend/go/mod
-          key: local-backend-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('clients/apps/electron/scripts/local-backend/manifest.json') }}
+          key: local-backend-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('clients/apps/electron/scripts/local-backend/**') }}
 
       # vpk is a .NET tool; this also sets DOTNET_ROOT so its launcher finds
       # the runtime.

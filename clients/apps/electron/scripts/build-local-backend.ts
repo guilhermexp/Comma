@@ -5,7 +5,7 @@
  *   build-local-backend.ts [deps|release|assemble|smoke|gate|all|release-tree] [--only=a,b]
  *
  * `deps` builds the pinned sources of scripts/local-backend/manifest.json into
- * a prefix cached by the manifest hash; `release` builds `mix release comma`
+ * a prefix named by the hash of the manifest and its build scripts; `release` builds `mix release comma`
  * with that toolchain; `assemble` lays out the bundle tree, signs it ad hoc,
  * runs the Mach-O gate, and smoke-tests the tree with PATH=/usr/bin:/bin;
  * `gate <dir>` runs the gate on any directory; `release-tree` runs `all` when
