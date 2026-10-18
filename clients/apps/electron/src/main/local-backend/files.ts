@@ -71,6 +71,7 @@ export function writePrivateFile(path: string, contents: string) {
 
 export function ensureLocalBackendSecrets(dataDir: string): LocalBackendSecrets {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  chmodSync(dataDir, 0o700);
   const path = join(dataDir, "secrets.json");
   let existing: Partial<Record<SecretName, unknown>> = {};
   if (existsSync(path)) {

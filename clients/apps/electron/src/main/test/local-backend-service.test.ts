@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -223,6 +224,20 @@ describe("local backend service", () => {
     });
     expect(JSON.stringify(backendChild.spec.env)).not.toContain(secrets.adminToken);
     expect(JSON.stringify(backendChild.spec.args)).not.toContain(secrets.adminToken);
+  });
+
+  it("keeps the data folders private even when they already existed", async () => {
+    const layout = install();
+    for (const dir of ["", "logs", "backups"]) {
+      mkdirSync(join(layout.dataDir, dir), { recursive: true, mode: 0o755 });
+      chmodSync(join(layout.dataDir, dir), 0o755);
+    }
+    const { backend } = service(layout, new FakeRuntime());
+
+    await backend.prepare();
+    for (const dir of ["", "logs", "backups", "redis", "minio"]) {
+      expect(statSync(join(layout.dataDir, dir)).mode & 0o777).toBe(0o700);
+    }
   });
 
   it("reuses the installation on the next launch without initdb or a backup", async () => {

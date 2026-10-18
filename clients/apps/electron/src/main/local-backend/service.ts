@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { backupBeforeUpgrade } from "./backup";
 import {
@@ -168,6 +168,8 @@ export class LocalBackendService {
       this.#paths.releaseTmp,
     ]) {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
+      // mkdir's mode applies only to a folder it creates.
+      chmodSync(dir, 0o700);
     }
     this.#secrets = ensureLocalBackendSecrets(dataDir);
     this.#state = readLocalBackendState(dataDir);
