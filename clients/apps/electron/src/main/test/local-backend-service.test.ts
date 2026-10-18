@@ -344,6 +344,44 @@ describe("local backend service", () => {
     expect(runtime.killed.map(([pid]) => pid)).not.toContain(7002);
   }, 10_000);
 
+  it("chooses new ports on Try again when a chosen port was taken", async () => {
+    const layout = install({ appVersion: "0.0.3" });
+    const runtime = new FakeRuntime();
+    runtime.databaseExists = true;
+    const { backend } = service(layout, runtime);
+    await backend.prepare();
+    const resolved: Partial<Record<string, number>>[] = [];
+    runtime.resolvePorts = async (saved) => {
+      resolved.push(saved);
+      return { ...ports, postgres: 52101 };
+    };
+
+    expect(await backend.retry()).toBe(true);
+    expect(resolved).toEqual([ports]);
+    const config = readFileSync(join(layout.dataDir, "config.json"), "utf8");
+    expect(config).toContain("127.0.0.1:52101/comma");
+    expect(readFileSync(join(layout.dataDir, "pgpass"), "utf8")).toContain(":52101:");
+    expect(runtime.child("postgres").spec.args).toContain("52101");
+    expect(readLocalBackendState(layout.dataDir).ports.postgres).toBe(52101);
+    expect(backend.apiBaseUrl).toBe("http://127.0.0.1:52006");
+  });
+
+  it("asks to reopen Comma when Try again would move the API port", async () => {
+    const layout = install({ appVersion: "0.0.3" });
+    const runtime = new FakeRuntime();
+    runtime.databaseExists = true;
+    const { backend } = service(layout, runtime);
+    await backend.prepare();
+    runtime.resolvePorts = async () => ({ ...ports, comma: 52106 });
+
+    expect(await backend.retry()).toBe(false);
+    expect(backend.snapshot()).toMatchObject({
+      phase: "failed",
+      failure: { code: "start_failed", message: expect.stringContaining("52006") },
+    });
+    expect(runtime.children).toEqual([]);
+  });
+
   it("reports the failure when a process keeps stopping", async () => {
     const layout = install({ appVersion: "0.0.3" });
     const runtime = new FakeRuntime();

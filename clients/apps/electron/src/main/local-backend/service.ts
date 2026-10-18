@@ -553,7 +553,38 @@ export class LocalBackendService {
   async retry(): Promise<boolean> {
     await this.#starting;
     await this.#supervisor?.stopAll(stopOrder);
+    if (!(await this.#refreshPorts())) return false;
     return this.start();
+  }
+
+  /**
+   * A failure may come from a port another program took after launch, so a
+   * retry chooses the ports again and rewrites the configuration. Main's
+   * Session already targets the API port, which cannot move until relaunch.
+   */
+  async #refreshPorts(): Promise<boolean> {
+    const secrets = this.#secrets;
+    const current = this.#ports;
+    if (!secrets || !current) throw new Error("prepare() must run before retry().");
+    const next = await (this.#runtime.resolvePorts ?? resolveLocalBackendPorts)({
+      ...current,
+    });
+    if (next.comma !== current.comma) {
+      this.#publish({
+        phase: "failed",
+        failure: {
+          code: "start_failed",
+          message: `Port ${current.comma} of Comma's API is now used by another program. Quit and reopen Comma to choose another port.`,
+        },
+      });
+      return false;
+    }
+    this.#ports = next;
+    const state = this.#requireState();
+    state.ports = { ...next };
+    writeLocalBackendState(this.#layout.dataDir, state);
+    this.#writeConfigFiles(secrets, next);
+    return true;
   }
 
   /** The owner's Session could not be created; the error screen offers Try again. */
