@@ -139,7 +139,11 @@ async function main() {
     preAutoEntitlements: false,
     preEmbedProvisioningProfile: false,
     binaries,
-    ignore: (filePath) => /\.(pak|bin|dat)$/u.test(filePath),
+    // The local backend's binaries are signed ad hoc when the tree is
+    // assembled (scripts/local-backend/assemble.ts); the app seal covers them.
+    ignore: (filePath) =>
+      /\.(pak|bin|dat)$/u.test(filePath) ||
+      filePath.includes("/Contents/Resources/local-backend/"),
   });
 
   run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", app]);

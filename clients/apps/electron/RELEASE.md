@@ -41,15 +41,19 @@ download the full package. The first release has no delta.
 
 ### Identity
 
-| Field              | Value                                     |
-| ------------------ | ----------------------------------------- |
-| Product name       | `Comma`                                   |
-| Bundle and pack ID | `com.guilhermexp.comma`                   |
-| URL scheme         | `comma-gx://`                             |
-| Data directory     | `~/Library/Application Support/@comma-gx` |
-| API base URL       | `https://xperience-studio.com`            |
+| Field              | Value                                        |
+| ------------------ | -------------------------------------------- |
+| Product name       | `Comma`                                      |
+| Bundle and pack ID | `com.guilhermexp.comma`                      |
+| URL scheme         | `comma-gx://`                                |
+| Data directory     | `~/Library/Application Support/@comma-gx`    |
+| Local backend data | `~/Library/Application Support/Comma/local`  |
+| API base URL       | The local backend, `http://127.0.0.1:<port>` |
 
-The repository variable `COMMA_API_BASE_URL` selects another API at build time.
+The release has no fixed API URL. It runs its own backend (see local backend)
+and Main sets the API URL from the port it chose. A build that sets
+`COMMA_API_BASE_URL` (or `COMMA_BACKEND_MODE=remote`) uses that remote API
+instead. The workflow sets neither.
 `COMMA_RELEASE_REPOSITORY` (the workflow sets `github.repository`) selects the
 release repository, and so the update URL. `COMMA_UPDATE_URL` replaces the
 update URL completely. The dev flavor (`Comma Dev`, `@comma-dev`,
@@ -87,6 +91,67 @@ Developer ID signing stays available as an opt-in switch. Set
 list. Set `COMMA_MACOS_NOTARY_PROFILE` to notarize and staple the app and the
 DMG. Without `COMMA_MACOS_SIGN=1` these values have no effect.
 The workflow does not configure them.
+
+### Local backend
+
+The release runs on any Apple silicon Mac without Homebrew, Docker, or
+developer tools. `Contents/Resources/local-backend/` contains:
+
+| Directory   | Contents                                                             |
+| ----------- | -------------------------------------------------------------------- |
+| `comma/`    | The `comma` OTP release with its ERTS, NIFs, and the verified kernel |
+| `postgres/` | Postgres 16 with `citext`, `pgcrypto`, `btree_gin`, and `pg_trgm`    |
+| `redis/`    | `redis-server` without TLS                                           |
+| `minio/`    | `minio`                                                              |
+
+`scripts/local-backend/manifest.json` pins every source by version and
+SHA-256. A download with another digest fails the build.
+`pnpm build:local-backend` builds the tree into `dist/local-backend`:
+
+1. `deps`: OpenSSL, libsodium, libopus, and libuv as static archives, then
+   Erlang/OTP linked to that OpenSSL, Elixir, Postgres, Redis, and MinIO, all in
+   a prefix under `.tmp/local-backend/` named by the manifest hash. The build
+   environment has only `/usr/bin:/bin:/usr/sbin:/sbin` on PATH, plus single
+   links to `pkg-config`, `cmake`, `go`, `lean`, and `lake`.
+2. `release`: `MIX_ENV=prod mix release comma` with that Erlang and Elixir.
+3. `assemble`: copies the tree, removes the build's fixed release cookie,
+   signs every Mach-O ad hoc, runs the Mach-O gate, and smoke-tests the tree
+   with `PATH=/usr/bin:/bin`: `bin/comma eval` and `CREATE EXTENSION` for each
+   extension in a temporary `initdb`.
+
+Source choices that differ from the first design: Postgres is built from
+source, because the zonky darwin arm64 package has no `pg_dump` or `createdb`.
+MinIO is built from its release tag with Go, because `dl.min.io` no longer
+serves darwin binaries. OpenSSL is linked statically, so `crypto.so` references
+no OpenSSL dylib.
+
+The Mach-O gate (`scripts/local-backend/macho-gate.ts`) runs on the local
+backend tree and, before `vpk pack`, on the whole app. It fails when a binary
+references a library outside `@rpath`, `@loader_path`, `@executable_path`,
+`/usr/lib`, and `/System`, or when an `@rpath` reference can search an
+absolute run path outside the system.
+
+At launch, Main (`src/main/local-backend/`):
+
+1. Creates `secrets.json` (mode 0600) with random passwords, keys, the release
+   cookie, the admin token, and the subscription storage key. It never
+   replaces an existing value.
+2. Chooses free ports on `127.0.0.1`, keeps them in `state.json`, and replaces
+   a port that another program took.
+3. Stops processes that a forced quit left, then starts Postgres (`initdb` and
+   `createdb` the first time), Redis, and MinIO.
+4. Dumps the database to `backups/` with `pg_dump` when the app version
+   changed. It keeps the three most recent dumps.
+5. Runs `bin/comma eval "Comma.LocalInstall.run()"`, which creates the storage
+   bucket and runs `Comma.FreshInstall.run/0`, then starts `bin/comma start`
+   with `COMMA_ENVIRONMENT=local` and `COMMA_DESKTOP_LOCAL=1`.
+6. Creates the owner (`owner@local.comma`) and a local Session through the
+   loopback-only admin API. The renderer receives neither token.
+
+A process that stops restarts after 1, 2, 4 … 30 seconds. Five stops within two
+minutes show the error screen. Quit stops the backend, Postgres in fast mode,
+Redis, and MinIO, kills what remains after the timeout, and then any helper
+that still runs from `local-backend/`.
 
 ### Features that need more than ad hoc signing
 
@@ -143,6 +208,34 @@ first. Do not reuse a tag for different code. Use the next version.
 4. Open Comma from `Applications`. Do not run it from the DMG: macOS then runs
    a read-only copy that cannot update.
 
+On the first open, Comma shows a startup screen while it creates its local
+backend: services, then the database, then the account. This takes about one
+minute. Comma then opens Home signed in as the owner of the Mac. It shows no
+login screen and sends no email. The first open of a new version can take
+longer, because Comma backs up the database and applies migrations first.
+
+The local data stays in `~/Library/Application Support/Comma/local`:
+
+| Path           | Contents                                         |
+| -------------- | ------------------------------------------------ |
+| `postgres/`    | The database                                     |
+| `minio/`       | Files                                            |
+| `redis/`       | Cache and rate-limit state                       |
+| `logs/`        | One log per process; Show logs opens this folder |
+| `backups/`     | The three most recent pre-update database dumps  |
+| `secrets.json` | This installation's keys (mode 0600)             |
+| `state.json`   | Ports, process IDs, app version, owner ID        |
+
+Updates keep this folder. To restore a backup, quit Comma and run
+`pg_restore` from `Comma.app/Contents/Resources/local-backend/postgres/bin`
+against the database.
+
+To delete the local installation, quit Comma, make sure that no process runs
+from `Comma.app/Contents/Resources/local-backend`, and remove
+`~/Library/Application Support/Comma/local`. Removing `secrets.json` alone
+makes the stored subscription accounts unreadable; remove the whole folder or
+keep it.
+
 ## Rehearse an update locally
 
 The release command runs locally with the same steps as the workflow.
@@ -167,4 +260,14 @@ runner toolchain. Only the first workflow run proves them.
 - `pnpm --dir clients exec vitest run apps/electron/test` checks the release
   identity, tag rule, signing switch, SleepGuard gate, and asset staging.
 - `actionlint .github/workflows/desktop-release.yml` checks the workflow.
+- `pnpm --dir clients exec vitest run apps/electron/src/main/test/local-backend-*.test.ts`
+  checks secrets, ports, configuration, supervision, backups, and the owner
+  Session with fake processes.
+- After `pnpm build:local-backend`, `pnpm --dir clients exec vitest run
+apps/electron/test/local-backend-runtime.test.ts` starts the real tree on an
+  empty data directory. The workflow runs it after the build.
+- With a packaged app, `COMMA_ELECTRON_LOCAL_MODE_APP=<path>/Comma.app pnpm
+--dir clients exec playwright test apps/electron/e2e/local-mode-packaged.spec.ts
+--no-deps` launches it with `PATH=/usr/bin:/bin`, checks Home without login,
+  a Router answer, quit, and reopen.
 - Unit tests do not prove signing, packaging, or an update. Those need a build.

@@ -11,6 +11,12 @@
 # Signing: ad hoc. The app is not notarized. Developer ID signing and
 # notarization stay available in the release scripts (COMMA_MACOS_SIGN=1); this
 # workflow does not configure them. See docs/release-operations.md.
+#
+# Local mode: the app ships its own backend (Postgres, Redis, MinIO and the
+# `comma` OTP release) in Contents/Resources/local-backend and has no fixed API
+# URL. The native prefix built from scripts/local-backend/manifest.json is
+# cached by that file's hash. The Mach-O gate fails the build when any binary
+# loads a library from outside the app and the system.
 name: Desktop Release
 
 on:
@@ -39,13 +45,12 @@ jobs:
   build:
     name: Build macOS arm64
     runs-on: macos-26
-    timeout-minutes: 120
+    timeout-minutes: 240
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
     env:
       COMMA_BUILD_FLAVOR: prod
-      COMMA_API_BASE_URL: ${{ vars.COMMA_API_BASE_URL || 'https://xperience-studio.com' }}
       COMMA_RELEASE_REPOSITORY: ${{ github.repository }}
       PUBLISH_REQUESTED: ${{ github.event_name == 'push' || inputs.publish }}
     steps:
@@ -73,6 +78,26 @@ jobs:
         with:
           go-version-file: systems/connector/salix-connect/go.mod
           cache-dependency-path: systems/connector/salix-connect/go.sum
+
+      # The verified kernel NIF of the backend release is built with Lean and
+      # CMake; pkgconf resolves the static libsodium and libopus of the prefix.
+      # These are build tools only: the Mach-O gate rejects any library they
+      # would link from Homebrew.
+      - name: Set up Lean, CMake, and pkgconf
+        run: |
+          brew list cmake >/dev/null 2>&1 || brew install cmake
+          brew list pkgconf >/dev/null 2>&1 || brew install pkgconf
+          bash systems/native/verified_kernel/scripts/install-toolchain.sh systems/native/verified_kernel/lean-toolchain
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Restore the local backend prefix and downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .tmp/local-backend/prefix-*
+            .tmp/local-backend/downloads
+            .tmp/local-backend/go/mod
+          key: local-backend-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('clients/apps/electron/scripts/local-backend/manifest.json') }}
 
       # vpk is a .NET tool; this also sets DOTNET_ROOT so its launcher finds
       # the runtime.
@@ -126,6 +151,15 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           COMMA_PACK_VERSION: ${{ steps.version.outputs.version }}
         run: pnpm --dir clients/apps/electron release:velopack:prod
+
+      # Starts the assembled backend on an empty data directory with only
+      # /usr/bin:/bin on PATH, checks that every listener is on 127.0.0.1, and
+      # that a second preparation applies no migration again.
+      - name: Prove the local backend
+        run: pnpm --dir clients exec vitest run apps/electron/test/local-backend-runtime.test.ts
+
+      - name: Report the DMG size
+        run: du -h clients/apps/electron/Releases/github/*.dmg
 
       - name: Upload release files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

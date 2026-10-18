@@ -81,6 +81,18 @@ function packageDirectory(dependency: string) {
     }
   }
 }
+/**
+ * The local backend tree built by `pnpm build:local-backend`. A release that
+ * runs in local mode is unusable without it, so packaging fails instead.
+ */
+const localBackendDir = resolve(import.meta.dirname, "dist", "local-backend");
+const shipsLocalBackend =
+  releaseConfig.backendMode === "local" && process.platform === "darwin";
+if (shipsLocalBackend && !existsSync(join(localBackendDir, "comma", "bin", "comma"))) {
+  throw new Error(
+    `${localBackendDir} is missing. Run \`pnpm --dir clients/apps/electron build:local-backend\` before packaging a local-mode release.`
+  );
+}
 const channelIconBasePath = resolve(
   import.meta.dirname,
   "build",
@@ -139,6 +151,7 @@ const config: ForgeConfig = {
     },
     extraResource: [
       "dist/native",
+      ...(shipsLocalBackend ? ["dist/local-backend"] : []),
       channelIconPngPath,
       notificationSoundPath,
       ...statusTrayIconPaths,

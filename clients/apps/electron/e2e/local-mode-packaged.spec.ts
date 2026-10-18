@@ -1,0 +1,366 @@
+/**
+ * The packaged local-mode app on a Mac with nothing installed: launched with
+ * only /usr/bin:/bin on PATH and an empty data directory, it reaches Home
+ * already signed in, the Router answers, quitting leaves no bundled process,
+ * and reopening keeps the conversation.
+ *
+ *   COMMA_ELECTRON_LOCAL_MODE_APP=/path/to/Comma.app \
+ *     pnpm --dir clients exec playwright test apps/electron/e2e/local-mode-packaged.spec.ts
+ *
+ * The release fuses disable Node inspection, so the test drives the renderer
+ * over the Chromium DevTools protocol on 127.0.0.1. `--use-mock-keychain`
+ * keeps the run away from the Keychain item of any installed Comma. The
+ * Router uses the repository's deterministic mock model
+ * (systems/scripts/local-llm-mock.mjs), configured the way Settings does.
+ */
+import { chromium, expect, test, type Browser, type Page } from "@playwright/test";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { createWriteStream, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import {
+  createServer as createHttpServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
+import { createServer as createNetServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const appBundle = process.env.COMMA_ELECTRON_LOCAL_MODE_APP;
+const evidenceDir = process.env.COMMA_E2E_EVIDENCE_DIR;
+const routerReply = "LOCAL_CHAT_OK";
+const message = "Hello Router, this is the local backend test";
+
+interface LaunchedApp {
+  process: ChildProcess;
+  browser: Browser;
+}
+
+function freePort(): Promise<number> {
+  return new Promise((resolvePort, reject) => {
+    const server = createNetServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close(() => resolvePort(port));
+    });
+  });
+}
+
+async function startMockModel(): Promise<{ url: string; server: Server }> {
+  const mock = (await import(
+    pathToFileURL(resolve(process.cwd(), "../systems/scripts/local-llm-mock.mjs")).href
+  )) as { createMockServer: (options: { logPath: string }) => Server };
+  const handler = mock
+    .createMockServer({ logPath: join(evidence(), "model-requests.jsonl") })
+    .listeners("request")[0] as (
+    request: IncomingMessage,
+    response: ServerResponse
+  ) => void;
+  // Model templates address an OpenAI-compatible base URL ending in /v1; the
+  // mock serves /chat/completions at its root.
+  const server = createHttpServer((request, response) => {
+    if (request.url?.startsWith("/v1/")) request.url = request.url.slice(3);
+    handler(request, response);
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", () => done()));
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  return { url: `http://127.0.0.1:${port}`, server };
+}
+
+async function launch(userData: string, label: string): Promise<LaunchedApp> {
+  const port = await freePort();
+  const log = createWriteStream(join(evidence(), `app-${label}.log`), { flags: "a" });
+  // The same environment a fresh Mac gives a Finder launch: no Homebrew, no
+  // developer tools on PATH.
+  const child = spawn(
+    join(appBundle!, "Contents/MacOS/comma"),
+    [
+      `--user-data-dir=${userData}`,
+      "--use-mock-keychain",
+      `--remote-debugging-port=${port}`,
+    ],
+    { env: { PATH: "/usr/bin:/bin" }, stdio: ["ignore", "pipe", "pipe"] }
+  );
+  child.stdout?.pipe(log);
+  child.stderr?.pipe(log);
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    try {
+      return {
+        process: child,
+        browser: await chromium.connectOverCDP(`http://127.0.0.1:${port}`),
+      };
+    } catch {
+      await new Promise((done) => setTimeout(done, 500));
+    }
+  }
+  throw new Error("The packaged app did not open its DevTools endpoint.");
+}
+
+async function windowWithRole(
+  browser: Browser,
+  role: string
+): Promise<Page | undefined> {
+  for (const context of browser.contexts()) {
+    for (const page of context.pages()) {
+      const pageRole = await page
+        .evaluate(
+          () =>
+            (globalThis as { commaNative?: { self?: { role?: string } } }).commaNative
+              ?.self?.role
+        )
+        .catch(() => undefined);
+      if (pageRole === role) return page;
+    }
+  }
+  return undefined;
+}
+
+async function mainWindow(browser: Browser): Promise<Page> {
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    const page = await windowWithRole(browser, "main-window");
+    if (page) return page;
+    await new Promise((done) => setTimeout(done, 500));
+  }
+  throw new Error("The main window did not open.");
+}
+
+/** Waits for Home; reports whether a login form was ever on screen meanwhile. */
+async function waitForSignedInHome(page: Page) {
+  let sawLogin = false;
+  const deadline = Date.now() + 10 * 60_000;
+  while (Date.now() < deadline) {
+    const state = await page
+      .evaluate(() => ({
+        login: Boolean(
+          document.querySelector('input[type="email"], input[autocomplete="email"]')
+        ),
+        home: Boolean(document.querySelector(".comma-app-shell")),
+        startup: Boolean(document.querySelector(".local-backend-startup")),
+      }))
+      .catch(() => ({ login: false, home: false, startup: false }));
+    sawLogin ||= state.login;
+    if (state.home && !state.startup) return { sawLogin };
+    await new Promise((done) => setTimeout(done, 250));
+  }
+  throw new Error("Home did not appear within 10 minutes.");
+}
+
+function evidence() {
+  const dir = evidenceDir ?? join(tmpdir(), "comma-local-mode-e2e-evidence");
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function bundledProcesses() {
+  const prefix = `${resolve(appBundle!)}/Contents/`;
+  return execFileSync(
+    "/bin/ps",
+    ["-U", String(process.getuid?.()), "-o", "pid=,comm="],
+    {
+      encoding: "utf8",
+    }
+  )
+    .split("\n")
+    .filter((line) =>
+      line
+        .trim()
+        .replace(/^\d+\s+/, "")
+        .startsWith(prefix)
+    );
+}
+
+async function quit(app: LaunchedApp) {
+  await app.browser.close().catch(() => undefined);
+  const exited = new Promise((done) => app.process.once("exit", done));
+  app.process.kill("SIGTERM");
+  await Promise.race([exited, new Promise((done) => setTimeout(done, 120_000))]);
+  expect(app.process.exitCode !== null || app.process.signalCode !== null).toBe(true);
+}
+
+interface Backend {
+  apiBaseUrl: string;
+  adminToken: string;
+  ownerUserId: string;
+}
+
+function readBackend(userData: string): Backend {
+  const dir = join(userData, "local-backend");
+  const state = JSON.parse(readFileSync(join(dir, "state.json"), "utf8"));
+  const secrets = JSON.parse(readFileSync(join(dir, "secrets.json"), "utf8"));
+  return {
+    apiBaseUrl: `http://127.0.0.1:${state.ports.comma}`,
+    adminToken: secrets.adminToken,
+    ownerUserId: state.ownerUserId,
+  };
+}
+
+async function api<T>(
+  backend: Backend,
+  token: string,
+  method: string,
+  path: string,
+  body?: unknown
+) {
+  const response = await fetch(`${backend.apiBaseUrl}${path}`, {
+    method,
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      "x-comma-session-transport": "bearer",
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const text = await response.text();
+  if (!response.ok)
+    throw new Error(`${method} ${path} returned ${response.status}: ${text}`);
+  return (text ? JSON.parse(text) : undefined) as T;
+}
+
+/** What Settings → Models does: a private model template, chosen for the Router. */
+async function useMockModelForRouter(backend: Backend, modelUrl: string) {
+  const { token } = await api<{ token: string }>(
+    backend,
+    backend.adminToken,
+    "POST",
+    `/v1/comma/admin/users/${backend.ownerUserId}/sessions`,
+    { local_dev: true, ttl_seconds: 3_600 }
+  );
+  let workspace: { id: string; status: string } | undefined;
+  for (let attempt = 0; attempt < 120 && workspace?.status !== "ready"; attempt += 1) {
+    const result = await api<{
+      status: string;
+      workspace: { id: string; status: string };
+    }>(backend, token, "POST", "/v1/comma/me/bootstrap", {});
+    workspace = result.workspace;
+    if (workspace.status !== "ready")
+      await new Promise((done) => setTimeout(done, 1_000));
+  }
+  expect(workspace?.status).toBe("ready");
+  const template = await api<{ template_id: string }>(
+    backend,
+    token,
+    "POST",
+    `/v1/comma/workspaces/${workspace!.id}/model-templates`,
+    {
+      name: "Local mock",
+      model: "gpt-local-dev",
+      provider: "openai",
+      protocol: "chat_completions",
+      base_url: modelUrl,
+      api_key: "local-e2e-only",
+      max_tokens: 2_048,
+      context_tokens: 32_768,
+    }
+  );
+  // The workspace's own convergence may still write its default models right
+  // after it becomes ready; the selection counts once it stays pinned.
+  let stable = 0;
+  for (let attempt = 0; attempt < 60 && stable < 3; attempt += 1) {
+    const models = await api<{ agents: { router: { template_id: string } } }>(
+      backend,
+      token,
+      "GET",
+      `/v1/comma/workspaces/${workspace!.id}/agent-models`
+    );
+    if (models.agents.router.template_id === template.template_id) {
+      stable += 1;
+    } else {
+      stable = 0;
+      await api(
+        backend,
+        token,
+        "PUT",
+        `/v1/comma/workspaces/${workspace!.id}/agent-models/router`,
+        { template_id: template.template_id }
+      );
+    }
+    await new Promise((done) => setTimeout(done, 1_000));
+  }
+  expect(stable).toBe(3);
+}
+
+test.describe("packaged local mode", () => {
+  test.skip(
+    !appBundle || process.platform !== "darwin",
+    "Set COMMA_ELECTRON_LOCAL_MODE_APP to a packaged local-mode Comma.app on macOS."
+  );
+
+  test("signs the owner in, answers in the Router, and keeps the conversation across quit", async () => {
+    test.setTimeout(30 * 60_000);
+    const userData = await mkdtemp(join(tmpdir(), "comma-local-mode-e2e-"));
+    const model = await startMockModel();
+    let app: LaunchedApp | undefined;
+    try {
+      app = await launch(userData, "first");
+      let main = await mainWindow(app.browser);
+      const first = await waitForSignedInHome(main);
+      expect(first.sawLogin).toBe(false);
+      await main.screenshot({ path: join(evidence(), "01-home-signed-in.png") });
+
+      // Closing the first-launch onboarding by hand records it as done.
+      const onboarding = await windowWithRole(app.browser, "onboarding-window");
+      await onboarding?.evaluate(() => window.close()).catch(() => undefined);
+
+      const backend = readBackend(userData);
+      await useMockModelForRouter(backend, model.url);
+      const listeners = execFileSync(
+        "/usr/sbin/lsof",
+        ["-nP", "-iTCP", "-sTCP:LISTEN"],
+        {
+          encoding: "utf8",
+        }
+      )
+        .split("\n")
+        .filter((line) => bundledPids().includes(Number(line.trim().split(/\s+/)[1])));
+      writeFileSync(
+        join(evidence(), "listeners-first.txt"),
+        `${listeners.join("\n")}\n`
+      );
+      for (const line of listeners)
+        expect(line).toMatch(/TCP (127\.0\.0\.1|\[::1\]):\d+ \(LISTEN\)/);
+
+      const composer = main.locator('[contenteditable="true"]').last();
+      await expect(composer).toBeEditable({ timeout: 120_000 });
+      await composer.click();
+      await composer.pressSequentially(message);
+      await composer.press("Enter");
+      await expect(main.getByText(routerReply).first()).toBeVisible({
+        timeout: 180_000,
+      });
+      await main.screenshot({ path: join(evidence(), "02-router-answered.png") });
+
+      await quit(app);
+      app = undefined;
+      await new Promise((done) => setTimeout(done, 2_000));
+      expect(bundledProcesses()).toEqual([]);
+
+      app = await launch(userData, "second");
+      main = await mainWindow(app.browser);
+      const second = await waitForSignedInHome(main);
+      expect(second.sawLogin).toBe(false);
+      await expect(main.getByText(message).first()).toBeVisible({ timeout: 120_000 });
+      await expect(main.getByText(routerReply).first()).toBeVisible();
+      await main.screenshot({ path: join(evidence(), "03-reopened-conversation.png") });
+
+      await quit(app);
+      app = undefined;
+      await new Promise((done) => setTimeout(done, 2_000));
+      expect(bundledProcesses()).toEqual([]);
+    } finally {
+      if (app) await quit(app).catch(() => undefined);
+      model.server.close();
+      if (!process.env.COMMA_E2E_KEEP_DATA)
+        await rm(userData, { force: true, recursive: true });
+    }
+  });
+});
+
+function bundledPids() {
+  return bundledProcesses().map((line) => Number(line.trim().split(/\s+/)[0]));
+}

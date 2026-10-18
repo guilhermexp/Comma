@@ -14,6 +14,7 @@ import { arch as hostArch, platform as hostPlatform } from "node:process";
 import { tmpdir } from "node:os";
 import { notarize } from "@electron/notarize";
 import { getPackableReleaseConfig } from "../src/release-config";
+import { assertRelocatable } from "./local-backend/macho-gate";
 import { resolveMacosSigning } from "./macos-signing";
 import {
   getDmgArtifactName,
@@ -229,6 +230,12 @@ async function main() {
 
   if (!existsSync(packDir)) {
     throw new Error(`Resolved Velopack packDir does not exist: ${packDir}`);
+  }
+
+  if (forgePlatform === "darwin") {
+    // No binary of the release may load a library from outside the app and
+    // the system: such an app works only on the Mac that built it.
+    assertRelocatable(packDir);
   }
 
   const packResult = spawnSync("pnpm", ["pack:velopack"], {
