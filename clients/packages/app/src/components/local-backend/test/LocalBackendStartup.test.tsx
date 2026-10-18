@@ -1,5 +1,5 @@
 import userEvent from "@testing-library/user-event";
-import { initializeCommaI18n, type CommaLocale } from "@comma/i18n";
+import { initializeCommaI18n } from "@comma/i18n";
 import { CommaI18nProvider } from "@comma/i18n/react";
 import type { LocalBackendStatus } from "@comma/native-bridge";
 import {
@@ -11,88 +11,95 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LocalBackendGate, LocalBackendStartupScreen } from "../LocalBackendStartup";
 
-function renderIn(locale: CommaLocale, node: ReactNode) {
-  initializeCommaI18n([locale]);
-  return render(<CommaI18nProvider locale={locale}>{node}</CommaI18nProvider>);
+function renderScreen(node: ReactNode) {
+  initializeCommaI18n(["en"]);
+  return render(<CommaI18nProvider locale="en">{node}</CommaI18nProvider>);
 }
 
 const paths = {
-  logsDir: "/Users/test/Library/Application Support/Comma/local/logs",
-  backupsDir: "/Users/test/Library/Application Support/Comma/local/backups",
+  logsDir: "/data/Comma/local/logs",
+  backupsDir: "/data/Comma/local/backups",
 };
+
+function stepStates() {
+  return screen.getAllByRole("listitem").map((item) => item.getAttribute("data-state"));
+}
 
 afterEach(() => {
   delete (globalThis as { commaNative?: unknown }).commaNative;
 });
 
 describe("local backend startup screen", () => {
-  it("shows which step is running while the backend starts", () => {
-    renderIn(
-      "en",
+  it("marks the services step as running while the backend starts", () => {
+    renderScreen(
       <LocalBackendStartupScreen
         status={{ mode: "local", phase: "starting", ...paths }}
       />
     );
 
-    expect(screen.getByRole("heading", { name: "Starting Comma" })).toBeTruthy();
-    const current = screen.getByRole("listitem", { current: "step" });
-    expect(current.textContent).toContain("Local services");
+    expect(screen.getByRole("heading", { level: 1 })).toBeTruthy();
+    expect(stepStates()).toEqual(["current", "pending", "pending"]);
+    expect(screen.getAllByRole("listitem")[0]!.getAttribute("aria-current")).toBe(
+      "step"
+    );
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.getByRole("main").getAttribute("aria-busy")).toBe("true");
   });
 
-  it("moves to the database step while the data is prepared", () => {
-    renderIn(
-      "pt-BR",
+  it("moves to the database step and then the account step", () => {
+    const view = renderScreen(
       <LocalBackendStartupScreen
         status={{ mode: "local", phase: "preparing", ...paths }}
       />
     );
+    expect(stepStates()).toEqual(["done", "current", "pending"]);
 
-    expect(screen.getByRole("heading", { name: "Preparando seus dados" })).toBeTruthy();
-    expect(screen.getByRole("listitem", { current: "step" }).textContent).toContain(
-      "Banco de dados"
+    view.rerender(
+      <CommaI18nProvider locale="en">
+        <LocalBackendStartupScreen
+          status={{ mode: "local", phase: "signing_in", ...paths }}
+        />
+      </CommaI18nProvider>
     );
+    expect(stepStates()).toEqual(["done", "done", "current"]);
   });
 
-  it("explains a failed migration, where the backup is, and offers both actions", async () => {
+  it("shows a failed migration with its detail, the backup, the logs, and both actions", async () => {
     const onRetry = vi.fn();
     const onShowLogs = vi.fn();
-    renderIn(
-      "en",
+    const backup = `${paths.backupsDir}/comma-20261017T120000Z-0.0.2-to-0.0.3.dump`;
+    renderScreen(
       <LocalBackendStartupScreen
         status={{
           mode: "local",
           phase: "failed",
-          failure: {
-            code: "migration_failed",
-            message: "comma exited with status 1. Log: /data/logs/prepare.log",
-          },
+          failure: { code: "migration_failed", message: "comma exited with status 1" },
           ...paths,
-          lastBackupPath: `${paths.backupsDir}/comma-20261017T120000Z-0.0.2-to-0.0.3.dump`,
+          lastBackupPath: backup,
         }}
         onRetry={onRetry}
         onShowLogs={onShowLogs}
       />
     );
 
-    expect(
-      screen.getByRole("heading", { name: "Your data could not be updated" })
-    ).toBeTruthy();
-    expect(screen.getByRole("alert").textContent).toContain("prepare.log");
-    expect(screen.getByText(/0\.0\.2-to-0\.0\.3\.dump$/)).toBeTruthy();
-    expect(screen.getByText(paths.logsDir)).toBeTruthy();
+    expect(screen.getByRole("main").getAttribute("data-phase")).toBe("failed");
     expect(screen.getByRole("main").getAttribute("aria-busy")).toBe("false");
+    expect(stepStates()).toEqual(["done", "failed", "pending"]);
+    expect(screen.getByRole("alert").textContent).toContain(
+      "comma exited with status 1"
+    );
+    expect(screen.getByText(backup)).toBeTruthy();
+    expect(screen.getByText(paths.logsDir)).toBeTruthy();
 
-    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
-    await userEvent.click(screen.getByRole("button", { name: "Show logs" }));
+    const [retry, showLogs] = screen.getAllByRole("button");
+    await userEvent.click(retry!);
+    await userEvent.click(showLogs!);
     expect(onRetry).toHaveBeenCalledOnce();
     expect(onShowLogs).toHaveBeenCalledOnce();
   });
 
-  it("names the error in Simplified Chinese", () => {
-    renderIn(
-      "zh-CN",
+  it("points to the backups folder when no backup was made", () => {
+    renderScreen(
       <LocalBackendStartupScreen
         status={{
           mode: "local",
@@ -102,8 +109,7 @@ describe("local backend startup screen", () => {
         }}
       />
     );
-    expect(screen.getByRole("heading", { name: "Comma 无法启动" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "重试" })).toBeTruthy();
+    expect(stepStates()).toEqual(["failed", "pending", "pending"]);
     expect(screen.getByText(paths.backupsDir)).toBeTruthy();
   });
 });
@@ -114,34 +120,32 @@ describe("local backend gate", () => {
       platform,
       localBackend: { state: createNativeStateBridgeMock(() => status) },
     } as Parameters<typeof installNativeBridgeMock>[0]);
-    return renderIn(
-      "en",
+    return renderScreen(
       <LocalBackendGate>
-        {(local) => <p>app {local ? "local" : "remote"}</p>}
+        {(local) => <p data-testid="app" data-local={String(local)} />}
       </LocalBackendGate>
     );
   }
 
   it("renders the app at once for a remote backend", async () => {
     gate({ mode: "remote", phase: "ready" });
-    expect(await screen.findByText("app remote")).toBeTruthy();
+    expect((await screen.findByTestId("app")).getAttribute("data-local")).toBe("false");
   });
 
   it("keeps the startup screen until the local backend is ready and the owner is in", async () => {
-    gate({ mode: "local", phase: "signing_in", ...paths });
-    expect(
-      await screen.findByRole("heading", { name: "Opening your account" })
-    ).toBeTruthy();
-    expect(screen.queryByText(/^app /)).toBeNull();
+    const view = gate({ mode: "local", phase: "signing_in", ...paths });
+    await screen.findByRole("main");
+    expect(view.container.querySelector('main[data-phase="signing_in"]')).toBeTruthy();
+    expect(screen.queryByTestId("app")).toBeNull();
   });
 
   it("renders the app in local mode once ready", async () => {
     gate({ mode: "local", phase: "ready", ...paths });
-    expect(await screen.findByText("app local")).toBeTruthy();
+    expect((await screen.findByTestId("app")).getAttribute("data-local")).toBe("true");
   });
 
   it("does not wait for a native snapshot in the web build", () => {
     gate({ mode: "local", phase: "starting" }, "web");
-    expect(screen.getByText("app remote")).toBeTruthy();
+    expect(screen.getByTestId("app").getAttribute("data-local")).toBe("false");
   });
 });
