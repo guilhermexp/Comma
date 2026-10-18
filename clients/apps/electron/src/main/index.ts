@@ -2130,6 +2130,7 @@ async function closeMainServices() {
   } catch (error) {
     // Quit is cancelled and the app keeps running with its backend.
     clearTimeout(localBackendWatchdog);
+    localBackend?.cancelShutdown();
     closingMainServices = false;
     mainWindowInteractionsEnabled = true;
     enableStatusTrayInteractions();

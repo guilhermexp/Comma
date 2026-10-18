@@ -128,6 +128,29 @@ describe("local backend controller", () => {
     expect(adopted).toHaveLength(1);
   });
 
+  it("keeps the owner signed in again when the quit is cancelled", async () => {
+    const { service, follow } = fakeService();
+    const adopted: SecureSessionInput[] = [];
+    const controller = new LocalBackendController({
+      service,
+      onStatus: () => undefined,
+      openPath: async () => "",
+      fetch: backendFetch(),
+    });
+    follow(() => controller.publish());
+    controller.attachSession(async (input) => {
+      adopted.push(input);
+    });
+    await controller.launch();
+
+    controller.beginShutdown();
+    controller.cancelShutdown();
+    controller.followSessionState({ phase: "signed_out", reason: "unauthorized" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(adopted).toHaveLength(2);
+    expect(await controller.retry()).toEqual({ accepted: true });
+  });
+
   it("shows the owner sign-in failure on the startup screen", async () => {
     const { service, follow } = fakeService();
     const published: LocalBackendStatus[] = [];

@@ -77,6 +77,11 @@ export class LocalBackendController implements LocalBackendProvider {
     this.#shuttingDown = true;
   }
 
+  /** Quit was cancelled before the backend stopped: the app keeps running. */
+  cancelShutdown() {
+    if (!this.#stopping) this.#shuttingDown = false;
+  }
+
   followSessionState(state: { phase: string; reason?: string }) {
     if (this.#shuttingDown) return;
     const signedIn = state.phase === "signed_in";
