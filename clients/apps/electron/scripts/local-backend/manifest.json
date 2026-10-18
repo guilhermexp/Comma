@@ -1,0 +1,54 @@
+{
+  "$comment": "Pinned sources of the macOS arm64 local backend (docs: clients/apps/electron/RELEASE.md). Every archive is rejected unless its SHA-256 matches. Change a version and its sha256 together; the CI cache key is the hash of this file.",
+  "version": 1,
+  "sources": {
+    "openssl": {
+      "version": "3.5.9",
+      "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+      "sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a"
+    },
+    "libsodium": {
+      "version": "1.0.21",
+      "url": "https://github.com/jedisct1/libsodium/releases/download/1.0.21-RELEASE/libsodium-1.0.21.tar.gz",
+      "sha256": "9e4285c7a419e82dedb0be63a72eea357d6943bc3e28e6735bf600dd4883feaf"
+    },
+    "opus": {
+      "version": "1.5.2",
+      "url": "https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz",
+      "sha256": "65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1"
+    },
+    "libuv": {
+      "version": "1.52.1",
+      "$comment": "Headers for the verified kernel's Lean runtime, which links the libuv.a of the same version from the Lean toolchain.",
+      "url": "https://dist.libuv.org/dist/v1.52.1/libuv-v1.52.1-dist.tar.gz",
+      "sha256": "c5f14915e2fa7b83b6111c3bc477920559499e10d95f852707420c8725b82d6a"
+    },
+    "otp": {
+      "version": "29.0.2",
+      "url": "https://github.com/erlang/otp/releases/download/OTP-29.0.2/otp_src_29.0.2.tar.gz",
+      "sha256": "b9a7714fdd282c4a7113651b1e2728a58799e60ffe20e545f5cc94c621527b15"
+    },
+    "elixir": {
+      "version": "1.20.1",
+      "url": "https://github.com/elixir-lang/elixir/releases/download/v1.20.1/elixir-otp-29.zip",
+      "sha256": "6f8aa7149d1ff24d048c5bcfc8c4e37e463faef7e8ae8f5ea105c95f7d4f3c9a"
+    },
+    "postgres": {
+      "version": "16.15",
+      "$comment": "Built from source: the zonky darwin arm64 package ships only initdb, pg_ctl and postgres, and the app needs pg_dump and createdb.",
+      "url": "https://ftp.postgresql.org/pub/source/v16.15/postgresql-16.15.tar.bz2",
+      "sha256": "c1575341fa7bd40f5274ea465b34390f4dc64cdd0770af327005caaeb9f6b7ed"
+    },
+    "redis": {
+      "version": "7.4.11",
+      "url": "https://download.redis.io/releases/redis-7.4.11.tar.gz",
+      "sha256": "3c266ece0abd54ed3b1c912c6eb86b7508cf382cb690ee6649d3843f018f6357"
+    },
+    "minio": {
+      "version": "RELEASE.2025-10-15T17-29-55Z",
+      "$comment": "Built from the tagged source with Go: dl.min.io no longer serves darwin-arm64 binaries (HTTP 410).",
+      "url": "https://github.com/minio/minio/archive/refs/tags/RELEASE.2025-10-15T17-29-55Z.tar.gz",
+      "sha256": "be6d0bd3696c3a13a35f02d3a0280b64319c67918b4501c5c3d87f96d000085c"
+    }
+  }
+}
