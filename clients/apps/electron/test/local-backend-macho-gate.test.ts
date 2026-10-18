@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import {
   copyFileSync,
+  cpSync,
+  symlinkSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -8,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   assertRelocatable,
@@ -105,6 +107,14 @@ describe.runIf(darwin)("local backend Mach-O gate", () => {
     expect(findForeignLinks(dir).map((link) => link.file)).toEqual([
       join(dir, "bin/Comma Helper (GPU)"),
     ]);
+    // The release scripts pass relative paths such as ../../out/Comma.app.
+    const local = mkdtempSync(join(process.cwd(), ".macho-gate-"));
+    dirs.push(local);
+    cpSync(dir, local, { recursive: true });
+    const relativeDir = relative(process.cwd(), local);
+    expect(findForeignLinks(relativeDir).map((link) => link.file)).toEqual([
+      join(relativeDir, "bin/Comma Helper (GPU)"),
+    ]);
   });
 
   it("ignores a foreign run path that no @rpath dependency can use", () => {
@@ -122,6 +132,27 @@ describe.runIf(darwin)("local backend Mach-O gate", () => {
     rmSync(join(dir, "main.c"));
 
     expect(findForeignLinks(dir)).toEqual([]);
+  });
+
+  it("fails on a symbolic link that leaves the bundle", () => {
+    const dir = tempDir();
+    linkedProgram(dir, "@rpath/libfoo.dylib", "@loader_path/../lib");
+    symlinkSync("/opt/homebrew/lib/libssl.3.dylib", join(dir, "lib/libssl.3.dylib"));
+    symlinkSync("../../outside/libcrypto.dylib", join(dir, "lib/libcrypto.dylib"));
+    symlinkSync("libfoo.dylib", join(dir, "lib/libfoo.1.dylib"));
+
+    expect(findForeignLinks(dir)).toEqual([
+      {
+        file: join(dir, "lib/libcrypto.dylib"),
+        reference: "../../outside/libcrypto.dylib",
+        kind: "symlink",
+      },
+      {
+        file: join(dir, "lib/libssl.3.dylib"),
+        reference: "/opt/homebrew/lib/libssl.3.dylib",
+        kind: "symlink",
+      },
+    ]);
   });
 
   it("passes binaries that resolve libraries from their own location or the system", () => {

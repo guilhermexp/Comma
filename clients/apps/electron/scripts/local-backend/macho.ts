@@ -6,11 +6,12 @@ import {
   openSync,
   readSync,
   readdirSync,
+  readlinkSync,
   rmSync,
   symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 const thinMagics = new Set([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe]);
 const fatMagics = new Set([0xcafebabe, 0xbebafeca, 0xcafebabf, 0xbfbafeca]);
@@ -50,6 +51,21 @@ export function listMachOFiles(root: string): string[] {
   };
   walk(root);
   return found.toSorted();
+}
+
+/** Every symbolic link below root with the target it stores. */
+export function listSymbolicLinks(root: string): { path: string; target: string }[] {
+  const found: { path: string; target: string }[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir)) {
+      const path = join(dir, entry);
+      const stats = lstatSync(path);
+      if (stats.isSymbolicLink()) found.push({ path, target: readlinkSync(path) });
+      else if (stats.isDirectory()) walk(path);
+    }
+  };
+  walk(root);
+  return found.toSorted((left, right) => left.path.localeCompare(right.path));
 }
 
 export interface MachOLinks {
@@ -99,7 +115,7 @@ export function readLoadCommands(path: string): MachOLinks {
   const dir = mkdtempSync(join(tmpdir(), "comma-macho-"));
   try {
     const link = join(dir, "binary");
-    symlinkSync(path, link);
+    symlinkSync(resolve(path), link);
     return parseLoadCommands(otool(link));
   } finally {
     rmSync(dir, { force: true, recursive: true });

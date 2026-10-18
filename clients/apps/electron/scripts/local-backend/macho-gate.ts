@@ -1,9 +1,10 @@
-import { listMachOFiles, readLoadCommands } from "./macho";
+import { isAbsolute, resolve, dirname } from "node:path";
+import { listMachOFiles, listSymbolicLinks, readLoadCommands } from "./macho";
 
 export interface ForeignLink {
   file: string;
   reference: string;
-  kind: "dependency" | "rpath";
+  kind: "dependency" | "rpath" | "symlink";
 }
 
 const relocatablePrefixes = ["@rpath/", "@loader_path/", "@executable_path/"];
@@ -39,6 +40,16 @@ export function findForeignLinks(root: string): ForeignLink[] {
     for (const rpath of commands.rpaths) {
       if (staysInside(rpath.endsWith("/") ? rpath : `${rpath}/`)) continue;
       links.push({ file, reference: rpath, kind: "rpath" });
+    }
+  }
+  // A link out of the tree loads whatever that path holds on the user's Mac.
+  const inside = `${resolve(root)}/`;
+  for (const link of listSymbolicLinks(root)) {
+    const target = isAbsolute(link.target)
+      ? link.target
+      : resolve(dirname(resolve(link.path)), link.target);
+    if (!target.startsWith(inside)) {
+      links.push({ file: link.path, reference: link.target, kind: "symlink" });
     }
   }
   return links;
