@@ -66,7 +66,8 @@ class FakeRuntime implements LocalBackendRuntime {
   /** Helpers the backend left behind, keyed by PID, with their executables. */
   readonly strays = new Map<number, string>();
 
-  resolvePorts = async () => ports;
+  resolvePorts: (saved: Partial<Record<string, number>>) => Promise<LocalBackendPorts> =
+    async () => ports;
 
   spawn(spec: ChildSpec) {
     const child = new FakeChild(spec);
