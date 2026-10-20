@@ -83,7 +83,51 @@ defmodule Salix.Bindings.AgentAudioTranscriberTest do
 
     assert {:error, :asr_audio_empty} = call.(0)
     assert {:error, :asr_audio_size_invalid} = call.(-1)
-    assert {:error, :asr_audio_too_large} = call.(30 * 1024 * 1024 + 1)
+    assert {:error, :asr_audio_too_large} = call.(64 * 1024 * 1024 + 1)
     refute_receive {:transcribed, _, _, _, _}
+
+    assert {:ok, _result} = call.(64 * 1024 * 1024)
+    assert_receive {:transcribed, 0, 67_108_864, "audio.ogg", _prompt}
+  end
+
+  defmodule MissingModelServer do
+    @moduledoc false
+    import Plug.Conn
+
+    def init(opts), do: opts
+
+    def call(conn, _opts) do
+      {:ok, _body, conn} = read_body(conn, length: 1_000_000)
+
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(
+        409,
+        Jason.encode!(%{
+          "error" => %{"code" => "local_asr_model_not_installed", "message" => "Install it."}
+        })
+      )
+    end
+  end
+
+  test "a local ASR server without its model returns the missing-model reason" do
+    {:ok, server} =
+      start_supervised(
+        {Bandit, plug: MissingModelServer, ip: {127, 0, 0, 1}, port: 0, startup_log: false}
+      )
+
+    {:ok, {_ip, port}} = ThousandIsland.listener_info(server)
+
+    cfg = %{
+      "protocol" => "audio_transcriptions",
+      "base_url" => "http://127.0.0.1:#{port}/v1",
+      "api_key" => "local-asr-token",
+      "model" => "parakeet-tdt-0.6b-v3"
+    }
+
+    assert {:error, :local_asr_model_not_installed} =
+             AgentAudioTranscriber.transcribe_upload(["M4A"], 3, "recording.m4a",
+               config_fun: fn -> {:ok, cfg} end
+             )
   end
 end

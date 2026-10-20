@@ -22,14 +22,18 @@ defmodule SalixAgent.ToolsMediaTest do
       send(owner, {:audio_transcribe, agent_id, path})
       Process.sleep(Application.get_env(:salix_agent, :tools_media_audio_delay_ms, 0))
 
-      {:ok,
-       %{
-         transcript: "[00:00:01] Speaker: complete",
-         duration_seconds: 7,
-         chunks: [
-           %{index: 0, offset_seconds: 0, transcript: "[00:00:01] Speaker: complete"}
-         ]
-       }}
+      Application.get_env(
+        :salix_agent,
+        :tools_media_audio_result,
+        {:ok,
+         %{
+           transcript: "[00:00:01] Speaker: complete",
+           duration_seconds: 7,
+           chunks: [
+             %{index: 0, offset_seconds: 0, transcript: "[00:00:01] Speaker: complete"}
+           ]
+         }}
+      )
     end
   end
 
@@ -256,6 +260,20 @@ defmodule SalixAgent.ToolsMediaTest do
   end
 
   describe "audio.transcribe" do
+    test "names the missing local transcription model", %{ctx: ctx} do
+      Application.put_env(
+        :salix_agent,
+        :tools_media_audio_result,
+        {:error, :local_asr_model_not_installed}
+      )
+
+      on_exit(fn -> Application.delete_env(:salix_agent, :tools_media_audio_result) end)
+
+      assert_raise RuntimeError, ~r/^local_asr_model_not_installed: /, fn ->
+        Media.transcribe_audio(%{"path" => "/uploads/meeting.m4a"}, ctx)
+      end
+    end
+
     test "uses the current agent scope and writes the complete transcript to VFS", %{
       agent: agent,
       ctx: ctx

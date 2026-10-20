@@ -52,10 +52,29 @@ defmodule CommaWeb.RecordingTranscriptionTest do
     refute_receive {:asr_observed, _, _}
   end
 
+  test "accepts a 64 MiB recording and dispatches it to ASR" do
+    owner = self()
+    size = 64 * 1024 * 1024
+
+    request =
+      conn(:post, "/", :binary.copy(<<0>>, size)) |> put_req_header("content-type", "audio/mp4")
+
+    response =
+      CommaWeb.RecordingTranscription.call(request,
+        transcribe: fn _stream, received, _filename ->
+          send(owner, {:dispatched, received})
+          {:error, :asr_failed}
+        end
+      )
+
+    assert response.status == 200
+    assert_receive {:dispatched, ^size}
+  end
+
   test "rejects empty and oversized inputs before ASR dispatch" do
     owner = self()
 
-    for {body, status} <- [{"", 400}, {:binary.copy(<<0>>, 30 * 1024 * 1024 + 1), 413}] do
+    for {body, status} <- [{"", 400}, {:binary.copy(<<0>>, 64 * 1024 * 1024 + 1), 413}] do
       request = conn(:post, "/", body) |> put_req_header("content-type", "audio/mp4")
 
       response =
@@ -79,6 +98,20 @@ defmodule CommaWeb.RecordingTranscriptionTest do
 
     assert response.resp_body =~ "not configured"
     refute response.resp_body =~ ~s("status":"ready")
+    assert_receive {:asr_observed, _, %{surface: "comma", outcome: "unavailable"}}
+  end
+
+  test "reports the missing local transcription model as its own reason" do
+    request = conn(:post, "/", "M4A") |> put_req_header("content-type", "audio/mp4")
+
+    response =
+      CommaWeb.RecordingTranscription.call(request,
+        transcribe: fn _, _, _ -> {:error, :local_asr_model_not_installed} end
+      )
+
+    assert response.resp_body =~
+             Jason.encode!(%{status: "error", reason: "local_asr_model_not_installed"})
+
     assert_receive {:asr_observed, _, %{surface: "comma", outcome: "unavailable"}}
   end
 

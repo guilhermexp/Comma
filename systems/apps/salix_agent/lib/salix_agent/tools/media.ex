@@ -190,6 +190,10 @@ defmodule SalixAgent.Tools.Media do
       {:error, :asr_audio_empty} ->
         raise "audio file is empty"
 
+      {:error, :local_asr_model_not_installed} ->
+        raise "local_asr_model_not_installed: local meeting transcription is not installed; " <>
+                "install it in Settings > Meeting"
+
       {:error, :asr_audio_too_large} ->
         raise "audio file exceeds the supported size"
 
