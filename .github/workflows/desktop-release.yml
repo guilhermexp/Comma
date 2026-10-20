@@ -210,6 +210,14 @@ jobs:
              System Settings > Privacy & Security.
 
           Installed copies update themselves from the latest release.
+
+          Local meeting transcription is optional. It needs Apple silicon and
+          macOS 15 or later. To use it, open Settings > Work > Meeting and click
+          Install in Local transcription (about 654 MB). The model stays in
+          `~/Library/Application Support/Comma/Models`; Remove deletes it.
+          Brazilian Portuguese names and slang can be wrong, and overlapping
+          speech gets one speaker. Model licenses are in
+          `Comma.app/Contents/Resources/licenses/fluidaudio/`.
           NOTES
           gh release create "$TAG" release/* \
             --repo "$GITHUB_REPOSITORY" \
