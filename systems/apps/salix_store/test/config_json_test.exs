@@ -639,6 +639,20 @@ defmodule SalixStore.ConfigJsonTest do
     assert ConfigJson.boolean(%{}, ~w(slack_mirror enabled)) == nil
   end
 
+  test "meetings.local_asr maps only a complete local ASR endpoint" do
+    local_asr = %{"base_url" => "http://127.0.0.1:41001/v1", "api_key" => "asr-token"}
+    json = put_in(@json, ["meetings", "local_asr"], local_asr)
+
+    assert {:comma_core, :local_meeting_asr, local_asr} in ConfigJson.app_env(json)
+
+    for incomplete <- [%{"base_url" => "http://127.0.0.1:41001/v1"}, %{"api_key" => "t"}, "x"] do
+      json = put_in(@json, ["meetings", "local_asr"], incomplete)
+      refute List.keymember?(ConfigJson.app_env(json), :local_meeting_asr, 1)
+    end
+
+    refute List.keymember?(ConfigJson.app_env(@json), :local_meeting_asr, 1)
+  end
+
   test "calendar autojoin is explicitly enabled and malformed bounds fail closed" do
     disabled = put_in(@json, ["meetings", "calendar_autojoin", "enabled"], false)
     missing_flag = update_in(@json, ["meetings", "calendar_autojoin"], &Map.delete(&1, "enabled"))
