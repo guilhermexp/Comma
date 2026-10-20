@@ -4,6 +4,7 @@ import { getCommaReleaseConfig } from "../src/release-config";
 
 export const notchBinaryName = "NotchHost";
 export const micCaptureBinaryName = "MicCaptureHost";
+export const transcriberBinaryName = "CommaTranscriber";
 export const sleepGuardBinaryName = "CommaSleepGuard";
 export const sleepGuardAddonName = "comma-sleep-guard.node";
 export const sideChatAppName = "CommaSideChatHost";
@@ -163,4 +164,25 @@ export function packagedSleepGuardPath(appBundle: string) {
 
 export function micCaptureHostDistPath(appDir: string) {
   return resolve(sharedMacOSNativeDistDir(appDir), micCaptureBinaryName);
+}
+
+export function transcriberDistPath(appDir: string) {
+  return resolve(sharedMacOSNativeDistDir(appDir), transcriberBinaryName);
+}
+
+export function packagedTranscriberPath(appBundle: string) {
+  return resolve(appBundle, "Contents/Resources/native/macos", transcriberBinaryName);
+}
+
+/** Packaged as Contents/Resources/licenses: FluidAudio and model attributions. */
+export function licensesDistRoot(appDir: string) {
+  return resolve(appDir, "dist/licenses");
+}
+
+export function transcriberLicensesDistDir(appDir: string) {
+  return resolve(licensesDistRoot(appDir), "fluidaudio");
+}
+
+export function packagedTranscriberLicensesDir(appBundle: string) {
+  return resolve(appBundle, "Contents/Resources/licenses/fluidaudio");
 }

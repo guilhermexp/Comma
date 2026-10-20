@@ -9,6 +9,7 @@ import {
   packagedNotchHostPath,
   packagedSideChatHostAppPath,
   packagedSleepGuardPath,
+  packagedTranscriberPath,
 } from "./native-paths";
 import { resolveMacosSigning, type MacosSigning } from "./macos-signing";
 
@@ -110,9 +111,11 @@ async function main() {
   const notchHost = packagedNotchHostPath(app);
   const computerUseHelper = packagedComputerUseAppPath(app, forgePlatform, forgeArch);
   const sideChatHelper = packagedSideChatHostAppPath(app);
-  const binaries = [notchHost, packagedSleepGuardPath(app)].filter((path) =>
-    existsSync(path)
-  );
+  const binaries = [
+    notchHost,
+    packagedSleepGuardPath(app),
+    packagedTranscriberPath(app),
+  ].filter((path) => existsSync(path));
 
   signNestedHelperApp(computerUseHelper, signing);
   signNestedHelperApp(sideChatHelper, signing);

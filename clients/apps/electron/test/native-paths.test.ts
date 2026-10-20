@@ -4,6 +4,7 @@ import {
   computerUseAppName,
   computerUseDistAppPath,
   nativeDistRoot,
+  licensesDistRoot,
   notchHostDistPath,
   packagedComputerUseAppPath,
   packagedNotchHostPath,
@@ -14,6 +15,10 @@ import {
   sideChatHostDistAppPath,
   sideChatHostBundleId,
   sideChatHostExecutablePath,
+  packagedTranscriberLicensesDir,
+  packagedTranscriberPath,
+  transcriberDistPath,
+  transcriberLicensesDistDir,
 } from "../scripts/native-paths";
 
 describe("native release paths", () => {
@@ -67,6 +72,22 @@ describe("native release paths", () => {
     );
     expect(salixConnectBinaryPath(appDir, "win32", "x64")).toBe(
       resolve(appDir, "dist/native/win32/x64/salix-connect.exe")
+    );
+  });
+
+  it("places the transcription helper and its licenses where the app resources expect them", () => {
+    expect(transcriberDistPath(appDir)).toBe(
+      resolve(appDir, "dist/native/macos/CommaTranscriber")
+    );
+    expect(packagedTranscriberPath(appBundle)).toBe(
+      resolve(appBundle, "Contents/Resources/native/macos/CommaTranscriber")
+    );
+    // Forge copies dist/licenses to Contents/Resources/licenses.
+    expect(relative(licensesDistRoot(appDir), transcriberLicensesDistDir(appDir))).toBe(
+      relative(
+        resolve(appBundle, "Contents/Resources/licenses"),
+        packagedTranscriberLicensesDir(appBundle)
+      )
     );
   });
 });

@@ -83,7 +83,7 @@ describe("transcriber model manifest", () => {
       { path: "model/Model.mlmodelc/weights/weight.bin", size: 9, sha256: weightSha },
       { path: "model/vocab.json", size: 5, sha256: sha("vocab") },
     ]);
-    expect([...licenseFiles.keys()].sort()).toEqual([
+    expect([...licenseFiles.keys()].toSorted()).toEqual([
       "ATTRIBUTION.md",
       "FluidAudio-LICENSE-Apache-2.0",
       "model-LICENSE",

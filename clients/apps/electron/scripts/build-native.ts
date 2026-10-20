@@ -43,6 +43,9 @@ import {
   sleepGuardDistPath,
   synchBinaryName,
   synchBinaryPath,
+  transcriberBinaryName,
+  transcriberDistPath,
+  transcriberLicensesDistDir,
 } from "./native-paths";
 import { fetchOpenDropKit } from "./opendropkit-release";
 import {
@@ -58,6 +61,9 @@ const repoRoot = resolve(appDir, "../../..");
 const releaseConfig = getCommaReleaseConfig();
 const notchPackageDir = resolve(appDir, "native/macos/NotchHost");
 const micCapturePackageDir = resolve(appDir, "native/macos/MicCaptureHost");
+const transcriberPackageDir = resolve(appDir, "native/macos/CommaTranscriber");
+const transcriberOutput = transcriberDistPath(appDir);
+const transcriberLicensesOutput = transcriberLicensesDistDir(appDir);
 const sleepGuardDir = resolve(appDir, "native/macos/SleepGuard");
 const sleepGuardOutput = sleepGuardDistPath(appDir);
 const sleepGuardAddonOutput = sleepGuardAddonDistPath(appDir);
@@ -157,6 +163,31 @@ function buildMicCaptureHost() {
   assertFile(micCaptureHostOutput, "Native MicCaptureHost");
 
   console.log(`Native MicCaptureHost built (${configuration}).`);
+}
+
+/**
+ * The local meeting transcription helper. Its model is downloaded on demand,
+ * never bundled; the license texts it needs ship beside the app resources.
+ */
+function buildTranscriber() {
+  run("swift", ["build", "-c", configuration], transcriberPackageDir);
+  mkdirSync(outputDir, { recursive: true });
+  copyFileSync(
+    resolve(transcriberPackageDir, ".build", configuration, transcriberBinaryName),
+    transcriberOutput
+  );
+  assertFile(transcriberOutput, `Native ${transcriberBinaryName}`);
+
+  rmSync(transcriberLicensesOutput, { force: true, recursive: true });
+  cpSync(resolve(transcriberPackageDir, "Licenses"), transcriberLicensesOutput, {
+    recursive: true,
+  });
+  assertFile(
+    resolve(transcriberLicensesOutput, "ATTRIBUTION.md"),
+    `${transcriberBinaryName} licenses`
+  );
+
+  console.log(`Native ${transcriberBinaryName} built (${configuration}).`);
 }
 
 /** The privileged lid-sleep daemon and the addon Main talks to it through. */
@@ -472,6 +503,7 @@ function verifyNativeOutputs() {
 
   assertFile(notchHostOutput, "Native NotchHost");
   assertFile(micCaptureHostOutput, "Native MicCaptureHost");
+  assertFile(transcriberOutput, `Native ${transcriberBinaryName}`);
   assertFile(sleepGuardOutput, "Native CommaSleepGuard");
   assertFile(sleepGuardAddonOutput, "Native sleep guard addon");
   assertFile(sideChatBackdropOutput, "Native Side Chat backdrop addon");
@@ -578,6 +610,7 @@ async function buildNative() {
 
   buildNotchHost();
   buildMicCaptureHost();
+  buildTranscriber();
   buildSleepGuard();
   await buildAirDrop();
   buildSideChatBackdropAddon();
