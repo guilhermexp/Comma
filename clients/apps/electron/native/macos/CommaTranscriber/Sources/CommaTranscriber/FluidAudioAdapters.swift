@@ -78,6 +78,8 @@ struct FluidModelPreparer: ModelPreparing {
 /// for this job only (design D5).
 struct FluidTranscriptionEngine: TranscriptionEngine {
     func transcribe(audio: URL, installed: URL) async throws -> EngineResult {
+        // Hand the pages freed with the models back to the system.
+        defer { malloc_zone_pressure_relief(nil, 0) }
         let (duration, words) = try await recognize(audio, installed: installed)
         let turns = words.isEmpty ? [] : try await diarize(audio, installed: installed)
         return EngineResult(duration: duration, words: words, turns: turns)
