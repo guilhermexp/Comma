@@ -269,7 +269,8 @@ Macs, Settings shows the reason and no Install button.
 To install the model:
 
 1. Open Settings > Work > Meeting.
-2. In Local transcription, click Install. The download is about 654 MB.
+2. In Local transcription, click Install. The download is about 654 MB
+   (Settings shows 623.5 MB, in binary units).
 3. Wait for Ready. The status shows Downloading with a percentage, then
    Preparing. Comma checks the SHA-256 and the size of each file before it
    marks the model ready. A failed or cancelled download leaves no model.
@@ -335,6 +336,14 @@ apps/electron/test/local-backend-runtime.test.ts` starts the real tree on an
 --dir clients exec playwright test apps/electron/e2e/local-mode-packaged.spec.ts
 --no-deps` launches it with `PATH=/usr/bin:/bin`, checks Home without login,
   a Router answer, quit, and reopen.
+- With a packaged app on Apple silicon, add
+  `COMMA_ELECTRON_LOCAL_ASR_AUDIO=<short two-voice .m4a>` to the command above
+  and select `-g "local transcription"`. The test downloads the real model,
+  checks the install notice, Downloading, Preparing, and Ready, a transcript
+  with Speaker 1 and Speaker 2 lines, and Remove. It moves the profile's Drive
+  source to a temporary folder first, because Drive otherwise publishes
+  `~/Comma Drive`. Set `COMMA_PLAYWRIGHT_SKIP_WEB_SERVER=1` for both packaged
+  tests.
 - `swift test` in `native/macos/CommaTranscriber` checks the model manifest,
   the staged install, the speaker merge, and the HTTP routes of the helper.
 - Unit tests do not prove signing, packaging, or an update. Those need a build.

@@ -15,7 +15,14 @@
  */
 import { chromium, expect, test, type Browser, type Page } from "@playwright/test";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import {
   createServer as createHttpServer,
@@ -355,6 +362,268 @@ test.describe("packaged local mode", () => {
     } finally {
       if (app) await quit(app).catch(() => undefined);
       model.server.close();
+      if (!process.env.COMMA_E2E_KEEP_DATA)
+        await rm(userData, { force: true, recursive: true });
+    }
+  });
+});
+
+/** The renderer's own strings, in the locale the packaged app chose. */
+async function rendererMessages(page: Page) {
+  const lang = await page.evaluate(() => document.documentElement.lang || "en");
+  const file = resolve(process.cwd(), `packages/i18n/messages/${lang}.json`);
+  return JSON.parse(readFileSync(file, "utf8")) as Record<string, string>;
+}
+
+function localTranscriptionState(page: Page) {
+  return page.evaluate(() =>
+    (
+      globalThis as {
+        commaNative?: {
+          localTranscription: {
+            state: { get(): Promise<{ phase: string; supported: boolean }> };
+          };
+        };
+      }
+    ).commaNative!.localTranscription.state.get()
+  );
+}
+
+/**
+ * Drive publishes `~/Comma Drive` whatever the Electron profile is, and the
+ * owner's own Comma can publish the same folder. The test moves this
+ * profile's Drive source to a temporary folder before it writes a file there.
+ * Drive must be ready: the commands go through its daemon.
+ */
+function isolateDriveSource(userData: string, root: string) {
+  const synch = join(appBundle!, "Contents/Resources/native/darwin/arm64/synch");
+  const env = { ...process.env, SYNCH_DATA_DIR: join(userData, "synchronicity") };
+  mkdirSync(root, { recursive: true });
+  execFileSync(synch, ["source", "rm", "comma-drive"], { env });
+  execFileSync(synch, ["source", "add", "comma-drive", root], { env });
+}
+
+/** Closes Settings and the toasts; a click outside Settings would close it and route Home. */
+async function clearOverlays(page: Page) {
+  for (
+    let attempt = 0;
+    attempt < 5 && (await page.getByRole("dialog").count());
+    attempt += 1
+  )
+    await page.keyboard.press("Escape");
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const close = page.locator("[data-sonner-toast] button[aria-label]").first();
+    if (!(await close.count())) return;
+    await close.click({ timeout: 5_000 }).catch(() => undefined);
+  }
+}
+
+async function transcribeFromDrive(
+  page: Page,
+  text: Record<string, string>,
+  name: string
+) {
+  await clearOverlays(page);
+  await page.evaluate(() => {
+    window.location.hash = "/drive";
+  });
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe("#/drive");
+  const file = page.getByText(name, { exact: true }).first();
+  const step = { timeout: 60_000 };
+  await expect(
+    page.getByText("recording", { exact: true }).or(file).first()
+  ).toBeVisible(step);
+  if (!(await file.isVisible())) {
+    await page.getByText("recording", { exact: true }).first().dblclick(step);
+    await page.getByText(recordingDay(), { exact: true }).first().dblclick(step);
+  }
+  await file.click({ button: "right", ...step });
+  await page.getByRole("menuitem", { name: text.recording_transcribe! }).click(step);
+}
+
+/** The local day folder Drive files a recording under (recording/<day>/). */
+function recordingDay() {
+  const now = new Date();
+  return [now.getFullYear(), now.getMonth() + 1, now.getDate()]
+    .map((part) => String(part).padStart(2, "0"))
+    .join("-");
+}
+
+async function openLocalTranscriptionSection(page: Page, text: Record<string, string>) {
+  const dialog = page
+    .getByRole("dialog")
+    .filter({ hasText: text.settings_local_transcription_model! });
+  await expect(dialog).toBeVisible({ timeout: 30_000 });
+  await dialog
+    .getByText(text.settings_local_transcription_model!)
+    .scrollIntoViewIfNeeded();
+  return dialog;
+}
+
+/**
+ * openspec add-local-meeting-asr, task 5.1. It downloads the real speech
+ * model (about 654 MB), so it runs only when COMMA_ELECTRON_LOCAL_ASR_AUDIO
+ * names a short recording with two voices. The recording comes from a
+ * live capture of system audio while `afplay` plays that file, so the
+ * launching terminal needs the Screen and System Audio Recording and the
+ * Microphone permissions. The same file is also put in Drive as a saved
+ * recording, a clean source for the speaker check.
+ */
+test.describe("packaged local transcription", () => {
+  const audio = process.env.COMMA_ELECTRON_LOCAL_ASR_AUDIO;
+  test.skip(
+    !appBundle || !audio || process.platform !== "darwin" || process.arch !== "arm64",
+    "Set COMMA_ELECTRON_LOCAL_MODE_APP and COMMA_ELECTRON_LOCAL_ASR_AUDIO on an Apple silicon Mac."
+  );
+
+  test("offers the install, installs the model, transcribes a saved recording by speaker, and removes the model", async () => {
+    test.setTimeout(40 * 60_000);
+    // Drive's control socket path must stay under the 104-byte macOS limit,
+    // which the per-user temporary folder leaves too little room for.
+    const userData = await mkdtemp("/tmp/comma-asr-");
+    const driveRoot = join(userData, "drive-root");
+    const modelsDir = join(userData, "Models");
+    const name = "e2e-two-voices.m4a";
+    let app: LaunchedApp | undefined;
+    try {
+      app = await launch(userData, "asr-first");
+      const first = await mainWindow(app.browser);
+      await waitForSignedInHome(first);
+      // Closing the first-launch onboarding records it as done, so it does
+      // not take over the main window's route on the next launch.
+      const onboarding = await windowWithRole(app.browser, "onboarding-window");
+      await onboarding?.evaluate(() => window.close()).catch(() => undefined);
+      await expect
+        .poll(
+          () =>
+            first.evaluate(
+              async () =>
+                (
+                  await (
+                    globalThis as {
+                      commaNative?: {
+                        synchronicity: { state(): Promise<{ status: string }> };
+                      };
+                    }
+                  ).commaNative!.synchronicity.state()
+                ).status
+            ),
+          { timeout: 120_000 }
+        )
+        .toBe("ready");
+      // Main reads the published Drive folder again on the next launch.
+      isolateDriveSource(userData, driveRoot);
+      await quit(app);
+      app = undefined;
+
+      app = await launch(userData, "asr-second");
+      const main = await mainWindow(app.browser);
+      await waitForSignedInHome(main);
+      const text = await rendererMessages(main);
+      expect(await localTranscriptionState(main)).toMatchObject({
+        supported: true,
+        phase: "not_installed",
+      });
+      const folder = join(driveRoot, "recording", recordingDay());
+
+      // Without the model the recording is saved and the server's
+      // local_asr_model_not_installed becomes the install notice.
+      await main.getByRole("button", { name: text.ui_ai_voice_input! }).click();
+      execFileSync("/usr/bin/afplay", [audio!]);
+      await main
+        .getByRole("button", { name: text.ui_ai_confirm_voice_recording! })
+        .click();
+      const notice = main.locator('[data-testid="local-transcription-notice"]');
+      await expect(notice).toBeVisible({ timeout: 120_000 });
+      await main.screenshot({ path: join(evidence(), "asr-01-install-notice.png") });
+      const recorded = readdirSync(folder).find((file) => file.endsWith(".m4a"))!;
+      expect(
+        JSON.parse(
+          readFileSync(
+            join(folder, recorded.replace(/\.m4a$/, ".transcript.json")),
+            "utf8"
+          )
+        )
+      ).toMatchObject({ status: "error", reason: "local_asr_model_not_installed" });
+      await notice
+        .getByRole("button", { name: text.recording_local_transcription_install! })
+        .click();
+
+      const section = await openLocalTranscriptionSection(main, text);
+      await main.screenshot({ path: join(evidence(), "asr-02-not-installed.png") });
+      await section
+        .getByRole("button", {
+          name: text.settings_local_transcription_install!,
+          exact: true,
+        })
+        .click();
+      const phases = new Set<string>();
+      await expect
+        .poll(
+          async () => {
+            const state = await localTranscriptionState(main);
+            if (!phases.has(state.phase)) {
+              phases.add(state.phase);
+              await main.screenshot({
+                path: join(evidence(), `asr-03-${state.phase}.png`),
+              });
+            }
+            return state.phase;
+          },
+          { timeout: 20 * 60_000, intervals: [250] }
+        )
+        .toBe("ready");
+      expect([...phases]).toEqual(
+        expect.arrayContaining(["downloading", "preparing", "ready"])
+      );
+
+      // The captured recording can also hold whatever else the Mac played,
+      // so only the clean file is checked for both speakers.
+      writeFileSync(join(folder, name), readFileSync(audio!));
+      for (const file of [recorded, name]) {
+        await transcribeFromDrive(main, text, file);
+        await expect(
+          main.locator("[data-sonner-toast]").filter({
+            hasText: text.recording_transcribe_done!.replace("{name}", file),
+          })
+        ).toBeVisible({ timeout: 10 * 60_000 });
+      }
+      const transcript = (file: string) =>
+        readFileSync(join(folder, file.replace(/\.m4a$/, ".transcript.txt")), "utf8");
+      writeFileSync(
+        join(evidence(), "asr-04-recorded.transcript.txt"),
+        transcript(recorded)
+      );
+      writeFileSync(join(evidence(), "asr-04-file.transcript.txt"), transcript(name));
+      expect(transcript(recorded)).toMatch(/^\[\d{2}:\d{2}:\d{2}\] Speaker \d+: \S/m);
+      expect(transcript(name)).toMatch(/^\[\d{2}:\d{2}:\d{2}\] Speaker 1: \S/m);
+      expect(transcript(name)).toMatch(/^\[\d{2}:\d{2}:\d{2}\] Speaker 2: \S/m);
+
+      await main.evaluate(() => {
+        window.location.hash = "/settings?category=meeting";
+      });
+      await (
+        await openLocalTranscriptionSection(main, text)
+      )
+        .getByRole("button", {
+          name: text.settings_local_transcription_remove!,
+          exact: true,
+        })
+        .click();
+      await expect
+        .poll(async () => (await localTranscriptionState(main)).phase, {
+          timeout: 120_000,
+        })
+        .toBe("not_installed");
+      await main.screenshot({ path: join(evidence(), "asr-05-removed.png") });
+      expect(existsSync(modelsDir)).toBe(false);
+
+      await quit(app);
+      app = undefined;
+      await new Promise((done) => setTimeout(done, 2_000));
+      expect(bundledProcesses()).toEqual([]);
+    } finally {
+      if (app) await quit(app).catch(() => undefined);
       if (!process.env.COMMA_E2E_KEEP_DATA)
         await rm(userData, { force: true, recursive: true });
     }
