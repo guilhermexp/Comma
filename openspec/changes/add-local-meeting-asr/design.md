@@ -89,7 +89,7 @@ Detalhes:
 Para cada requisição:
 1. `AsrManager` com `ASRConfig(parallelChunkConcurrency: 1, melChunkContext: true)` e `encoderComputeUnits: .cpuAndNeuralEngine`, com timestamps de token → palavras (`buildWordTimings`);
 2. `OfflineDiarizerManager.process(url)` sobre o mesmo arquivo;
-3. cada palavra vai para o segmento de voz com maior sobreposição de tempo (varredura ordenada);
+3. cada palavra vai para o segmento de voz com maior sobreposição de tempo (varredura ordenada). Uma palavra sem sobreposição vai para o segmento mais próximo a até 1 s, porque a primeira palavra de uma fala costuma começar um pouco antes do segmento do diarizador. Mais longe que isso, a palavra fica sem speaker;
 4. palavras seguidas do mesmo speaker viram um segmento;
 5. `asr.cleanup()` e a liberação de todas as referências de modelos ao fim do trabalho.
 

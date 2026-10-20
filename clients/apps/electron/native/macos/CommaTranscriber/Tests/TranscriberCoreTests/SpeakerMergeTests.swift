@@ -46,16 +46,45 @@ private func turn(_ speaker: String, _ start: Double, _ end: Double) -> SpeakerT
     #expect(segments.map(\.speaker) == ["S1", "S2", "S1"])
 }
 
-@Test func aWordWithoutOverlapHasNoSpeaker() {
+@Test func aWordWithinOneSecondOfATurnJoinsTheNearestTurn() {
+    // A turn's first word often starts just before the diarizer's turn does.
     let segments = mergeWordsWithSpeakers(
-        words: [word("before", 0, 0.5), word("inside", 1.0, 1.5), word("gap", 2.5, 3.0)],
-        turns: [turn("A", 0.9, 2.0)]
+        words: [
+            word("Me", 0.6, 0.85), word("inside", 1.0, 1.5),
+            word("trailing", 2.5, 3.0),
+            word("between", 6.15, 6.3),
+        ],
+        turns: [turn("A", 0.9, 2.0), turn("B", 6.5, 7.0), turn("C", 5.0, 6.0)]
+    )
+    #expect(segments == [
+        TranscriptSegment(start: 0.6, end: 3.0, speaker: "S1", text: "Me inside trailing"),
+        TranscriptSegment(start: 6.15, end: 6.3, speaker: "S2", text: "between"),
+    ])
+}
+
+@Test func aWordFartherThanOneSecondFromEveryTurnHasNoSpeaker() {
+    let segments = mergeWordsWithSpeakers(
+        words: [word("before", 0, 0.5), word("inside", 2.0, 2.5), word("far", 4.6, 5.0)],
+        turns: [turn("A", 1.6, 3.0)]
     )
     #expect(segments == [
         TranscriptSegment(start: 0, end: 0.5, speaker: nil, text: "before"),
-        TranscriptSegment(start: 1.0, end: 1.5, speaker: "S1", text: "inside"),
-        TranscriptSegment(start: 2.5, end: 3.0, speaker: nil, text: "gap"),
+        TranscriptSegment(start: 2.0, end: 2.5, speaker: "S1", text: "inside"),
+        TranscriptSegment(start: 4.6, end: 5.0, speaker: nil, text: "far"),
     ])
+}
+
+@Test func anEqualGapGoesToTheEarlierTurn() {
+    let segments = mergeWordsWithSpeakers(
+        words: [word("middle", 1.5, 2.0)],
+        turns: [turn("late", 2.5, 3.0), turn("early", 0.0, 1.0)]
+    )
+    #expect(segments.map(\.speaker) == ["S1"])
+    #expect(
+        mergeWordsWithSpeakers(
+            words: [word("middle", 1.5, 2.0), word("next", 2.6, 2.9)],
+            turns: [turn("late", 2.5, 3.0), turn("early", 0.0, 1.0)]
+        ).map(\.speaker) == ["S1", "S2"])
 }
 
 @Test func overlappingAndUnsortedTurnsAreSwept() {
