@@ -1,20 +1,34 @@
 import { useCommaLocale, useCommaMessages } from "@comma/i18n/react";
 import type { LocalTranscriptionState } from "@comma/native-bridge";
-import type { SettingsPanelItem, SettingsPanelSection } from "@comma/ui";
-import { formatAttachmentSize } from "./chat/thread/attachments/attachmentLabels";
+import { Dialog, type SettingsPanelItem, type SettingsPanelSection } from "@comma/ui";
+import { useState, type ReactNode } from "react";
 import { useLocalTranscription } from "./useLocalTranscription";
+
+/** Decimal megabytes, as the docs and release notes give the download size. */
+function formatMegabytes(bytes: number, locale: string) {
+  return new Intl.NumberFormat(locale, {
+    style: "unit",
+    unit: "megabyte",
+    maximumFractionDigits: 1,
+  }).format(bytes / 1_000_000);
+}
 
 /**
  * Settings → Work → Meeting → Local transcription: one row for the speech
  * model, whose status dot, text and single action follow Main's state. The
  * status stays text ("Downloading 42%") rather than a spinner, so progress
- * is readable at a glance.
+ * is readable at a glance. Remove asks first, in `removalDialog`, which the
+ * caller renders beside its other Settings dialogs.
  */
-export function useLocalTranscriptionSection(): SettingsPanelSection {
+export function useLocalTranscriptionSection(): {
+  section: SettingsPanelSection;
+  removalDialog: ReactNode;
+} {
   const m = useCommaMessages();
   const locale = useCommaLocale();
   const { state, pending, refusal, install, cancel, remove } = useLocalTranscription();
-  const size = formatAttachmentSize(state?.sizeBytes || undefined, locale) ?? "";
+  const [confirmingRemoval, setConfirmingRemoval] = useState(false);
+  const size = state?.sizeBytes ? formatMegabytes(state.sizeBytes, locale) : "";
   const busy = pending !== undefined;
 
   const row = (
@@ -71,7 +85,7 @@ export function useLocalTranscriptionSection(): SettingsPanelSection {
             label: m.settings_local_transcription_remove(),
             tone: "danger",
             disabled: busy,
-            onPress: () => void remove(),
+            onPress: () => setConfirmingRemoval(true),
           },
           ...(refusal === "busy"
             ? { errorMessage: m.settings_local_transcription_remove_busy() }
@@ -119,15 +133,44 @@ export function useLocalTranscriptionSection(): SettingsPanelSection {
   };
 
   return {
-    id: "meeting.local-transcription",
-    title: m.settings_local_transcription(),
-    items: [
-      {
-        id: "meeting.local-transcription.model",
-        title: m.settings_local_transcription_model(),
-        keywords: ["transcription", "speech", "parakeet", "speaker", "asr"],
-        ...(state ? row(state) : { descriptionLoading: true }),
-      },
-    ],
+    section: {
+      id: "meeting.local-transcription",
+      title: m.settings_local_transcription(),
+      items: [
+        {
+          id: "meeting.local-transcription.model",
+          title: m.settings_local_transcription_model(),
+          keywords: ["transcription", "speech", "parakeet", "speaker", "asr"],
+          ...(state ? row(state) : { descriptionLoading: true }),
+        },
+      ],
+    },
+    removalDialog:
+      confirmingRemoval && state?.phase === "ready" ? (
+        <Dialog
+          isOpen
+          isDismissable
+          onOpenChange={setConfirmingRemoval}
+          title={m.settings_local_transcription_remove_confirm_title()}
+          description={m.settings_local_transcription_remove_confirm_description({
+            size,
+          })}
+          actions={[
+            {
+              label: m.settings_local_transcription_cancel(),
+              hierarchy: "secondary-gray",
+              onPress: () => setConfirmingRemoval(false),
+            },
+            {
+              label: m.settings_local_transcription_remove(),
+              hierarchy: "destructive",
+              onPress: () => {
+                setConfirmingRemoval(false);
+                void remove();
+              },
+            },
+          ]}
+        />
+      ) : null,
   };
 }

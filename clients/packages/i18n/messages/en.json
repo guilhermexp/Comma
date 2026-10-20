@@ -3280,6 +3280,8 @@
   "settings_local_transcription_error_network": "The download stopped. Check your internet connection and try again.",
   "settings_local_transcription_error_other": "The model could not be installed: {message}",
   "settings_local_transcription_remove_busy": "A recording is being transcribed. Remove the model after it finishes.",
+  "settings_local_transcription_remove_confirm_title": "Remove the speech model?",
+  "settings_local_transcription_remove_confirm_description": "Meeting recordings will no longer be transcribed on this Mac until you install it again ({size} download).",
   "recording_local_transcription_missing": "Recording saved. Install local transcription to transcribe it on this Mac.",
   "recording_local_transcription_install": "Install",
   "recording_transcribe": "Transcribe",

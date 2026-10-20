@@ -3280,6 +3280,8 @@
   "settings_local_transcription_error_network": "O download parou. Confira sua conexão com a internet e tente de novo.",
   "settings_local_transcription_error_other": "Não foi possível instalar o modelo: {message}",
   "settings_local_transcription_remove_busy": "Uma gravação está sendo transcrita. Remova o modelo quando ela terminar.",
+  "settings_local_transcription_remove_confirm_title": "Remover o modelo de fala?",
+  "settings_local_transcription_remove_confirm_description": "As gravações de reunião deixam de ser transcritas neste Mac até você instalar de novo (download de {size}).",
   "recording_local_transcription_missing": "Gravação salva. Instale a transcrição local para transcrevê-la neste Mac.",
   "recording_local_transcription_install": "Instalar",
   "recording_transcribe": "Transcrever",

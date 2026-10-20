@@ -3280,6 +3280,8 @@
   "settings_local_transcription_error_network": "下载已中断。请检查网络连接后重试。",
   "settings_local_transcription_error_other": "无法安装模型：{message}",
   "settings_local_transcription_remove_busy": "正在转写一段录音。请在完成后再移除模型。",
+  "settings_local_transcription_remove_confirm_title": "移除语音模型？",
+  "settings_local_transcription_remove_confirm_description": "在重新安装之前，此 Mac 将不再转写会议录音（下载 {size}）。",
   "recording_local_transcription_missing": "录音已保存。安装本地转写即可在这台 Mac 上转写它。",
   "recording_local_transcription_install": "安装",
   "recording_transcribe": "转写",

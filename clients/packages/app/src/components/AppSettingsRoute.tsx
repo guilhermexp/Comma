@@ -248,7 +248,10 @@ export function AppSettingsRoute({
   const clientSettings = useCommaClientSettings();
   const clientSettingsPending = useCommaClientSettingsPending();
   const onboardingReplay = useOnboardingReplaySection();
-  const localTranscriptionSection = useLocalTranscriptionSection();
+  const {
+    section: localTranscriptionSection,
+    removalDialog: localTranscriptionDialog,
+  } = useLocalTranscriptionSection();
   const auth = useCommaAuth();
   const guest = auth.isGuest === true;
   // Every category reader below keys off this id, so a guest never loads the
@@ -2551,6 +2554,7 @@ export function AppSettingsRoute({
           ]}
         />
       ) : null}
+      {activeCategoryId === "meeting" ? localTranscriptionDialog : null}
       {telegramReconnectOpen && activeCategoryId === "channels" ? (
         <Dialog
           isOpen

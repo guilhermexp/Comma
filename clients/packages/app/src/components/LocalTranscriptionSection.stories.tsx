@@ -75,12 +75,16 @@ function WithMockBridge({
 }
 
 function LocalTranscriptionSettings() {
+  const { section, removalDialog } = useLocalTranscriptionSection();
   return (
-    <SettingsPanel
-      className="h-[360px] w-[860px]"
-      sections={[useLocalTranscriptionSection()]}
-      title="Meeting"
-    />
+    <>
+      <SettingsPanel
+        className="h-[360px] w-[860px]"
+        sections={[section]}
+        title="Meeting"
+      />
+      {removalDialog}
+    </>
   );
 }
 

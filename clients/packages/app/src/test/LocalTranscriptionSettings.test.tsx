@@ -7,19 +7,34 @@ import {
   createNativeStateBridgeMock,
   installNativeBridgeMock,
 } from "@comma/test-utils/native-bridge";
-import { act, fireEvent, render, screen, waitFor } from "@comma/test-utils/render";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@comma/test-utils/render";
 import { SettingsPanel } from "@comma/ui";
+import type { NativeStateBridge } from "@comma/native-bridge";
 import { describe, expect, it, vi } from "vitest";
 import { useLocalTranscriptionSection } from "../components/useLocalTranscriptionSection";
 
-const size = 654_000_000;
+// The manifest's total, which the docs and release notes call about 654 MB.
+const size = 653_769_228;
 
 function Section() {
-  return <SettingsPanel sections={[useLocalTranscriptionSection()]} title="Meeting" />;
+  const { section, removalDialog } = useLocalTranscriptionSection();
+  return (
+    <>
+      <SettingsPanel sections={[section]} title="Meeting" />
+      {removalDialog}
+    </>
+  );
 }
 
 function renderSection(
-  state: LocalTranscriptionState,
+  state: LocalTranscriptionState | NativeStateBridge<LocalTranscriptionState>,
   results: Partial<
     Record<"install" | "cancel" | "remove", LocalTranscriptionActionResult>
   > = {}
@@ -32,7 +47,7 @@ function renderSection(
   installNativeBridgeMock({
     platform: "electron",
     localTranscription: {
-      state: createNativeStateBridgeMock(() => state),
+      state: "subscribe" in state ? state : createNativeStateBridgeMock(() => state),
       ...actions,
     },
   } as never);
@@ -88,7 +103,7 @@ describe("Settings → Meeting → Local transcription", () => {
     });
     await row();
     expect(screen.getByText("Not installed")).toBeTruthy();
-    expect(screen.getByText(/Download: 623\.7 MB\./)).toBeTruthy();
+    expect(screen.getByText(/Download: 653\.8 MB\./)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Install" }));
     await waitFor(() => expect(actions.install).toHaveBeenCalledOnce());
@@ -118,13 +133,60 @@ describe("Settings → Meeting → Local transcription", () => {
       expect(buttons()).not.toContain(label);
   });
 
-  it("shows Ready and removes the model", async () => {
+  it("shows Ready and removes the model only after confirmation", async () => {
     const actions = renderSection({ supported: true, phase: "ready", sizeBytes: size });
     expect(await screen.findByText("Ready")).toBeTruthy();
-    expect(screen.getByText(/The model uses 623\.7 MB\./)).toBeTruthy();
+    expect(screen.getByText(/The model uses 653\.8 MB\./)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Remove the speech model?",
+    });
+    expect(dialog.textContent).toContain(
+      "Meeting recordings will no longer be transcribed on this Mac until you install it again (653.8 MB download)."
+    );
+    expect(actions.remove).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(actions.remove).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove" })
+    );
     await waitFor(() => expect(actions.remove).toHaveBeenCalledOnce());
+  });
+
+  it("does not leave keyboard focus on Remove when an install finishes", async () => {
+    let publish!: (state: LocalTranscriptionState) => void;
+    let current: LocalTranscriptionState = {
+      supported: true,
+      phase: "downloading",
+      fraction: 0.5,
+      sizeBytes: size,
+    };
+    const get = vi.fn(async () => current);
+    renderSection(
+      Object.assign(get, {
+        get,
+        subscribe: (listener: (state: LocalTranscriptionState) => void) => {
+          publish = (state) => {
+            current = state;
+            listener(state);
+          };
+          listener(current);
+          return () => undefined;
+        },
+      }) as unknown as NativeStateBridge<LocalTranscriptionState>
+    );
+    (await screen.findByRole("button", { name: "Cancel" })).focus();
+    act(() => publish({ supported: true, phase: "preparing", sizeBytes: size }));
+    act(() => publish({ supported: true, phase: "ready", sizeBytes: size }));
+    const remove = await screen.findByRole("button", { name: "Remove" });
+    expect(document.activeElement).not.toBe(remove);
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Enter" });
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("explains a refused removal while a recording is transcribed", async () => {
@@ -133,8 +195,10 @@ describe("Settings → Meeting → Local transcription", () => {
       { remove: { accepted: false, reason: "busy" } }
     );
     await row();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    const dialog = await screen.findByRole("dialog");
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
     });
     expect(
       await screen.findByText(
