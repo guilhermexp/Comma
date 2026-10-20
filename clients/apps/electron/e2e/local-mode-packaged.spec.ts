@@ -628,7 +628,10 @@ test.describe("packaged local transcription", () => {
         name: text.settings_local_transcription_remove_confirm_title!,
       });
       await expect(confirmation).toBeVisible();
-      await main.screenshot({ path: join(evidence(), "asr-05-remove-confirm.png") });
+      await main.screenshot({
+        path: join(evidence(), "asr-05-remove-confirm.png"),
+        animations: "disabled",
+      });
       await confirmation
         .getByRole("button", {
           name: text.settings_local_transcription_remove!,
