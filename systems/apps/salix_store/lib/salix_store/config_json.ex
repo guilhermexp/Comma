@@ -40,7 +40,9 @@ defmodule SalixStore.ConfigJson do
                  google_auth.{web_client_id,electron_client_id,electron_client_secret},
                  synchronicity.{base_url,provisioning_secret}
       meetings   runtime_url (external meeting runtime), agent_template,
-                 summary_template, asr_template, bot_name
+                 summary_template, asr_template,
+                 local_asr.{base_url,api_key} (desktop local ASR server; see
+                 Comma.LocalInstall), bot_name
                  (default in-meeting display name, fallback "Cirno"),
                  caption_language (fallback subtitle language when the
                  trigger text yields no inference; code default is
@@ -217,6 +219,7 @@ defmodule SalixStore.ConfigJson do
         {:salix_meet, :meeting_feishu_activation_enabled,
          boolean(json, ~w(meetings feishu_action_activation_enabled))},
         {:salix_web, :meeting_asr_template, str(json, ~w(meetings asr_template))},
+        {:comma_core, :local_meeting_asr, local_meeting_asr(json)},
 
         # Salix admin dashboard
         {:salix_web, :dashboard_secret_key_base, str(json, ~w(salix_dashboard secret_key_base))},
@@ -850,6 +853,15 @@ defmodule SalixStore.ConfigJson do
     concurrency = Keyword.fetch!(opts, :max_concurrency)
     waves = div(length(groups) + concurrency - 1, concurrency)
     waves * Keyword.fetch!(opts, :task_timeout_ms) < @calendar_autojoin_work_budget_ms
+  end
+
+  # The desktop app's loopback ASR server; Comma.LocalInstall points the
+  # local-meeting-asr template at it. Both fields are required.
+  defp local_meeting_asr(json) do
+    base_url = str(json, ~w(meetings local_asr base_url))
+    api_key = str(json, ~w(meetings local_asr api_key))
+
+    if base_url && api_key, do: %{"base_url" => base_url, "api_key" => api_key}
   end
 
   defp vm_config(json) do

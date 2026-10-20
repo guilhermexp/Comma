@@ -85,4 +85,50 @@ defmodule Comma.LocalInstallTest do
         else: System.delete_env("COMMA_ENVIRONMENT")
     end
   end
+
+  describe "local meeting ASR template" do
+    setup do
+      previous_backend = Application.get_env(:salix_store, :s3_backend)
+      Application.put_env(:salix_store, :s3_backend, SalixStore.S3.Fake)
+
+      if Process.whereis(SalixStore.S3.Fake),
+        do: SalixStore.S3.Fake.reset(),
+        else: start_supervised!(SalixStore.S3.Fake)
+
+      on_exit(fn ->
+        if previous_backend,
+          do: Application.put_env(:salix_store, :s3_backend, previous_backend),
+          else: Application.delete_env(:salix_store, :s3_backend)
+      end)
+
+      :ok
+    end
+
+    test "upserts one global template that follows the newest local ASR port" do
+      for port <- [41_001, 41_002] do
+        assert {:ok, _template} =
+                 Comma.LocalInstall.ensure_meeting_asr_template(%{
+                   "base_url" => "http://127.0.0.1:#{port}/v1",
+                   "api_key" => "token-#{port}"
+                 })
+      end
+
+      assert [%{"template_id" => "local-meeting-asr"}] =
+               Enum.filter(
+                 SalixAgent.Templates.list_admin(),
+                 &(&1["name"] == "local-meeting-asr")
+               )
+
+      assert {:ok, llm} = SalixAgent.Templates.resolve_llm_for_template_ref("local-meeting-asr")
+      assert llm["protocol"] == "audio_transcriptions"
+      assert llm["base_url"] == "http://127.0.0.1:41002/v1"
+      assert llm["api_key"] == "token-41002"
+      assert llm["model"] == "parakeet-tdt-0.6b-v3"
+    end
+
+    test "creates no template without meetings.local_asr" do
+      assert :skip = Comma.LocalInstall.ensure_meeting_asr_template(nil)
+      assert {:error, :not_found} = SalixAgent.Templates.get("local-meeting-asr")
+    end
+  end
 end

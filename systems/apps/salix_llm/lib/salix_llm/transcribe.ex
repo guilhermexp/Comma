@@ -53,9 +53,13 @@ defmodule SalixLlm.Transcribe do
       when is_map(cfg) and is_binary(audio) and is_binary(source_filename) do
     chunker = opts[:chunker] || AudioChunker
 
-    transcribe_audio_source_with_metadata(cfg, prompt, opts, fn callback, chunker_opts ->
-      chunker.with_mp3_chunks(audio, source_filename, callback, chunker_opts)
-    end)
+    if audio_transcriptions?(cfg) do
+      transcribe_whole_audio(cfg, audio, byte_size(audio), source_filename, opts)
+    else
+      transcribe_audio_source_with_metadata(cfg, prompt, opts, fn callback, chunker_opts ->
+        chunker.with_mp3_chunks(audio, source_filename, callback, chunker_opts)
+      end)
+    end
   end
 
   @spec transcribe_audio_stream_with_metadata(
@@ -77,15 +81,19 @@ defmodule SalixLlm.Transcribe do
       when is_map(cfg) and is_integer(source_size) and is_binary(source_filename) do
     chunker = opts[:chunker] || AudioChunker
 
-    transcribe_audio_source_with_metadata(cfg, prompt, opts, fn callback, chunker_opts ->
-      chunker.with_mp3_chunks_stream(
-        stream,
-        source_size,
-        source_filename,
-        callback,
-        chunker_opts
-      )
-    end)
+    if audio_transcriptions?(cfg) do
+      transcribe_whole_audio(cfg, stream, source_size, source_filename, opts)
+    else
+      transcribe_audio_source_with_metadata(cfg, prompt, opts, fn callback, chunker_opts ->
+        chunker.with_mp3_chunks_stream(
+          stream,
+          source_size,
+          source_filename,
+          callback,
+          chunker_opts
+        )
+      end)
+    end
   end
 
   defp transcribe_audio_source_with_metadata(cfg, prompt, opts, run_chunker) do
@@ -211,6 +219,140 @@ defmodule SalixLlm.Transcribe do
         {:error, reason}
     end
   end
+
+  # The OpenAI-compatible `audio_transcriptions` protocol receives the whole
+  # recording in one request. Speaker diarization needs the complete audio to
+  # keep one speaker number for the same voice, so this path never chunks.
+  defp audio_transcriptions?(cfg), do: Map.get(cfg, "protocol") == "audio_transcriptions"
+
+  defp transcribe_whole_audio(cfg, audio, size, source_filename, opts) do
+    base_url = cfg |> Map.get("base_url", "") |> to_string() |> String.trim()
+    model = cfg |> Map.get("model", "") |> to_string() |> String.trim()
+    key = api_key(cfg)
+
+    cond do
+      base_url == "" ->
+        {:error, :asr_base_url_missing}
+
+      model == "" ->
+        {:error, :asr_model_missing}
+
+      key == "" ->
+        {:error, :asr_api_key_missing}
+
+      size <= 0 ->
+        {:error, :asr_audio_empty}
+
+      true ->
+        post_audio_transcription(base_url, model, key, cfg, audio, size, source_filename, opts)
+    end
+  end
+
+  defp post_audio_transcription(base_url, model, key, cfg, audio, size, source_filename, opts) do
+    url = String.trim_trailing(base_url, "/") <> "/audio/transcriptions"
+
+    fields = [
+      file:
+        {audio,
+         filename: source_filename, content_type: audio_content_type(source_filename), size: size},
+      model: model,
+      response_format: "verbose_json"
+    ]
+
+    headers = [{"authorization", "Bearer #{key}"}] ++ header_pairs(cfg["headers"])
+    timeout = positive_integer(opts[:batch_timeout_ms], @batch_timeout)
+
+    case Req.post(url, form_multipart: fields, headers: headers, receive_timeout: timeout) do
+      {:ok, %{status: 200, body: resp}} ->
+        verbose_json_result(resp)
+
+      {:ok, %{status: 409, body: resp}} ->
+        if provider_error_code(resp) == "local_asr_model_not_installed",
+          do: {:error, :local_asr_model_not_installed},
+          else: {:error, {:asr_http, 409, preview(resp)}}
+
+      {:ok, %{status: status, body: resp}} ->
+        {:error, {:asr_http, status, preview(resp)}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp audio_content_type(filename) do
+    case filename |> Path.extname() |> String.downcase() do
+      ".m4a" -> "audio/mp4"
+      ".mp3" -> "audio/mpeg"
+      ".wav" -> "audio/wav"
+      _ -> MIME.from_path(filename)
+    end
+  end
+
+  defp verbose_json_result(resp) when is_binary(resp) do
+    case Jason.decode(resp) do
+      {:ok, %{} = decoded} -> verbose_json_result(decoded)
+      _ -> {:error, :asr_malformed_response}
+    end
+  end
+
+  defp verbose_json_result(%{"segments" => segments, "duration" => duration})
+       when is_list(segments) and is_number(duration) and duration >= 0 do
+    with {:ok, lines} <- segment_lines(segments) do
+      transcript = Enum.join(lines, "\n")
+
+      {:ok,
+       %{
+         transcript: transcript,
+         duration_seconds: max(ceil(duration), 1),
+         chunks: [%{index: 0, offset_seconds: 0, transcript: transcript}]
+       }}
+    end
+  end
+
+  defp verbose_json_result(_resp), do: {:error, :asr_malformed_response}
+
+  # Speaker labels are opaque per response; number them by first appearance.
+  defp segment_lines(segments) do
+    segments
+    |> Enum.reduce_while({:ok, [], %{}}, fn
+      %{"start" => start, "text" => text} = segment, {:ok, lines, speakers}
+      when is_number(start) and start >= 0 and is_binary(text) ->
+        case String.trim(text) do
+          "" ->
+            {:cont, {:ok, lines, speakers}}
+
+          text ->
+            {label, speakers} = speaker_label(segment["speaker"], speakers)
+            line = "#{format_clock(trunc(start))} #{label}#{text}"
+            {:cont, {:ok, [line | lines], speakers}}
+        end
+
+      _segment, _acc ->
+        {:halt, {:error, :asr_malformed_response}}
+    end)
+    |> case do
+      {:ok, lines, _speakers} -> {:ok, Enum.reverse(lines)}
+      error -> error
+    end
+  end
+
+  defp speaker_label(speaker, speakers) when is_binary(speaker) and speaker != "" do
+    number = Map.get(speakers, speaker, map_size(speakers) + 1)
+    {"Speaker #{number}: ", Map.put(speakers, speaker, number)}
+  end
+
+  defp speaker_label(_speaker, speakers), do: {"", speakers}
+
+  defp provider_error_code(%{"error" => %{"code" => code}}) when is_binary(code), do: code
+
+  defp provider_error_code(resp) when is_binary(resp) do
+    case Jason.decode(resp) do
+      {:ok, %{} = decoded} -> provider_error_code(decoded)
+      _ -> nil
+    end
+  end
+
+  defp provider_error_code(_resp), do: nil
 
   defp complete_ordered_chunks([]), do: {:error, :asr_chunks_empty}
 

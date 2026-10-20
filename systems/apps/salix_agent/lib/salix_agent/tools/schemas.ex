@@ -1473,7 +1473,7 @@ defmodule SalixAgent.Tools.Schemas do
         "path" => %{
           "type" => "string",
           "description" =>
-            "Absolute VFS path to an audio or video file of at most 30 MiB in the current Agent workspace. For a Task attachment, use the reader-local path returned by im_api.internal.read_conversation."
+            "Absolute VFS path to an audio or video file of at most 64 MiB in the current Agent workspace. For a Task attachment, use the reader-local path returned by im_api.internal.read_conversation."
         },
         "output_path" => %{
           "type" => "string",
