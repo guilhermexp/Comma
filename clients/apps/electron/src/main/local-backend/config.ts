@@ -18,13 +18,13 @@ export function buildBackendConfig({
   secrets,
   ports,
   logsDir,
-  localTranscription = false,
+  localAsr,
 }: {
-  secrets: LocalBackendSecrets;
-  ports: LocalBackendPorts;
+  secrets: Omit<LocalBackendSecrets, "asrToken">;
+  ports: Omit<LocalBackendPorts, "asr">;
   logsDir: string;
-  /** The app bundles CommaTranscriber, so meeting ASR runs on this Mac. */
-  localTranscription?: boolean;
+  /** CommaTranscriber's loopback port and bearer, when the app bundles it. */
+  localAsr?: { port: number; token: string } | undefined;
 }) {
   const databaseUrl = `ecto://postgres:${secrets.postgresPassword}@${loopbackHost}:${ports.postgres}/${localBackendDatabase}`;
   return {
@@ -58,13 +58,13 @@ export function buildBackendConfig({
       },
     },
     subscription_proxy: { storage_key: secrets.subscriptionStorageKey },
-    ...(localTranscription
+    ...(localAsr
       ? {
           meetings: {
             asr_template: localMeetingAsrTemplate,
             local_asr: {
-              base_url: `http://${loopbackHost}:${ports.asr}/v1`,
-              api_key: secrets.asrToken,
+              base_url: `http://${loopbackHost}:${localAsr.port}/v1`,
+              api_key: localAsr.token,
             },
           },
         }
@@ -74,7 +74,10 @@ export function buildBackendConfig({
 
 export type BackendConfig = ReturnType<typeof buildBackendConfig>;
 
-export function redisUrl(secrets: LocalBackendSecrets, ports: LocalBackendPorts) {
+export function redisUrl(
+  secrets: Pick<LocalBackendSecrets, "redisPassword">,
+  ports: Pick<LocalBackendPorts, "redis">
+) {
   return `redis://:${secrets.redisPassword}@${loopbackHost}:${ports.redis}/0`;
 }
 

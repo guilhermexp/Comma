@@ -8621,6 +8621,7 @@ export const localTranscriptionNoticeSchema = z
 export type LocalTranscriptionNotice = z.output<typeof localTranscriptionNoticeSchema>;
 
 export const localTranscriptionNoticeEvent = defineNativeEvent({
+  bridge: { method: "onNotice", namespace: "localTranscription" },
   channel: "comma:local-transcription:notice",
   id: "localTranscription.notice",
   mock: {
@@ -8635,7 +8636,7 @@ export const localTranscriptionNoticeEvent = defineNativeEvent({
   },
   payload: localTranscriptionNoticeSchema,
   permission: localTranscriptionStateCapability.permission,
-  target: { type: "all" },
+  target: { role: "main-window", type: "role" },
 });
 
 export const nativeCapabilityRegistry = [

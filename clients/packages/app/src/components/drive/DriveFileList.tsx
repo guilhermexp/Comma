@@ -312,6 +312,7 @@ const DriveFileRow = memo(function DriveFileRow({
   selected,
   selecting,
   selectionKeptOffline,
+  transcribable,
   writable,
 }: {
   file: DriveFile;
@@ -329,6 +330,8 @@ const DriveFileRow = memo(function DriveFileRow({
   selecting: boolean;
   /** True when every selected file is already pinned, so the action unpins. */
   selectionKeptOffline: boolean;
+  /** A recording without a transcript while local transcription is ready. */
+  transcribable: boolean;
   writable: boolean;
 }) {
   const locale = useCommaLocale();
@@ -556,6 +559,7 @@ const DriveFileRow = memo(function DriveFileRow({
           onAction={(action) => onMenuAction(action, file)}
           onOpenChange={menu.onOpenChange}
           pointerOffsets={menu.pointerOffsets}
+          transcribeLabel={transcribable ? messages.recording_transcribe() : undefined}
           triggerRef={rowRef}
           writable={writable}
         />
@@ -695,6 +699,7 @@ export function DriveFileList({
   selecting,
   selectionKeptOffline,
   spaceName,
+  transcribableFileIds,
   writable,
 }: {
   files: readonly DriveFile[];
@@ -724,6 +729,8 @@ export function DriveFileList({
   revealFileId?: string | undefined;
   selectedFileIds: ReadonlySet<string>;
   spaceName: string;
+  /** Recordings the row menu offers to transcribe again. */
+  transcribableFileIds?: ReadonlySet<string> | undefined;
   writable: boolean;
 }) {
   const messages = useCommaMessages();
@@ -989,6 +996,7 @@ export function DriveFileList({
                         selected={selectedFileIds.has(file.id)}
                         selecting={selecting}
                         selectionKeptOffline={selectionKeptOffline}
+                        transcribable={transcribableFileIds?.has(file.id) ?? false}
                         writable={writable}
                       />
                     ) : null}

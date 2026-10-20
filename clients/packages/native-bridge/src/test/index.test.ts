@@ -727,7 +727,7 @@ describe("native bridge contracts", () => {
         channel: "comma:local-transcription:notice",
         id: "localTranscription.notice",
         permission: "local-transcription.read",
-        target: { type: "all" },
+        target: { role: "main-window", type: "role" },
       },
       {
         channel: "comma:application-menu:command",

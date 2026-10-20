@@ -3,13 +3,52 @@ import {
   toggleCollapsedHomeRail,
 } from "./home/homeRailCollapse";
 import { useCommaMessages } from "@comma/i18n/react";
-import { getNativeBridge, type AudioCaptureRecording } from "@comma/native-bridge";
+import {
+  getNativeBridge,
+  type AudioCaptureDriveFile,
+  type AudioCaptureRecording,
+} from "@comma/native-bridge";
 import { toast } from "@comma/ui";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useContext, useRef, useState } from "react";
+import type { SessionProductLease } from "@comma/session-contract";
 import { CommaAuthContext } from "./auth-context";
+import type { DriveFile } from "./drive/driveStore";
 
 let revealSequence = 0;
+
+/** Main's exact reason when the local speech model is missing (contract C3). */
+const localModelMissing = "local_asr_model_not_installed";
+
+/** Settings → Work → Meeting, where the Local transcription section lives. */
+export function openLocalTranscriptionSettings() {
+  window.location.hash = "/settings?category=meeting";
+}
+
+/**
+ * Recordings that can be sent through transcription again: the AAC files
+ * under `recording/<day>/` without a `.transcript.txt` beside them. An ASR
+ * error writes only the `.transcript.json`, so a failed one qualifies too.
+ */
+export function transcribableRecordingIds(files: readonly DriveFile[]) {
+  const transcripts = new Set(
+    files
+      .filter((file) => file.name.endsWith(".transcript.txt"))
+      .map((file) => `${file.spaceId}:${file.folderPath ?? ""}/${file.name}`)
+  );
+  return new Set(
+    files
+      .filter(
+        (file) =>
+          /^recording\/\d{4}-\d{2}-\d{2}$/.test(file.folderPath ?? "") &&
+          file.name.endsWith(".m4a") &&
+          !transcripts.has(
+            `${file.spaceId}:${file.folderPath}/${file.name.replace(/\.m4a$/, ".transcript.txt")}`
+          )
+      )
+      .map((file) => file.id)
+  );
+}
 
 /** The card and both recording completion paths act on Main's saved target. */
 export function useRecordingFileActions() {
@@ -180,5 +219,95 @@ export function useRecordingFileActions() {
     [messages, open, reveal, router]
   );
 
-  return { error, open, pending, reveal, showSaved };
+  /** A recording was saved but the local model is missing: offer the install. */
+  const showLocalTranscriptionNotice = useCallback(
+    (recording: AudioCaptureRecording) => {
+      toast.info(messages.recording_local_transcription_missing(), {
+        actions: [
+          {
+            hierarchy: "secondary-gray",
+            label: messages.recording_local_transcription_install(),
+            onPress: openLocalTranscriptionSettings,
+          },
+          {
+            hierarchy: "tertiary-gray",
+            label: messages.ui_meeting_recorder_show_in_drive(),
+            onPress: () => void reveal(recording),
+          },
+        ],
+        id: "local-transcription-notice",
+        testId: "local-transcription-notice",
+      });
+    },
+    [messages, reveal]
+  );
+
+  return {
+    error,
+    open,
+    pending,
+    reveal,
+    showLocalTranscriptionNotice,
+    showSaved,
+  };
+}
+
+/**
+ * Sends a saved recording through transcription again (Drive's row menu);
+ * the transcript lands beside it. Needs no router, so any surface can use it.
+ */
+export function useRecordingTranscription(
+  productLease: SessionProductLease | null | undefined
+) {
+  const messages = useCommaMessages();
+  return useCallback(
+    async (driveFile: AudioCaptureDriveFile) => {
+      const name = driveFile.path.split("/").at(-1) ?? driveFile.path;
+      const id = `recording-transcribe-${driveFile.path}`;
+      toast.info(messages.recording_transcribe_started({ name }), { id, testId: id });
+      let reason: string;
+      try {
+        if (!productLease) throw new Error("Recording session is unavailable.");
+        const result = await getNativeBridge().audioCapture.transcribeSaved({
+          driveFile,
+          session: productLease,
+        });
+        if (result.status === "ready") {
+          toast.success(messages.recording_transcribe_done({ name }), {
+            id,
+            testId: id,
+          });
+          return;
+        }
+        reason = result.reason;
+      } catch (failure) {
+        reason = failure instanceof Error ? failure.message : String(failure);
+      }
+      const missingModel = reason === localModelMissing;
+      toast.error(
+        messages.recording_transcribe_failed({
+          name,
+          reason: missingModel
+            ? messages.recording_local_transcription_install_hint()
+            : reason,
+        }),
+        {
+          id,
+          testId: id,
+          ...(missingModel
+            ? {
+                actions: [
+                  {
+                    hierarchy: "secondary-gray" as const,
+                    label: messages.recording_local_transcription_install(),
+                    onPress: openLocalTranscriptionSettings,
+                  },
+                ],
+              }
+            : {}),
+        }
+      );
+    },
+    [messages, productLease]
+  );
 }

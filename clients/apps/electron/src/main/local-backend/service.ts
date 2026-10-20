@@ -211,7 +211,9 @@ export class LocalBackendService {
       secrets,
       ports,
       logsDir: this.#paths.logsDir,
-      localTranscription: Boolean(this.#transcriber),
+      localAsr: this.#transcriber
+        ? { port: ports.asr, token: secrets.asrToken }
+        : undefined,
     });
     writePrivateFile(this.#paths.configFile, `${JSON.stringify(config, null, 2)}\n`);
     // The helper reads its bearer from this file, never from argv or env.

@@ -10427,6 +10427,7 @@ export type GeneratedNativeBridge = {
       typeof localTranscriptionRemoveCapability
     >;
     state: GeneratedNativeStateBridgeMethod<typeof localTranscriptionStateLeaf>;
+    onNotice: GeneratedNativeEventBridgeMethod<typeof localTranscriptionNoticeEvent>;
   };
   computerUse: {
     getPermissions: GeneratedNativeCommandBridgeMethod<
@@ -10942,6 +10943,8 @@ export function createGeneratedNativePreloadBridge(
         get: localTranscriptionStateCapability.contract,
         subscribe: localTranscriptionStateChangedEvent,
       }),
+      onNotice: (listener) =>
+        helpers.subscribe(localTranscriptionNoticeEvent, listener),
     },
     computerUse: {
       getPermissions: () =>
@@ -11574,6 +11577,7 @@ export function createGeneratedNativeWebBridge(): GeneratedNativeBridge {
         GeneratedNativeStateSnapshot<typeof localTranscriptionStateLeaf>,
         GeneratedNativeStateGetInput<typeof localTranscriptionStateLeaf>
       >((_input) => localTranscriptionStateLeaf.webFallback),
+      onNotice: () => () => {},
     },
     computerUse: {
       getPermissions: async () => computerUsePermissionsCapability.webFallback,
@@ -12209,6 +12213,7 @@ export function createGeneratedNativeBridgeMock(
         (_input: GeneratedNativeStateGetInput<typeof localTranscriptionStateLeaf>) =>
           localTranscriptionStateLeaf.mock
       ),
+      onNotice: helpers.event((_listener) => () => {}),
     },
     computerUse: {
       getPermissions: helpers.command(

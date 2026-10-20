@@ -61,7 +61,7 @@ describe("local backend configuration", () => {
       secrets,
       ports,
       logsDir: "/data/logs",
-      localTranscription: true,
+      localAsr: { port: ports.asr, token: secrets.asrToken },
     });
     expect(withHelper.meetings).toEqual({
       asr_template: "local-meeting-asr",
@@ -78,7 +78,7 @@ describe("local backend configuration", () => {
       secrets,
       ports,
       logsDir: "/data/logs",
-      localTranscription: true,
+      localAsr: { port: ports.asr, token: secrets.asrToken },
     });
     const logged = JSON.stringify(redactSecrets(withHelper, secrets));
     for (const [name, value] of Object.entries(secrets)) {
