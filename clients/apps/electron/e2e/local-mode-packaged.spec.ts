@@ -576,6 +576,20 @@ test.describe("packaged local transcription", () => {
       expect([...phases]).toEqual(
         expect.arrayContaining(["downloading", "preparing", "ready"])
       );
+      // Ready dismisses the install notice, and keyboard focus is not left on
+      // the Remove button that replaced Install.
+      await expect(
+        main.locator('[data-testid="local-transcription-notice"]')
+      ).toHaveCount(0);
+      const focused = await main.evaluate(() => ({
+        tag: document.activeElement?.tagName,
+        text: document.activeElement?.textContent?.trim().slice(0, 40),
+      }));
+      writeFileSync(
+        join(evidence(), "asr-03-ready-focus.json"),
+        JSON.stringify(focused)
+      );
+      expect(focused.text).not.toBe(text.settings_local_transcription_remove);
 
       // The captured recording can also hold whatever else the Mac played,
       // so only the clean file is checked for both speakers.
@@ -610,12 +624,23 @@ test.describe("packaged local transcription", () => {
           exact: true,
         })
         .click();
+      const confirmation = main.getByRole("dialog", {
+        name: text.settings_local_transcription_remove_confirm_title!,
+      });
+      await expect(confirmation).toBeVisible();
+      await main.screenshot({ path: join(evidence(), "asr-05-remove-confirm.png") });
+      await confirmation
+        .getByRole("button", {
+          name: text.settings_local_transcription_remove!,
+          exact: true,
+        })
+        .click();
       await expect
         .poll(async () => (await localTranscriptionState(main)).phase, {
           timeout: 120_000,
         })
         .toBe("not_installed");
-      await main.screenshot({ path: join(evidence(), "asr-05-removed.png") });
+      await main.screenshot({ path: join(evidence(), "asr-06-removed.png") });
       expect(existsSync(modelsDir)).toBe(false);
 
       await quit(app);

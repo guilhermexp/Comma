@@ -1,6 +1,7 @@
 import type {
   AudioCaptureRecording,
   LocalTranscriptionNotice,
+  LocalTranscriptionState,
 } from "@comma/native-bridge";
 import { CommaI18nProvider } from "@comma/i18n/react";
 import { installNativeBridgeMock } from "@comma/test-utils/native-bridge";
@@ -58,6 +59,18 @@ function withAuth(children: React.ReactNode) {
   );
 }
 
+/** Drive's row action: transcribes the fixture recording again. */
+function Harness() {
+  const transcribe = useRecordingTranscription(
+    useContext(CommaAuthContext)?.productLease
+  );
+  return (
+    <button type="button" onClick={() => void transcribe(recording.driveFile)}>
+      Transcribe
+    </button>
+  );
+}
+
 describe("install notice for a recording without the local model", () => {
   it("shows the notice with Install, which opens Settings → Meeting", async () => {
     let deliver!: (notice: LocalTranscriptionNotice) => void;
@@ -86,6 +99,51 @@ describe("install notice for a recording without the local model", () => {
     ]);
     act(() => options!.actions![0]!.onPress!());
     expect(window.location.hash).toBe("#/settings?category=meeting");
+  });
+
+  it("dismisses every install notice once the model is ready", async () => {
+    let deliver!: (notice: LocalTranscriptionNotice) => void;
+    let publish!: (state: LocalTranscriptionState) => void;
+    installNativeBridgeMock({
+      platform: "electron",
+      localTranscription: {
+        onNotice: (listener: (notice: LocalTranscriptionNotice) => void) => {
+          deliver = listener;
+          return () => undefined;
+        },
+        state: {
+          subscribe: (listener: (state: LocalTranscriptionState) => void) => {
+            publish = listener;
+            return () => undefined;
+          },
+        },
+      },
+      audioCapture: {
+        transcribeSaved: async () => ({
+          status: "failed" as const,
+          reason: "local_asr_model_not_installed",
+        }),
+      } as never,
+    } as never);
+    const shown = vi.spyOn(toast, "info");
+    const failed = vi.spyOn(toast, "error");
+    const dismissed = vi.spyOn(toast, "dismiss");
+    render(
+      withAuth(
+        <>
+          <LocalTranscriptionNoticeHost />
+          <Harness />
+        </>
+      )
+    );
+    act(() => deliver({ reason: "local_asr_model_not_installed", recording }));
+    await act(async () => screen.getByRole("button", { name: "Transcribe" }).click());
+    const noticeIds = [shown, failed].map((spy) => spy.mock.calls.at(-1)![1]!.id);
+
+    act(() => publish({ supported: true, phase: "downloading", sizeBytes: 1 }));
+    expect(dismissed).not.toHaveBeenCalled();
+    act(() => publish({ supported: true, phase: "ready", sizeBytes: 1 }));
+    for (const id of noticeIds) expect(dismissed).toHaveBeenCalledWith(id);
   });
 
   it("does nothing on the web", () => {
@@ -137,17 +195,6 @@ describe("transcribing a saved recording again", () => {
     await act(async () => screen.getByRole("menuitem", { name: "Transcribe" }).click());
     expect(onAction).toHaveBeenCalledWith("transcribe");
   });
-
-  function Harness() {
-    const transcribe = useRecordingTranscription(
-      useContext(CommaAuthContext)?.productLease
-    );
-    return (
-      <button type="button" onClick={() => void transcribe(recording.driveFile)}>
-        Transcribe
-      </button>
-    );
-  }
 
   it("reports a saved transcript", async () => {
     const transcribeSaved = vi.fn(async () => ({ status: "ready" as const }));

@@ -20,6 +20,15 @@ let revealSequence = 0;
 /** Main's exact reason when the local speech model is missing (contract C3). */
 const localModelMissing = "local_asr_model_not_installed";
 
+/** Toasts that ask for the install; they are stale once the model is ready. */
+const installNoticeIds = new Set<string>();
+
+/** Dismisses every install notice, for example when the model becomes ready. */
+export function dismissLocalTranscriptionInstallNotices() {
+  for (const id of installNoticeIds) toast.dismiss(id);
+  installNoticeIds.clear();
+}
+
 /** Settings → Work → Meeting, where the Local transcription section lives. */
 export function openLocalTranscriptionSettings() {
   window.location.hash = "/settings?category=meeting";
@@ -222,6 +231,7 @@ export function useRecordingFileActions() {
   /** A recording was saved but the local model is missing: offer the install. */
   const showLocalTranscriptionNotice = useCallback(
     (recording: AudioCaptureRecording) => {
+      installNoticeIds.add("local-transcription-notice");
       toast.info(messages.recording_local_transcription_missing(), {
         actions: [
           {
@@ -284,6 +294,7 @@ export function useRecordingTranscription(
         reason = failure instanceof Error ? failure.message : String(failure);
       }
       const missingModel = reason === localModelMissing;
+      if (missingModel) installNoticeIds.add(id);
       toast.error(
         messages.recording_transcribe_failed({
           name,

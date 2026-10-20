@@ -269,11 +269,11 @@ Macs, Settings shows the reason and no Install button.
 To install the model:
 
 1. Open Settings > Work > Meeting.
-2. In Local transcription, click Install. The download is about 654 MB
-   (Settings shows 623.5 MB, in binary units).
+2. In Local transcription, click Install. The download is about 654 MB.
 3. Wait for Ready. The status shows Downloading with a percentage, then
    Preparing. Comma checks the SHA-256 and the size of each file before it
    marks the model ready. A failed or cancelled download leaves no model.
+   Ready closes the "Install local transcription" notices.
 
 The model stays in `~/Library/Application Support/Comma/Models`, outside
 `local/`. Removing one does not remove the other.
@@ -285,14 +285,16 @@ shows "Install local transcription" with an Install button. To transcribe a save
 select Transcribe on the recording in Drive. Recordings up to 64 MiB (about
 two hours) are accepted.
 
-To remove the model, click Remove in the same section. Comma deletes the
-`Models` folder. Remove is refused while a transcription runs.
+To remove the model, click Remove in the same section and confirm. Comma
+deletes the `Models` folder. Remove is refused while a transcription runs.
 
 Limits:
 
 - The model learned Portuguese mostly from European Portuguese. Names and
   slang in Brazilian Portuguese can be wrong.
 - When two people speak at the same time, the line gets one speaker.
+- A word more than one second away from any detected speech has no speaker
+  and starts a line without a `Speaker N` label.
 - The first transcription after a macOS update can be slower, because macOS
   prepares the model again.
 
@@ -339,8 +341,9 @@ apps/electron/test/local-backend-runtime.test.ts` starts the real tree on an
 - With a packaged app on Apple silicon, add
   `COMMA_ELECTRON_LOCAL_ASR_AUDIO=<short two-voice .m4a>` to the command above
   and select `-g "local transcription"`. The test downloads the real model,
-  checks the install notice, Downloading, Preparing, and Ready, a transcript
-  with Speaker 1 and Speaker 2 lines, and Remove. It moves the profile's Drive
+  checks the install notice, Downloading, Preparing, and Ready (which closes
+  the notice), a transcript with Speaker 1 and Speaker 2 lines, and Remove
+  with its confirmation. It moves the profile's Drive
   source to a temporary folder first, because Drive otherwise publishes
   `~/Comma Drive`. Set `COMMA_PLAYWRIGHT_SKIP_WEB_SERVER=1` for both packaged
   tests.
