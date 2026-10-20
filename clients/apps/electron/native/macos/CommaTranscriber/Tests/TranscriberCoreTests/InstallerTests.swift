@@ -9,9 +9,12 @@ private struct FakeDownloader: ModelDownloading {
     enum Mode { case good, corrupt, networkFailure, waitForCancel }
     let mode: Mode
 
-    func download(manifest: ModelManifest, into staging: URL) async throws {
+    func download(
+        manifest: ModelManifest, into staging: URL, progress: @escaping @Sendable (Int64) -> Void
+    ) async throws {
         switch mode {
         case .good:
+            progress(3)
             try writeSampleModel(to: staging)
             try write("{}", to: staging, "asr/config.json")
         case .corrupt:

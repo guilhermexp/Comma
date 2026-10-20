@@ -1,9 +1,24 @@
 import Foundation
 import os
 
-/// Downloads the pinned model files into a staging folder.
+/// A failure whose result code is known where it happens, such as a full
+/// disk during a download.
+public struct InstallFailure: Error {
+    public let code: InstallErrorCode
+    public let message: String
+
+    public init(_ code: InstallErrorCode, _ message: String) {
+        self.code = code
+        self.message = message
+    }
+}
+
+/// Downloads the pinned model files into a staging folder. `progress`
+/// takes an estimate of the manifest bytes downloaded so far.
 public protocol ModelDownloading: Sendable {
-    func download(manifest: ModelManifest, into staging: URL) async throws
+    func download(
+        manifest: ModelManifest, into staging: URL, progress: @escaping @Sendable (Int64) -> Void
+    ) async throws
 }
 
 /// Loads the installed model once so Core ML compiles it now, not at the
@@ -62,10 +77,12 @@ public struct Installer: Sendable {
 
         let total = store.manifest.totalBytes
         let reported = OSAllocatedUnfairLock<Int64>(initialState: -1)
+        // One line per 0.1 %, plus the final total.
+        let step = max(1, total / 1000)
         let report: @Sendable (Int64) -> Void = { bytes in
             let bytes = min(bytes, total)
             let isNew = reported.withLock { last in
-                guard bytes > last else { return false }
+                guard bytes > last, last < 0 || bytes - last >= step || bytes == total else { return false }
                 last = bytes
                 return true
             }
@@ -78,7 +95,9 @@ public struct Installer: Sendable {
             }
         }
         do {
-            try await downloader.download(manifest: store.manifest, into: staging)
+            // Files appear in staging only once complete; the downloader
+            // also reports bytes within a file.
+            try await downloader.download(manifest: store.manifest, into: staging, progress: report)
             poller.cancel()
             try Task.checkCancellation()
         } catch {
@@ -111,6 +130,9 @@ public struct Installer: Sendable {
     private static func failure(_ error: any Error, else code: InstallErrorCode) -> InstallOutcome {
         if error is CancellationError || Task.isCancelled {
             return .failed(.cancelled, "The installation was cancelled.")
+        }
+        if let failure = error as? InstallFailure {
+            return .failed(failure.code, failure.message)
         }
         return .failed(code, error.localizedDescription)
     }
