@@ -33,6 +33,8 @@ describe("local backend ports", () => {
     expect(Object.keys(ports).toSorted()).toEqual(
       [...localBackendPortNames].toSorted()
     );
+    // The local transcription helper listens on its own loopback port.
+    expect(ports.asr).toEqual(expect.any(Number));
     const values = Object.values(ports);
     expect(new Set(values).size).toBe(values.length);
     for (const port of values) expect(await isLoopbackPortFree(port)).toBe(true);

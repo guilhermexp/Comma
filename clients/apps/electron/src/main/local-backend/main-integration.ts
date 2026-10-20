@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { LocalBackendStatus } from "@comma/native-bridge";
 import { sessionExpectation } from "@comma/session-contract";
@@ -9,7 +10,11 @@ import {
 import type { SecureSessionInput } from "../secure-store";
 import { resolveElectronStartupSession } from "../startup-session";
 import { LocalBackendController } from "./controller";
-import { resolveLocalBackendDataDir } from "./layout";
+import {
+  localTranscriberPath,
+  resolveLocalBackendDataDir,
+  resolveLocalTranscriptionModelsDir,
+} from "./layout";
 import { nodeLocalBackendRuntime } from "./runtime";
 import { LocalBackendService } from "./service";
 
@@ -44,6 +49,13 @@ export function createMainLocalBackend({
 }): LocalBackendController | undefined {
   if (releaseConfig.backendMode !== "local" || e2eApiBaseUrl) return undefined;
   const userDataOverridden = userData !== join(appData, releaseConfig.runtimeNamespace);
+  const transcriber = localTranscriber({
+    isPackaged,
+    resourcesPath,
+    appPath,
+    appData,
+    userDataOverride: userDataOverridden ? userData : undefined,
+  });
   const service = new LocalBackendService({
     layout: {
       resourcesDir: isPackaged
@@ -59,6 +71,7 @@ export function createMainLocalBackend({
     runtime: nodeLocalBackendRuntime,
     onSnapshot: () => controller.publish(),
     log,
+    transcriber,
   });
   const controller = new LocalBackendController({
     service,
@@ -66,6 +79,31 @@ export function createMainLocalBackend({
     openPath,
   });
   return controller;
+}
+
+/**
+ * The bundled CommaTranscriber and its models folder. A build without the
+ * helper still starts its backend, with meeting ASR left unconfigured.
+ */
+export function localTranscriber({
+  isPackaged,
+  resourcesPath,
+  appPath,
+  appData,
+  userDataOverride,
+}: {
+  isPackaged: boolean;
+  resourcesPath: string;
+  appPath: string;
+  appData: string;
+  userDataOverride: string | undefined;
+}) {
+  const executable = localTranscriberPath({ isPackaged, resourcesPath, appPath });
+  if (!existsSync(executable)) return undefined;
+  return {
+    executable,
+    modelsDir: resolveLocalTranscriptionModelsDir({ appData, userDataOverride }),
+  };
 }
 
 /**

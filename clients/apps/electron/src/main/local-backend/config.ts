@@ -5,6 +5,8 @@ import type { LocalBackendPorts } from "./ports";
 export const localBackendDatabase = "comma";
 export const localBackendBucket = "comma-local";
 export const loopbackHost = "127.0.0.1";
+/** The global template Comma.LocalInstall upserts from `meetings.local_asr` (contract C3). */
+export const localMeetingAsrTemplate = "local-meeting-asr";
 
 /**
  * The backend's SALIX_CONFIG_PATH file, in the format of the native
@@ -16,10 +18,13 @@ export function buildBackendConfig({
   secrets,
   ports,
   logsDir,
+  localTranscription = false,
 }: {
   secrets: LocalBackendSecrets;
   ports: LocalBackendPorts;
   logsDir: string;
+  /** The app bundles CommaTranscriber, so meeting ASR runs on this Mac. */
+  localTranscription?: boolean;
 }) {
   const databaseUrl = `ecto://postgres:${secrets.postgresPassword}@${loopbackHost}:${ports.postgres}/${localBackendDatabase}`;
   return {
@@ -53,6 +58,17 @@ export function buildBackendConfig({
       },
     },
     subscription_proxy: { storage_key: secrets.subscriptionStorageKey },
+    ...(localTranscription
+      ? {
+          meetings: {
+            asr_template: localMeetingAsrTemplate,
+            local_asr: {
+              base_url: `http://${loopbackHost}:${ports.asr}/v1`,
+              api_key: secrets.asrToken,
+            },
+          },
+        }
+      : {}),
   };
 }
 

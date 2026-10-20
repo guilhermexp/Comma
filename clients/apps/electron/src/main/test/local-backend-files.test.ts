@@ -56,6 +56,23 @@ describe("local backend secrets", () => {
     expect(mode(join(dir, "secrets.json"))).toBe(0o600);
   });
 
+  it("generates the transcription token once and keeps it across launches", () => {
+    const dir = dataDir();
+    const first = ensureLocalBackendSecrets(dir);
+    expect(first.asrToken).toMatch(/^[0-9a-f]{64}$/);
+
+    expect(ensureLocalBackendSecrets(dir).asrToken).toBe(first.asrToken);
+    expect(mode(join(dir, "secrets.json"))).toBe(0o600);
+
+    // An installation from before local transcription gains only the new token.
+    const { asrToken: _missing, ...older } = first;
+    writeFileSync(join(dir, "secrets.json"), JSON.stringify(older), { mode: 0o600 });
+    const upgraded = ensureLocalBackendSecrets(dir);
+    expect(upgraded.asrToken).toMatch(/^[0-9a-f]{64}$/);
+    expect({ ...upgraded, asrToken: first.asrToken }).toEqual(first);
+    expect(mode(join(dir, "secrets.json"))).toBe(0o600);
+  });
+
   it("adds only missing secrets and never regenerates the subscription storage key", () => {
     const dir = dataDir();
     const first = ensureLocalBackendSecrets(dir);

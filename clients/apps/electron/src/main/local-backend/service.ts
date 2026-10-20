@@ -73,9 +73,18 @@ export interface LocalBackendRuntime {
     | undefined;
 }
 
-/** Stop order on quit: the backend first, then Postgres ("fast"), Redis and MinIO. */
-const stopOrder = ["backend", "postgres", "redis", "minio"];
-const orphanOrder = ["backend", "minio", "redis", "postgres"];
+/**
+ * Stop order on quit: the backend first, then the transcription helper,
+ * Postgres ("fast"), Redis and MinIO.
+ */
+const stopOrder = ["backend", "asr", "postgres", "redis", "minio"];
+const orphanOrder = ["backend", "asr", "minio", "redis", "postgres"];
+
+/** The bundled CommaTranscriber and the models folder it serves from (contract C1/C4). */
+export interface LocalTranscriber {
+  executable: string;
+  modelsDir: string;
+}
 
 class StepError extends Error {
   constructor(
@@ -99,6 +108,7 @@ export class LocalBackendService {
   readonly #runtime: LocalBackendRuntime;
   readonly #onSnapshot: (snapshot: LocalBackendSnapshot) => void;
   readonly #log: (message: string) => void;
+  readonly #transcriber: LocalTranscriber | undefined;
   #snapshot: LocalBackendSnapshot;
   #secrets: LocalBackendSecrets | undefined;
   #ports: LocalBackendPorts | undefined;
@@ -112,6 +122,8 @@ export class LocalBackendService {
     runtime: LocalBackendRuntime;
     onSnapshot?: ((snapshot: LocalBackendSnapshot) => void) | undefined;
     log?: ((message: string) => void) | undefined;
+    /** Absent when the app has no helper: meeting ASR then stays unconfigured. */
+    transcriber?: LocalTranscriber | undefined;
   }) {
     this.#layout = options.layout;
     this.#paths = localBackendPaths(options.layout);
@@ -119,6 +131,7 @@ export class LocalBackendService {
     this.#runtime = options.runtime;
     this.#onSnapshot = options.onSnapshot ?? (() => undefined);
     this.#log = options.log ?? (() => undefined);
+    this.#transcriber = options.transcriber;
     this.#snapshot = {
       phase: "idle",
       logsDir: this.#paths.logsDir,
@@ -188,8 +201,15 @@ export class LocalBackendService {
   }
 
   #writeConfigFiles(secrets: LocalBackendSecrets, ports: LocalBackendPorts) {
-    const config = buildBackendConfig({ secrets, ports, logsDir: this.#paths.logsDir });
+    const config = buildBackendConfig({
+      secrets,
+      ports,
+      logsDir: this.#paths.logsDir,
+      localTranscription: Boolean(this.#transcriber),
+    });
     writePrivateFile(this.#paths.configFile, `${JSON.stringify(config, null, 2)}\n`);
+    // The helper reads its bearer from this file, never from argv or env.
+    if (this.#transcriber) writePrivateFile(this.#paths.asrTokenFile, secrets.asrToken);
     writePrivateFile(
       this.#paths.redisConf,
       [
@@ -250,6 +270,12 @@ export class LocalBackendService {
       await this.#step("start_failed", () =>
         this.#supervisor!.start(this.#minioSpec(ports))
       );
+      if (this.#transcriber) {
+        const transcriber = this.#transcriber;
+        await this.#step("start_failed", () =>
+          this.#supervisor!.start(this.#asrSpec(transcriber, ports))
+        );
+      }
 
       this.#publish({ phase: "preparing" });
       const backup = await this.#step("backup_failed", () =>
@@ -478,6 +504,34 @@ export class LocalBackendService {
           this.#runtime.httpOk(
             `http://${loopbackHost}:${ports.minio}/minio/health/live`
           ),
+      }
+    );
+  }
+
+  /**
+   * CommaTranscriber serve (openspec add-local-meeting-asr, D5/D6). It runs
+   * without an installed model too; idle, it holds only a loopback socket.
+   * taskpolicy caps the QoS of every thread, including the diarizer's
+   * userInitiated workers, and execs in place, so the PID is the helper's.
+   */
+  #asrSpec(transcriber: LocalTranscriber, ports: LocalBackendPorts): ChildSpec {
+    return this.#child(
+      "asr",
+      "/usr/sbin/taskpolicy",
+      [
+        "-c",
+        "utility",
+        transcriber.executable,
+        "serve",
+        "--port",
+        String(ports.asr),
+        "--token-file",
+        this.#paths.asrTokenFile,
+        "--models-dir",
+        transcriber.modelsDir,
+      ],
+      {
+        ready: () => this.#runtime.httpOk(`http://${loopbackHost}:${ports.asr}/health`),
       }
     );
   }
