@@ -803,6 +803,7 @@ function sampleCommandInput(id: string) {
     case "audioCapture.start":
       return { session: TEST_SESSION_PRODUCT_LEASE, source: { kind: "system" } };
     case "audioCapture.openSaved":
+    case "audioCapture.transcribeSaved":
       return {
         session: TEST_SESSION_PRODUCT_LEASE,
         driveFile: { space: "comma-drive", path: "recording/test.wav" },

@@ -32,6 +32,7 @@ import {
   audioCaptureStateChangedEvent,
   audioCaptureStateLeaf,
   audioCaptureStopCapability,
+  audioCaptureTranscribeSavedCapability,
   browserSidebarCaptureCapability,
   browserSidebarChangedEvent,
   browserSidebarCloseCapability,
@@ -114,6 +115,13 @@ import {
   localDataStatusCapability,
   localFilesPickCapability,
   localFilesPreviewCapability,
+  localTranscriptionCancelCapability,
+  localTranscriptionInstallCapability,
+  localTranscriptionNoticeEvent,
+  localTranscriptionRemoveCapability,
+  localTranscriptionStateCapability,
+  localTranscriptionStateChangedEvent,
+  localTranscriptionStateLeaf,
   maintainHostCapability,
   meetingPresenceIconCapability,
   meetingPresenceStateCapability,
@@ -247,6 +255,10 @@ export const generatedNativeCapabilityContracts = {
   localBackendStatus: localBackendStatusCapability.contract,
   localBackendRetry: localBackendRetryCapability.contract,
   localBackendShowLogs: localBackendShowLogsCapability.contract,
+  localTranscriptionState: localTranscriptionStateCapability.contract,
+  localTranscriptionInstall: localTranscriptionInstallCapability.contract,
+  localTranscriptionCancel: localTranscriptionCancelCapability.contract,
+  localTranscriptionRemove: localTranscriptionRemoveCapability.contract,
   computerUsePermissions: computerUsePermissionsCapability.contract,
   computerUsePermissionFlow: computerUsePermissionFlowCapability.contract,
   applicationMenuUpdate: applicationMenuUpdateCapability.contract,
@@ -395,6 +407,7 @@ export const generatedNativeCapabilityContracts = {
   audioCaptureStart: audioCaptureStartCapability.contract,
   audioCaptureStop: audioCaptureStopCapability.contract,
   audioCaptureOpenSaved: audioCaptureOpenSavedCapability.contract,
+  audioCaptureTranscribeSaved: audioCaptureTranscribeSavedCapability.contract,
   audioCaptureCancel: audioCaptureCancelCapability.contract,
   audioCapturePause: audioCapturePauseCapability.contract,
   audioCaptureResume: audioCaptureResumeCapability.contract,
@@ -442,6 +455,10 @@ export const generatedNativeWebFallbacks = {
   localBackendStatus: localBackendStatusCapability.webFallback,
   localBackendRetry: localBackendRetryCapability.webFallback,
   localBackendShowLogs: localBackendShowLogsCapability.webFallback,
+  localTranscriptionState: localTranscriptionStateCapability.webFallback,
+  localTranscriptionInstall: localTranscriptionInstallCapability.webFallback,
+  localTranscriptionCancel: localTranscriptionCancelCapability.webFallback,
+  localTranscriptionRemove: localTranscriptionRemoveCapability.webFallback,
   computerUsePermissions: computerUsePermissionsCapability.webFallback,
   computerUsePermissionFlow: computerUsePermissionFlowCapability.webFallback,
   applicationMenuUpdate: applicationMenuUpdateCapability.webFallback,
@@ -592,6 +609,7 @@ export const generatedNativeWebFallbacks = {
   audioCaptureStart: audioCaptureStartCapability.webFallback,
   audioCaptureStop: audioCaptureStopCapability.webFallback,
   audioCaptureOpenSaved: audioCaptureOpenSavedCapability.webFallback,
+  audioCaptureTranscribeSaved: audioCaptureTranscribeSavedCapability.webFallback,
   audioCaptureCancel: audioCaptureCancelCapability.webFallback,
   audioCapturePause: audioCapturePauseCapability.webFallback,
   audioCaptureResume: audioCaptureResumeCapability.webFallback,
@@ -642,6 +660,12 @@ export const generatedNativePreloadBindings = {
     state: localBackendStatusCapability.contract,
     retry: localBackendRetryCapability.contract,
     showLogs: localBackendShowLogsCapability.contract,
+  },
+  localTranscription: {
+    state: localTranscriptionStateCapability.contract,
+    install: localTranscriptionInstallCapability.contract,
+    cancel: localTranscriptionCancelCapability.contract,
+    remove: localTranscriptionRemoveCapability.contract,
   },
   computerUse: {
     getPermissions: computerUsePermissionsCapability.contract,
@@ -843,6 +867,7 @@ export const generatedNativePreloadBindings = {
     start: audioCaptureStartCapability.contract,
     stop: audioCaptureStopCapability.contract,
     openSaved: audioCaptureOpenSavedCapability.contract,
+    transcribeSaved: audioCaptureTranscribeSavedCapability.contract,
     cancel: audioCaptureCancelCapability.contract,
     pause: audioCapturePauseCapability.contract,
     resume: audioCaptureResumeCapability.contract,
@@ -899,6 +924,10 @@ export const generatedNativePreloadBindings = {
 export const generatedNativePreloadEventBindings = {
   localBackend: {
     state: localBackendStatusChangedEvent,
+  },
+  localTranscription: {
+    state: localTranscriptionStateChangedEvent,
+    notice: localTranscriptionNoticeEvent,
   },
   applicationMenu: {
     command: applicationMenuCommandEvent,
@@ -973,6 +1002,12 @@ export const generatedNativeStateBindings = {
     state: {
       get: localBackendStatusCapability.contract,
       subscribe: localBackendStatusChangedEvent,
+    },
+  },
+  localTranscription: {
+    state: {
+      get: localTranscriptionStateCapability.contract,
+      subscribe: localTranscriptionStateChangedEvent,
     },
   },
   sitePermissionMenu: {
@@ -1109,6 +1144,42 @@ export const generatedNativeMainBindingsById = {
     provider: "localBackend",
     sessionAdmission: localBackendShowLogsCapability.sessionAdmission,
     sessionAdmissionRationale: localBackendShowLogsCapability.sessionAdmissionRationale,
+  },
+  "localTranscription.state": {
+    contract: localTranscriptionStateCapability.contract,
+    id: localTranscriptionStateCapability.id,
+    method: "state",
+    provider: "localTranscription",
+    sessionAdmission: localTranscriptionStateCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      localTranscriptionStateCapability.sessionAdmissionRationale,
+  },
+  "localTranscription.install": {
+    contract: localTranscriptionInstallCapability.contract,
+    id: localTranscriptionInstallCapability.id,
+    method: "install",
+    provider: "localTranscription",
+    sessionAdmission: localTranscriptionInstallCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      localTranscriptionInstallCapability.sessionAdmissionRationale,
+  },
+  "localTranscription.cancel": {
+    contract: localTranscriptionCancelCapability.contract,
+    id: localTranscriptionCancelCapability.id,
+    method: "cancel",
+    provider: "localTranscription",
+    sessionAdmission: localTranscriptionCancelCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      localTranscriptionCancelCapability.sessionAdmissionRationale,
+  },
+  "localTranscription.remove": {
+    contract: localTranscriptionRemoveCapability.contract,
+    id: localTranscriptionRemoveCapability.id,
+    method: "remove",
+    provider: "localTranscription",
+    sessionAdmission: localTranscriptionRemoveCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      localTranscriptionRemoveCapability.sessionAdmissionRationale,
   },
   "computerUse.getPermissions": {
     contract: computerUsePermissionsCapability.contract,
@@ -2234,6 +2305,13 @@ export const generatedNativeMainBindingsById = {
     provider: "audioCapture",
     sessionAdmission: audioCaptureOpenSavedCapability.sessionAdmission,
   },
+  "audioCapture.transcribeSaved": {
+    contract: audioCaptureTranscribeSavedCapability.contract,
+    id: audioCaptureTranscribeSavedCapability.id,
+    method: "transcribeSaved",
+    provider: "audioCapture",
+    sessionAdmission: audioCaptureTranscribeSavedCapability.sessionAdmission,
+  },
   "audioCapture.cancel": {
     contract: audioCaptureCancelCapability.contract,
     id: audioCaptureCancelCapability.id,
@@ -2610,6 +2688,50 @@ export const generatedNativeCapabilityManifest = [
     sessionAdmission: localBackendShowLogsCapability.sessionAdmission,
     sessionAdmissionRationale: localBackendShowLogsCapability.sessionAdmissionRationale,
     transport: localBackendShowLogsCapability.transport,
+  },
+  {
+    bridge: localTranscriptionStateCapability.bridge,
+    channel: localTranscriptionStateCapability.channel,
+    id: localTranscriptionStateCapability.id,
+    payloadClass: localTranscriptionStateCapability.payloadClass,
+    permission: localTranscriptionStateCapability.permission,
+    sessionAdmission: localTranscriptionStateCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      localTranscriptionStateCapability.sessionAdmissionRationale,
+    transport: localTranscriptionStateCapability.transport,
+  },
+  {
+    bridge: localTranscriptionInstallCapability.bridge,
+    channel: localTranscriptionInstallCapability.channel,
+    id: localTranscriptionInstallCapability.id,
+    payloadClass: localTranscriptionInstallCapability.payloadClass,
+    permission: localTranscriptionInstallCapability.permission,
+    sessionAdmission: localTranscriptionInstallCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      localTranscriptionInstallCapability.sessionAdmissionRationale,
+    transport: localTranscriptionInstallCapability.transport,
+  },
+  {
+    bridge: localTranscriptionCancelCapability.bridge,
+    channel: localTranscriptionCancelCapability.channel,
+    id: localTranscriptionCancelCapability.id,
+    payloadClass: localTranscriptionCancelCapability.payloadClass,
+    permission: localTranscriptionCancelCapability.permission,
+    sessionAdmission: localTranscriptionCancelCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      localTranscriptionCancelCapability.sessionAdmissionRationale,
+    transport: localTranscriptionCancelCapability.transport,
+  },
+  {
+    bridge: localTranscriptionRemoveCapability.bridge,
+    channel: localTranscriptionRemoveCapability.channel,
+    id: localTranscriptionRemoveCapability.id,
+    payloadClass: localTranscriptionRemoveCapability.payloadClass,
+    permission: localTranscriptionRemoveCapability.permission,
+    sessionAdmission: localTranscriptionRemoveCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      localTranscriptionRemoveCapability.sessionAdmissionRationale,
+    transport: localTranscriptionRemoveCapability.transport,
   },
   {
     bridge: computerUsePermissionsCapability.bridge,
@@ -4020,6 +4142,15 @@ export const generatedNativeCapabilityManifest = [
     transport: audioCaptureOpenSavedCapability.transport,
   },
   {
+    bridge: audioCaptureTranscribeSavedCapability.bridge,
+    channel: audioCaptureTranscribeSavedCapability.channel,
+    id: audioCaptureTranscribeSavedCapability.id,
+    payloadClass: audioCaptureTranscribeSavedCapability.payloadClass,
+    permission: audioCaptureTranscribeSavedCapability.permission,
+    sessionAdmission: audioCaptureTranscribeSavedCapability.sessionAdmission,
+    transport: audioCaptureTranscribeSavedCapability.transport,
+  },
+  {
     bridge: audioCaptureCancelCapability.bridge,
     channel: audioCaptureCancelCapability.channel,
     id: audioCaptureCancelCapability.id,
@@ -4449,6 +4580,18 @@ export const generatedNativeEventManifest = [
     target: localBackendStatusChangedEvent.target,
   },
   {
+    channel: localTranscriptionStateChangedEvent.channel,
+    id: localTranscriptionStateChangedEvent.id,
+    permission: localTranscriptionStateChangedEvent.permission,
+    target: localTranscriptionStateChangedEvent.target,
+  },
+  {
+    channel: localTranscriptionNoticeEvent.channel,
+    id: localTranscriptionNoticeEvent.id,
+    permission: localTranscriptionNoticeEvent.permission,
+    target: localTranscriptionNoticeEvent.target,
+  },
+  {
     channel: applicationMenuCommandEvent.channel,
     id: applicationMenuCommandEvent.id,
     permission: applicationMenuCommandEvent.permission,
@@ -4622,6 +4765,24 @@ export const generatedNativeStateManifest = [
       id: localBackendStateLeaf.subscribe.id,
       permission: localBackendStateLeaf.subscribe.permission,
       target: localBackendStateLeaf.subscribe.target,
+    },
+  },
+  {
+    bridge: localTranscriptionStateLeaf.bridge,
+    get: {
+      channel: localTranscriptionStateLeaf.get.channel,
+      id: localTranscriptionStateLeaf.get.id,
+      permission: localTranscriptionStateLeaf.get.permission,
+      sessionAdmission: localTranscriptionStateLeaf.get.sessionAdmission,
+      sessionAdmissionRationale:
+        localTranscriptionStateLeaf.get.sessionAdmissionRationale,
+    },
+    id: localTranscriptionStateLeaf.id,
+    subscribe: {
+      channel: localTranscriptionStateLeaf.subscribe.channel,
+      id: localTranscriptionStateLeaf.subscribe.id,
+      permission: localTranscriptionStateLeaf.subscribe.permission,
+      target: localTranscriptionStateLeaf.subscribe.target,
     },
   },
   {
@@ -5015,6 +5176,90 @@ export const generatedNativeCapabilityIndex = {
     sessionAdmission: localBackendShowLogsCapability.sessionAdmission,
     sessionAdmissionRationale: localBackendShowLogsCapability.sessionAdmissionRationale,
     transport: localBackendShowLogsCapability.transport,
+  },
+  "localTranscription.state": {
+    artifacts: {
+      contract: "localTranscriptionStateContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["localTranscription.state"]',
+      leaf: "localTranscriptionStateCapability",
+      mainBinding: 'generatedNativeMainBindingsById["localTranscription.state"]',
+      mock: "localTranscriptionStateCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.localTranscription.state",
+      webFallback: "generatedNativeWebFallbacks.localTranscriptionState",
+    },
+    bridge: localTranscriptionStateCapability.bridge,
+    channel: localTranscriptionStateCapability.channel,
+    handler: localTranscriptionStateCapability.handler,
+    id: localTranscriptionStateCapability.id,
+    payloadClass: localTranscriptionStateCapability.payloadClass,
+    permission: localTranscriptionStateCapability.permission,
+    sessionAdmission: localTranscriptionStateCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      localTranscriptionStateCapability.sessionAdmissionRationale,
+    transport: localTranscriptionStateCapability.transport,
+  },
+  "localTranscription.install": {
+    artifacts: {
+      contract: "localTranscriptionInstallContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["localTranscription.install"]',
+      leaf: "localTranscriptionInstallCapability",
+      mainBinding: 'generatedNativeMainBindingsById["localTranscription.install"]',
+      mock: "localTranscriptionInstallCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.localTranscription.install",
+      webFallback: "generatedNativeWebFallbacks.localTranscriptionInstall",
+    },
+    bridge: localTranscriptionInstallCapability.bridge,
+    channel: localTranscriptionInstallCapability.channel,
+    handler: localTranscriptionInstallCapability.handler,
+    id: localTranscriptionInstallCapability.id,
+    payloadClass: localTranscriptionInstallCapability.payloadClass,
+    permission: localTranscriptionInstallCapability.permission,
+    sessionAdmission: localTranscriptionInstallCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      localTranscriptionInstallCapability.sessionAdmissionRationale,
+    transport: localTranscriptionInstallCapability.transport,
+  },
+  "localTranscription.cancel": {
+    artifacts: {
+      contract: "localTranscriptionCancelContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["localTranscription.cancel"]',
+      leaf: "localTranscriptionCancelCapability",
+      mainBinding: 'generatedNativeMainBindingsById["localTranscription.cancel"]',
+      mock: "localTranscriptionCancelCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.localTranscription.cancel",
+      webFallback: "generatedNativeWebFallbacks.localTranscriptionCancel",
+    },
+    bridge: localTranscriptionCancelCapability.bridge,
+    channel: localTranscriptionCancelCapability.channel,
+    handler: localTranscriptionCancelCapability.handler,
+    id: localTranscriptionCancelCapability.id,
+    payloadClass: localTranscriptionCancelCapability.payloadClass,
+    permission: localTranscriptionCancelCapability.permission,
+    sessionAdmission: localTranscriptionCancelCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      localTranscriptionCancelCapability.sessionAdmissionRationale,
+    transport: localTranscriptionCancelCapability.transport,
+  },
+  "localTranscription.remove": {
+    artifacts: {
+      contract: "localTranscriptionRemoveContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["localTranscription.remove"]',
+      leaf: "localTranscriptionRemoveCapability",
+      mainBinding: 'generatedNativeMainBindingsById["localTranscription.remove"]',
+      mock: "localTranscriptionRemoveCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.localTranscription.remove",
+      webFallback: "generatedNativeWebFallbacks.localTranscriptionRemove",
+    },
+    bridge: localTranscriptionRemoveCapability.bridge,
+    channel: localTranscriptionRemoveCapability.channel,
+    handler: localTranscriptionRemoveCapability.handler,
+    id: localTranscriptionRemoveCapability.id,
+    payloadClass: localTranscriptionRemoveCapability.payloadClass,
+    permission: localTranscriptionRemoveCapability.permission,
+    sessionAdmission: localTranscriptionRemoveCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      localTranscriptionRemoveCapability.sessionAdmissionRationale,
+    transport: localTranscriptionRemoveCapability.transport,
   },
   "computerUse.getPermissions": {
     artifacts: {
@@ -7869,6 +8114,25 @@ export const generatedNativeCapabilityIndex = {
     sessionAdmission: audioCaptureOpenSavedCapability.sessionAdmission,
     transport: audioCaptureOpenSavedCapability.transport,
   },
+  "audioCapture.transcribeSaved": {
+    artifacts: {
+      contract: "audioCaptureTranscribeSavedContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["audioCapture.transcribeSaved"]',
+      leaf: "audioCaptureTranscribeSavedCapability",
+      mainBinding: 'generatedNativeMainBindingsById["audioCapture.transcribeSaved"]',
+      mock: "audioCaptureTranscribeSavedCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.audioCapture.transcribeSaved",
+      webFallback: "generatedNativeWebFallbacks.audioCaptureTranscribeSaved",
+    },
+    bridge: audioCaptureTranscribeSavedCapability.bridge,
+    channel: audioCaptureTranscribeSavedCapability.channel,
+    handler: audioCaptureTranscribeSavedCapability.handler,
+    id: audioCaptureTranscribeSavedCapability.id,
+    payloadClass: audioCaptureTranscribeSavedCapability.payloadClass,
+    permission: audioCaptureTranscribeSavedCapability.permission,
+    sessionAdmission: audioCaptureTranscribeSavedCapability.sessionAdmission,
+    transport: audioCaptureTranscribeSavedCapability.transport,
+  },
   "audioCapture.cancel": {
     artifacts: {
       contract: "audioCaptureCancelContract",
@@ -8707,6 +8971,26 @@ export const generatedNativeEventIndex = {
     permission: localBackendStatusChangedEvent.permission,
     target: localBackendStatusChangedEvent.target,
   },
+  "localTranscription.state.changed": {
+    artifacts: {
+      leaf: "localTranscriptionStateChangedEvent",
+      mock: "localTranscriptionStateChangedEvent.mock",
+    },
+    channel: localTranscriptionStateChangedEvent.channel,
+    id: localTranscriptionStateChangedEvent.id,
+    permission: localTranscriptionStateChangedEvent.permission,
+    target: localTranscriptionStateChangedEvent.target,
+  },
+  "localTranscription.notice": {
+    artifacts: {
+      leaf: "localTranscriptionNoticeEvent",
+      mock: "localTranscriptionNoticeEvent.mock",
+    },
+    channel: localTranscriptionNoticeEvent.channel,
+    id: localTranscriptionNoticeEvent.id,
+    permission: localTranscriptionNoticeEvent.permission,
+    target: localTranscriptionNoticeEvent.target,
+  },
   "applicationMenu.command": {
     artifacts: {
       leaf: "applicationMenuCommandEvent",
@@ -8992,6 +9276,31 @@ export const generatedNativeStateIndex = {
       id: localBackendStateLeaf.subscribe.id,
       permission: localBackendStateLeaf.subscribe.permission,
       target: localBackendStateLeaf.subscribe.target,
+    },
+  },
+  "localTranscription.state": {
+    artifacts: {
+      get: "generatedNativeStateBindings.localTranscription.state.get",
+      leaf: "localTranscriptionStateLeaf",
+      mock: "localTranscriptionStateLeaf.mock",
+      subscribe: "generatedNativeStateBindings.localTranscription.state.subscribe",
+      webFallback: "localTranscriptionStateLeaf.webFallback",
+    },
+    bridge: localTranscriptionStateLeaf.bridge,
+    get: {
+      channel: localTranscriptionStateLeaf.get.channel,
+      id: localTranscriptionStateLeaf.get.id,
+      permission: localTranscriptionStateLeaf.get.permission,
+      sessionAdmission: localTranscriptionStateLeaf.get.sessionAdmission,
+      sessionAdmissionRationale:
+        localTranscriptionStateLeaf.get.sessionAdmissionRationale,
+    },
+    id: localTranscriptionStateLeaf.id,
+    subscribe: {
+      channel: localTranscriptionStateLeaf.subscribe.channel,
+      id: localTranscriptionStateLeaf.subscribe.id,
+      permission: localTranscriptionStateLeaf.subscribe.permission,
+      target: localTranscriptionStateLeaf.subscribe.target,
     },
   },
   "sitePermissionMenu.state": {
@@ -9464,6 +9773,14 @@ export const localBackendRetryContract =
   generatedNativeCapabilityContracts.localBackendRetry;
 export const localBackendShowLogsContract =
   generatedNativeCapabilityContracts.localBackendShowLogs;
+export const localTranscriptionStateContract =
+  generatedNativeCapabilityContracts.localTranscriptionState;
+export const localTranscriptionInstallContract =
+  generatedNativeCapabilityContracts.localTranscriptionInstall;
+export const localTranscriptionCancelContract =
+  generatedNativeCapabilityContracts.localTranscriptionCancel;
+export const localTranscriptionRemoveContract =
+  generatedNativeCapabilityContracts.localTranscriptionRemove;
 export const computerUsePermissionsContract =
   generatedNativeCapabilityContracts.computerUsePermissions;
 export const computerUsePermissionFlowContract =
@@ -9714,6 +10031,8 @@ export const audioCaptureStopContract =
   generatedNativeCapabilityContracts.audioCaptureStop;
 export const audioCaptureOpenSavedContract =
   generatedNativeCapabilityContracts.audioCaptureOpenSaved;
+export const audioCaptureTranscribeSavedContract =
+  generatedNativeCapabilityContracts.audioCaptureTranscribeSaved;
 export const audioCaptureCancelContract =
   generatedNativeCapabilityContracts.audioCaptureCancel;
 export const audioCapturePauseContract =
@@ -9796,6 +10115,10 @@ export type NativeCapabilityTypeMap = {
   "localBackend.state": typeof localBackendStatusCapability;
   "localBackend.retry": typeof localBackendRetryCapability;
   "localBackend.showLogs": typeof localBackendShowLogsCapability;
+  "localTranscription.state": typeof localTranscriptionStateCapability;
+  "localTranscription.install": typeof localTranscriptionInstallCapability;
+  "localTranscription.cancel": typeof localTranscriptionCancelCapability;
+  "localTranscription.remove": typeof localTranscriptionRemoveCapability;
   "computerUse.getPermissions": typeof computerUsePermissionsCapability;
   "computerUse.openPermissionFlow": typeof computerUsePermissionFlowCapability;
   "applicationMenu.update": typeof applicationMenuUpdateCapability;
@@ -9938,6 +10261,7 @@ export type NativeCapabilityTypeMap = {
   "audioCapture.start": typeof audioCaptureStartCapability;
   "audioCapture.stop": typeof audioCaptureStopCapability;
   "audioCapture.openSaved": typeof audioCaptureOpenSavedCapability;
+  "audioCapture.transcribeSaved": typeof audioCaptureTranscribeSavedCapability;
   "audioCapture.cancel": typeof audioCaptureCancelCapability;
   "audioCapture.pause": typeof audioCapturePauseCapability;
   "audioCapture.resume": typeof audioCaptureResumeCapability;
@@ -9982,6 +10306,8 @@ export type NativeCapabilityTypeMap = {
 
 export type NativeEventTypeMap = {
   "localBackend.state.changed": typeof localBackendStatusChangedEvent;
+  "localTranscription.state.changed": typeof localTranscriptionStateChangedEvent;
+  "localTranscription.notice": typeof localTranscriptionNoticeEvent;
   "applicationMenu.command": typeof applicationMenuCommandEvent;
   "sitePermissionMenu.changed": typeof sitePermissionMenuChangedEvent;
   "appPreferences.state.changed": typeof appPreferencesChangedEvent;
@@ -10012,6 +10338,7 @@ export type NativeEventTypeMap = {
 
 export type NativeStateTypeMap = {
   "localBackend.state": typeof localBackendStateLeaf;
+  "localTranscription.state": typeof localTranscriptionStateLeaf;
   "sitePermissionMenu.state": typeof sitePermissionMenuStateLeaf;
   "appPreferences.state": typeof appPreferencesStateLeaf;
   "connectorRuntime.state": typeof connectorRuntimeStateLeaf;
@@ -10088,6 +10415,19 @@ export type GeneratedNativeBridge = {
     retry: GeneratedNativeCommandBridgeMethod<typeof localBackendRetryCapability>;
     showLogs: GeneratedNativeCommandBridgeMethod<typeof localBackendShowLogsCapability>;
     state: GeneratedNativeStateBridgeMethod<typeof localBackendStateLeaf>;
+  };
+  localTranscription: {
+    install: GeneratedNativeCommandBridgeMethod<
+      typeof localTranscriptionInstallCapability
+    >;
+    cancel: GeneratedNativeCommandBridgeMethod<
+      typeof localTranscriptionCancelCapability
+    >;
+    remove: GeneratedNativeCommandBridgeMethod<
+      typeof localTranscriptionRemoveCapability
+    >;
+    state: GeneratedNativeStateBridgeMethod<typeof localTranscriptionStateLeaf>;
+    onNotice: GeneratedNativeEventBridgeMethod<typeof localTranscriptionNoticeEvent>;
   };
   computerUse: {
     getPermissions: GeneratedNativeCommandBridgeMethod<
@@ -10427,6 +10767,9 @@ export type GeneratedNativeBridge = {
     openSaved: GeneratedNativeCommandBridgeMethod<
       typeof audioCaptureOpenSavedCapability
     >;
+    transcribeSaved: GeneratedNativeCommandBridgeMethod<
+      typeof audioCaptureTranscribeSavedCapability
+    >;
     cancel: GeneratedNativeCommandBridgeMethod<typeof audioCaptureCancelCapability>;
     pause: GeneratedNativeCommandBridgeMethod<typeof audioCapturePauseCapability>;
     resume: GeneratedNativeCommandBridgeMethod<typeof audioCaptureResumeCapability>;
@@ -10588,6 +10931,20 @@ export function createGeneratedNativePreloadBridge(
         get: localBackendStatusCapability.contract,
         subscribe: localBackendStatusChangedEvent,
       }),
+    },
+    localTranscription: {
+      install: () =>
+        helpers.invoke(localTranscriptionInstallCapability.contract, undefined),
+      cancel: () =>
+        helpers.invoke(localTranscriptionCancelCapability.contract, undefined),
+      remove: () =>
+        helpers.invoke(localTranscriptionRemoveCapability.contract, undefined),
+      state: helpers.state({
+        get: localTranscriptionStateCapability.contract,
+        subscribe: localTranscriptionStateChangedEvent,
+      }),
+      onNotice: (listener) =>
+        helpers.subscribe(localTranscriptionNoticeEvent, listener),
     },
     computerUse: {
       getPermissions: () =>
@@ -11052,6 +11409,9 @@ export function createGeneratedNativePreloadBridge(
       openSaved: (
         input: GeneratedNativeCommandInput<typeof audioCaptureOpenSavedCapability>
       ) => helpers.invoke(audioCaptureOpenSavedCapability.contract, input),
+      transcribeSaved: (
+        input: GeneratedNativeCommandInput<typeof audioCaptureTranscribeSavedCapability>
+      ) => helpers.invoke(audioCaptureTranscribeSavedCapability.contract, input),
       cancel: () => helpers.invoke(audioCaptureCancelCapability.contract, undefined),
       pause: () => helpers.invoke(audioCapturePauseCapability.contract, undefined),
       resume: () => helpers.invoke(audioCaptureResumeCapability.contract, undefined),
@@ -11208,6 +11568,16 @@ export function createGeneratedNativeWebBridge(): GeneratedNativeBridge {
         GeneratedNativeStateSnapshot<typeof localBackendStateLeaf>,
         GeneratedNativeStateGetInput<typeof localBackendStateLeaf>
       >((_input) => localBackendStateLeaf.webFallback),
+    },
+    localTranscription: {
+      install: async () => localTranscriptionInstallCapability.webFallback,
+      cancel: async () => localTranscriptionCancelCapability.webFallback,
+      remove: async () => localTranscriptionRemoveCapability.webFallback,
+      state: createGeneratedWebStateBridge<
+        GeneratedNativeStateSnapshot<typeof localTranscriptionStateLeaf>,
+        GeneratedNativeStateGetInput<typeof localTranscriptionStateLeaf>
+      >((_input) => localTranscriptionStateLeaf.webFallback),
+      onNotice: () => () => {},
     },
     computerUse: {
       getPermissions: async () => computerUsePermissionsCapability.webFallback,
@@ -11671,6 +12041,11 @@ export function createGeneratedNativeWebBridge(): GeneratedNativeBridge {
       openSaved: async (
         _input: GeneratedNativeCommandInput<typeof audioCaptureOpenSavedCapability>
       ) => audioCaptureOpenSavedCapability.webFallback,
+      transcribeSaved: async (
+        _input: GeneratedNativeCommandInput<
+          typeof audioCaptureTranscribeSavedCapability
+        >
+      ) => audioCaptureTranscribeSavedCapability.webFallback,
       cancel: async () => audioCaptureCancelCapability.webFallback,
       pause: async () => audioCapturePauseCapability.webFallback,
       resume: async () => audioCaptureResumeCapability.webFallback,
@@ -11829,6 +12204,16 @@ export function createGeneratedNativeBridgeMock(
         (_input: GeneratedNativeStateGetInput<typeof localBackendStateLeaf>) =>
           localBackendStateLeaf.mock
       ),
+    },
+    localTranscription: {
+      install: helpers.command(async () => localTranscriptionInstallCapability.mock),
+      cancel: helpers.command(async () => localTranscriptionCancelCapability.mock),
+      remove: helpers.command(async () => localTranscriptionRemoveCapability.mock),
+      state: helpers.state(
+        (_input: GeneratedNativeStateGetInput<typeof localTranscriptionStateLeaf>) =>
+          localTranscriptionStateLeaf.mock
+      ),
+      onNotice: helpers.event((_listener) => () => {}),
     },
     computerUse: {
       getPermissions: helpers.command(
@@ -12490,6 +12875,13 @@ export function createGeneratedNativeBridgeMock(
           _input: GeneratedNativeCommandInput<typeof audioCaptureOpenSavedCapability>
         ) => audioCaptureOpenSavedCapability.mock
       ),
+      transcribeSaved: helpers.command(
+        async (
+          _input: GeneratedNativeCommandInput<
+            typeof audioCaptureTranscribeSavedCapability
+          >
+        ) => audioCaptureTranscribeSavedCapability.mock
+      ),
       cancel: helpers.command(async () => audioCaptureCancelCapability.mock),
       pause: helpers.command(async () => audioCapturePauseCapability.mock),
       resume: helpers.command(async () => audioCaptureResumeCapability.mock),
@@ -12708,6 +13100,10 @@ export function mergeGeneratedNativeBridgeOverrides(
     localBackend: {
       ...bridge.localBackend,
       ...overrides.localBackend,
+    },
+    localTranscription: {
+      ...bridge.localTranscription,
+      ...overrides.localTranscription,
     },
     computerUse: {
       ...bridge.computerUse,

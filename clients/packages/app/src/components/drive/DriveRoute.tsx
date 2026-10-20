@@ -75,6 +75,11 @@ import {
   useDriveBackendLoad,
 } from "./driveBackend";
 import { useDriveFileReveal } from "./useDriveFileReveal";
+import { useLocalTranscription } from "../useLocalTranscription";
+import {
+  transcribableRecordingIds,
+  useRecordingTranscription,
+} from "../useRecordingFileActions";
 import { collectDroppedFiles, useDriveDropZone } from "./driveDropZone";
 import { GoogleDriveBrowser } from "./GoogleDriveBrowser";
 import { readActiveWorkspaceId, subscribeActiveWorkspace } from "../activeWorkspace";
@@ -220,7 +225,9 @@ function LocalDriveRoute({ active }: { active: boolean }) {
     () => ({ ...(backend ? { backend } : {}), bridge, locale }),
     [backend, bridge, locale]
   );
-  const { api } = useCommaAuth();
+  const { api, productLease } = useCommaAuth();
+  const localTranscription = useLocalTranscription();
+  const transcribe = useRecordingTranscription(productLease);
   // Enrollment is opportunistic: a Workspace without a network yet, or no
   // connection, leaves the node on its own key and the next launch tries again.
   useDriveBackendLoad(store, backend, (state) => {
@@ -313,6 +320,15 @@ function LocalDriveRoute({ active }: { active: boolean }) {
             file.deviceId === snapshot.originDeviceId)
       ),
     [snapshot.files, snapshot.selectedSpaceId, snapshot.originDeviceId, currentDeviceId]
+  );
+  // Local mode: a recording without a transcript can be sent through the
+  // installed local model again from its row menu.
+  const transcribableFileIds = useMemo(
+    () =>
+      localTranscription.state?.phase === "ready"
+        ? transcribableRecordingIds(spaceFiles)
+        : undefined,
+    [localTranscription.state?.phase, spaceFiles]
   );
   const openPreview = useCallback(
     (file: DriveFile) => {
@@ -423,6 +439,13 @@ function LocalDriveRoute({ active }: { active: boolean }) {
         void askCommaAgent([file]);
         return;
       }
+      if (action === "transcribe") {
+        void transcribe({
+          space: file.spaceId,
+          path: `${file.folderPath ?? ""}/${file.name}`,
+        });
+        return;
+      }
       if (action === "download") {
         void downloadDriveFile(store, file, transferDeps);
         return;
@@ -477,7 +500,7 @@ function LocalDriveRoute({ active }: { active: boolean }) {
         return;
       setDeleteTarget([file]);
     },
-    [askCommaAgent, backend, messages, nodeRejected, store, transferDeps]
+    [askCommaAgent, backend, messages, nodeRejected, store, transcribe, transferDeps]
   );
 
   const confirmDelete = useCallback(async () => {
@@ -1183,6 +1206,7 @@ function LocalDriveRoute({ active }: { active: boolean }) {
               selectedFileIds={selectedFileIds}
               selecting={selectedFiles.length > 0}
               selectionKeptOffline={selectionKeptOffline}
+              transcribableFileIds={transcribableFileIds}
               spaceName={
                 snapshot.spaces.find((space) => space.id === snapshot.selectedSpaceId)
                   ?.name ?? ""

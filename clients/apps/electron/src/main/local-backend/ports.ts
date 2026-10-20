@@ -10,6 +10,8 @@ export const localBackendPortNames = [
   "comma",
   "transfer",
   "metrics",
+  // CommaTranscriber serve (openspec add-local-meeting-asr, D6).
+  "asr",
 ] as const;
 
 export type LocalBackendPortName = (typeof localBackendPortNames)[number];

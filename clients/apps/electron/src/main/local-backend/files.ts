@@ -27,6 +27,8 @@ export interface LocalBackendSecrets {
   dashboardSecretKeyBase: string;
   adminToken: string;
   subscriptionStorageKey: string;
+  /** Bearer of the local transcription helper; it reads it from a 0600 file. */
+  asrToken: string;
 }
 
 type SecretName = Exclude<keyof LocalBackendSecrets, "version">;
@@ -45,6 +47,7 @@ const secretGenerators: Record<SecretName, () => string> = {
   adminToken: hex(32),
   // SALIX_SUBSCRIPTION_STORAGE_KEY is a base64 32-byte key.
   subscriptionStorageKey: () => randomBytes(32).toString("base64"),
+  asrToken: hex(32),
 };
 
 export interface LocalBackendProcessRecord {

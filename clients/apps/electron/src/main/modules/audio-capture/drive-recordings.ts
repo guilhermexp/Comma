@@ -87,31 +87,20 @@ export class DriveRecordingStore implements AudioCaptureDriveStore {
   async open(input: AudioCaptureDriveFile): Promise<AudioCaptureOpenSavedResult> {
     const options = { locale: readMainLocale(this.locale) };
     try {
-      const driveFile = audioCaptureDriveFileSchema.parse(input);
-      const target = await this.target();
-      if (driveFile.space !== target.space) {
+      const located = await this.#locate(input);
+      if (located.status === "other_space") {
         return {
           status: "unavailable",
           reason: messages.recording_open_drive_unavailable({}, options),
         };
       }
-      // The configured source is Main's authority. A renderer path, including
-      // one that follows a user-created symlink, must remain inside this root.
-      const root = await realpath(target.localRoot);
-      const path = await realpath(join(root, driveFile.path));
-      const withinRoot = relative(root, path);
-      if (
-        !withinRoot ||
-        withinRoot.replaceAll("\\", "/") !== driveFile.path ||
-        isAbsolute(withinRoot) ||
-        !(await stat(path)).isFile()
-      ) {
+      if (located.status === "missing") {
         return {
           status: "unavailable",
           reason: messages.recording_open_missing({}, options),
         };
       }
-      const failure = await this.openPath(path);
+      const failure = await this.openPath(located.path);
       return failure
         ? {
             status: "unavailable",
@@ -124,6 +113,37 @@ export class DriveRecordingStore implements AudioCaptureDriveStore {
         reason: messages.recording_open_not_synced({}, options),
       };
     }
+  }
+
+  /** A saved recording's local file, for transcribing it again; throws when unavailable. */
+  async resolveSaved(
+    input: AudioCaptureDriveFile
+  ): Promise<{ target: RecordingDriveTarget; path: string; size: number }> {
+    const located = await this.#locate(input);
+    if (located.status !== "found")
+      throw new Error("The recording is not available in Drive.");
+    return { target: located.target, path: located.path, size: located.size };
+  }
+
+  async #locate(input: AudioCaptureDriveFile) {
+    const driveFile = audioCaptureDriveFileSchema.parse(input);
+    const target = await this.target();
+    if (driveFile.space !== target.space) return { status: "other_space" } as const;
+    // The configured source is Main's authority. A renderer path, including
+    // one that follows a user-created symlink, must remain inside this root.
+    const root = await realpath(target.localRoot);
+    const path = await realpath(join(root, driveFile.path));
+    const withinRoot = relative(root, path);
+    const stats = await stat(path);
+    if (
+      !withinRoot ||
+      withinRoot.replaceAll("\\", "/") !== driveFile.path ||
+      isAbsolute(withinRoot) ||
+      !stats.isFile()
+    ) {
+      return { status: "missing" } as const;
+    }
+    return { status: "found", target, path, size: stats.size } as const;
   }
 }
 

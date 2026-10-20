@@ -23,6 +23,7 @@ export function localBackendPaths({ resourcesDir, dataDir }: LocalBackendLayout)
     redisConf: join(dataDir, "redis.conf"),
     minioEnv: join(dataDir, "minio.env"),
     pgpass: join(dataDir, "pgpass"),
+    asrTokenFile: join(dataDir, "asr-token"),
   };
 }
 
@@ -42,4 +43,36 @@ export function resolveLocalBackendDataDir({
   return userDataOverride
     ? join(userDataOverride, "local-backend")
     : join(appData, "Comma", "local");
+}
+
+/**
+ * Where CommaTranscriber keeps the speech models: outside `local/`, so
+ * removing the backend and removing the model stay independent (D2). An
+ * isolated launch (`--user-data-dir`) keeps them inside its profile.
+ */
+export function resolveLocalTranscriptionModelsDir({
+  appData,
+  userDataOverride,
+}: {
+  appData: string;
+  userDataOverride?: string | undefined;
+}) {
+  return userDataOverride
+    ? join(userDataOverride, "Models")
+    : join(appData, "Comma", "Models");
+}
+
+/** The bundled helper (contract C4); Forge copies dist/native into Resources. */
+export function localTranscriberPath({
+  isPackaged,
+  resourcesPath,
+  appPath,
+}: {
+  isPackaged: boolean;
+  resourcesPath: string;
+  appPath: string;
+}) {
+  return isPackaged
+    ? join(resourcesPath, "native", "macos", "CommaTranscriber")
+    : join(appPath, "dist", "native", "macos", "CommaTranscriber");
 }

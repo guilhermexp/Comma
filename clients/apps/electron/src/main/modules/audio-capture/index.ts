@@ -13,6 +13,8 @@ import type {
   AudioCaptureMicrophones,
   AudioCaptureRecording,
   AudioCaptureSelectMicrophoneInput,
+  AudioCaptureTranscribeSavedResult,
+  AudioCaptureDriveFile,
 } from "@comma/native-bridge";
 import { defaultLocale, messages } from "@comma/i18n";
 import { readMainLocale, type MainLocaleSource } from "../../main-locale";
@@ -51,6 +53,9 @@ export interface AudioCaptureProvider {
   cancel(input: void): Promise<AudioCaptureState>;
   openPermissionSettings(input: void): Promise<{ opened: boolean }>;
   openSaved(input: AudioCaptureOpenSavedInput): Promise<AudioCaptureOpenSavedResult>;
+  transcribeSaved(
+    input: AudioCaptureOpenSavedInput
+  ): Promise<AudioCaptureTranscribeSavedResult>;
   pause(input: void): Promise<AudioCaptureState>;
   resume(input: void): Promise<AudioCaptureState>;
   sources(input: void): Promise<AudioCaptureSourcesResult>;
@@ -118,7 +123,10 @@ export class AudioCaptureService implements AudioCaptureProvider {
         recording: AudioCaptureRecording,
         target: RecordingDriveTarget,
         sourcePath: string
-      ) => Promise<void>)
+      ) => Promise<unknown>)
+    | undefined;
+  readonly #transcribeSaved:
+    | ((driveFile: AudioCaptureDriveFile) => Promise<AudioCaptureTranscribeSavedResult>)
     | undefined;
   #starting: Promise<AudioCaptureState> | undefined;
   #startCancelled = false;
@@ -148,6 +156,7 @@ export class AudioCaptureService implements AudioCaptureProvider {
     encoder,
     locale = defaultLocale,
     onSaved,
+    transcribeSaved,
   }: {
     loadNative?: () => Promise<NativeAudioCapture | undefined>;
     /** Main's app language; reasons shown to the user read it when they are set. */
@@ -169,7 +178,11 @@ export class AudioCaptureService implements AudioCaptureProvider {
       recording: AudioCaptureRecording,
       target: RecordingDriveTarget,
       sourcePath: string
-    ) => Promise<void>;
+    ) => Promise<unknown>;
+    /** Sends a recording already in Drive through transcription again. */
+    transcribeSaved?: (
+      driveFile: AudioCaptureDriveFile
+    ) => Promise<AudioCaptureTranscribeSavedResult>;
   }) {
     this.#loadNative = loadNative;
     this.#microphone = microphone;
@@ -180,6 +193,7 @@ export class AudioCaptureService implements AudioCaptureProvider {
     this.#drive = drive;
     this.#encoder = encoder;
     this.#onSaved = onSaved;
+    this.#transcribeSaved = transcribeSaved;
     this.#locale = locale;
     this.#permission = readScreenAccess(screenAccessStatus) ? "granted" : "unknown";
   }
@@ -486,6 +500,14 @@ export class AudioCaptureService implements AudioCaptureProvider {
   ): Promise<AudioCaptureOpenSavedResult> {
     getCurrentNativeSessionAdmission();
     return this.#drive.open(input.driveFile);
+  }
+
+  async transcribeSaved(
+    input: AudioCaptureOpenSavedInput
+  ): Promise<AudioCaptureTranscribeSavedResult> {
+    getCurrentNativeSessionAdmission();
+    if (!this.#transcribeSaved) return { status: "failed", reason: "unavailable" };
+    return this.#transcribeSaved(input.driveFile);
   }
 
   async cancel(): Promise<AudioCaptureState> {

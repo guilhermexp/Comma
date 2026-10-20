@@ -7,6 +7,7 @@ import {
   audioCaptureStartCapability,
   audioCaptureSelectMicrophoneCapability,
   audioCaptureStopCapability,
+  audioCaptureTranscribeSavedCapability,
   type AudioCaptureStartInput,
   type AudioCaptureState,
 } from "@comma/native-bridge";
@@ -1166,3 +1167,84 @@ describe("capture initialization ownership", () => {
     await service.close();
   });
 });
+
+describe("transcribing a saved recording again", () => {
+  const driveFile = { space: "drive", path: "recording/2026-10-20/call.m4a" };
+
+  function admittedTranscription(transcribeSaved?: AudioCaptureTranscribeSaved) {
+    const service = new AudioCaptureService({
+      encoder: { encode: async (path: string) => path },
+      locale: "en",
+      loadNative: async () => undefined,
+      onStateChanged: () => undefined,
+      recordingsDir: tempDirectory(),
+      drive: {
+        target: async () => ({ space: "drive", localRoot: tempDirectory() }),
+        save: async () => {
+          throw new Error("not used");
+        },
+        open: async () => ({ status: "unavailable" as const }),
+      },
+      ...(transcribeSaved ? { transcribeSaved } : {}),
+    });
+    const { guard, session } = createAdmission();
+    return (input = driveFile) =>
+      Promise.resolve(
+        guard.run({
+          contract: audioCaptureTranscribeSavedCapability.contract,
+          handler: () => service.transcribeSaved({ session, driveFile: input }),
+          input: { session, driveFile: input },
+        })
+      );
+  }
+
+  it("sends the Drive recording through transcription inside the Session admission", async () => {
+    const transcribeSaved = vi.fn<AudioCaptureTranscribeSaved>(async () => ({
+      status: "ready" as const,
+    }));
+    const transcribe = admittedTranscription(transcribeSaved);
+
+    expect(await transcribe()).toEqual({ status: "ready" });
+    expect(transcribeSaved).toHaveBeenCalledExactlyOnceWith(driveFile);
+  });
+
+  it("passes the missing-model reason to the renderer", async () => {
+    const transcribe = admittedTranscription(async () => ({
+      status: "failed",
+      reason: "local_asr_model_not_installed",
+    }));
+    expect(await transcribe()).toEqual({
+      status: "failed",
+      reason: "local_asr_model_not_installed",
+    });
+  });
+
+  it("is unavailable when this build cannot transcribe", async () => {
+    expect(await admittedTranscription()()).toEqual({
+      status: "failed",
+      reason: "unavailable",
+    });
+  });
+});
+
+type AudioCaptureTranscribeSaved = NonNullable<
+  ConstructorParameters<typeof AudioCaptureService>[0]["transcribeSaved"]
+>;
+
+function createAdmission() {
+  const authority = new MainProductCredentialAuthority({
+    authorityInstanceId: `authority-transcribe-${Math.random()}`,
+    trustedAudience: "https://api.comma.example",
+  });
+  const signedIn = authority.acceptVerifiedCredential({
+    audience: "https://api.comma.example",
+    email: "capture@example.com",
+    expiresAtEpochSeconds: 1_900_000_000,
+    sessionId: `session-transcribe-${Math.random()}`,
+    token: "main_secret",
+    userId: "user-capture",
+  });
+  const session = sessionProductLease(signedIn);
+  if (!session) throw new Error("Expected signed-in Session lease.");
+  return { guard: new MainNativeSessionAdmissionGuard(authority), session };
+}
