@@ -113,7 +113,11 @@ struct FluidTranscriptionEngine: TranscriptionEngine {
         let diarizer = OfflineDiarizerManager()
         diarizer.initialize(models: models)
         do {
-            return try await diarizer.process(audio).segments.map {
+            let segments = try await diarizer.process(audio).segments
+            let speakers = Set(segments.map(\.speakerId)).count
+            FileHandle.standardError.write(
+                Data("[CommaTranscriber] diarization: \(segments.count) turns, \(speakers) speakers\n".utf8))
+            return segments.map {
                 SpeakerTurn(
                     speaker: $0.speakerId, start: Double($0.startTimeSeconds), end: Double($0.endTimeSeconds))
             }

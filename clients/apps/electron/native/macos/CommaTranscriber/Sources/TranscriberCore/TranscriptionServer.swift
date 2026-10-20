@@ -375,10 +375,13 @@ private struct Connection: Sendable {
         }
     }
 
+    /// Sends one complete message; `final` also closes the write side. An
+    /// incomplete message would hold back every later send (such as the
+    /// response after `100 Continue`).
     func send(_ data: Data, final: Bool) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             connection.send(
-                content: data, contentContext: final ? .finalMessage : .defaultMessage, isComplete: final,
+                content: data, contentContext: final ? .finalMessage : .defaultMessage, isComplete: true,
                 completion: .contentProcessed { error in
                     if let error { continuation.resume(throwing: error) } else { continuation.resume() }
                 })

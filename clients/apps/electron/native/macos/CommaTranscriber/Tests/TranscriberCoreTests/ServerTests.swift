@@ -89,6 +89,12 @@ private func blockingExchange(_ port: UInt16, _ request: Data) throws -> Reply {
         if count <= 0 { break }
         received.append(contentsOf: buffer[0..<count])
     }
+    // Skip interim responses such as 100 Continue.
+    while received.starts(with: Data("HTTP/1.1 1".utf8)),
+        let interim = received.range(of: Data("\r\n\r\n".utf8))
+    {
+        received = Data(received[interim.upperBound...])
+    }
     let separator = try #require(received.range(of: Data("\r\n\r\n".utf8)))
     let head = String(decoding: received[..<separator.lowerBound], as: UTF8.self)
     var lines = head.components(separatedBy: "\r\n")
@@ -125,9 +131,10 @@ private func multipart(file: Data?, format: String? = nil) -> Data {
 
 private func post(
     _ port: UInt16, token: String? = "secret", body: Data, contentLength: Int? = nil,
-    chunked: Bool = false
+    chunked: Bool = false, expectContinue: Bool = false
 ) async throws -> Reply {
     var head = "POST /v1/audio/transcriptions HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+    if expectContinue { head += "Expect: 100-continue\r\n" }
     head += "Content-Type: multipart/form-data; boundary=\(boundary)\r\n"
     if let token { head += "Authorization: Bearer \(token)\r\n" }
     var payload = body
@@ -247,6 +254,17 @@ private struct Harness {
 
     #expect(reply.status == 200)
     #expect(reply.json == ["text": "Olá, tudo bem? Tudo ótimo."])
+    await harness.stop()
+}
+
+@Test func aClientExpecting100ContinueGetsTheFinalResponse() async throws {
+    // curl sends Expect: 100-continue for bodies above 1 MiB.
+    let harness = try await Harness()
+    let reply = try await post(
+        harness.port, body: multipart(file: Data(repeating: 1, count: 2 << 20)), expectContinue: true)
+
+    #expect(reply.status == 200)
+    #expect(reply.json?["text"] as? String == "Olá, tudo bem? Tudo ótimo.")
     await harness.stop()
 }
 
