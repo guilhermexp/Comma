@@ -149,8 +149,26 @@ describe("recordings in Drive", () => {
       { space: "comma-drive", path: "recording/disguised.wav" },
     ]) {
       await expect(store.open(input)).resolves.toMatchObject({ status: "unavailable" });
+      await expect(store.resolveSaved(input)).rejects.toThrow();
     }
     expect(openPath).not.toHaveBeenCalled();
+  });
+
+  it("finds a saved recording's file for another transcription", async () => {
+    const { localRoot, store } = await fixture();
+    await mkdir(join(localRoot, "recording", "2026-10-20"), { recursive: true });
+    const path = join(localRoot, "recording", "2026-10-20", "call.m4a");
+    await writeFile(path, "AAC bytes");
+
+    const saved = await store.resolveSaved({
+      space: "comma-drive",
+      path: "recording/2026-10-20/call.m4a",
+    });
+    expect(saved).toEqual({
+      target: { space: "comma-drive", localRoot },
+      path: await realpath(path),
+      size: 9,
+    });
   });
 
   it("surfaces a default-app failure so the saved card can stay actionable", async () => {

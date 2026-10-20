@@ -4,6 +4,7 @@
 import { generatedNativeMainBindings } from "@comma/native-bridge";
 import type { NativeCommandContract } from "@comma/native-bridge";
 import type { LocalBackendProvider } from "../local-backend/provider";
+import type { LocalTranscriptionProvider } from "../local-transcription/provider";
 import type { ComputerUsePermissionProvider } from "../connector";
 import type { ApplicationMenuProvider } from "../application-menu-provider";
 import type {
@@ -58,6 +59,7 @@ export interface NativeSessionAdmissionGuard {
 
 export type NativeCapabilityProviderMap = {
   localBackend: LocalBackendProvider;
+  localTranscription: LocalTranscriptionProvider;
   computerUse: ComputerUsePermissionProvider;
   applicationMenu: ApplicationMenuProvider;
   nativeInfo: NativeInfoProvider;
@@ -98,6 +100,10 @@ export type NativeCapabilityHandlerTypeMap = {
   "localBackend.state": LocalBackendProvider["state"];
   "localBackend.retry": LocalBackendProvider["retry"];
   "localBackend.showLogs": LocalBackendProvider["showLogs"];
+  "localTranscription.state": LocalTranscriptionProvider["state"];
+  "localTranscription.install": LocalTranscriptionProvider["install"];
+  "localTranscription.cancel": LocalTranscriptionProvider["cancel"];
+  "localTranscription.remove": LocalTranscriptionProvider["remove"];
   "computerUse.getPermissions": ComputerUsePermissionProvider["getPermissions"];
   "computerUse.openPermissionFlow": ComputerUsePermissionProvider["openComputerUsePermissionFlow"];
   "applicationMenu.update": ApplicationMenuProvider["update"];
@@ -240,6 +246,7 @@ export type NativeCapabilityHandlerTypeMap = {
   "audioCapture.start": AudioCaptureProvider["start"];
   "audioCapture.stop": AudioCaptureProvider["stop"];
   "audioCapture.openSaved": AudioCaptureProvider["openSaved"];
+  "audioCapture.transcribeSaved": AudioCaptureProvider["transcribeSaved"];
   "audioCapture.cancel": AudioCaptureProvider["cancel"];
   "audioCapture.pause": AudioCaptureProvider["pause"];
   "audioCapture.resume": AudioCaptureProvider["resume"];
@@ -301,6 +308,14 @@ export function registerGeneratedNativeMainBindings({
     "localBackend.state": async (input) => providers.localBackend.state(input),
     "localBackend.retry": async (input) => providers.localBackend.retry(input),
     "localBackend.showLogs": async (input) => providers.localBackend.showLogs(input),
+    "localTranscription.state": async (input) =>
+      providers.localTranscription.state(input),
+    "localTranscription.install": async (input) =>
+      providers.localTranscription.install(input),
+    "localTranscription.cancel": async (input) =>
+      providers.localTranscription.cancel(input),
+    "localTranscription.remove": async (input) =>
+      providers.localTranscription.remove(input),
     "computerUse.getPermissions": async (input) =>
       providers.computerUse.getPermissions(input),
     "computerUse.openPermissionFlow": async (input) =>
@@ -494,6 +509,8 @@ export function registerGeneratedNativeMainBindings({
     "audioCapture.start": async (input) => providers.audioCapture.start(input),
     "audioCapture.stop": async (input) => providers.audioCapture.stop(input),
     "audioCapture.openSaved": async (input) => providers.audioCapture.openSaved(input),
+    "audioCapture.transcribeSaved": async (input) =>
+      providers.audioCapture.transcribeSaved(input),
     "audioCapture.cancel": async (input) => providers.audioCapture.cancel(input),
     "audioCapture.pause": async (input) => providers.audioCapture.pause(input),
     "audioCapture.resume": async (input) => providers.audioCapture.resume(input),

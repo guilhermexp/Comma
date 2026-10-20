@@ -74,17 +74,17 @@ describe("local backend configuration", () => {
   });
 
   it("logs the configuration without any secret", () => {
-    const config = buildBackendConfig({
+    const withHelper = buildBackendConfig({
       secrets,
       ports,
       logsDir: "/data/logs",
       localTranscription: true,
     });
-    const logged = JSON.stringify(redactSecrets(config, secrets));
+    const logged = JSON.stringify(redactSecrets(withHelper, secrets));
     for (const [name, value] of Object.entries(secrets)) {
       if (name !== "version") expect(logged).not.toContain(value);
     }
-    expect(redactSecrets(config.comma, secrets)).toMatchInlineSnapshot(`
+    expect(redactSecrets(withHelper.comma, secrets)).toMatchInlineSnapshot(`
       {
         "auth": {
           "rate_limit_secret": "[redacted]",
@@ -97,7 +97,7 @@ describe("local backend configuration", () => {
         },
       }
     `);
-    expect(redactSecrets(config.meetings, secrets)).toEqual({
+    expect(redactSecrets(withHelper.meetings, secrets)).toEqual({
       asr_template: "local-meeting-asr",
       local_asr: { base_url: "http://127.0.0.1:51009/v1", api_key: "[redacted]" },
     });

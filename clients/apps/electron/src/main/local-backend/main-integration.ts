@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { LocalBackendStatus } from "@comma/native-bridge";
+import type { LocalBackendStatus, LocalTranscriptionState } from "@comma/native-bridge";
 import { sessionExpectation } from "@comma/session-contract";
 import type { CommaReleaseConfig } from "../../release-config";
 import {
@@ -9,6 +9,7 @@ import {
 } from "../modules/electron-main.module";
 import type { SecureSessionInput } from "../secure-store";
 import { resolveElectronStartupSession } from "../startup-session";
+import { LocalTranscriptionManager } from "../local-transcription/manager";
 import { LocalBackendController } from "./controller";
 import {
   localTranscriberPath,
@@ -32,6 +33,8 @@ export function createMainLocalBackend({
   userData,
   appVersion,
   emitStatus,
+  emitTranscriptionState,
+  systemVersion,
   openPath,
   log,
 }: {
@@ -44,6 +47,9 @@ export function createMainLocalBackend({
   userData: string;
   appVersion: string;
   emitStatus: (status: LocalBackendStatus) => void;
+  emitTranscriptionState: (state: LocalTranscriptionState) => void;
+  /** process.getSystemVersion(): the macOS version, which decides local transcription. */
+  systemVersion: string;
   openPath: (path: string) => Promise<string>;
   log: (message: string) => void;
 }): LocalBackendController | undefined {
@@ -73,10 +79,36 @@ export function createMainLocalBackend({
     log,
     transcriber,
   });
+  const localTranscription = new LocalTranscriptionManager({
+    environment: {
+      localMode: true,
+      arch: process.arch,
+      macosVersion: systemVersion,
+      executable: transcriber?.executable,
+      modelsDir:
+        transcriber?.modelsDir ??
+        resolveLocalTranscriptionModelsDir({
+          appData,
+          userDataOverride: userDataOverridden ? userData : undefined,
+        }),
+    },
+    health: async () => {
+      const url = service.transcriberUrl;
+      if (!url) return undefined;
+      const response = await fetch(`${url}/health`, {
+        signal: AbortSignal.timeout(2_000),
+      });
+      const body = (await response.json()) as { busy?: unknown };
+      return { busy: body.busy === true };
+    },
+    onState: emitTranscriptionState,
+    log,
+  });
   const controller = new LocalBackendController({
     service,
     onStatus: emitStatus,
     openPath,
+    localTranscription,
   });
   return controller;
 }

@@ -6461,6 +6461,24 @@ export type AudioCaptureOpenSavedResult = z.infer<
   typeof audioCaptureOpenSavedResultSchema
 >;
 
+/**
+ * Sends a saved recording through transcription again: one without a
+ * transcript, or whose `.transcript.json` records an error.
+ */
+export const audioCaptureTranscribeSavedResultSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ready") }).strict(),
+  z
+    .object({
+      status: z.literal("failed"),
+      /** `local_asr_model_not_installed` when the local model is missing. */
+      reason: z.string().max(500),
+    })
+    .strict(),
+]);
+export type AudioCaptureTranscribeSavedResult = z.infer<
+  typeof audioCaptureTranscribeSavedResultSchema
+>;
+
 export const audioCaptureApplicationSchema = z
   .object({
     bundleIdentifier: z.string().max(255),
@@ -6726,6 +6744,31 @@ export const audioCaptureOpenSavedCapability = defineNativeCapability({
   permission: "audio-capture.record",
   sessionAdmission: "required",
   webFallback: { status: "unavailable" } as AudioCaptureOpenSavedResult,
+});
+
+export const audioCaptureTranscribeSavedCapability = defineNativeCapability({
+  bridge: { method: "transcribeSaved", namespace: "audioCapture" },
+  channel: "comma:audio-capture:transcribe-saved",
+  handler: {
+    exportName: "AudioCaptureProvider",
+    member: "transcribeSaved",
+    module: "../../../apps/electron/src/main/modules/audio-capture/index",
+    provider: "audioCapture",
+  },
+  id: "audioCapture.transcribeSaved",
+  input: audioCaptureOpenSavedInputSchema,
+  mock: {
+    status: "failed",
+    reason: "unavailable",
+  } as AudioCaptureTranscribeSavedResult,
+  output: audioCaptureTranscribeSavedResultSchema,
+  // Uploads the user's own Drive recording under the same Session as a new one.
+  permission: "audio-capture.record",
+  sessionAdmission: "required",
+  webFallback: {
+    status: "failed",
+    reason: "unavailable",
+  } as AudioCaptureTranscribeSavedResult,
 });
 
 // ---------------------------------------------------------------------------
@@ -8399,10 +8442,210 @@ export const localBackendShowLogsCapability = defineNativeCapability({
   webFallback: { accepted: false },
 });
 
+/**
+ * Local meeting transcription (openspec add-local-meeting-asr, D7): the
+ * speech and speaker models CommaTranscriber installs on this Mac. Main
+ * decides `supported` (Apple Silicon, macOS 15+, local backend) and runs the
+ * helper's install and remove; the renderer only shows the state.
+ */
+export const localTranscriptionUnsupportedReasonSchema = z.enum([
+  "unsupported_cpu",
+  "unsupported_os",
+  "remote_backend",
+  "helper_missing",
+]);
+export type LocalTranscriptionUnsupportedReason = z.output<
+  typeof localTranscriptionUnsupportedReasonSchema
+>;
+
+export const localTranscriptionErrorCodeSchema = z.enum([
+  "unsupported",
+  "network",
+  "checksum_mismatch",
+  "cancelled",
+  "io",
+]);
+export type LocalTranscriptionErrorCode = z.output<
+  typeof localTranscriptionErrorCodeSchema
+>;
+
+export const localTranscriptionStateSchema = z
+  .object({
+    supported: z.boolean(),
+    reason: localTranscriptionUnsupportedReasonSchema.optional(),
+    phase: z.enum(["not_installed", "downloading", "preparing", "ready", "failed"]),
+    /** Downloaded share of the manifest's bytes, only while downloading. */
+    fraction: z.number().min(0).max(1).optional(),
+    /** Total download size from the helper's manifest; 0 until known. */
+    sizeBytes: z.number().int().nonnegative(),
+    error: z
+      .object({ code: localTranscriptionErrorCodeSchema, message: z.string().max(500) })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export type LocalTranscriptionState = z.output<typeof localTranscriptionStateSchema>;
+
+export const unavailableLocalTranscriptionState: LocalTranscriptionState = {
+  supported: false,
+  reason: "remote_backend",
+  phase: "not_installed",
+  sizeBytes: 0,
+};
+
+export const localTranscriptionStateCapability = defineNativeCapability({
+  bridge: { method: "state", namespace: "localTranscription" },
+  channel: "comma:local-transcription:state",
+  handler: {
+    exportName: "LocalTranscriptionProvider",
+    member: "state",
+    module: "../../../apps/electron/src/main/local-transcription/provider",
+    provider: "localTranscription",
+  },
+  id: "localTranscription.state",
+  input: z.void(),
+  mock: unavailableLocalTranscriptionState,
+  output: localTranscriptionStateSchema,
+  permission: "local-transcription.read",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Reports whether this Mac's speech models are installed; no account data is involved.",
+  webFallback: unavailableLocalTranscriptionState,
+});
+
+export const localTranscriptionStateChangedEvent = defineNativeEvent({
+  channel: "comma:local-transcription:state-changed",
+  id: "localTranscription.state.changed",
+  mock: unavailableLocalTranscriptionState,
+  payload: localTranscriptionStateSchema,
+  permission: localTranscriptionStateCapability.permission,
+  target: { type: "all" },
+});
+
+export const localTranscriptionStateLeaf = defineNativeState({
+  bridge: { method: "state", namespace: "localTranscription" },
+  get: localTranscriptionStateCapability,
+  id: "localTranscription.state",
+  subscribe: localTranscriptionStateChangedEvent,
+});
+
+export const localTranscriptionActionResultSchema = z
+  .object({
+    accepted: z.boolean(),
+    /** Why an action was refused: `busy` means a transcription is running. */
+    reason: z.enum(["busy", "in_progress", "unsupported", "not_installed"]).optional(),
+  })
+  .strict();
+export type LocalTranscriptionActionResult = z.output<
+  typeof localTranscriptionActionResultSchema
+>;
+
+const refusedLocalTranscriptionAction: LocalTranscriptionActionResult = {
+  accepted: false,
+  reason: "unsupported",
+};
+
+/** Settings → Meeting → Install: downloads, verifies and prepares the models. */
+export const localTranscriptionInstallCapability = defineNativeCapability({
+  bridge: { method: "install", namespace: "localTranscription" },
+  channel: "comma:local-transcription:install",
+  handler: {
+    exportName: "LocalTranscriptionProvider",
+    member: "install",
+    module: "../../../apps/electron/src/main/local-transcription/provider",
+    provider: "localTranscription",
+  },
+  id: "localTranscription.install",
+  input: z.void(),
+  mock: refusedLocalTranscriptionAction,
+  output: localTranscriptionActionResultSchema,
+  permission: "local-transcription.control",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Downloads the pinned speech models into this Mac's Application Support folder; no account data is involved.",
+  webFallback: refusedLocalTranscriptionAction,
+});
+
+/** Stops a running install; the helper deletes its staging folder. */
+export const localTranscriptionCancelCapability = defineNativeCapability({
+  bridge: { method: "cancel", namespace: "localTranscription" },
+  channel: "comma:local-transcription:cancel",
+  handler: {
+    exportName: "LocalTranscriptionProvider",
+    member: "cancel",
+    module: "../../../apps/electron/src/main/local-transcription/provider",
+    provider: "localTranscription",
+  },
+  id: "localTranscription.cancel",
+  input: z.void(),
+  mock: refusedLocalTranscriptionAction,
+  output: localTranscriptionActionResultSchema,
+  permission: "local-transcription.control",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Stops this Mac's speech model download; no account data is involved.",
+  webFallback: refusedLocalTranscriptionAction,
+});
+
+/** Deletes the models; refused while a transcription runs. */
+export const localTranscriptionRemoveCapability = defineNativeCapability({
+  bridge: { method: "remove", namespace: "localTranscription" },
+  channel: "comma:local-transcription:remove",
+  handler: {
+    exportName: "LocalTranscriptionProvider",
+    member: "remove",
+    module: "../../../apps/electron/src/main/local-transcription/provider",
+    provider: "localTranscription",
+  },
+  id: "localTranscription.remove",
+  input: z.void(),
+  mock: refusedLocalTranscriptionAction,
+  output: localTranscriptionActionResultSchema,
+  permission: "local-transcription.control",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Deletes this Mac's speech models to free disk space; no account data is involved.",
+  webFallback: refusedLocalTranscriptionAction,
+});
+
+/**
+ * A saved recording could not be transcribed because the local model is not
+ * installed. The renderer shows the install notice beside the saved toast.
+ */
+export const localTranscriptionNoticeSchema = z
+  .object({
+    reason: z.literal("local_asr_model_not_installed"),
+    recording: audioCaptureRecordingSchema,
+  })
+  .strict();
+export type LocalTranscriptionNotice = z.output<typeof localTranscriptionNoticeSchema>;
+
+export const localTranscriptionNoticeEvent = defineNativeEvent({
+  channel: "comma:local-transcription:notice",
+  id: "localTranscription.notice",
+  mock: {
+    reason: "local_asr_model_not_installed",
+    recording: {
+      channels: 1,
+      durationMs: 0,
+      driveFile: { space: "drive", path: "recording/2026-01-01/mock.m4a" },
+      file: { mediaType: "audio/mp4", name: "mock.m4a", size: 0 },
+      sampleRate: 48_000,
+    },
+  },
+  payload: localTranscriptionNoticeSchema,
+  permission: localTranscriptionStateCapability.permission,
+  target: { type: "all" },
+});
+
 export const nativeCapabilityRegistry = [
   localBackendStatusCapability,
   localBackendRetryCapability,
   localBackendShowLogsCapability,
+  localTranscriptionStateCapability,
+  localTranscriptionInstallCapability,
+  localTranscriptionCancelCapability,
+  localTranscriptionRemoveCapability,
   computerUsePermissionsCapability,
   computerUsePermissionFlowCapability,
   applicationMenuUpdateCapability,
@@ -8545,6 +8788,7 @@ export const nativeCapabilityRegistry = [
   audioCaptureStartCapability,
   audioCaptureStopCapability,
   audioCaptureOpenSavedCapability,
+  audioCaptureTranscribeSavedCapability,
   audioCaptureCancelCapability,
   audioCapturePauseCapability,
   audioCaptureResumeCapability,
@@ -8589,6 +8833,8 @@ export const nativeCapabilityRegistry = [
 
 export const nativeEventRegistry = [
   localBackendStatusChangedEvent,
+  localTranscriptionStateChangedEvent,
+  localTranscriptionNoticeEvent,
   applicationMenuCommandEvent,
   sitePermissionMenuChangedEvent,
   appPreferencesChangedEvent,
@@ -8619,6 +8865,7 @@ export const nativeEventRegistry = [
 
 export const nativeStateRegistry = [
   localBackendStateLeaf,
+  localTranscriptionStateLeaf,
   sitePermissionMenuStateLeaf,
   appPreferencesStateLeaf,
   connectorRuntimeStateLeaf,

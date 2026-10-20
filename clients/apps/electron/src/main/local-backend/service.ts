@@ -154,6 +154,12 @@ export class LocalBackendService {
     return this.#secrets.adminToken;
   }
 
+  /** The serving transcription helper's loopback URL, when the app bundles one. */
+  get transcriberUrl(): string | undefined {
+    if (!this.#transcriber || !this.#ports) return undefined;
+    return `http://${loopbackHost}:${this.#ports.asr}`;
+  }
+
   get ownerUserId(): string | undefined {
     return this.#state?.ownerUserId;
   }
