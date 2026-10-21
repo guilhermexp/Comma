@@ -19,6 +19,7 @@ import {
 } from "./components/commaAppearance";
 import { CommaSideChatShortcutProvider } from "./components/commaSideChatShortcut";
 import { CommaAppShortcutsProvider } from "./components/shortcuts/commaAppShortcuts";
+import { AgendaRoute, validateAgendaSearch } from "./components/agenda/AgendaRoute";
 import { ConversationRoute } from "./components/chat/conversation/ConversationRoute";
 import { DriveRoute } from "./components/drive/DriveRoute";
 import { InboxWorkspace } from "./components/inbox/InboxRoute";
@@ -263,6 +264,13 @@ const pluginsRoute = createRoute({
   component: PluginsRoute,
 });
 
+const agendaRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: "agenda",
+  component: AgendaRoute,
+  validateSearch: validateAgendaSearch,
+});
+
 // URL for Settings. The product layout renders the Settings surface itself
 // (outside the chat-consumer boundary), so this match stays empty.
 const settingsRoute = createRoute({
@@ -276,6 +284,7 @@ const shellRouteTree = shellRoute.addChildren({
   inboxRouteTree,
   driveRoute,
   pluginsRoute,
+  agendaRoute,
   settingsRoute,
   taskDetailRoute,
   tasksRoute,

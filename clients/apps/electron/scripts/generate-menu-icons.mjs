@@ -14,6 +14,7 @@ const names = {
   "drive-upload-folder": "IconFolderUpload",
   "go-tasks": "IconPlanning",
   "go-plugins": "IconPuzzle",
+  "go-agenda": "IconCalendarDays",
   "go-search": "IconMagnifyingGlass",
   "go-routines": "IconCalendarDays",
   "record-start": "IconMicrophone",

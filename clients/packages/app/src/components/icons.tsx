@@ -1,5 +1,6 @@
 import {
   ArrowLeftIcon,
+  CalendarIcon,
   ArrowRightIcon,
   ArrowUpIcon,
   ChevronDownIcon,
@@ -28,6 +29,7 @@ type CentralAppIcon = ComponentType<{
 }>;
 
 export type AppIconName =
+  | "agenda"
   | "arrow-left"
   | "arrow-right"
   | "arrow-up"
@@ -50,6 +52,7 @@ export type AppIconName =
   | "tasks";
 
 const appIcons: Record<AppIconName, CentralAppIcon> = {
+  agenda: CalendarIcon,
   "arrow-left": ArrowLeftIcon,
   "arrow-right": ArrowRightIcon,
   "arrow-up": ArrowUpIcon,

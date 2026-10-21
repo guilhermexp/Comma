@@ -1,0 +1,10 @@
+/* Tints the theme tokens do not name: the current day's column, days outside
+   the shown month, and the faint part of the "now" rule. */
+.agenda-today,
+.agenda-outside-month {
+  background-color: color-mix(in srgb, var(--color-bg-secondary) 70%, transparent);
+}
+
+.agenda-now-rule {
+  background-color: color-mix(in srgb, var(--color-bg-error-solid) 45%, transparent);
+}

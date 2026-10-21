@@ -75,8 +75,8 @@
 
 ## 3. Interface: seção Agenda (worktree `feat/agenda-ui`)
 
-- [ ] 3.1 Funções puras `agendaDates.ts` (períodos de 3 dias, Semana e Mês, segunda a domingo, total do dia, fuso e dia inteiro) e `agendaLayout.ts` (colunas de sobreposição, faixas de vários dias, encaixe de 15 min), começando por testes que falham com os cenários das specs: "Semana 19 – 25 out 2026", "2 h 45 min", eventos sobrepostos, dia inteiro quinta a sábado e dia inteiro sem deslocamento de fuso. Verificar com `vitest`.
-- [ ] 3.2 Item "Agenda" na sidebar:
+- [x] 3.1 Funções puras `agendaDates.ts` (períodos de 3 dias, Semana e Mês, segunda a domingo, total do dia, fuso e dia inteiro) e `agendaLayout.ts` (colunas de sobreposição, faixas de vários dias, encaixe de 15 min), começando por testes que falham com os cenários das specs: "Semana 19 – 25 out 2026", "2 h 45 min", eventos sobrepostos, dia inteiro quinta a sábado e dia inteiro sem deslocamento de fuso. Verificar com `vitest`.
+- [x] 3.2 Item "Agenda" na sidebar:
   - `sidebarNavOrder.ts`, `SidebarChrome.tsx` e `icons.tsx` (com `CalendarIcon`);
   - rota `#/agenda` em `index.tsx`, com `validateSearch` de `view` e `date`;
   - atalho e menu como os do Drive;
@@ -84,18 +84,18 @@
   - testes existentes de ordem e caminhos atualizados.
 
   Verificar: `sidebarNavOrder.test.ts` com ordem salva antiga, `check-i18n` e `pnpm typecheck`.
-- [ ] 3.3 `AgendaSource` (D5) e `googleCalendarSource` sobre C1, com zod, contas `googlecalendar` vindas da ação `accounts` e mapeamento dos erros para mensagens. Verificar com testes que usam respostas C1 simuladas, incluindo `calendar_write_permission_required` e `calendar_event_conflict`.
-- [ ] 3.4 Estado da Agenda:
+- [x] 3.3 `AgendaSource` (D5) e `googleCalendarSource` sobre C1, com zod, contas `googlecalendar` vindas da ação `accounts` e mapeamento dos erros para mensagens. Verificar com testes que usam respostas C1 simuladas, incluindo `calendar_write_permission_required` e `calendar_event_conflict`.
+- [x] 3.4 Estado da Agenda:
   - fontes, calendários ocultos e zoom em `localStorage` por workspace;
   - busca do período com `AbortController`, a cada 60 s, ao focar e depois de cada escrita;
   - erro isolado por fonte;
   - regra de duplicatas por `ownerEmail`.
 
   Verificar com testes do hook: fonte com erro não esconde as outras, e o calendário Mac da conta conectada começa oculto.
-- [ ] 3.5 Barra (título, zoom de 75% a 200%, painel, 3 dias/Semana/Mês, anterior/Hoje/próximo), `AgendaCalendarPanel` e `AgendaTimeGrid` (cabeçalhos com total, Dia inteiro, horas, faixa e linha do agora, rolagem inicial). Verificar com testes de componente para navegação, zoom no limite e linha do agora, e com uma captura no navegador comparada à referência.
-- [ ] 3.6 `AgendaMonthGrid` com "+N" e a lista do dia. Verificar com um teste de componente do dia com 7 eventos.
-- [ ] 3.7 Criar, mover e redimensionar por arraste (ponteiro, 15 min, auto-rolagem), criar pela linha Dia inteiro e alterações otimistas com reversão. Verificar com testes de componente: mover de quarta 10:00 para sexta 14:00, redimensionar até 13:45 e reversão quando a fonte recusa.
-- [ ] 3.8 `AgendaEventDetails`:
+- [x] 3.5 Barra (título, zoom de 75% a 200%, painel, 3 dias/Semana/Mês, anterior/Hoje/próximo), `AgendaCalendarPanel` e `AgendaTimeGrid` (cabeçalhos com total, Dia inteiro, horas, faixa e linha do agora, rolagem inicial). Verificar com testes de componente para navegação, zoom no limite e linha do agora, e com uma captura no navegador comparada à referência.
+- [x] 3.6 `AgendaMonthGrid` com "+N" e a lista do dia. Verificar com um teste de componente do dia com 7 eventos.
+- [x] 3.7 Criar, mover e redimensionar por arraste (ponteiro, 15 min, auto-rolagem), criar pela linha Dia inteiro e alterações otimistas com reversão. Verificar com testes de componente: mover de quarta 10:00 para sexta 14:00, redimensionar até 13:45 e reversão quando a fonte recusa.
+- [x] 3.8 `AgendaEventDetails`:
   - edição dos campos e de calendário, inclusive o aviso para outra fonte (criar e depois apagar);
   - repetição simples, com "Personalizada" só de leitura;
   - "Só este evento" ou "Todos os eventos";
@@ -103,7 +103,7 @@
   - modo só de leitura.
 
   Verificar com testes de componente dos cenários das specs.
-- [ ] 3.9 E2E (Playwright, web) com a fonte Google simulada: abrir pela sidebar, navegar, criar, mover e apagar. Verificar: o spec novo passa e os specs de sidebar e atalhos continuam passando.
+- [x] 3.9 E2E (Playwright, web) com a fonte Google simulada: abrir pela sidebar, navegar, criar, mover e apagar. Verificar: o spec novo passa e os specs de sidebar e atalhos continuam passando.
 
 ## 4. Integração e prova (worktree `feat/agenda`, depois de 1, 2 e 3)
 
