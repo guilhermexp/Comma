@@ -21,18 +21,27 @@ func write(_ text: String, to root: URL, _ path: String) throws {
     try Data(text.utf8).write(to: url)
 }
 
+let sampleContents = [
+    "asr/Model.mlmodelc/weights/weight.bin": "weights",
+    "asr/vocab.json": "{}",
+    "diar/Segmentation.mlmodelc/model.mil": "mil",
+]
+
+/// Two components: `asr` in folder `asr`, `diarization` in folder `diar`.
 let sampleManifest = ModelManifest(
     id: "sample@1",
     repos: [],
-    files: [
-        .init(path: "asr/Model.mlmodelc/weights/weight.bin", size: 7, sha256: sha256Hex("weights")),
-        .init(path: "asr/vocab.json", size: 2, sha256: sha256Hex("{}")),
-    ]
+    components: [.asr: ["asr"], .diarization: ["diar"]],
+    files: sampleContents.keys.sorted().map {
+        .init(path: $0, size: Int64(sampleContents[$0]!.utf8.count), sha256: sha256Hex(sampleContents[$0]!))
+    }
 )
 
-func writeSampleModel(to root: URL) throws {
-    try write("weights", to: root, "asr/Model.mlmodelc/weights/weight.bin")
-    try write("{}", to: root, "asr/vocab.json")
+/// Writes the files of `manifest` (the whole sample by default).
+func writeSampleModel(to root: URL, manifest: ModelManifest = sampleManifest) throws {
+    for file in manifest.files {
+        try write(sampleContents[file.path]!, to: root, file.path)
+    }
 }
 
 @Test func matchingFilesVerify() throws {
@@ -96,6 +105,9 @@ func writeSampleModel(to root: URL) throws {
         "asr/Model.mlmodelc/weights",
         "asr/Model.mlmodelc/weights/weight.bin",
         "asr/vocab.json",
+        "diar",
+        "diar/Segmentation.mlmodelc",
+        "diar/Segmentation.mlmodelc/model.mil",
     ])
 }
 
@@ -123,4 +135,17 @@ func writeSampleModel(to root: URL) throws {
     #expect(manifest.files.count > 0)
     #expect(manifest.totalBytes == manifest.files.reduce(0) { $0 + $1.size })
     #expect(Set(manifest.repos.map(\.folder)) == ["parakeet-tdt-0.6b-v3", "speaker-diarization"])
+    #expect(manifest.components == [.asr: ["parakeet-tdt-0.6b-v3"], .diarization: ["speaker-diarization"]])
+    // Every file belongs to exactly one component.
+    #expect(manifest.subset([.asr]).files.count + manifest.subset([.diarization]).files.count == manifest.files.count)
+    #expect(manifest.bytes(of: .diarization) < 30_000_000)
+}
+
+@Test func aComponentSubsetKeepsOnlyItsFolders() {
+    let diarization = sampleManifest.subset([.diarization])
+    #expect(diarization.id == sampleManifest.id)
+    #expect(diarization.files.map(\.path) == ["diar/Segmentation.mlmodelc/model.mil"])
+    #expect(diarization.components == [.diarization: ["diar"]])
+    #expect(sampleManifest.bytes(of: .asr) == 9)
+    #expect(sampleManifest.subset([.asr, .diarization]) == sampleManifest)
 }

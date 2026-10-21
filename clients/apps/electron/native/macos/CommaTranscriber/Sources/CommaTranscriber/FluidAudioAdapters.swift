@@ -58,17 +58,17 @@ struct FluidModelDownloader: ModelDownloading {
     }
 }
 
-/// Loads every model once so Core ML compiles it for this Mac now, then
-/// drops the references.
+/// Loads every model of the installed components once so Core ML compiles
+/// it for this Mac now, then drops the references.
 struct FluidModelPreparer: ModelPreparing {
-    func prepare(installed: URL) async throws {
+    func prepare(installed: URL, components: Set<ModelComponent>) async throws {
         ModelHub.offlineMode = true
-        do {
+        if components.contains(.asr) {
             _ = try AsrModels.loadLocal(
                 from: asrDirectory(installed), version: .v3, encoderPrecision: encoderPrecision,
                 encoderComputeUnits: .cpuAndNeuralEngine)
         }
-        do {
+        if components.contains(.diarization) {
             _ = try await OfflineDiarizerModels.load(from: installed, configuration: neuralEngineConfiguration())
         }
     }
