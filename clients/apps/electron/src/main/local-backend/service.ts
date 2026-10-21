@@ -109,6 +109,7 @@ export class LocalBackendService {
   readonly #onSnapshot: (snapshot: LocalBackendSnapshot) => void;
   readonly #log: (message: string) => void;
   readonly #transcriber: LocalTranscriber | undefined;
+  readonly #onTranscriberStarted: () => void;
   #snapshot: LocalBackendSnapshot;
   #secrets: LocalBackendSecrets | undefined;
   #ports: LocalBackendPorts | undefined;
@@ -124,6 +125,11 @@ export class LocalBackendService {
     log?: ((message: string) => void) | undefined;
     /** Absent when the app has no helper: meeting ASR then stays unconfigured. */
     transcriber?: LocalTranscriber | undefined;
+    /**
+     * Each start of the helper, the first once it serves and every restart
+     * as it spawns; the helper keeps the meeting provider only in memory.
+     */
+    onTranscriberStarted?: (() => void) | undefined;
   }) {
     this.#layout = options.layout;
     this.#paths = localBackendPaths(options.layout);
@@ -132,6 +138,7 @@ export class LocalBackendService {
     this.#onSnapshot = options.onSnapshot ?? (() => undefined);
     this.#log = options.log ?? (() => undefined);
     this.#transcriber = options.transcriber;
+    this.#onTranscriberStarted = options.onTranscriberStarted ?? (() => undefined);
     this.#snapshot = {
       phase: "idle",
       logsDir: this.#paths.logsDir,
@@ -158,6 +165,12 @@ export class LocalBackendService {
   get transcriberUrl(): string | undefined {
     if (!this.#transcriber || !this.#ports) return undefined;
     return `http://${loopbackHost}:${this.#ports.asr}`;
+  }
+
+  /** Main-only: the helper's bearer for its provider routes (contract C6). */
+  get transcriberToken(): string | undefined {
+    if (!this.#transcriber) return undefined;
+    return this.#secrets?.asrToken;
   }
 
   get ownerUserId(): string | undefined {
@@ -585,6 +598,7 @@ export class LocalBackendService {
     return new ProcessSupervisor({
       spawn: (spec) => this.#runtime.spawn(spec),
       onStarted: (name, handle) => {
+        if (name === "asr") this.#onTranscriberStarted();
         if (handle.pid === undefined) return;
         const executable = this.#runtime.executableOf(handle.pid);
         if (!executable) return;

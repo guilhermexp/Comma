@@ -786,6 +786,8 @@ function sampleCommandInput(id: string) {
       return { index: 0, requestId: "11111111-1111-4111-8111-111111111111" };
     case "meetingRecorder.action":
       return { action: "start", meetingKey: "zoom:1", generation: 0 };
+    case "meetingTranscription.setProvider":
+      return { kind: "groq", model: "whisper-large-v3", apiKey: "gsk_sample" };
     case "meetingRecorder.selectMicrophone":
       return { deviceId: "default", meetingKey: "zoom:1", generation: 0 };
     case "meetingRecorder.acknowledgeSaved":
