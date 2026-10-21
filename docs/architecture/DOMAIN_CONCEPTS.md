@@ -642,6 +642,51 @@ Implementation: [route composition](../../clients/packages/app/src/components/dr
 [member read](../../systems/apps/comma_web/lib/comma_web/google_drive_browser.ex).
 See [the user procedure](../user_manual/comma/google-drive.md).
 
+### Agenda event projection
+
+The Agenda route shows a member's Google Calendar and Mac Calendar events in
+one grid. Each event is a transient projection of its source for the visible
+period, not a new event identity, replica or lifecycle owner. No entity is
+added: the existing source objects, the member's Composio account and the
+local Calendar permission represent the required behavior.
+
+The source owns each event. Google owns calendar IDs, event and series IDs,
+etags, recurrence and access roles; the reader's `googlecalendar` account in
+ComposioAccess owns the relationship. The macOS Calendar database owns Mac
+calendars and events, with Comma's own Calendar permission. The client key
+`source:account:calendar:event` only addresses an event on screen. A Mac
+occurrence is addressed by its series `calendarItemIdentifier` and original
+occurrence date.
+
+The screen reads the visible period (at most 62 days) when it opens, on
+navigation, on focus, every 60 s while visible, after each write and, on the
+Mac, when the Calendar database revision grows. Results stay in memory. Comma
+stores no event row, cache or background sync. Only the zoom, the hidden
+calendars, the panel state and the last calendar used stay in browser storage
+per Workspace. Each write goes to the event's own source and calendar. A move
+to another source or account creates the event in the target first and deletes
+the original only after that succeeds.
+
+Google calls use the closed `google_calendar` Composio action. The server
+fixes each tool slug and rechecks the Workspace, the exact account owner, the
+toolkit, the mode and the active status before and after the provider call. Mac
+events stay on this computer: the `calendar.*` leaves are `local_only`, and
+neither the backend, Sessions nor logs receive event content. Mac calendars of a
+connected Google account start hidden to avoid duplicates.
+
+The Group-scoped [Calendar Item](#6-files-and-proactive-work) in `salix_calendar`
+is a separate, read-only projection for Agent work. The Agenda does not read or
+write it, and Agenda edits create no Calendar Item, Task or Routine source.
+Implementation: [route and screen](../../clients/packages/app/src/components/agenda/AgendaRoute.tsx),
+[source model](../../clients/packages/app/src/components/agenda/agendaSource.ts),
+[Google source](../../clients/packages/app/src/components/agenda/googleCalendarSource.ts),
+[Mac source](../../clients/packages/app/src/components/agenda/macCalendarSource.ts),
+[screen state](../../clients/packages/app/src/components/agenda/useAgendaData.ts),
+[member action](../../systems/apps/comma_web/lib/comma_web/google_calendar_agenda.ex),
+[fixed-slug executors](../../systems/apps/salix_web/lib/salix/control/composio_connect.ex),
+[Mac provider](../../clients/apps/electron/src/main/modules/calendar/index.ts),
+[EventKit addon](../../clients/apps/electron/native/macos/CalendarKit/src/calendar_kit.mm).
+
 ### Composio Connect access
 
 Composio Connect reuses OAuth credentials, provider account references, Agent grants,
