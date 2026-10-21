@@ -53,7 +53,10 @@ it("asks for the Mac Calendar on every macOS version, saying Comma reads and edi
     await readFile(join(resources, "pt_BR.lproj", "InfoPlist.strings"))
   ).toString("utf16le");
   // macOS 14+ reads the full-access key; macOS 13 and earlier only the other.
-  for (const key of ["NSCalendarsFullAccessUsageDescription", "NSCalendarsUsageDescription"]) {
+  for (const key of [
+    "NSCalendarsFullAccessUsageDescription",
+    "NSCalendarsUsageDescription",
+  ]) {
     expect(portuguese).toContain(`"${key}" = "`);
   }
   const english = macosUsageDescriptions("en");

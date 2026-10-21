@@ -7069,12 +7069,8 @@ export const calendarEventResultSchema = z.union([
 ]);
 export type CalendarEventResult = z.infer<typeof calendarEventResultSchema>;
 
-export const calendarDeleteEventResultSchema = z.union([
-  z.void(),
-  calendarErrorSchema,
-]);
+export const calendarDeleteEventResultSchema = z.union([z.void(), calendarErrorSchema]);
 export type CalendarDeleteEventResult = z.infer<typeof calendarDeleteEventResultSchema>;
-
 
 export const calendarStateCapability = defineNativeCapability({
   bridge: { method: "state", namespace: "calendar" },

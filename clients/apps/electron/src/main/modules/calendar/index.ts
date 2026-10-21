@@ -70,7 +70,11 @@ function assertEventBounds(
       }
     }
   }
-  if (start !== undefined && end !== undefined && !(Date.parse(end) > Date.parse(start))) {
+  if (
+    start !== undefined &&
+    end !== undefined &&
+    !(Date.parse(end) > Date.parse(start))
+  ) {
     throw new RangeError(`${operation}: the event must end after it starts.`);
   }
 }

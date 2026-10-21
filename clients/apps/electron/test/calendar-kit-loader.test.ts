@@ -13,14 +13,19 @@ const fixture = (name: string) =>
 describe("calendar addon candidate paths", () => {
   it("loads only the bundled binary in a packaged app", () => {
     expect(
-      calendarKitCandidateBinaryPaths({ isPackaged: true, resourcesPath: "/App/Resources" })
+      calendarKitCandidateBinaryPaths({
+        isPackaged: true,
+        resourcesPath: "/App/Resources",
+      })
     ).toEqual([resolve("/App/Resources/native/macos", calendarKitAddonFileName)]);
   });
 
   it("prefers dist/native and then the node-gyp output from source", () => {
     const cwd = "/repo/clients";
     const candidates = calendarKitCandidateBinaryPaths({ cwd, resourcesPath: "" });
-    expect(candidates[0]).toBe(resolve(cwd, "dist/native/macos", calendarKitAddonFileName));
+    expect(candidates[0]).toBe(
+      resolve(cwd, "dist/native/macos", calendarKitAddonFileName)
+    );
     expect(candidates).toContain(
       resolve(
         cwd,

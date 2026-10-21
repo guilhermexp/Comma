@@ -54,7 +54,10 @@ function fakeAddon(overrides: Partial<CalendarKitAddon> = {}) {
   return { addon, change: () => listener?.(), observing: () => listener !== undefined };
 }
 
-function service(addon: CalendarKitAddon, extra: Partial<ConstructorParameters<typeof CalendarService>[0]> = {}) {
+function service(
+  addon: CalendarKitAddon,
+  extra: Partial<ConstructorParameters<typeof CalendarService>[0]> = {}
+) {
   const published: CalendarState[] = [];
   const logger = { warn: vi.fn() };
   const calendar = new CalendarService({
@@ -80,7 +83,9 @@ describe("CalendarService limits", () => {
       title: `Calendar ${index}`,
       writable: true,
     }));
-    const { calendar } = service(fakeAddon({ calendars: async () => ({ calendars }) }).addon);
+    const { calendar } = service(
+      fakeAddon({ calendars: async () => ({ calendars }) }).addon
+    );
     const result = await calendar.calendars();
     expect("calendars" in result && result.calendars).toHaveLength(500);
   });
@@ -94,7 +99,11 @@ describe("CalendarService limits", () => {
     }));
     const { calendar } = service(fakeAddon({ events }).addon);
     const result = await calendar.events({ calendarIds: ["cal-1"], ...week });
-    expect(events).toHaveBeenCalledWith({ calendarIds: ["cal-1"], ...week, limit: 2_500 });
+    expect(events).toHaveBeenCalledWith({
+      calendarIds: ["cal-1"],
+      ...week,
+      limit: 2_500,
+    });
     expect(result).toMatchObject({ truncated: true });
     expect("events" in result && result.events).toHaveLength(2_500);
   });
@@ -113,7 +122,10 @@ describe("CalendarService limits", () => {
       calendar.events({ calendarIds: ["cal-1"], start: week.end, end: week.start })
     ).rejects.toThrow(RangeError);
     await expect(
-      calendar.events({ calendarIds: Array.from({ length: 501 }, (_, i) => `c${i}`), ...week })
+      calendar.events({
+        calendarIds: Array.from({ length: 501 }, (_, i) => `c${i}`),
+        ...week,
+      })
     ).rejects.toThrow(RangeError);
     expect(events).not.toHaveBeenCalled();
   });
@@ -136,7 +148,12 @@ describe("CalendarService limits", () => {
     await expect(
       calendar.createEvent({
         calendarId: "cal-1",
-        event: { ...base, allDay: true, start: "2026-10-21T10:00:00Z", end: "2026-10-22" },
+        event: {
+          ...base,
+          allDay: true,
+          start: "2026-10-21T10:00:00Z",
+          end: "2026-10-22",
+        },
       })
     ).rejects.toThrow(RangeError);
     expect(createEvent).not.toHaveBeenCalled();
@@ -145,7 +162,12 @@ describe("CalendarService limits", () => {
 
 describe("CalendarService access and errors", () => {
   it("answers calendar_access_denied without reading when access is not full", async () => {
-    for (const access of ["notDetermined", "denied", "restricted", "writeOnly"] as const) {
+    for (const access of [
+      "notDetermined",
+      "denied",
+      "restricted",
+      "writeOnly",
+    ] as const) {
       const calendars = vi.fn();
       const { calendar } = service(
         fakeAddon({ accessStatus: () => access, calendars }).addon
@@ -154,7 +176,11 @@ describe("CalendarService access and errors", () => {
         error: "calendar_access_denied",
       });
       await expect(
-        calendar.deleteEvent({ eventId: "item-1", occurrenceDate: null, scope: "instance" })
+        calendar.deleteEvent({
+          eventId: "item-1",
+          occurrenceDate: null,
+          scope: "instance",
+        })
       ).resolves.toEqual({ error: "calendar_access_denied" });
       expect(calendars).not.toHaveBeenCalled();
     }
@@ -195,7 +221,8 @@ describe("CalendarService access and errors", () => {
   it("is unavailable without the addon and never asks the OS", async () => {
     const requestAccess = vi.fn();
     const { calendar } = service(
-      fakeAddon({ loaded: false, accessStatus: () => "unavailable", requestAccess }).addon
+      fakeAddon({ loaded: false, accessStatus: () => "unavailable", requestAccess })
+        .addon
     );
     await expect(calendar.state()).resolves.toEqual({
       access: "unavailable",
@@ -203,7 +230,9 @@ describe("CalendarService access and errors", () => {
       revision: 1,
     });
     await expect(calendar.requestAccess()).resolves.toBe("unavailable");
-    await expect(calendar.calendars()).resolves.toEqual({ error: "calendar_unavailable" });
+    await expect(calendar.calendars()).resolves.toEqual({
+      error: "calendar_unavailable",
+    });
     expect(requestAccess).not.toHaveBeenCalled();
   });
 
@@ -220,7 +249,11 @@ describe("CalendarService access and errors", () => {
     expect(fake.observing()).toBe(false);
 
     await expect(calendar.requestAccess()).resolves.toBe("fullAccess");
-    expect(published.at(-1)).toEqual({ access: "fullAccess", available: true, revision: 2 });
+    expect(published.at(-1)).toEqual({
+      access: "fullAccess",
+      available: true,
+      revision: 2,
+    });
     expect(fake.observing()).toBe(true);
   });
 
@@ -255,7 +288,9 @@ describe("CalendarService change notices", () => {
       fake.change();
       expect(published).toEqual([]);
       vi.advanceTimersByTime(1);
-      expect(published).toEqual([{ access: "fullAccess", available: true, revision: 2 }]);
+      expect(published).toEqual([
+        { access: "fullAccess", available: true, revision: 2 },
+      ]);
       fake.change();
       vi.advanceTimersByTime(500);
       expect(published.map((state) => state.revision)).toEqual([2, 3]);
@@ -272,7 +307,9 @@ describe("CalendarService logs", () => {
     const { calendar, logger } = service(
       fakeAddon({
         updateEvent: async () => {
-          throw new Error(`failed to save ${secretTitle} at ${secretLocation}: ${secretNotes}`);
+          throw new Error(
+            `failed to save ${secretTitle} at ${secretLocation}: ${secretNotes}`
+          );
         },
         events: async () => ({ error: "calendar_unavailable" }),
       }).addon

@@ -48,7 +48,10 @@ export const notificationSoundPath = resolve(
   "../../packages/app/src/components/notifications/assets/notification.wav"
 );
 // The packaged ad hoc build's entitlements, so EventKit sees the same grant.
-const devEntitlementsPath = resolve(appRoot, "build/entitlements.mac.adhoc.entitlements");
+const devEntitlementsPath = resolve(
+  appRoot,
+  "build/entitlements.mac.adhoc.entitlements"
+);
 /**
  * Privacy texts the stock Electron.app lacks. TCC terminates a process that
  * asks for the Calendar without them, so the bundle carries them too.

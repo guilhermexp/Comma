@@ -116,7 +116,13 @@ export function calendarKitCandidateBinaryPaths({
     resolve(cwd, "apps/electron/dist/native/macos", calendarKitAddonFileName),
     ...["Debug", "Release"].flatMap((configuration) => [
       resolve(cwd, gypOutput, configuration, "comma_calendar_kit.node"),
-      resolve(cwd, "apps/electron", gypOutput, configuration, "comma_calendar_kit.node"),
+      resolve(
+        cwd,
+        "apps/electron",
+        gypOutput,
+        configuration,
+        "comma_calendar_kit.node"
+      ),
       resolve(
         cwd,
         "clients/apps/electron",
@@ -174,7 +180,10 @@ function wrapNativeAddon(
     updateEvent: (input) => call("updateEvent", input),
     // A successful delete answers `{}` across the binding; the contract says void.
     deleteEvent: async (input) => {
-      const result = await call<CalendarDeleteEventResult | object>("deleteEvent", input);
+      const result = await call<CalendarDeleteEventResult | object>(
+        "deleteEvent",
+        input
+      );
       return result && "error" in result ? result : undefined;
     },
     observeChanges(listener) {
@@ -202,7 +211,9 @@ export function loadCalendarKitAddon(
   }
 
   // See NotificationAuthorization: Vite empties `import.meta` in bundled Main.
-  const require = createRequire(resolve(process.cwd(), "comma-calendar-kit-loader.cjs"));
+  const require = createRequire(
+    resolve(process.cwd(), "comma-calendar-kit-loader.cjs")
+  );
   const candidates = calendarKitCandidateBinaryPaths({
     ...(options.binaryPath !== undefined ? { explicitPath: options.binaryPath } : {}),
     ...(options.isPackaged !== undefined ? { isPackaged: options.isPackaged } : {}),
