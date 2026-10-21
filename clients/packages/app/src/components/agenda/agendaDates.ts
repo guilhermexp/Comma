@@ -193,11 +193,12 @@ export function systemTimeZone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
+const pad = (value: number) => String(Math.abs(value)).padStart(2, "0");
+
 /** ISO instant with the local offset: what C1 calls "ISO com offset". */
 export function localIsoString(date: Date) {
   const offset = -date.getTimezoneOffset();
   const sign = offset >= 0 ? "+" : "-";
-  const pad = (value: number) => String(Math.abs(value)).padStart(2, "0");
   return (
     `${dateKey(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` +
     `${sign}${pad(Math.trunc(offset / 60))}:${pad(offset % 60)}`

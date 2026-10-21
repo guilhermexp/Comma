@@ -89,6 +89,17 @@ function inputBody(input: Partial<AgendaEventInput>) {
   return body;
 }
 
+// A series is addressed by its series id; an occurrence by its own id and
+// the etag it was read with.
+function target(event: AgendaEvent, scope: AgendaScope) {
+  return {
+    calendar_id: event.calendarId,
+    event_id: scope === "series" ? (event.seriesId ?? event.id) : event.id,
+    scope,
+    ...(scope === "instance" && event.etag ? { etag: event.etag } : {}),
+  };
+}
+
 export function googleCalendarSource(
   api: CommaApiClient,
   workspace: string,
@@ -119,14 +130,6 @@ export function googleCalendarSource(
     color: event.color,
     editable: event.editable,
     etag: event.etag,
-  });
-  // A series is addressed by its series id; an occurrence by its own id and
-  // the etag it was read with.
-  const target = (event: AgendaEvent, scope: AgendaScope) => ({
-    calendar_id: event.calendarId,
-    event_id: scope === "series" ? (event.seriesId ?? event.id) : event.id,
-    scope,
-    ...(scope === "instance" && event.etag ? { etag: event.etag } : {}),
   });
 
   return {
@@ -210,6 +213,15 @@ export function googleCalendarSource(
   };
 }
 
+function usable(item: ComposioAccount, mode: string) {
+  return (
+    item.toolkit === "googlecalendar" &&
+    item.status === "ACTIVE" &&
+    item.enabled &&
+    item.mode === mode
+  );
+}
+
 export type GoogleCalendarAccounts = {
   accounts: ComposioAccount[];
   /** Remote accounts the reader may adopt when none is connected yet. */
@@ -229,11 +241,6 @@ export async function listGoogleCalendarAccounts(
 ): Promise<GoogleCalendarAccounts> {
   let result = await api.getComposio(workspace, { signal });
   let candidates: ComposioAccount[] = [];
-  const usable = (item: ComposioAccount, mode: string) =>
-    item.toolkit === "googlecalendar" &&
-    item.status === "ACTIVE" &&
-    item.enabled &&
-    item.mode === mode;
   if (
     result.mode === "connect" &&
     result.status === "connected" &&

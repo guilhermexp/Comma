@@ -228,9 +228,14 @@ export function useAgendaData({
   }, [entries, calendarStates, isVisible]);
 
   // Events of the visible period, per source.
+  const startTime = start.getTime();
+  const endTime = end.getTime();
   const range = useMemo(
-    () => ({ start: localIsoString(start), end: localIsoString(end) }),
-    [start.getTime(), end.getTime()]
+    () => ({
+      start: localIsoString(new Date(startTime)),
+      end: localIsoString(new Date(endTime)),
+    }),
+    [startTime, endTime]
   );
   const latest = useRef({ range, visibleIds });
   latest.current = { range, visibleIds };
@@ -529,12 +534,17 @@ export function useAgendaData({
       []
     ),
     lastCalendarKey: preferences.lastCalendarKey,
-    retry: useCallback((entryKey: string) => {
-      setCalendarRetry((value) => ({
-        ...value,
-        [entryKey]: (value[entryKey] ?? 0) + 1,
-      }));
-    }, []),
+    retry: useCallback(
+      (entryKey: string) => {
+        setCalendarRetry((value) => ({
+          ...value,
+          [entryKey]: (value[entryKey] ?? 0) + 1,
+        }));
+        const entry = entriesRef.current.find((item) => item.key === entryKey);
+        if (entry) void loadEvents(entry);
+      },
+      [loadEvents]
+    ),
     refresh,
     create,
     update,
