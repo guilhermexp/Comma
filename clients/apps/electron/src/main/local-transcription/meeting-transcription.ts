@@ -76,6 +76,8 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
     this.#onState = options.onState;
     this.#log = options.log ?? (() => undefined);
     this.#record = this.#store.read();
+    // A helper starts with Local, so a saved Local choice is already applied.
+    if (this.#record.selected === "local") this.#acknowledged = this.#revision;
   }
 
   /** True while a cloud provider is selected; Remove then keeps the separator (D3). */
@@ -258,15 +260,34 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
   }
 
   /**
-   * The helper takes the new provider before it is saved: a change it does
-   * not acknowledge is refused and the saved one stays. The helper may still
-   * have applied it, so the saved one becomes unacknowledged and goes again.
+   * Local (also after deleting the key) is never refused: it is saved at
+   * once and sent until the helper acknowledges it, with `applying` in the
+   * state meanwhile. A cloud provider goes to the helper before it is saved:
+   * a change it does not acknowledge is refused and the saved one stays. The
+   * helper may still have applied it, so the saved one becomes
+   * unacknowledged and goes again.
    */
   async #select(
     record: StoredMeetingRecord,
     verification: Verification
   ): Promise<MeetingTranscriptionActionResult> {
     const provider = selectedProvider(record);
+    if (provider.kind === "local") {
+      try {
+        this.#store.write(record);
+      } catch (error) {
+        if (error instanceof Error && error.message === "secure_storage_unavailable")
+          return { accepted: false, reason: "secure_storage_unavailable" };
+        throw error;
+      }
+      this.#record = record;
+      this.#revision++;
+      this.#verification = verification;
+      this.#log("Meeting transcription uses this Mac.");
+      await this.#queueDelivery(() => this.#deliverNow());
+      this.localChanged();
+      return { accepted: true };
+    }
     const acknowledged = await this.#queueDelivery(async () => {
       for (let attempt = 0; attempt < changeAttempts; attempt++) {
         if (attempt > 0)
@@ -294,9 +315,7 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
     this.#cancelRetry();
     this.#verification = verification;
     this.#log(
-      provider.kind === "local"
-        ? "Meeting transcription uses this Mac."
-        : `Meeting transcription uses ${provider.kind} at ${new URL(provider.baseUrl).host} (${provider.model}).`
+      `Meeting transcription uses ${provider.kind} at ${new URL(provider.baseUrl).host} (${provider.model}).`
     );
     this.localChanged();
     return { accepted: true };
@@ -327,6 +346,7 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
     if (revision === this.#revision) {
       this.#acknowledged = revision;
       this.#cancelRetry();
+      this.#publish();
     }
     return true;
   }
@@ -335,6 +355,7 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
   #unacknowledged() {
     this.#revision++;
     this.#scheduleRetry();
+    this.#publish();
   }
 
   #scheduleRetry() {
@@ -371,7 +392,12 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
           },
         }
       : {};
-    const base = { provider: selected, diarization, ...cloud } as const;
+    const base = {
+      provider: selected,
+      diarization,
+      ...cloud,
+      ...(this.#acknowledged === this.#revision ? {} : { applying: true as const }),
+    } as const;
     if (!local.supported) return { ...base, ready: false, reason: "unsupported" };
     const storageReason = this.#store.available()
       ? undefined

@@ -135,7 +135,8 @@ const cloudBody = (body) =>
 // helper does after a job that no local model took over. PUT
 // /fake/provider-ack {"mode":"ok"|"refuse"|"lost"} makes /v1/provider answer
 // 503 without applying ("refuse") or after applying ("lost": an
-// acknowledgment that never reaches Main).
+// acknowledgment that never reaches Main). POST /v1/audio/transcriptions
+// answers with the provider a job would use.
 if (command === "serve") {
   const token = readFileSync(option("--token-file"), "utf8").trim();
   let provider = { kind: "local" };
@@ -176,6 +177,9 @@ if (command === "serve") {
       response.writeHead(204);
       return response.end();
     }
+    // A job runs with whatever provider the helper holds at that moment.
+    if (request.method === "POST" && request.url === "/v1/audio/transcriptions")
+      return json(response, 200, { text: "", provider: provider.kind });
     if (request.method === "PUT" && request.url === "/fake/provider-ack") {
       ackMode = body.mode;
       response.writeHead(204);

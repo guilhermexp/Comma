@@ -353,6 +353,9 @@ The key:
   Comma never stores the key as plain text.
 - Selecting Local keeps the saved key. Delete removes it. If that provider was
   selected, the engine goes back to Local.
+- Selecting Local and Delete always apply at once, also when the helper is
+  busy. Until the helper confirms, the engine shows Checking, and Comma sends
+  Local to it again before the next transcription it starts.
 
 Groq free plan limits: 20 requests per minute, 2,000 requests per day,
 7,200 seconds of audio per hour, and 28,800 seconds per day. A two-hour

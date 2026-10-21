@@ -110,6 +110,15 @@ describe("Settings → Meeting → Transcription engine (add-cloud-meeting-asr, 
     expect(screen.getByText("Speech model")).toBeTruthy();
   });
 
+  it("shows Checking while a Local switch has not reached the helper yet", async () => {
+    renderSection(
+      { provider: "local", ready: true, diarization: "not_installed", applying: true },
+      { localState: localReady }
+    );
+    expect(await engine()).toHaveTextContent("Local (on this Mac)");
+    expect(screen.getByText("Checking…")).toBeTruthy();
+  });
+
   it("asks only for a masked key and a Groq model, and saves after verification", async () => {
     const verification = Promise.withResolvers<MeetingTranscriptionActionResult>();
     const { setProvider } = renderSection(local, { result: verification.promise });

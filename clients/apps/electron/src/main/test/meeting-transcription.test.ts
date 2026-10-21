@@ -152,6 +152,16 @@ async function fixture(
       headers: { authorization: `Bearer ${token}` },
       body: JSON.stringify({ mode }),
     });
+  /** The provider a job sent to the helper now would use. */
+  const jobProvider = async () =>
+    (
+      (await (
+        await fetch(`${url}/v1/audio/transcriptions`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).json()) as { provider: string }
+    ).provider;
   const processes = () =>
     readFileSync(argvLog, "utf8")
       .trim()
@@ -169,6 +179,7 @@ async function fixture(
     delivered,
     failCloud,
     helperAck,
+    jobProvider,
     processes,
     startHelper,
     stopHelper,
@@ -391,6 +402,51 @@ describe("meeting transcription provider (openspec add-cloud-meeting-asr)", () =
       model: "whisper-large-v3",
     });
     expect(await service.ensureDelivered()).toBe(false);
+  });
+
+  it("never refuses Local or deleting the key, and applies them before the next job", async () => {
+    const { service, root, store, delivered, helperAck, jobProvider } = await fixture({
+      fetch: groqFetch({ [groqKey]: 200 }),
+    });
+    expect(await service.setProvider(groq)).toEqual({ accepted: true });
+
+    // The helper is busy and keeps Groq: Local is still saved and accepted.
+    await helperAck("refuse");
+    expect(await service.setProvider({ kind: "local" })).toEqual({ accepted: true });
+    expect(store.read()).toMatchObject({ selected: "local" });
+    expect(await service.state()).toMatchObject({ provider: "local", applying: true });
+    expect((await delivered()).provider).toMatchObject({ kind: "groq" });
+
+    // Deleting the key removes it from disk at once, unacknowledged too.
+    expect(await service.clearKey()).toEqual({ accepted: true });
+    expect(existsSync(join(root, "asr-provider.bin"))).toBe(false);
+    expect((await service.state()).cloud).toBeUndefined();
+
+    // The helper answers again: the hook that runs before every job
+    // (beforeTranscribe) gives it Local, so the job never reaches Groq.
+    await helperAck("ok");
+    await service.ensureDelivered();
+    expect(await jobProvider()).toBe("local");
+    expect((await delivered()).provider).toEqual({ kind: "local" });
+    expect((await service.state()).applying).toBeUndefined();
+  });
+
+  it("applies an unacknowledged Local switch in the background", async () => {
+    const { service, helperAck, jobProvider } = await fixture({
+      fetch: groqFetch({ [groqKey]: 200 }),
+    });
+    await service.setProvider(groq);
+    await helperAck("refuse");
+    expect(await service.setProvider({ kind: "local" })).toEqual({ accepted: true });
+    await helperAck("ok");
+
+    await vi.waitFor(async () => expect(await jobProvider()).toBe("local"), {
+      timeout: 5_000,
+      interval: 100,
+    });
+    await vi.waitFor(async () =>
+      expect((await service.state()).applying).toBeUndefined()
+    );
   });
 
   it("retries an unacknowledged provider in the background until the helper takes it", async () => {

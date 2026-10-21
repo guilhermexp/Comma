@@ -139,7 +139,7 @@ export function useMeetingTranscriptionSection(): {
     : m.settings_meeting_transcription_privacy_local();
 
   const engineStatus: SettingsPanelItem["status"] =
-    verification === "checking"
+    verification === "checking" || state.applying
       ? { label: m.settings_meeting_transcription_status_checking(), color: "blue" }
       : state.reason === "key_rejected"
         ? { label: m.settings_meeting_transcription_status_rejected(), color: "error" }

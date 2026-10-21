@@ -52,7 +52,7 @@ Alternativa descartada: o backend chamar a Groq direto. Exigiria ffmpeg para cor
   - Sem `cloud`, o arquivo não existe.
 - **Entrega:** depois que o helper fica pronto, a cada reinício dele e a cada mudança de configuração, o Electron faz `PUT /v1/provider` (C6) com o token do helper. O helper guarda a configuração só em memória.
 - **Reenvio:** `/health` informa `provider.configured`. Se o helper reiniciou e perdeu a configuração, o gerenciador a reenvia.
-- **Confirmação:** uma mudança só é aceita (e salva) depois que o helper responde 204 ao `PUT /v1/provider`. Sem essa confirmação, o Main recusa a mudança com `helper_unavailable` e mantém a configuração salva. Como o helper pode ter aplicado a mudança sem que a resposta chegasse, a configuração salva passa a ser uma revisão não confirmada: o Main a reenvia em `ensureDelivered` e em segundo plano (1 s, dobrando até 30 s) até o helper confirmar essa revisão.
+- **Confirmação:** escolher Local e apagar a chave nunca são recusados: são ações de privacidade. O Main grava na hora (apagar remove a chave de `asr-provider.bin` imediatamente), responde aceito e envia `{"kind":"local"}` ao helper até ele confirmar. Enquanto não confirma, o estado traz `applying: true` e a seção mostra o estado "Verificando…" já existente. A troca para um provedor de nuvem, ou de URL, modelo ou chave, só é aceita (e gravada) depois que o helper responde 204 ao `PUT /v1/provider`; sem essa confirmação, o Main a recusa com `helper_unavailable` e mantém a configuração salva. Como o helper pode ter aplicado a mudança sem que a resposta chegasse, a configuração salva passa a ser uma revisão não confirmada. Em todos os casos, o Main reenvia a revisão salva em `ensureDelivered` (que roda antes de cada transcrição pedida pelo Main) e em segundo plano (1 s, dobrando até 30 s) até o helper confirmar essa revisão. Um helper recém-iniciado está em Local, então uma escolha Local salva já conta como confirmada.
 - **Sem `safeStorage`:** se a cifra não estiver disponível, os provedores de nuvem ficam indisponíveis, com motivo explícito. Não há fallback para texto puro.
 - **Alternativas descartadas:**
   - arquivo 0600 em texto puro: quebra a promessa de Keychain;
@@ -165,7 +165,8 @@ Alternativa descartada: o backend chamar a Groq direto. Exigiria ffmpeg para cor
   ready: bool,
   reason?: "local_model_missing" | "key_missing" | "key_rejected" | "diarization_missing" | "secure_storage_unavailable" | "unsupported",
   cloud?: { kind: "groq" | "openai_compatible", model, baseHost, hasKey, verification: "idle" | "checking" | "valid" | "rejected" | "unreachable" },
-  diarization: "not_installed" | "downloading" | "ready" | "failed"
+  diarization: "not_installed" | "downloading" | "ready" | "failed",
+  applying?: true   // a revisão salva ainda não foi confirmada pelo helper
 }
 ```
 

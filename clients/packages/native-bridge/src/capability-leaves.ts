@@ -8663,6 +8663,11 @@ export const meetingTranscriptionStateSchema = z
       .optional(),
     /** The local speaker separator that cloud providers need. */
     diarization: z.enum(["not_installed", "downloading", "ready", "failed"]),
+    /**
+     * The saved provider has not reached the helper yet (for example a Local
+     * switch while it was busy); Main keeps sending it until acknowledged.
+     */
+    applying: z.literal(true).optional(),
   })
   .strict();
 export type MeetingTranscriptionState = z.output<
