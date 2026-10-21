@@ -21,6 +21,8 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -403,6 +405,54 @@ function isolateDriveSource(userData: string, root: string) {
   execFileSync(synch, ["source", "add", "comma-drive", root], { env });
 }
 
+/**
+ * First launch on an empty profile, then a second launch whose Drive source
+ * is a temporary folder (see isolateDriveSource). Returns the second launch.
+ */
+async function launchWithIsolatedDrive(
+  userData: string,
+  driveRoot: string,
+  label: string
+): Promise<{ app: LaunchedApp; main: Page }> {
+  let app = await launch(userData, `${label}-first`);
+  try {
+    const first = await mainWindow(app.browser);
+    await waitForSignedInHome(first);
+    // Closing the first-launch onboarding records it as done, so it does
+    // not take over the main window's route on the next launch.
+    const onboarding = await windowWithRole(app.browser, "onboarding-window");
+    await onboarding?.evaluate(() => window.close()).catch(() => undefined);
+    await expect
+      .poll(
+        () =>
+          first.evaluate(
+            async () =>
+              (
+                await (
+                  globalThis as {
+                    commaNative?: {
+                      synchronicity: { state(): Promise<{ status: string }> };
+                    };
+                  }
+                ).commaNative!.synchronicity.state()
+              ).status
+          ),
+        { timeout: 120_000 }
+      )
+      .toBe("ready");
+    // Main reads the published Drive folder again on the next launch.
+    isolateDriveSource(userData, driveRoot);
+    await quit(app);
+    app = await launch(userData, `${label}-second`);
+    const main = await mainWindow(app.browser);
+    await waitForSignedInHome(main);
+    return { app, main };
+  } catch (error) {
+    await quit(app).catch(() => undefined);
+    throw error;
+  }
+}
+
 /** Closes Settings and the toasts; a click outside Settings would close it and route Home. */
 async function clearOverlays(page: Page) {
   for (
@@ -486,39 +536,8 @@ test.describe("packaged local transcription", () => {
     const name = "e2e-two-voices.m4a";
     let app: LaunchedApp | undefined;
     try {
-      app = await launch(userData, "asr-first");
-      const first = await mainWindow(app.browser);
-      await waitForSignedInHome(first);
-      // Closing the first-launch onboarding records it as done, so it does
-      // not take over the main window's route on the next launch.
-      const onboarding = await windowWithRole(app.browser, "onboarding-window");
-      await onboarding?.evaluate(() => window.close()).catch(() => undefined);
-      await expect
-        .poll(
-          () =>
-            first.evaluate(
-              async () =>
-                (
-                  await (
-                    globalThis as {
-                      commaNative?: {
-                        synchronicity: { state(): Promise<{ status: string }> };
-                      };
-                    }
-                  ).commaNative!.synchronicity.state()
-                ).status
-            ),
-          { timeout: 120_000 }
-        )
-        .toBe("ready");
-      // Main reads the published Drive folder again on the next launch.
-      isolateDriveSource(userData, driveRoot);
-      await quit(app);
-      app = undefined;
-
-      app = await launch(userData, "asr-second");
-      const main = await mainWindow(app.browser);
-      await waitForSignedInHome(main);
+      let main: Page;
+      ({ app, main } = await launchWithIsolatedDrive(userData, driveRoot, "asr"));
       const text = await rendererMessages(main);
       expect(await localTranscriptionState(main)).toMatchObject({
         supported: true,
@@ -652,6 +671,676 @@ test.describe("packaged local transcription", () => {
       expect(bundledProcesses()).toEqual([]);
     } finally {
       if (app) await quit(app).catch(() => undefined);
+      if (!process.env.COMMA_E2E_KEEP_DATA)
+        await rm(userData, { force: true, recursive: true });
+    }
+  });
+});
+
+interface MeetingState {
+  provider: string;
+  ready: boolean;
+  reason?: string;
+  cloud?: { kind: string; model: string; hasKey: boolean; verification: string };
+  diarization: string;
+}
+
+function meetingState(page: Page) {
+  return page.evaluate(() =>
+    (
+      globalThis as {
+        commaNative?: {
+          meetingTranscription: { state: { get(): Promise<MeetingState> } };
+        };
+      }
+    ).commaNative!.meetingTranscription.state.get()
+  );
+}
+
+/** Opens Settings → Meeting (from any route) and selects a transcription engine. */
+async function chooseEngine(page: Page, text: Record<string, string>, label: string) {
+  await clearOverlays(page);
+  await page.evaluate(() => {
+    window.location.hash = "/settings?category=meeting";
+  });
+  const dialog = await openLocalTranscriptionSection(page, text);
+  await dialog
+    .getByRole("button", {
+      name: new RegExp(text.settings_meeting_transcription_engine!),
+    })
+    .click();
+  await page.getByRole("option", { name: label, exact: true }).click();
+  return dialog;
+}
+
+/** The key field is a password field; screenshots also cover every one. */
+function shot(page: Page, name: string) {
+  return page.screenshot({
+    path: join(evidence(), name),
+    mask: [page.locator('input[type="password"]')],
+    animations: "disabled",
+  });
+}
+
+/** Every file under `root` (relative path and size), for the evidence. */
+function listFiles(root: string, base = root): string[] {
+  if (!existsSync(root)) return [];
+  return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) return listFiles(path, base);
+    return entry.isFile()
+      ? [`${path.slice(base.length + 1)} ${statSync(path).size}`]
+      : [];
+  });
+}
+
+/** Regular files under the roots that contain `secret`; it is never printed. */
+function filesContaining(roots: string[], secret: string) {
+  const needle = Buffer.from(secret);
+  let scanned = 0;
+  const hits: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile()) {
+        scanned += 1;
+        try {
+          if (readFileSync(path).includes(needle)) hits.push(path);
+        } catch {
+          // A file removed during the scan holds nothing.
+        }
+      }
+    }
+  };
+  for (const root of roots) if (existsSync(root)) walk(root);
+  return { scanned, hits };
+}
+
+/** Samples `ps -axww` until stopped and counts command lines with `secret`. */
+function sampleProcesses(secret: string) {
+  let samples = 0;
+  let hits = 0;
+  const timer = setInterval(() => {
+    const lines = execFileSync("/bin/ps", ["-axww", "-o", "pid=,command="], {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    }).split("\n");
+    samples += 1;
+    hits += lines.filter((line) => line.includes(secret)).length;
+  }, 1_000);
+  return () => {
+    clearInterval(timer);
+    return { samples, hits };
+  };
+}
+
+interface FakeRequest {
+  at: number;
+  method: string;
+  path: string;
+  status: number;
+  bytes: number;
+  seconds?: number;
+  fields?: Record<string, string>;
+}
+
+/**
+ * A loopback OpenAI-compatible transcription API. It cannot recognize
+ * speech: each piece gets one word "w" every 0.5 s of its own duration
+ * (read with afinfo), so the joined transcript shows the pieces' rebase and
+ * seams. `rateLimitOnce` answers the next upload 429 with retry-after.
+ */
+async function startFakeProvider(key: string) {
+  const requests: FakeRequest[] = [];
+  const work = await mkdtemp(join(tmpdir(), "comma-fake-asr-"));
+  let rateLimitOnce = 0;
+  let pieces = 0;
+  const server = createHttpServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      const body = Buffer.concat(chunks);
+      const record: FakeRequest = {
+        at: Date.now(),
+        method: request.method ?? "",
+        path: request.url ?? "",
+        status: 200,
+        bytes: body.length,
+      };
+      requests.push(record);
+      const send = (
+        status: number,
+        json: unknown,
+        headers: Record<string, string> = {}
+      ) => {
+        record.status = status;
+        response.writeHead(status, { "content-type": "application/json", ...headers });
+        response.end(JSON.stringify(json));
+      };
+      if (request.headers.authorization !== `Bearer ${key}`)
+        return send(401, { error: { message: "bad key" } });
+      if (request.method === "GET" && request.url === "/v1/models")
+        return send(200, { object: "list", data: [{ id: "fake-whisper" }] });
+      if (request.method !== "POST" || request.url !== "/v1/audio/transcriptions")
+        return send(404, { error: { message: "not found" } });
+      if (rateLimitOnce > 0) {
+        const seconds = rateLimitOnce;
+        rateLimitOnce = 0;
+        return send(
+          429,
+          { error: { message: "rate limited" } },
+          { "retry-after": String(seconds) }
+        );
+      }
+      const parts = multipart(body, String(request.headers["content-type"]));
+      const file = join(work, `piece-${(pieces += 1)}.m4a`);
+      writeFileSync(file, parts.file ?? Buffer.alloc(0));
+      const info = execFileSync("/usr/bin/afinfo", [file], { encoding: "utf8" });
+      rmSync(file, { force: true });
+      const seconds = Number(/estimated duration: ([\d.]+)/.exec(info)?.[1] ?? 0);
+      record.seconds = seconds;
+      record.fields = parts.fields;
+      const words = [];
+      for (let start = 0.25; start < seconds - 0.1; start += 0.5)
+        words.push({ word: "w", start, end: start + 0.3 });
+      const segments = [];
+      for (let start = 0; start < seconds; start += 10) {
+        const inside = words.filter((w) => w.start >= start && w.start < start + 10);
+        segments.push({
+          id: segments.length,
+          start,
+          end: Math.min(start + 10, seconds),
+          text: inside.map((w) => w.word).join(" "),
+        });
+      }
+      send(200, {
+        task: "transcribe",
+        language: "english",
+        duration: seconds,
+        text: words.map((w) => w.word).join(" "),
+        segments,
+        words,
+      });
+    });
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", () => done()));
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  return {
+    baseUrl: `http://127.0.0.1:${port}/v1`,
+    requests,
+    rateLimitNext(seconds: number) {
+      rateLimitOnce = seconds;
+    },
+    /** Refuses every later connection: the provider is unreachable. */
+    async stop() {
+      server.closeAllConnections();
+      await new Promise((done) => server.close(done));
+      await rm(work, { force: true, recursive: true });
+    },
+  };
+}
+
+function multipart(body: Buffer, contentType: string) {
+  const boundary = /boundary=(?:"([^"]+)"|([^;]+))/.exec(contentType);
+  const marker = Buffer.from(`--${boundary?.[1] ?? boundary?.[2] ?? ""}`);
+  const fields: Record<string, string> = {};
+  let file: Buffer | undefined;
+  let at = body.indexOf(marker);
+  while (at >= 0) {
+    const next = body.indexOf(marker, at + marker.length);
+    if (next < 0) break;
+    const part = body.subarray(at + marker.length + 2, next - 2);
+    const split = part.indexOf("\r\n\r\n");
+    const headers = part.subarray(0, split).toString("utf8");
+    const content = part.subarray(split + 4);
+    const name = /name="([^"]+)"/.exec(headers)?.[1] ?? "";
+    if (name === "file") file = content;
+    // Repeated fields such as timestamp_granularities[] keep every value.
+    else
+      fields[name] = fields[name]
+        ? `${fields[name]},${content.toString("utf8")}`
+        : content.toString("utf8");
+    at = next;
+  }
+  return { fields, file };
+}
+
+/** `[HH:MM:SS]` of each transcript line, in seconds. */
+function lineTimes(transcript: string) {
+  return [...transcript.matchAll(/^\[(\d{2}):(\d{2}):(\d{2})\]/gm)].map(
+    ([, h, m, s]) => Number(h) * 3600 + Number(m) * 60 + Number(s)
+  );
+}
+
+function audioDuration(file: string) {
+  const info = execFileSync("/usr/bin/afinfo", [file], { encoding: "utf8" });
+  return Number(/estimated duration: ([\d.]+)/.exec(info)?.[1] ?? 0);
+}
+
+/** The Drive toast that says the transcript was saved beside the recording. */
+function transcriptSaved(
+  main: Page,
+  text: Record<string, string>,
+  name: string,
+  timeout = 11 * 60_000
+) {
+  return expect(
+    main.locator("[data-sonner-toast]").filter({
+      hasText: text.recording_transcribe_done!.replace("{name}", name),
+    })
+  ).toBeVisible({ timeout });
+}
+
+/**
+ * openspec add-cloud-meeting-asr, tasks 6.1–6.3. It uses a real Groq key
+ * (COMMA_ELECTRON_CLOUD_ASR_KEY_FILE, read here and typed into Settings,
+ * never logged) and COMMA_ELECTRON_LOCAL_ASR_AUDIO, a short two-voice
+ * recording. A real failure needs no network cut: the OpenAI-compatible
+ * provider is a loopback fake that the test stops, which the helper reports
+ * as cloud_unreachable. Optional, for task 6.2:
+ * COMMA_ELECTRON_CLOUD_ASR_LONG_AUDIO, a recording above Groq's 24 MB
+ * piece limit whose speech says "Sentence number N" once for each N, sent
+ * to Groq; and COMMA_ELECTRON_CLOUD_ASR_FAKE_AUDIO, a two-hour recording sent
+ * to the fake provider, whose first upload gets 429 with retry-after.
+ * The run also downloads the local model (about 632 MB) for the fallback.
+ */
+test.describe("packaged cloud transcription", () => {
+  const keyFile = process.env.COMMA_ELECTRON_CLOUD_ASR_KEY_FILE;
+  const audio = process.env.COMMA_ELECTRON_LOCAL_ASR_AUDIO;
+  const longAudio = process.env.COMMA_ELECTRON_CLOUD_ASR_LONG_AUDIO;
+  const fakeAudio = process.env.COMMA_ELECTRON_CLOUD_ASR_FAKE_AUDIO;
+  test.skip(
+    !appBundle ||
+      !keyFile ||
+      !audio ||
+      process.platform !== "darwin" ||
+      process.arch !== "arm64",
+    "Set COMMA_ELECTRON_LOCAL_MODE_APP, COMMA_ELECTRON_CLOUD_ASR_KEY_FILE and COMMA_ELECTRON_LOCAL_ASR_AUDIO on an Apple silicon Mac."
+  );
+
+  test("transcribes through Groq with local speakers, reports cloud failures, falls back, and returns to Local", async () => {
+    test.setTimeout(120 * 60_000);
+    const key = readFileSync(keyFile!, "utf8").trim();
+    const fakeKey = "fake-provider-e2e-key";
+    const userData = await mkdtemp("/tmp/comma-cloud-");
+    const driveRoot = join(userData, "drive-root");
+    const modelsDir = join(userData, "Models");
+    const folder = join(driveRoot, "recording", recordingDay());
+    const report: Record<string, unknown> = {};
+    const fake = await startFakeProvider(fakeKey);
+    let app: LaunchedApp | undefined;
+    const transcribe = async (
+      main: Page,
+      text: Record<string, string>,
+      name: string
+    ) => {
+      const started = Date.now();
+      await transcribeFromDrive(main, text, name);
+      return started;
+    };
+    const transcriptOf = (name: string, ext: "txt" | "json") =>
+      readFileSync(join(folder, name.replace(/\.m4a$/, `.transcript.${ext}`)), "utf8");
+    try {
+      let main: Page;
+      ({ app, main } = await launchWithIsolatedDrive(userData, driveRoot, "cloud"));
+      // A missing control fails the step instead of waiting for the test timeout.
+      main.setDefaultTimeout(120_000);
+      const text = await rendererMessages(main);
+      mkdirSync(folder, { recursive: true });
+      expect(await meetingState(main)).toMatchObject({
+        provider: "local",
+        ready: false,
+      });
+
+      // 6.1: Groq with the owner's key; only the speaker separator installs.
+      let dialog = await chooseEngine(
+        main,
+        text,
+        text.settings_meeting_transcription_engine_groq!
+      );
+      await dialog
+        .getByLabel(text.settings_meeting_transcription_key!, { exact: true })
+        .fill(key);
+      await shot(main, "cloud-01-groq-key-entered.png");
+      await dialog
+        .getByRole("button", {
+          name: text.settings_meeting_transcription_save!,
+          exact: true,
+        })
+        .click();
+      const separator = new Set<string>();
+      await expect
+        .poll(
+          async () => {
+            const state = await meetingState(main);
+            if (!separator.has(state.diarization)) {
+              separator.add(state.diarization);
+              await shot(main, `cloud-02-separator-${state.diarization}.png`);
+            }
+            return state.provider === "groq" && state.ready;
+          },
+          { timeout: 10 * 60_000, intervals: [250] }
+        )
+        .toBe(true);
+      await shot(main, "cloud-03-groq-ready.png");
+      report.separatorPhases = [...separator];
+      expect(await meetingState(main)).toMatchObject({
+        provider: "groq",
+        ready: true,
+        diarization: "ready",
+        cloud: {
+          kind: "groq",
+          model: "whisper-large-v3",
+          hasKey: true,
+          verification: "valid",
+        },
+      });
+      expect((await localTranscriptionState(main)).phase).toBe("not_installed");
+      const separatorOnly = listFiles(modelsDir);
+      writeFileSync(
+        join(evidence(), "cloud-models-separator-only.txt"),
+        `${separatorOnly.join("\n")}\n`
+      );
+      expect(separatorOnly.length).toBeGreaterThan(0);
+      // The folder is named by the manifest id; inside it only the separator
+      // component and its marker exist, not the speech model's files.
+      expect(
+        separatorOnly.filter(
+          (file) =>
+            !/^[^/]+\/(speaker-diarization\/|\.installed-diarization )/.test(file)
+        )
+      ).toEqual([]);
+
+      // Two voices through Groq; ps is sampled for the key meanwhile (6.3).
+      const twoVoices = "cloud-two-voices.m4a";
+      writeFileSync(join(folder, twoVoices), readFileSync(audio!));
+      const stopSampling = sampleProcesses(key);
+      let started = await transcribe(main, text, twoVoices);
+      await transcriptSaved(main, text, twoVoices);
+      report.twoVoicesSeconds = (Date.now() - started) / 1000;
+      report.psDuringGroq = stopSampling();
+      const twoText = transcriptOf(twoVoices, "txt");
+      const twoJson = JSON.parse(transcriptOf(twoVoices, "json"));
+      writeFileSync(join(evidence(), "cloud-04-groq.transcript.txt"), twoText);
+      writeFileSync(
+        join(evidence(), "cloud-04-groq.transcript.json"),
+        JSON.stringify(twoJson, null, 2)
+      );
+      expect(twoText).toMatch(/^\[\d{2}:\d{2}:\d{2}\] Speaker 1: \S/m);
+      expect(twoText).toMatch(/^\[\d{2}:\d{2}:\d{2}\] Speaker 2: \S/m);
+      expect(twoJson).toMatchObject({
+        status: "ready",
+        provider: "groq",
+        model: "whisper-large-v3",
+      });
+      expect(twoJson.fallback).toBeUndefined();
+      await shot(main, "cloud-04-groq-transcribed.png");
+
+      // 6.2 with Groq: pieces below 24 MB, seams without repeated speech.
+      if (longAudio) {
+        const name = "cloud-long-groq.m4a";
+        writeFileSync(join(folder, name), readFileSync(longAudio));
+        started = await transcribe(main, text, name);
+        await transcriptSaved(main, text, name);
+        const elapsed = (Date.now() - started) / 1000;
+        const transcript = transcriptOf(name, "txt");
+        const json = JSON.parse(transcriptOf(name, "json"));
+        writeFileSync(
+          join(evidence(), "cloud-05-long-groq.transcript.txt"),
+          transcript
+        );
+        const said = [...transcript.matchAll(/sentence (?:number )?(\d+)/gi)].map(
+          ([, n]) => Number(n)
+        );
+        const repeated = said.filter((n, index) => said.indexOf(n) !== index);
+        const times = lineTimes(transcript);
+        const audioSeconds = audioDuration(longAudio);
+        report.longGroq = {
+          audioSeconds,
+          bytes: statSync(longAudio).size,
+          elapsed,
+          provider: json.provider,
+          fallback: json.fallback,
+          distinctSentences: new Set(said).size,
+          maxSentence: Math.max(...said),
+          repeated,
+          lastLine: times.at(-1),
+          largestGap: Math.max(...times.slice(1).map((t, i) => t - times[i]!)),
+        };
+        expect(json).toMatchObject({ status: "ready", provider: "groq" });
+        expect(json.fallback).toBeUndefined();
+        expect(elapsed).toBeLessThan(600);
+        expect(repeated).toEqual([]);
+        expect(times).toEqual(times.toSorted((a, b) => a - b));
+        expect(times.at(-1)!).toBeGreaterThan(audioSeconds - 120);
+      }
+
+      // The data and the logs never hold the key (6.3).
+      report.keyInFilesAfterGroq = filesContaining([userData, evidence()], key);
+
+      // An OpenAI-compatible API on loopback; its key replaces Groq's.
+      dialog = await chooseEngine(
+        main,
+        text,
+        text.settings_meeting_transcription_engine_compatible!
+      );
+      await dialog
+        .getByLabel(text.settings_meeting_transcription_url!, { exact: true })
+        .fill(fake.baseUrl);
+      await dialog
+        .getByLabel(text.settings_meeting_transcription_key!, { exact: true })
+        .fill(fakeKey);
+      await dialog
+        .getByLabel(text.settings_meeting_transcription_model!, { exact: true })
+        .fill("fake-whisper");
+      await dialog
+        .getByRole("button", {
+          name: text.settings_meeting_transcription_save!,
+          exact: true,
+        })
+        .click();
+      await expect
+        .poll(
+          async () => {
+            const state = await meetingState(main);
+            return state.provider === "openai_compatible" && state.ready;
+          },
+          { timeout: 60_000 }
+        )
+        .toBe(true);
+      await shot(main, "cloud-06-compatible-ready.png");
+
+      // 6.2 with the fake: two hours in pieces, and a 429 with retry-after.
+      if (fakeAudio) {
+        const name = "cloud-long-fake.m4a";
+        writeFileSync(join(folder, name), readFileSync(fakeAudio));
+        fake.rateLimitNext(3);
+        const before = fake.requests.length;
+        started = await transcribe(main, text, name);
+        await transcriptSaved(main, text, name);
+        const elapsed = (Date.now() - started) / 1000;
+        const uploads = fake.requests.slice(before).filter((r) => r.method === "POST");
+        const transcript = transcriptOf(name, "txt");
+        const json = JSON.parse(transcriptOf(name, "json"));
+        const words = transcript.split("\n").flatMap((line) =>
+          line
+            .replace(/^\[[^\]]+\]( Speaker \d+:)? ?/, "")
+            .split(" ")
+            .filter(Boolean)
+        );
+        const audioSeconds = audioDuration(fakeAudio);
+        const times = lineTimes(transcript);
+        const expected = uploads
+          .filter((r) => r.status === 200)
+          .reduce((sum, r) => sum + Math.ceil(((r.seconds ?? 0) - 0.35) / 0.5), 0);
+        report.longFake = {
+          audioSeconds,
+          bytes: statSync(fakeAudio).size,
+          elapsed,
+          provider: json.provider,
+          uploads: uploads.map(({ at, status, bytes, seconds, fields }) => ({
+            at,
+            status,
+            bytes,
+            seconds,
+            model: fields?.model,
+            format: fields?.response_format,
+            granularities: fields?.["timestamp_granularities[]"],
+          })),
+          retryWaitSeconds: uploads[1]
+            ? (uploads[1].at - uploads[0]!.at) / 1000
+            : undefined,
+          words: words.length,
+          wordsSentBeforeJoin: expected,
+          wordsExpectedForDuration: Math.round(audioSeconds * 2),
+          lastLine: times.at(-1),
+          largestGap: Math.max(...times.slice(1).map((t, i) => t - times[i]!)),
+        };
+        expect(json).toMatchObject({
+          status: "ready",
+          provider: "openai_compatible",
+          model: "fake-whisper",
+        });
+        expect(uploads[0]!.status).toBe(429);
+        expect(uploads[1]!.at - uploads[0]!.at).toBeGreaterThanOrEqual(3_000);
+        expect(uploads.filter((r) => r.status === 200).length).toBeGreaterThanOrEqual(
+          12
+        );
+        for (const upload of uploads) expect(upload.bytes).toBeLessThan(24_000_000);
+        expect(elapsed).toBeLessThan(600);
+        // Each 2 s overlap is sent twice but joined once.
+        expect(Math.abs(words.length - audioSeconds * 2)).toBeLessThanOrEqual(
+          uploads.length * 2
+        );
+        expect(times).toEqual(times.toSorted((a, b) => a - b));
+        expect(times.at(-1)!).toBeGreaterThan(audioSeconds - 60);
+      }
+
+      // The provider is unreachable and no local model takes over:
+      // the provider's error with Try again, never the local install.
+      await fake.stop();
+      const failed = "cloud-failed.m4a";
+      writeFileSync(join(folder, failed), readFileSync(audio!));
+      await transcribe(main, text, failed);
+      const failedToast = main.locator(
+        `[data-testid="recording-transcribe-recording/${recordingDay()}/${failed}"]`
+      );
+      await expect(
+        main
+          .locator("[data-sonner-toast]")
+          .filter({
+            has: main.getByRole("button", {
+              name: text.recording_transcription_retry!,
+              exact: true,
+            }),
+          })
+          .first()
+      ).toBeVisible({ timeout: 5 * 60_000 });
+      await main.screenshot({
+        path: join(evidence(), "cloud-07-failed-try-again.png"),
+        animations: "disabled",
+      });
+      expect(
+        await main.locator('[data-testid="local-transcription-notice"]').count()
+      ).toBe(0);
+      report.failedToasts = await main.locator("[data-sonner-toast]").allInnerTexts();
+      report.failedDriveToastIdFound = await failedToast.count();
+      expect(JSON.parse(transcriptOf(failed, "json"))).toMatchObject({
+        status: "error",
+        reason: "cloud_asr_failed:cloud_unreachable",
+      });
+      expect(
+        existsSync(join(folder, failed.replace(/\.m4a$/, ".transcript.txt")))
+      ).toBe(false);
+
+      // With the local model installed, the same failure falls back to it.
+      await clearOverlays(main);
+      await main.evaluate(() => {
+        window.location.hash = "/settings?category=meeting";
+      });
+      await (
+        await openLocalTranscriptionSection(main, text)
+      )
+        .getByRole("button", {
+          name: text.settings_local_transcription_install!,
+          exact: true,
+        })
+        .click();
+      await expect
+        .poll(async () => (await localTranscriptionState(main)).phase, {
+          timeout: 30 * 60_000,
+          intervals: [1_000],
+        })
+        .toBe("ready");
+      const fallback = "cloud-fallback.m4a";
+      writeFileSync(join(folder, fallback), readFileSync(audio!));
+      await transcribe(main, text, fallback);
+      await transcriptSaved(main, text, fallback);
+      await expect(
+        main.locator('[data-testid="transcription-fallback-notice"]')
+      ).toBeVisible({
+        timeout: 60_000,
+      });
+      await main.screenshot({
+        path: join(evidence(), "cloud-08-fallback.png"),
+        animations: "disabled",
+      });
+      report.fallbackToast = await main
+        .locator('[data-testid="transcription-fallback-notice"]')
+        .innerText();
+      const fallbackJson = JSON.parse(transcriptOf(fallback, "json"));
+      writeFileSync(
+        join(evidence(), "cloud-08-fallback.transcript.json"),
+        JSON.stringify(fallbackJson, null, 2)
+      );
+      expect(fallbackJson).toMatchObject({
+        status: "ready",
+        provider: "local",
+        fallback: { from: "openai_compatible", reason: "cloud_unreachable" },
+      });
+
+      // Back to Local: no check needed, the cloud setup is kept.
+      await chooseEngine(main, text, text.settings_meeting_transcription_engine_local!);
+      await expect
+        .poll(
+          async () => {
+            const state = await meetingState(main);
+            return state.provider === "local" && state.ready;
+          },
+          { timeout: 60_000 }
+        )
+        .toBe(true);
+      await shot(main, "cloud-09-back-to-local.png");
+      expect((await meetingState(main)).cloud).toMatchObject({
+        kind: "openai_compatible",
+        hasKey: true,
+      });
+      const local = "cloud-back-to-local.m4a";
+      writeFileSync(join(folder, local), readFileSync(audio!));
+      await transcribe(main, text, local);
+      await transcriptSaved(main, text, local);
+      const localJson = JSON.parse(transcriptOf(local, "json"));
+      expect(localJson).toMatchObject({ status: "ready", provider: "local" });
+      expect(localJson.fallback).toBeUndefined();
+
+      report.keyInFilesAtEnd = filesContaining([userData, evidence()], key);
+      expect((report.psDuringGroq as { hits: number }).hits).toBe(0);
+      expect((report.keyInFilesAfterGroq as { hits: string[] }).hits).toEqual([]);
+      expect((report.keyInFilesAtEnd as { hits: string[] }).hits).toEqual([]);
+
+      await quit(app);
+      app = undefined;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 2_000));
+      expect(bundledProcesses()).toEqual([]);
+    } finally {
+      writeFileSync(
+        join(evidence(), "cloud-report.json"),
+        JSON.stringify(report, null, 2)
+      );
+      if (app) await quit(app).catch(() => undefined);
+      await fake.stop().catch(() => undefined);
       if (!process.env.COMMA_E2E_KEEP_DATA)
         await rm(userData, { force: true, recursive: true });
     }
