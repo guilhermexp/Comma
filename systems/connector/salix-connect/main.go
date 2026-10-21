@@ -215,6 +215,7 @@ type connector struct {
 	computerUseMu              sync.Mutex
 	computerUseAuthToken       string
 	android                    *androidProvider
+	calendarModule             calendarModule
 
 	meetMu           sync.Mutex
 	meetServer       *http.Server
@@ -3060,6 +3061,7 @@ func (c *connector) metadataWithRuntimeProbeEvidence(probed []map[string]any) me
 		if c.cfg.deviceMode {
 			capabilities["agent_runtimes"] = c.deviceRuntimeObservations()
 			capabilities["device_access"] = true
+			capabilities["calendar"] = c.calendarAvailable()
 		}
 		return message{
 			Type:            "metadata",
@@ -3106,6 +3108,7 @@ func (c *connector) metadataWithRuntimeProbeEvidence(probed []map[string]any) me
 	}
 	if c.cfg.deviceMode {
 		capabilities["device_access"] = true
+		capabilities["calendar"] = c.calendarAvailable()
 	}
 	if runtimeAuthAvailable(agentRuntimes) {
 		capabilities["runtime_auth_v1"] = true
@@ -4034,6 +4037,11 @@ func (c *connector) dispatchSession(ctx context.Context, session *connectionSess
 
 	if c.cfg.deviceMode && method == "device_access" {
 		return c.methodDeviceAccess(params)
+	}
+	// The user's macOS Calendar permission and Agenda activation are the consent
+	// for this method, so it does not wait for "Allow operations".
+	if c.cfg.deviceMode && method == "calendar" {
+		return c.methodCalendar(params)
 	}
 	// The scope gate must precede every method so a scoped connector can never
 	// execute commands, touch host files, or drive runtimes regardless of what
