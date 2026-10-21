@@ -51,8 +51,8 @@ Fora: o que a proposta exclui.
 
 | operation | Slug Composio |
 |---|---|
-| `calendars` | `GOOGLECALENDAR_CALENDAR_LIST_LIST` |
-| `events` | `GOOGLECALENDAR_EVENTS_LIST`, uma chamada por calendário, com `singleEvents=true`, `orderBy=startTime`, `showDeleted=false` e paginação até o limite |
+| `calendars` | `GOOGLECALENDAR_LIST_CALENDARS` (`max_results: 250`) |
+| `events` | `GOOGLECALENDAR_LIST_CALENDARS` uma vez (níveis de acesso) e `GOOGLECALENDAR_EVENTS_LIST`, uma chamada por página e calendário, com `singleEvents=true`, `orderBy=startTime`, `showDeleted=false` e paginação até o limite |
 | `event` | `GOOGLECALENDAR_EVENTS_GET` |
 | `create` | `GOOGLECALENDAR_CREATE_EVENT` |
 | `update` | `GOOGLECALENDAR_PATCH_EVENT`; troca de calendário na mesma conta com `GOOGLECALENDAR_EVENTS_MOVE` antes do patch |
@@ -60,6 +60,7 @@ Fora: o que a proposta exclui.
 
 - Os argumentos de cada slug seguem o schema atual da Composio para a ferramenta, conferido com a operação `schema` existente (`composio_connect.ex:300`). Não segue a API do Google diretamente.
 - `scope: "series"` age sobre o `series_id` (`recurringEventId`). `scope: "instance"` age sobre o id da ocorrência.
+- Mover a série por arraste ("Todos os eventos"): a interface manda o início e o fim da ocorrência arrastada com `scope: "series"`. A primeira data da série anda a mesma diferença em dias que a ocorrência e recebe a nova hora e a nova duração. A primeira data nunca vira a data da ocorrência arrastada. O CalendarKit faz o mesmo no Mac.
 - Escrita com `etag`: o backend lê o evento (`EVENTS_GET`) e compara antes do patch ou delete. Se mudou, responde `calendar_event_conflict`. [Risco: há uma janela curta entre a leitura e a escrita; aceita.]
 - `events` com vários calendários roda as chamadas em sequência, todas dentro do prazo de 30 s. Um calendário que falha entra em `failed_calendar_ids` sem derrubar os outros.
 - Paginação de `EVENTS_LIST` (lição do `fastrepl/anarlog`, `crates/calendar/src/fetch.rs`):
@@ -69,7 +70,11 @@ Fora: o que a proposta exclui.
   - ocorrências `cancelled` são descartadas mesmo com `showDeleted=false`.
 - Erros: 401 ou 403 numa escrita viram `calendar_write_permission_required`. Fora isso, valem os mesmos erros do Drive.
 - O consentimento é a própria ação explícita do usuário na tela. Não há agente no meio, como no Drive ("Member-facing closed read"). A escrita não passa pelo consentimento de leitura das Rotinas.
-- O `LocalComposioMock` passa a responder os seis slugs para o desenvolvimento local.
+- O `LocalComposioMock` passa a responder os slugs de `google_calendar` para o desenvolvimento local. Ele só atende a conta `googlecalendar` de id `local-<group>-googlecalendar` no ComposioAccess do membro.
+- Desvios registrados na implementação (o `@moduledoc` de `CommaWeb.GoogleCalendarAgenda` tem o mapeamento completo C1 → argumentos):
+  - `GOOGLECALENDAR_CALENDAR_LIST_LIST` não existe mais na Composio (`Tool_ToolNotFound`). O slug real é `GOOGLECALENDAR_LIST_CALENDARS`.
+  - `events` lê os níveis de acesso uma vez. Um evento só é editável num calendário `owner` ou `writer`. Sem o nível de acesso, os campos do próprio evento decidem.
+  - `update` e `delete` leem o evento com `EVENTS_GET` antes de escrever, para o `etag` e a série.
 
 ### D3 – EventKit no mesmo processo (`CalendarKit`)
 
@@ -79,7 +84,7 @@ Fora: o que a proposta exclui.
 - Um observador de `EKEventStoreChangedNotification` agrupa os avisos em janelas de 500 ms e incrementa a `revision`.
 - Lições do `fastrepl/anarlog` (`crates/apple-calendar`, `crates/calendar/src/apple_identity.rs`, `plugins/permissions/src/ext.rs`):
   - **Chave:** `eventIdentifier` não serve de chave, porque muda ao editar e varia por store. A ocorrência é `calendarItemIdentifier` + `occurrenceDate`.
-  - **Ocorrências destacadas:** o sufixo `/RID=…` é removido para obter a série. A ocorrência movida mantém o `occurrenceDate` original, e `MacEvent.detached` sinaliza isso.
+  - **Ocorrências destacadas:** o sufixo `/RID=…` é removido para obter a série. A ocorrência movida mantém o `occurrenceDate` original, e `MacEvent.detached` sinaliza isso. `eventId` é o `calendarItemIdentifier` da série. No iCloud, a ocorrência destacada tem identificador próprio, e a série é encontrada pelo `externalId`.
   - **Dia inteiro:** a data é tomada no fuso do evento.
   - **Chamadas ao EventKit:** todas passam por uma fila serial. "0 calendários depois de >0" é tratado como transitório. Exceções Objective-C são capturadas, com 3 tentativas de 100 ms em falha de XPC.
   - **Editável:** `allowsContentModifications && !immutable`.
@@ -130,7 +135,8 @@ interface AgendaSource {
 
 - Uma fonte por conta Google (`googleCalendarSource(api, workspace, accountId)`) e uma para o Mac (`macCalendarSource(bridge)`, só quando a capacidade existe).
 - A chave do evento é `${source}:${accountId ?? "mac"}:${calendarId}:${id}`.
-- Duplicatas: calendários Mac cujo `ownerEmail` (título da conta de origem) é igual ao e-mail de uma conta Google conectada começam ocultos.
+- Duplicatas: calendários Mac cujo `ownerEmail` é igual ao e-mail de uma conta Google conectada começam ocultos.
+- `macCalendarSource` usa `sourceTitle` como `ownerEmail` só quando é um e-mail. `sourceType` `subscribed` e `birthdays` viram `ownerEmail: null`, que o painel mostra em "Calendários assinados". O campo opcional `sourceLabel` guarda o título da conta (por exemplo, "iCloud") para agrupar o painel.
 - Troca de calendário entre fontes ou contas: `create` no destino e depois `remove` no original.
 
 ### D6 – Contratos
@@ -167,12 +173,14 @@ calendar.events({ calendarIds[≤500], start, end })
 calendar.event({ eventId, occurrenceDate|null }) -> MacEvent
 calendar.createEvent({ calendarId, event: Input })                         -> MacEvent
 calendar.updateEvent({ eventId, occurrenceDate|null, scope, patch, targetCalendarId? }) -> MacEvent
-calendar.deleteEvent({ eventId, occurrenceDate|null, scope })              -> void
+calendar.deleteEvent({ eventId, occurrenceDate|null, scope })              -> void | { error }
 
 MacEvent = { occurrenceId, eventId, externalId|null, calendarId, title, start, end, allDay, location|null,
              notes|null, url|null, editable, recurrence: none|daily|weekly|monthly|yearly|custom, occurrenceDate|null, detached }
 Erros: calendar_access_denied, calendar_read_only, calendar_event_not_found, calendar_unavailable
 ```
+
+Os erros de C2 voltam como resultado `{ error: code }`, em união com o resultado de sucesso de cada folha. Um handler que lança chega ao renderer só como `INTERNAL_ERROR` genérico. `deleteEvent` devolve `void | { error }`.
 
 `Input` em C2 é o mesmo de C1, em camelCase (`allDay`, `timeZone`).
 
