@@ -705,6 +705,7 @@ describe("native bridge contracts", () => {
       "computeNode.state.changed",
       "audioCapture.state.changed",
       "meetingPresence.state.changed",
+      "calendar.state.changed",
       "meetingRecorder.state.changed",
       "surfaces.windowResizeSettled",
       "airDrop.state.changed",
@@ -862,6 +863,12 @@ describe("native bridge contracts", () => {
         target: { type: "all" },
       },
       {
+        channel: "comma:calendar:state-changed",
+        id: "calendar.state.changed",
+        permission: "calendar.read",
+        target: { type: "all" },
+      },
+      {
         channel: "comma:meeting-recorder:state-changed",
         id: "meetingRecorder.state.changed",
         permission: "meeting-recorder.read",
@@ -936,6 +943,7 @@ describe("native bridge contracts", () => {
       "computeNode.state",
       "audioCapture.state",
       "meetingPresence.state",
+      "calendar.state",
       "meetingRecorder.state",
       "airDrop.state",
       "driveCatalog.state",
@@ -1256,6 +1264,24 @@ describe("native bridge contracts", () => {
           channel: "comma:meeting-presence:state-changed",
           id: "meetingPresence.state.changed",
           permission: "meeting-presence.read",
+          target: { type: "all" },
+        },
+      },
+      {
+        bridge: { method: "state", namespace: "calendar" },
+        get: {
+          channel: "comma:calendar:state",
+          id: "calendar.state",
+          permission: "calendar.read",
+          sessionAdmission: "local_only",
+          sessionAdmissionRationale:
+            "Reports the Mac Calendar permission and a change counter; no event data or Session state.",
+        },
+        id: "calendar.state",
+        subscribe: {
+          channel: "comma:calendar:state-changed",
+          id: "calendar.state.changed",
+          permission: "calendar.read",
           target: { type: "all" },
         },
       },

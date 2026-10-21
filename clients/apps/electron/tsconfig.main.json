@@ -39,6 +39,7 @@
     "src/release-config.ts",
     "native/macos/SideChatBackdrop/index.ts",
     "native/macos/NotificationAuthorization/index.ts",
+    "native/macos/CalendarKit/index.ts",
     "native/macos/FileApplications/index.ts",
     "native/macos/FontFamilies/index.ts",
     "native/macos/SleepGuard/index.ts",

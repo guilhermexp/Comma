@@ -37,6 +37,7 @@ import type { SitePermissionMenuProvider } from "../site-permission-menu-window"
 import type { LocalFilePickerProvider } from "../modules/local-files/picker";
 import type { AudioCaptureProvider } from "../modules/audio-capture/index";
 import type { MeetingPresenceProvider } from "../modules/meeting-presence/index";
+import type { CalendarProvider } from "../modules/calendar/index";
 import type { MeetingRecorderProvider } from "../modules/meeting-recorder/index";
 import type { AirDropReceptionProvider } from "../modules/airdrop/reception";
 import type { DriveCatalogService } from "../modules/synchronicity/catalog";
@@ -90,6 +91,7 @@ export type NativeCapabilityProviderMap = {
   sideChat: SideChatProvider;
   audioCapture: AudioCaptureProvider;
   meetingPresence: MeetingPresenceProvider;
+  calendar: CalendarProvider;
   meetingRecorder: MeetingRecorderProvider;
   airDrop: AirDropReceptionProvider;
   driveCatalog: DriveCatalogService;
@@ -253,6 +255,15 @@ export type NativeCapabilityHandlerTypeMap = {
   "audioCapture.openPermissionSettings": AudioCaptureProvider["openPermissionSettings"];
   "meetingPresence.state": MeetingPresenceProvider["state"];
   "meetingPresence.icon": MeetingPresenceProvider["icon"];
+  "calendar.state": CalendarProvider["state"];
+  "calendar.requestAccess": CalendarProvider["requestAccess"];
+  "calendar.openPrivacySettings": CalendarProvider["openPrivacySettings"];
+  "calendar.calendars": CalendarProvider["calendars"];
+  "calendar.events": CalendarProvider["events"];
+  "calendar.event": CalendarProvider["event"];
+  "calendar.createEvent": CalendarProvider["createEvent"];
+  "calendar.updateEvent": CalendarProvider["updateEvent"];
+  "calendar.deleteEvent": CalendarProvider["deleteEvent"];
   "meetingRecorder.state": MeetingRecorderProvider["state"];
   "meetingRecorder.action": MeetingRecorderProvider["action"];
   "meetingRecorder.retryTaskSync": MeetingRecorderProvider["retryTaskSync"];
@@ -518,6 +529,16 @@ export function registerGeneratedNativeMainBindings({
       providers.audioCapture.openPermissionSettings(input),
     "meetingPresence.state": async (input) => providers.meetingPresence.state(input),
     "meetingPresence.icon": async (input) => providers.meetingPresence.icon(input),
+    "calendar.state": async (input) => providers.calendar.state(input),
+    "calendar.requestAccess": async (input) => providers.calendar.requestAccess(input),
+    "calendar.openPrivacySettings": async (input) =>
+      providers.calendar.openPrivacySettings(input),
+    "calendar.calendars": async (input) => providers.calendar.calendars(input),
+    "calendar.events": async (input) => providers.calendar.events(input),
+    "calendar.event": async (input) => providers.calendar.event(input),
+    "calendar.createEvent": async (input) => providers.calendar.createEvent(input),
+    "calendar.updateEvent": async (input) => providers.calendar.updateEvent(input),
+    "calendar.deleteEvent": async (input) => providers.calendar.deleteEvent(input),
     "meetingRecorder.state": async (input) => providers.meetingRecorder.state(input),
     "meetingRecorder.action": async (input) => providers.meetingRecorder.action(input),
     "meetingRecorder.retryTaskSync": async (input) =>

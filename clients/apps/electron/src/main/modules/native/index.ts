@@ -106,6 +106,7 @@ import type { LocalFilePickerProvider } from "../local-files/picker";
 import type { RecommendationMediaProvider } from "../recommendation-media";
 import type { AudioCaptureProvider } from "../audio-capture";
 import type { MeetingPresenceProvider } from "../meeting-presence";
+import type { CalendarProvider } from "../calendar";
 import type { MeetingRecorderProvider } from "../meeting-recorder";
 import type { AirDropReceptionProvider } from "../airdrop/reception";
 import { getCurrentNativeCallerContext, NativeCallerBindingError } from "../ipc";
@@ -798,6 +799,7 @@ export function registerNativeBridgeHandlers({
   audioCapture,
   browserSidebar,
   meetingPresence,
+  calendar,
   sitePermissionMenu = unavailableSitePermissionMenu,
   onboardingWindow = unavailableOnboardingWindow,
   meetingRecorder,
@@ -837,6 +839,7 @@ export function registerNativeBridgeHandlers({
   audioCapture: AudioCaptureProvider;
   browserSidebar: BrowserSidebarProvider;
   meetingPresence: MeetingPresenceProvider;
+  calendar: CalendarProvider;
   sitePermissionMenu?: SitePermissionMenuProvider;
   onboardingWindow?: OnboardingWindowProvider;
   meetingRecorder: MeetingRecorderProvider;
@@ -881,6 +884,7 @@ export function registerNativeBridgeHandlers({
       audioCapture,
       browserSidebar,
       meetingPresence,
+      calendar,
       sitePermissionMenu,
       onboardingWindow,
       meetingRecorder,
