@@ -38,6 +38,8 @@ export function cloudReasonLabel(
       return m.recording_cloud_reason_timeout();
     case "cloud_bad_response":
       return m.recording_cloud_reason_bad_response();
+    case "cloud_audio_unprepared":
+      return m.recording_cloud_reason_audio();
     default:
       return m.recording_cloud_reason_other();
   }

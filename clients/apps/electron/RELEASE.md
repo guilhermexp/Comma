@@ -326,6 +326,8 @@ To use Groq:
    `whisper-large-v3-turbo` (faster).
 4. Click Save. Comma checks the key with the provider. A refused key shows
    "The provider rejected this key.", and the previous engine stays selected.
+   The previous engine also stays when the transcription helper does not
+   confirm the change.
 5. Wait for Ready. Comma installs only the speaker separator (about 22 MB),
    with the same SHA-256 and size checks. It does not download the 632 MB
    speech model.
@@ -356,12 +358,13 @@ Groq free plan limits: 20 requests per minute, 2,000 requests per day,
 7,200 seconds of audio per hour, and 28,800 seconds per day. A two-hour
 recording uses the full hourly limit. Comma cuts a recording above 24 MB into
 pieces of at most 10 minutes with a 2-second overlap, and sends them one at a
-time. A `429` response with a short `retry-after` makes Comma wait and
+time. The helper does not follow redirects, so the audio and the key go only
+to the configured URL. A `429` response with a short `retry-after` makes Comma wait and
 continue. If the wait does not fit in the 420-second cloud budget, the
 attempt fails as a quota error.
 
 When the cloud attempt fails (no connection, quota, refused key, server error,
-or timeout):
+timeout, or a recording that cannot be prepared for upload):
 
 - With the local speech model installed, Comma transcribes the recording on
   the Mac and shows "Transcribed on this Mac: <provider> unavailable

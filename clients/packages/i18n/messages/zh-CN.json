@@ -3346,6 +3346,7 @@
   "recording_cloud_reason_server": "服务器错误",
   "recording_cloud_reason_timeout": "超时",
   "recording_cloud_reason_bad_response": "响应异常",
+  "recording_cloud_reason_audio": "无法准备录音以便上传",
   "recording_cloud_reason_other": "错误",
   "recording_transcription_cloud_failed_saved": "录音已保存，但 {provider} 未能转写：{reason}。"
 }

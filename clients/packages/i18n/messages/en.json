@@ -3346,6 +3346,7 @@
   "recording_cloud_reason_server": "server error",
   "recording_cloud_reason_timeout": "timed out",
   "recording_cloud_reason_bad_response": "unexpected answer",
+  "recording_cloud_reason_audio": "the recording could not be prepared for upload",
   "recording_cloud_reason_other": "error",
   "recording_transcription_cloud_failed_saved": "Recording saved, but {provider} could not transcribe it: {reason}."
 }

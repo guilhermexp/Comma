@@ -52,6 +52,7 @@ Alternativa descartada: o backend chamar a Groq direto. Exigiria ffmpeg para cor
   - Sem `cloud`, o arquivo não existe.
 - **Entrega:** depois que o helper fica pronto, a cada reinício dele e a cada mudança de configuração, o Electron faz `PUT /v1/provider` (C6) com o token do helper. O helper guarda a configuração só em memória.
 - **Reenvio:** `/health` informa `provider.configured`. Se o helper reiniciou e perdeu a configuração, o gerenciador a reenvia.
+- **Confirmação:** uma mudança só é aceita (e salva) depois que o helper responde 204 ao `PUT /v1/provider`. Sem essa confirmação, o Main recusa a mudança com `helper_unavailable` e mantém a configuração salva. Como o helper pode ter aplicado a mudança sem que a resposta chegasse, a configuração salva passa a ser uma revisão não confirmada: o Main a reenvia em `ensureDelivered` e em segundo plano (1 s, dobrando até 30 s) até o helper confirmar essa revisão.
 - **Sem `safeStorage`:** se a cifra não estiver disponível, os provedores de nuvem ficam indisponíveis, com motivo explícito. Não há fallback para texto puro.
 - **Alternativas descartadas:**
   - arquivo 0600 em texto puro: quebra a promessa de Keychain;
@@ -76,12 +77,14 @@ Alternativa descartada: o backend chamar a Groq direto. Exigiria ffmpeg para cor
 - **Tamanho do pedaço:** calculado pela taxa de bits real do arquivo para ficar abaixo de `maxUploadBytes` do provedor (Groq: 24 MB, deixando folga de 1 MB), com teto de 10 min por pedaço.
 - **Sobreposição:** pedaços consecutivos se sobrepõem em 2 s. Na emenda, cada palavra fica com o pedaço em que está mais longe da borda: palavras com início antes do meio da sobreposição vêm do pedaço anterior, as demais do seguinte.
 - **Palavras:** pedidas com `timestamp_granularities[]=word` e `segment`. Os tempos são rebaseados pelo início do pedaço.
-- **Provedor sem palavras:** se não devolver `words`, a fusão usa os segmentos como unidade.
+- **Provedor sem palavras:** se não devolver `words`, ou devolver `words` vazio junto com texto, a fusão usa os segmentos como unidade e, sem segmentos, o texto. `words` vazio sem texto (silêncio) continua contando como palavras.
+- **Emenda de segmentos:** os dois pedaços cortam os segmentos de modo diferente, então o tempo não diz quais palavras de um segmento já vieram do pedaço anterior. Na sobreposição, um segmento do pedaço seguinte perde só as palavras iniciais que repetem o fim do texto já juntado (sem diferenciar caixa e pontuação) e mantém o resto, mesmo sem correspondência.
 - **Arquivos pequenos:** um arquivo abaixo do limite vai inteiro, sem cortar.
 
 ### D5. Motor de nuvem, prazos e erros
 
 - **Envio:** cliente `URLSession` em `TranscriberCore`, multipart com `file`, `model`, `response_format=verbose_json` e `temperature=0`. Um pedaço por vez, com timeout de 120 s por requisição.
+- **Redirecionamento:** a sessão recusa todo redirecionamento, no envio e na verificação, como o Main (`redirect: "error"`). Um 3xx vira `cloud_bad_response`, sem levar o áudio nem a chave a outra origem.
 - **Prazo do trabalho:** 420 s para a tentativa na nuvem, deixando margem para o fallback local dentro dos 600 s do backend.
 - **429:** espera o `retry-after` se ele couber no prazo; senão, falha com `cloud_quota`.
 - **Mapeamento de falhas:**
@@ -89,7 +92,8 @@ Alternativa descartada: o backend chamar a Groq direto. Exigiria ffmpeg para cor
   - erro de rede ou DNS → `cloud_unreachable`;
   - 5xx → `cloud_server_error`;
   - prazo estourado → `cloud_timeout`;
-  - resposta inválida → `cloud_bad_response`.
+  - resposta inválida ou redirecionamento → `cloud_bad_response`;
+  - erro local antes de uma resposta do provedor (ler ou cortar a gravação) → `cloud_audio_unprepared`, com o mesmo fallback.
 - **Diarização:** roda localmente sobre o arquivo inteiro, em paralelo com o envio, sob a mesma prioridade `utility`. A fusão reutiliza `mergeWordsWithSpeakers`, com a regra de 1 s do D5 da change anterior.
 
 ### D6. Fallback e marcação do resultado
@@ -142,7 +146,7 @@ Alternativa descartada: o backend chamar a Groq direto. Exigiria ffmpeg para cor
   Respostas: `204`, ou `400 {"error":{"code":"bad_request"}}`.
 - **`POST /v1/provider/verify`**, mesmo corpo de um provedor de nuvem, sem gravar nada:
   - `200 {"ok":true}`;
-  - `200 {"ok":false,"reason":"cloud_auth_rejected"|"cloud_unreachable"|"cloud_server_error"|"cloud_bad_response"}`.
+  - `200 {"ok":false,"reason":"cloud_auth_rejected"|"cloud_unreachable"|"cloud_server_error"|"cloud_bad_response"}`. Uma falha local (`cloud_audio_unprepared`) é informada como `cloud_bad_response`.
 - **`GET /health`** acrescenta `"provider":{"kind":"local"|"groq"|"openai_compatible","configured":bool}` e `"components":{"asr":bool,"diarization":bool}`. O campo `model` de C2 continua refletindo o componente `asr`.
   - `provider.lastFailure` (opcional): `{"reason":"cloud_…","provider":"groq"|"openai_compatible","at":"<ISO-8601 UTC>"}`, a última falha da nuvem sem modelo local para assumir (o 502 `cloud_asr_failed`). Some no próximo trabalho da nuvem que termina sem fallback e a cada `PUT /v1/provider`. Nunca traz a chave. O Main a lê quando uma tarefa de resumo de reunião termina sem transcrição, porque esse trabalho chega ao helper pelo backend e não pelo Main, e então emite o aviso `cloud_failed`.
 
