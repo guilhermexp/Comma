@@ -3319,7 +3319,7 @@
   "agenda_mac_calendar": "Mac 日历",
   "agenda_subscribed_calendars": "订阅的日历",
   "agenda_mac_enable": "启用 Mac 日历",
-  "agenda_mac_enable_hint": "在这里显示这台 Mac 上“日历”App 的事件。这些事件不会离开这台电脑。",
+  "agenda_mac_enable_hint": "这些事件不会离开这台电脑。",
   "agenda_mac_denied": "访问被拒绝。请在“隐私与安全性 › 日历”中允许 Comma。",
   "agenda_mac_restricted": "这台 Mac 限制了访问。请联系 Mac 的管理者，或查看“隐私与安全性 › 日历”。",
   "agenda_mac_write_only": "Comma 只能添加事件。请在“隐私与安全性 › 日历”中允许完全访问，以便在这里查看事件。",

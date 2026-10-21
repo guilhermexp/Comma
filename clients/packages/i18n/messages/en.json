@@ -3319,7 +3319,7 @@
   "agenda_mac_calendar": "Mac Calendar",
   "agenda_subscribed_calendars": "Subscribed calendars",
   "agenda_mac_enable": "Turn on Mac Calendar",
-  "agenda_mac_enable_hint": "Show the events of this Mac's Calendar app here. They stay on this computer.",
+  "agenda_mac_enable_hint": "Events stay on this computer.",
   "agenda_mac_denied": "Access denied. Allow Comma under Privacy & Security › Calendars.",
   "agenda_mac_restricted": "Access restricted on this Mac. Ask the person who manages it, or check Privacy & Security › Calendars.",
   "agenda_mac_write_only": "Comma can only add events. Allow full access under Privacy & Security › Calendars to see them here.",

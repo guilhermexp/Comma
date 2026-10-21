@@ -1,6 +1,9 @@
 import { useCommaMessages } from "@comma/i18n/react";
-import { Button, ScrollArea } from "@comma/ui";
+import { getNativeBridge } from "@comma/native-bridge";
+import { Button, ScrollArea, Tooltip } from "@comma/ui";
+import { useEffect, useId, useState } from "react";
 import type { ComposioAccount } from "../../api";
+import { AppIcon } from "../icons";
 import { composioAccountPresentation } from "../plugins/composioAccountPresentation";
 import type { AgendaCalendar } from "./agendaSource";
 import type { MacCalendarPrompt } from "./macCalendarSource";
@@ -60,9 +63,12 @@ export function AgendaCalendarPanel({
       aria-label={m.agenda_calendars()}
       className="flex w-60 shrink-0 flex-col rounded-lg border border-secondary bg-primary"
     >
-      <h2 className="m-0 px-lg pt-lg pb-sm text-sm font-semibold text-primary">
-        {m.agenda_calendars()}
-      </h2>
+      <div className="flex items-center justify-between gap-sm px-lg pt-lg pb-sm">
+        <h2 className="m-0 text-sm font-semibold text-primary">
+          {m.agenda_calendars()}
+        </h2>
+        {mac && <MacCalendarAccess prompt={mac} />}
+      </div>
       <ScrollArea
         className="min-h-0 flex-1"
         contentClassName="flex flex-col gap-lg px-lg pb-lg"
@@ -140,14 +146,41 @@ export function AgendaCalendarPanel({
               sections={macSections(group.calendars, m.agenda_subscribed_calendars())}
             />
           ))}
-        {mac && <MacCalendarAccess prompt={mac} />}
       </ScrollArea>
     </aside>
   );
 }
 
+// The Calendar app's own icon, read from macOS; null until it arrives, on
+// the web, or when Main cannot read it.
+function useCalendarAppIcon() {
+  const [icon, setIcon] = useState<string | null>(null);
+  useEffect(() => {
+    let disposed = false;
+    void getNativeBridge()
+      .calendar.appIcon()
+      .then(
+        (url) => {
+          if (!disposed) setIcon(url);
+        },
+        () => {}
+      );
+    return () => {
+      disposed = true;
+    };
+  }, []);
+  return icon;
+}
+
+// A quiet control beside the panel title: the press asks macOS for access
+// before the first prompt, and opens System Settings after a refusal.
 function MacCalendarAccess({ prompt }: { prompt: MacCalendarPrompt }) {
   const m = useCommaMessages();
+  const descriptionId = useId();
+  const icon = useCalendarAppIcon();
+  const [iconFailed, setIconFailed] = useState(false);
+  const askable = prompt.access === "notDetermined";
+  const action = askable ? m.agenda_mac_enable() : m.agenda_mac_open_settings();
   const reason = {
     notDetermined: m.agenda_mac_enable_hint(),
     denied: m.agenda_mac_denied(),
@@ -155,25 +188,35 @@ function MacCalendarAccess({ prompt }: { prompt: MacCalendarPrompt }) {
     writeOnly: m.agenda_mac_write_only(),
   }[prompt.access];
   return (
-    <section
-      aria-label={m.agenda_mac_calendar()}
-      className="flex flex-col items-start gap-xs text-sm"
-      data-testid="agenda-source"
-    >
-      <h3 className="m-0 text-xs font-semibold tracking-wide text-tertiary uppercase">
-        {m.agenda_mac_calendar()}
-      </h3>
-      <p className="m-0 text-tertiary">{reason}</p>
-      {prompt.access === "notDetermined" ? (
-        <Button hierarchy="secondary-gray" onPress={prompt.enable} size="xs">
-          {m.agenda_mac_enable()}
-        </Button>
-      ) : (
-        <Button hierarchy="secondary-gray" onPress={prompt.openSettings} size="xs">
-          {m.agenda_mac_open_settings()}
-        </Button>
-      )}
-    </section>
+    <>
+      <Tooltip content={action} supportingText={reason}>
+        <Button
+          aria-describedby={descriptionId}
+          aria-label={action}
+          className="-my-xs"
+          hierarchy="tertiary-gray"
+          iconLeading={
+            icon && !iconFailed ? (
+              <img
+                alt=""
+                className="size-full"
+                draggable={false}
+                onError={() => setIconFailed(true)}
+                src={icon}
+              />
+            ) : (
+              <AppIcon name="agenda" />
+            )
+          }
+          iconOnly
+          onPress={askable ? prompt.enable : prompt.openSettings}
+          size="xs"
+        />
+      </Tooltip>
+      <span className="sr-only" id={descriptionId}>
+        {reason}
+      </span>
+    </>
   );
 }
 

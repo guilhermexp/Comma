@@ -13,9 +13,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgendaScreen } from "../AgendaRoute";
 import { useMacCalendar } from "../macCalendarSource";
 
-// The Mac group of the calendar panel over the `calendar.*` bridge mock:
-// absent on the web, an explicit "Turn on" before any system prompt, and
-// System Settings once access is denied.
+// The Mac Calendar in the calendar panel over the `calendar.*` bridge mock:
+// absent on the web, a quiet header control that asks before any system
+// prompt, System Settings once access is denied, and the Mac group once
+// access is granted.
 
 function MacAgenda() {
   const mac = useMacCalendar("Calendário do Mac");
@@ -76,6 +77,7 @@ function installCalendar(initial: CalendarState, extra: Record<string, unknown> 
       ],
     })),
     events: vi.fn(async () => ({ events: [], truncated: false })),
+    appIcon: vi.fn(async () => calendarIcon as string | null),
     ...extra,
   };
   installNativeBridgeMock({ platform: "electron", os: "macos", calendar } as never);
@@ -88,7 +90,12 @@ function installCalendar(initial: CalendarState, extra: Record<string, unknown> 
   };
 }
 
+const calendarIcon = "data:image/png;base64,iVBORw0KGgo=";
+
 const macGroup = () => screen.getByRole("region", { name: "Calendário do Mac" });
+const panel = () => screen.findByRole("complementary", { name: "Calendários" });
+const macControl = async (name: string) =>
+  within(await panel()).findByRole("button", { name });
 
 beforeEach(() => {
   localStorage.clear();
@@ -120,9 +127,12 @@ describe("Mac Calendar in the Agenda", () => {
     const { calendar, publish } = installCalendar(state("notDetermined"));
     renderMac();
 
-    const enable = await within(await waitFor(macGroup)).findByRole("button", {
-      name: "Ativar Calendário do Mac",
-    });
+    const enable = await macControl("Ativar Calendário do Mac");
+    expect(enable).toHaveAccessibleDescription("Os eventos não saem do computador.");
+    await waitFor(() =>
+      expect(enable.querySelector("img")).toHaveAttribute("src", calendarIcon)
+    );
+    expect(screen.queryByRole("region", { name: "Calendário do Mac" })).toBeNull();
     expect(calendar.requestAccess).not.toHaveBeenCalled();
     expect(calendar.calendars).not.toHaveBeenCalled();
 
@@ -138,6 +148,18 @@ describe("Mac Calendar in the Agenda", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows the calendar glyph when the Calendar app's icon is unavailable", async () => {
+    const { calendar } = installCalendar(state("notDetermined"), {
+      appIcon: vi.fn(async () => null),
+    });
+    renderMac();
+
+    const enable = await macControl("Ativar Calendário do Mac");
+    await waitFor(() => expect(calendar.appIcon).toHaveBeenCalled());
+    expect(enable.querySelector("img")).toBeNull();
+    expect(enable.querySelector("svg")).not.toBeNull();
+  });
+
   it.each([
     ["denied", "Acesso negado"],
     ["restricted", "Acesso restrito neste Mac"],
@@ -146,11 +168,10 @@ describe("Mac Calendar in the Agenda", () => {
     const { calendar } = installCalendar(state(access));
     renderMac();
 
-    const group = await waitFor(macGroup);
-    expect(within(group).getByText(new RegExp(reason))).toBeInTheDocument();
-    fireEvent.click(
-      within(group).getByRole("button", { name: "Abrir Ajustes do Sistema" })
-    );
+    const settings = await macControl("Abrir Ajustes do Sistema");
+    expect(settings).toHaveAccessibleDescription(new RegExp(reason));
+    expect(screen.queryByRole("region", { name: "Calendário do Mac" })).toBeNull();
+    fireEvent.click(settings);
     expect(calendar.openPrivacySettings).toHaveBeenCalledOnce();
     expect(calendar.requestAccess).not.toHaveBeenCalled();
     expect(calendar.calendars).not.toHaveBeenCalled();
@@ -159,7 +180,7 @@ describe("Mac Calendar in the Agenda", () => {
   it("reads the access again when the window regains focus", async () => {
     const { calendar } = installCalendar(state("denied"));
     renderMac();
-    await waitFor(macGroup);
+    await macControl("Abrir Ajustes do Sistema");
 
     calendar.state.get.mockResolvedValue(state("fullAccess"));
     act(() => window.dispatchEvent(new Event("focus")));

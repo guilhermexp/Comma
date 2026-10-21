@@ -3319,7 +3319,7 @@
   "agenda_mac_calendar": "Calendário do Mac",
   "agenda_subscribed_calendars": "Calendários assinados",
   "agenda_mac_enable": "Ativar Calendário do Mac",
-  "agenda_mac_enable_hint": "Mostre aqui os eventos do app Calendário deste Mac. Eles não saem do computador.",
+  "agenda_mac_enable_hint": "Os eventos não saem do computador.",
   "agenda_mac_denied": "Acesso negado. Permita o Comma em Privacidade e Segurança › Calendários.",
   "agenda_mac_restricted": "Acesso restrito neste Mac. Fale com quem administra o Mac ou confira Privacidade e Segurança › Calendários.",
   "agenda_mac_write_only": "O Comma só pode adicionar eventos. Permita acesso completo em Privacidade e Segurança › Calendários para vê-los aqui.",
