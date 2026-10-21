@@ -78,6 +78,7 @@ import {
 } from "./sidebar/CommaCenterStatusContext";
 import { AppProductShortcutListener } from "./shortcuts/useAppShortcutListener";
 import { MeetingRecorderHost } from "./MeetingRecorderHost";
+import { LocalTranscriptionNoticeHost } from "./LocalTranscriptionNoticeHost";
 import { NotchTaskSync } from "./tasks/NotchTaskSync";
 import { MessageNotificationSync } from "./notifications/MessageNotificationSync";
 import { AirDropToasts } from "./airdrop/AirDropToasts";
@@ -521,6 +522,7 @@ function CommaContent({ frameElement }: { frameElement: HTMLElement | null }) {
         {/* Native browser views paint above DOM. Keep client controls in the route
           area; Main still owns capture across projection remounts. */}
         {isGuest ? null : <MeetingRecorderHost containment={recorderArea} />}
+        {isGuest ? null : <LocalTranscriptionNoticeHost />}
         <ChatConsumerBoundary>
           <ChatSidebarSlot
             appSidebarFloor={collapsed ? 0 : commaSidebarRailWidth}

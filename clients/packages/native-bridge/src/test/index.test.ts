@@ -624,6 +624,7 @@ describe("native bridge contracts", () => {
       "audioCapture.start",
       "audioCapture.stop",
       "audioCapture.openSaved",
+      "audioCapture.transcribeSaved",
     ]);
 
     for (const capability of nativeCapabilityRegistry) {
@@ -680,6 +681,8 @@ describe("native bridge contracts", () => {
   it("publishes event leaves as first-class generated manifest entries", () => {
     expect(nativeEventRegistry.map((event) => event.id)).toEqual([
       "localBackend.state.changed",
+      "localTranscription.state.changed",
+      "localTranscription.notice",
       "applicationMenu.command",
       "sitePermissionMenu.changed",
       "appPreferences.state.changed",
@@ -713,6 +716,18 @@ describe("native bridge contracts", () => {
         id: "localBackend.state.changed",
         permission: "local-backend.read",
         target: { type: "all" },
+      },
+      {
+        channel: "comma:local-transcription:state-changed",
+        id: "localTranscription.state.changed",
+        permission: "local-transcription.read",
+        target: { type: "all" },
+      },
+      {
+        channel: "comma:local-transcription:notice",
+        id: "localTranscription.notice",
+        permission: "local-transcription.read",
+        target: { role: "main-window", type: "role" },
       },
       {
         channel: "comma:application-menu:command",
@@ -904,6 +919,7 @@ describe("native bridge contracts", () => {
   it("publishes state leaves with generated get and subscribe bindings", () => {
     expect(nativeStateRegistry.map((state) => state.id)).toEqual([
       "localBackend.state",
+      "localTranscription.state",
       "sitePermissionMenu.state",
       "appPreferences.state",
       "connectorRuntime.state",
@@ -940,6 +956,24 @@ describe("native bridge contracts", () => {
           channel: "comma:local-backend:state-changed",
           id: "localBackend.state.changed",
           permission: "local-backend.read",
+          target: { type: "all" },
+        },
+      },
+      {
+        bridge: { method: "state", namespace: "localTranscription" },
+        get: {
+          channel: "comma:local-transcription:state",
+          id: "localTranscription.state",
+          permission: "local-transcription.read",
+          sessionAdmission: "local_only",
+          sessionAdmissionRationale:
+            "Reports whether this Mac's speech models are installed; no account data is involved.",
+        },
+        id: "localTranscription.state",
+        subscribe: {
+          channel: "comma:local-transcription:state-changed",
+          id: "localTranscription.state.changed",
+          permission: "local-transcription.read",
           target: { type: "all" },
         },
       },

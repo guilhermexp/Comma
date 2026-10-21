@@ -3,6 +3,7 @@ import {
   CloudCheckIcon,
   Cursor1Icon,
   DownloadIcon,
+  FileTextIcon,
   Menu,
   MenuItem,
   MenuPopover,
@@ -16,7 +17,8 @@ export type DriveFileMenuAction =
   | "ask-comma-agent"
   | "delete"
   | "download"
-  | "keep-offline";
+  | "keep-offline"
+  | "transcribe";
 
 export type DriveSelectionMenuAction =
   | "ask-comma-agent"
@@ -109,6 +111,7 @@ export function DriveFileMenuPopover({
   onAction,
   onOpenChange,
   pointerOffsets,
+  transcribeLabel,
   triggerRef,
   writable,
 }: {
@@ -121,6 +124,8 @@ export function DriveFileMenuPopover({
   onAction: (action: DriveFileMenuAction) => void;
   onOpenChange: (isOpen: boolean) => void;
   pointerOffsets: MenuPointerOffsets | null;
+  /** Present for a recording without a transcript while local transcription is ready. */
+  transcribeLabel?: string | undefined;
   triggerRef: RefObject<HTMLElement | null>;
   writable: boolean;
 }) {
@@ -153,6 +158,11 @@ export function DriveFileMenuPopover({
         <MenuItem icon={<CloudCheckIcon />} id="keep-offline">
           {keepOfflineLabel}
         </MenuItem>
+        {transcribeLabel ? (
+          <MenuItem icon={<FileTextIcon />} id="transcribe">
+            {transcribeLabel}
+          </MenuItem>
+        ) : null}
         {writable ? (
           <>
             <MenuSeparator />

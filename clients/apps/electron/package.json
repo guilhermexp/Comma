@@ -1,7 +1,7 @@
 {
   "name": "@comma/electron",
   "private": true,
-  "version": "0.0.3",
+  "version": "0.0.4",
   "main": ".vite/build/main.js",
   "scripts": {
     "dev": "pnpm build:native && tsx ./scripts/install-dev-protocol-handler.ts && electron-forge start",

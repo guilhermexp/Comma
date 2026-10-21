@@ -137,6 +137,10 @@
     "agent_template": "__internal_meeting_agent",
     "summary_template": "example-meeting-summary-template",
     "asr_template": "example-meeting-asr-template",
+    "local_asr": {
+      "base_url": "http://127.0.0.1:41001/v1",
+      "api_key": "replace-with-local-asr-token"
+    },
     "bot_name": "Cirno",
     "caption_language": "Chinese, Mandarin (Simplified)",
     "feishu_action_activation_enabled": false,

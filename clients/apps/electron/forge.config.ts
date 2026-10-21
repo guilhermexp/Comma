@@ -18,6 +18,11 @@ import { ensureDevNativeAddons } from "./scripts/dev-native-addons";
 import { electronDownloadCache } from "./scripts/electron-download-cache";
 import { macosDisplayNameHook } from "./scripts/macos-display-name";
 import {
+  licensesDistRoot,
+  transcriberDistPath,
+  transcriberLicensesDistDir,
+} from "./scripts/native-paths";
+import {
   macosInfoPlistStringsHook,
   macosUsageDescriptions,
 } from "./scripts/macos-info-plist-strings";
@@ -93,6 +98,20 @@ if (shipsLocalBackend && !existsSync(join(localBackendDir, "comma", "bin", "comm
     `${localBackendDir} is missing. Run \`pnpm --dir clients/apps/electron build:local-backend\` before packaging a local-mode release.`
   );
 }
+/**
+ * The transcription helper's license and attribution texts (FluidAudio,
+ * Parakeet, Community-1) ship as Contents/Resources/licenses whenever the
+ * helper itself ships in dist/native.
+ */
+const shipsTranscriber = existsSync(transcriberDistPath(import.meta.dirname));
+if (
+  shipsTranscriber &&
+  !existsSync(join(transcriberLicensesDistDir(import.meta.dirname), "ATTRIBUTION.md"))
+) {
+  throw new Error(
+    `${transcriberLicensesDistDir(import.meta.dirname)} is missing. Run \`pnpm --dir clients/apps/electron build:native\` before packaging.`
+  );
+}
 const channelIconBasePath = resolve(
   import.meta.dirname,
   "build",
@@ -152,6 +171,7 @@ const config: ForgeConfig = {
     extraResource: [
       "dist/native",
       ...(shipsLocalBackend ? ["dist/local-backend"] : []),
+      ...(shipsTranscriber ? [licensesDistRoot(import.meta.dirname)] : []),
       channelIconPngPath,
       notificationSoundPath,
       ...statusTrayIconPaths,

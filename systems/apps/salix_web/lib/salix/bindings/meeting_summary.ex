@@ -696,6 +696,7 @@ defmodule Salix.Bindings.MeetingSummary do
               :ffprobe_timeout,
               :asr_batch_timeout,
               :asr_not_configured,
+              :local_asr_model_not_installed,
               :not_found,
               :timeout,
               :unavailable

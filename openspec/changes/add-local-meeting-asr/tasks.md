@@ -6,7 +6,7 @@
 - [x] 1.2 Gerar `models-manifest.json` com caminho, tamanho e SHA-256 de cada arquivo de runtime do Parakeet v3 `int8-v2` (revisão `7dd20fe…`) e da diarização Community-1 (revisão `df2625a…`), mais os textos de licença/NOTICE. Fazer isso com um script de geração versionado em `clients/apps/electron/scripts/`. Verificar: o script recria o mesmo manifesto e os SHA-256 dos pesos batem com os metadados LFS do Hugging Face.
 - [x] 1.3 Verificador de manifesto, começando por teste que falha: um arquivo com SHA-256 ou tamanho diferente invalida a instalação, e arquivos fora do manifesto são apagados. Verificar com `swift test`.
 - [x] 1.4 Subcomandos `status`, `install` (staging → download pelo `ModelHub` com revisões fixadas → verificação de 1.3 → rename atômico → carga de preparação → descarga) e `remove`, emitindo JSONL de progresso e resultado. Também a checagem de Apple Silicon e macOS 15+. Verificar: testes de staging interrompido (nada fica "pronto"), de `remove` e de máquina não suportada; e um `install` real em `/tmp` que termina em `ready`.
-- [x] 1.5 Fusão de palavras e speakers, começando por teste que falha: cada palavra vai para o segmento com maior sobreposição, palavras seguidas do mesmo speaker se juntam, os speakers são numerados por primeira aparição e uma palavra sem sobreposição fica sem speaker. Verificar com `swift test`.
+- [x] 1.5 Fusão de palavras e speakers, começando por teste que falha: cada palavra vai para o segmento com maior sobreposição, palavras seguidas do mesmo speaker se juntam, os speakers são numerados por primeira aparição e uma palavra sem sobreposição vai para o segmento mais próximo a até 1 s; mais longe que isso, fica sem speaker. Verificar com `swift test`.
 - [x] 1.6 `serve` com `NWListener` só em `127.0.0.1`:
   - `GET /health` (`status`, `busy`);
   - `POST /v1/audio/transcriptions` multipart, com limite de 64 MiB;
@@ -31,7 +31,7 @@
 
 - [x] 3.1 Compilar o helper em `build-native.ts` e `native-paths.ts` (`dist/native/macos/CommaTranscriber`), incluí-lo em `sign-macos-app.ts` e copiar as licenças para `Contents/Resources/licenses/`. Verificar: `pnpm build:native` gera o binário, e `codesign --verify --deep --strict` passa num `package` local.
 - [x] 3.2 Porta `asr` em `ports.ts`, `asrToken` em `secrets.json` (gerado uma vez, 0600), arquivo do token passado com `--token-file`, e `meetings.asr_template` + `meetings.local_asr` em `config.ts`. Verificar: testes de portas, segredos e snapshot da config sem segredo no log.
-- [ ] 3.3 `#asrSpec()` em `service.ts`: `taskpolicy -c utility` + `serve`, iniciado depois do minio e antes do backend, com prontidão por `/health` e entrada em `stopOrder`/`orphanOrder`. Verificar: testes com processo falso (ordem, reinício, parada) e, num app real em modo local, `ps -o pri,command` mostrando o helper sob `taskpolicy`.
+- [x] 3.3 `#asrSpec()` em `service.ts`: `taskpolicy -c utility` + `serve`, iniciado depois do minio e antes do backend, com prontidão por `/health` e entrada em `stopOrder`/`orphanOrder`. Verificar: testes com processo falso (ordem, reinício, parada) e, num app real em modo local, `ps -o pri,command` mostrando o helper sob `taskpolicy`.
 - [x] 3.4 Gerenciador do modelo no Main e a folha `localTranscription` da ponte (`state.subscribe`, `install`, `cancel`, `remove`). Ele roda os subcomandos de 1.4, traduz o JSONL em estado, recusa `remove` com `busy`, e calcula `supported` (Apple Silicon, macOS ≥ 15, modo local). Verificar com testes de unidade com helper falso: progresso, falha de checksum, cancelamento, recusa de remoção e não suportado.
 - [x] 3.5 `transcription.ts`: limite de 64 MiB, publicação do motivo `local_asr_model_not_installed` no estado do recorder/toast e ação de retranscrever uma gravação salva. Verificar com testes em `audio-capture.test.ts`.
 
@@ -48,7 +48,7 @@
 
 ## 5. Integração e release
 
-- [ ] 5.1 E2E no Electron em modo local:
+- [x] 5.1 E2E no Electron em modo local:
   - abrir sem modelo;
   - gravar um trecho e ver o aviso de instalar;
   - instalar e ver "Pronto";
@@ -62,8 +62,8 @@
   - registrar o uso de CPU e GPU com `powermetrics` durante o trabalho;
   - confirmar que, ocioso, o helper não mantém o modelo na memória (RSS antes e depois).
 - [ ] 5.3 Acesso: de outro dispositivo da rede, confirmar que a porta `asr` recusa conexão; localmente, sem token, receber 401.
-- [ ] 5.4 CI de release: o `desktop-release.yml` compila o helper (cache SwiftPM com o novo `Package.resolved`). Verificar com `actionlint` e uma execução do workflow que gere o DMG com `Contents/Resources/native/macos/CommaTranscriber`, sem os pesos do modelo.
-- [ ] 5.5 Atualizar a documentação de primeira instalação e as notas da release: onde o modelo fica, tamanho, como remover, requisitos (Apple Silicon, macOS 15+), limitações (pt europeu no treino, fala sobreposta) e atribuições. Verificar com `pnpm docs:check`.
+- [x] 5.4 CI de release: o `desktop-release.yml` compila o helper (cache SwiftPM com o novo `Package.resolved`). Verificar com `actionlint` e uma execução do workflow que gere o DMG com `Contents/Resources/native/macos/CommaTranscriber`, sem os pesos do modelo.
+- [x] 5.5 Atualizar a documentação de primeira instalação e as notas da release: onde o modelo fica, tamanho, como remover, requisitos (Apple Silicon, macOS 15+), limitações (pt europeu no treino, fala sobreposta) e atribuições. Verificar com `pnpm docs:check`.
 
 ## Acompanhamento do fluxo
 

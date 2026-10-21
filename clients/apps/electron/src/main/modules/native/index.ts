@@ -1,4 +1,5 @@
 import type { LocalBackendProvider } from "../../local-backend/provider";
+import type { LocalTranscriptionProvider } from "../../local-transcription/provider";
 import type {
   LocalComputeOverview,
   LocalComputeDisposalResult,
@@ -790,6 +791,7 @@ function currentChatEnvelope<Envelope>(
 
 export function registerNativeBridgeHandlers({
   localBackend,
+  localTranscription,
   airDrop,
   appPreferences,
   computerUse,
@@ -865,11 +867,13 @@ export function registerNativeBridgeHandlers({
   windowAppearance: WindowAppearanceProvider;
   windows: WindowsProvider;
   localBackend: LocalBackendProvider;
+  localTranscription: LocalTranscriptionProvider;
 }) {
   registerGeneratedNativeMainBindings({
     gateway,
     providers: {
       localBackend,
+      localTranscription,
       airDrop,
       applicationMenu: applicationMenuProvider,
       appPreferences,

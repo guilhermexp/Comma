@@ -6,7 +6,7 @@ defmodule Salix.Bindings.AgentAudioTranscriber do
   alias SalixAgent.{FileBackend, Templates}
   alias SalixLlm.Transcribe
 
-  @max_audio_bytes 30 * 1024 * 1024
+  @max_audio_bytes 64 * 1024 * 1024
 
   @impl true
   def transcribe(agent_id, path) do

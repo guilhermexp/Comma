@@ -1,4 +1,5 @@
 import type { LocalBackendStatus } from "@comma/native-bridge";
+import type { LocalTranscriptionManager } from "../local-transcription/manager";
 import type { SecureSessionInput } from "../secure-store";
 import { LocalOwnerSessionKeeper, mintLocalOwnerSession } from "./owner-session";
 import { toLocalBackendStatus, type LocalBackendProvider } from "./provider";
@@ -14,6 +15,8 @@ export class LocalBackendController implements LocalBackendProvider {
   readonly #onStatus: (status: LocalBackendStatus) => void;
   readonly #openPath: (path: string) => Promise<string>;
   readonly #fetch: typeof fetch | undefined;
+  /** The speech models of this Mac; present in every local-mode build. */
+  readonly localTranscription: LocalTranscriptionManager | undefined;
   #keeper: LocalOwnerSessionKeeper | undefined;
   #ownerSignedIn = false;
   #shuttingDown = false;
@@ -24,11 +27,13 @@ export class LocalBackendController implements LocalBackendProvider {
     onStatus: (status: LocalBackendStatus) => void;
     openPath: (path: string) => Promise<string>;
     fetch?: typeof fetch | undefined;
+    localTranscription?: LocalTranscriptionManager | undefined;
   }) {
     this.#service = options.service;
     this.#onStatus = options.onStatus;
     this.#openPath = options.openPath;
     this.#fetch = options.fetch;
+    this.localTranscription = options.localTranscription;
   }
 
   /** Chooses ports and writes the configuration; returns the API base URL. */

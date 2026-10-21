@@ -5,6 +5,7 @@ import { applicationMenuProvider } from "./application-menu-provider";
 import {
   applicationMenuCommandEvent,
   localBackendStatusChangedEvent,
+  localTranscriptionStateChangedEvent,
 } from "@comma/native-bridge";
 import { applyBrowserSidebarAppearance } from "./browser-sidebar-appearance";
 import { OpenCommaShortcut } from "./open-comma-shortcut";
@@ -226,6 +227,9 @@ const localBackend = createMainLocalBackend({
   appVersion: displayVersion,
   emitStatus: (status) =>
     appContext?.nativeEventBus.emit(localBackendStatusChangedEvent, status),
+  emitTranscriptionState: (state) =>
+    appContext?.nativeEventBus.emit(localTranscriptionStateChangedEvent, state),
+  systemVersion: process.getSystemVersion(),
   openPath: (path) => shell.openPath(path),
   log: (message) => log.info(message),
 });
@@ -1853,6 +1857,7 @@ async function createElectronMainContext() {
     startupSession,
     deferSessionInitialize: Boolean(localBackend),
     localBackend,
+    localTranscription: localBackend?.localTranscription,
     computeNodeLifecyclePath: e2eHooks.computeNodeLifecyclePath,
   });
   await applyElectronE2eHooks(e2eHooks, context.secureSessionStore, context.session);

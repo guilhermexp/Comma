@@ -98,6 +98,18 @@ defmodule SalixLlm.TranscribeTest do
     end
   end
 
+  defmodule FailingChunker do
+    def with_mp3_chunks(_audio, _source_filename, _callback, _opts), do: called()
+
+    def with_mp3_chunks_stream(_stream, _source_size, _source_filename, _callback, _opts),
+      do: called()
+
+    defp called do
+      send(self(), :chunker_called)
+      {:error, :chunker_called}
+    end
+  end
+
   describe "accumulate_content/1" do
     test "folds SSE delta.content, skipping [DONE] and extra_content (gemini thought sig)" do
       sse = ~S"""
@@ -485,6 +497,180 @@ defmodule SalixLlm.TranscribeTest do
       assert_receive {:streaming_chunker_input, 14, 14, deadline_ms}
       assert is_integer(deadline_ms)
     end
+  end
+
+  defmodule AudioTranscriptionsServer do
+    @moduledoc false
+    import Plug.Conn
+
+    def init(test_pid), do: test_pid
+
+    def call(conn, test_pid) do
+      conn =
+        Plug.Parsers.call(
+          conn,
+          Plug.Parsers.init(parsers: [:multipart], length: 80_000_000, pass: ["*/*"])
+        )
+
+      file =
+        case conn.body_params["file"] do
+          %Plug.Upload{} = upload ->
+            %{
+              bytes: File.read!(upload.path),
+              filename: upload.filename,
+              content_type: upload.content_type
+            }
+
+          other ->
+            other
+        end
+
+      send(
+        test_pid,
+        {:audio_transcriptions_request, conn.method, conn.request_path,
+         get_req_header(conn, "authorization"), Map.delete(conn.body_params, "file"), file}
+      )
+
+      {status, body} = :persistent_term.get({__MODULE__, conn.port})
+
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(status, Jason.encode!(body))
+    end
+  end
+
+  describe "audio_transcriptions protocol" do
+    setup do
+      {:ok, server} =
+        start_supervised(
+          {Bandit,
+           plug: {AudioTranscriptionsServer, self()},
+           ip: {127, 0, 0, 1},
+           port: 0,
+           startup_log: false}
+        )
+
+      {:ok, {_ip, port}} = ThousandIsland.listener_info(server)
+      on_exit(fn -> :persistent_term.erase({AudioTranscriptionsServer, port}) end)
+
+      respond = fn status, body ->
+        :persistent_term.put({AudioTranscriptionsServer, port}, {status, body})
+      end
+
+      cfg = %{
+        "protocol" => "audio_transcriptions",
+        "base_url" => "http://127.0.0.1:#{port}/v1/",
+        "api_key" => "local-asr-token",
+        "model" => "parakeet-tdt-0.6b-v3"
+      }
+
+      %{cfg: cfg, respond: respond}
+    end
+
+    test "posts the whole recording as multipart and numbers speakers by first appearance",
+         %{cfg: cfg, respond: respond} do
+      respond.(200, %{
+        "text" => "ignored",
+        "duration" => 3725.4,
+        "segments" => [
+          %{"id" => 0, "start" => 0.4, "end" => 2.0, "text" => " Bom dia. ", "speaker" => "S7"},
+          %{"id" => 1, "start" => 65.9, "end" => 70.0, "text" => "Oi!", "speaker" => "S2"},
+          %{"id" => 2, "start" => 3600.0, "end" => 3601.0, "text" => "Tchau.", "speaker" => "S7"},
+          %{"id" => 3, "start" => 3700.2, "end" => 3702.0, "text" => "Hm.", "speaker" => nil}
+        ]
+      })
+
+      audio = :binary.copy(<<0xA5>>, 600_000)
+      stream = Stream.map(0..5, fn i -> binary_part(audio, i * 100_000, 100_000) end)
+
+      assert {:ok, result} =
+               Transcribe.transcribe_audio_stream_with_metadata(
+                 cfg,
+                 stream,
+                 byte_size(audio),
+                 "recording.m4a",
+                 "ignored prompt",
+                 chunker: FailingChunker
+               )
+
+      assert result.transcript ==
+               Enum.join(
+                 [
+                   "[00:00:00] Speaker 1: Bom dia.",
+                   "[00:01:05] Speaker 2: Oi!",
+                   "[01:00:00] Speaker 1: Tchau.",
+                   "[01:01:40] Hm."
+                 ],
+                 "\n"
+               )
+
+      assert result.duration_seconds == 3726
+      assert result.chunks == [%{index: 0, offset_seconds: 0, transcript: result.transcript}]
+
+      assert_receive {:audio_transcriptions_request, "POST", "/v1/audio/transcriptions",
+                      ["Bearer local-asr-token"], fields, file}
+
+      assert fields == %{"model" => "parakeet-tdt-0.6b-v3", "response_format" => "verbose_json"}
+      assert file.bytes == audio
+      assert file.filename == "recording.m4a"
+      assert file.content_type == "audio/mp4"
+      refute_received :chunker_called
+    end
+
+    test "a recording without speech completes with an empty transcript",
+         %{cfg: cfg, respond: respond} do
+      respond.(200, %{"text" => "", "duration" => 12.0, "segments" => []})
+
+      assert {:ok, %{transcript: "", duration_seconds: 12, chunks: [%{transcript: ""}]}} =
+               Transcribe.transcribe_audio_with_metadata(cfg, "M4A", "recording.m4a", "p",
+                 chunker: FailingChunker
+               )
+    end
+
+    test "maps the missing local model conflict to its own reason",
+         %{cfg: cfg, respond: respond} do
+      respond.(409, %{
+        "error" => %{"code" => "local_asr_model_not_installed", "message" => "Install it."}
+      })
+
+      assert {:error, :local_asr_model_not_installed} =
+               Transcribe.transcribe_audio_with_metadata(cfg, "M4A", "recording.m4a", "p",
+                 chunker: FailingChunker
+               )
+
+      respond.(409, %{"error" => %{"code" => "other_conflict"}})
+
+      assert {:error, {:asr_http, 409, _preview}} =
+               Transcribe.transcribe_audio_with_metadata(cfg, "M4A", "recording.m4a", "p",
+                 chunker: FailingChunker
+               )
+    end
+
+    test "rejects a malformed verbose_json response", %{cfg: cfg, respond: respond} do
+      respond.(200, %{"text" => "no segments"})
+
+      assert {:error, :asr_malformed_response} =
+               Transcribe.transcribe_audio_with_metadata(cfg, "M4A", "recording.m4a", "p",
+                 chunker: FailingChunker
+               )
+    end
+  end
+
+  test "chat_completions templates keep using the chunker" do
+    assert {:ok, %{transcript: "[00:00:01] Speaker: hello", duration_seconds: 7}} =
+             Transcribe.transcribe_audio_stream_with_metadata(
+               %{"protocol" => "chat_completions"},
+               ["abc"],
+               3,
+               "recording.m4a",
+               "prompt",
+               chunker: StreamingChunker,
+               transcribe_fun: fn _cfg, _audio, "mp3", "prompt" ->
+                 {:ok, "[00:00:01] Speaker: hello"}
+               end
+             )
+
+    assert_received {:streaming_chunker_input, 3, 3, _deadline}
   end
 
   defp test_chunks(contents, offsets) do

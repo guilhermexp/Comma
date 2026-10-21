@@ -167,6 +167,42 @@ It refuses to run unless `COMMA_ENVIRONMENT=local`.
 `COMMA_RELEASE_JOB=1` is set only for the preparation command.
 Stop the backend with `SIGTERM`; the release shuts down gracefully.
 
+### Local meeting transcription
+
+The app runs a loopback ASR server and writes its address to `config.json`:
+
+```json
+"meetings": {
+  "asr_template": "local-meeting-asr",
+  "local_asr": { "base_url": "http://127.0.0.1:<asr port>/v1", "api_key": "<asr token>" }
+}
+```
+
+When `meetings.local_asr` has both fields, `Comma.LocalInstall.run/0` upserts
+the global template `local-meeting-asr`. The template uses the model
+`parakeet-tdt-0.6b-v3` and `provider_config.protocol: "audio_transcriptions"`.
+Each start writes the current `base_url` and `api_key`, because the port can
+change. Without `meetings.local_asr`, the command creates no template.
+
+An ASR template with `protocol: "audio_transcriptions"` uses the
+OpenAI-compatible transcription API:
+
+- The backend sends the whole recording in one multipart request to
+  `POST {base_url}/audio/transcriptions` with `file`, `model`, and
+  `response_format=verbose_json`. It does not cut the audio and does not use
+  ffmpeg.
+- Each item of `segments[]` becomes one line `[HH:MM:SS] Speaker N: text`.
+  Speakers get numbers in order of first appearance. A segment without
+  `speaker` becomes `[HH:MM:SS] text`.
+- A `409` response with error code `local_asr_model_not_installed` gives the
+  reason `local_asr_model_not_installed` in the
+  `/v1/comma/me/recordings/transcribe` SSE result and in the `audio.transcribe`
+  tool error.
+
+Templates without `protocol`, or with `protocol: "chat_completions"`, keep the
+chunked `chat/completions` path. That path needs ffmpeg and accepts up to
+30 MiB. Recording uploads and `audio.transcribe` accept up to 64 MiB.
+
 ## Subsystem selection
 
 `COMMA_SUBSYSTEMS` (comma-separated subsystem names; unset = every subsystem in

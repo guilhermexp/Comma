@@ -2,7 +2,7 @@ defmodule CommaWeb.RecordingTranscription do
   @moduledoc "Authenticated recording uploads to the shared meeting ASR backend."
   import Plug.Conn
 
-  @max_bytes 30 * 1024 * 1024
+  @max_bytes 64 * 1024 * 1024
   @timeout_ms 610_000
 
   def call(conn, opts \\ []) do
@@ -38,7 +38,7 @@ defmodule CommaWeb.RecordingTranscription do
             error(conn, 400, "The recording is empty.")
 
           {:error, conn, :too_large} ->
-            error(conn, 413, "ASR accepts recordings up to 30 MiB. The audio remains in Drive.")
+            error(conn, 413, "ASR accepts recordings up to 64 MiB. The audio remains in Drive.")
 
           {:error, conn, _} ->
             error(conn, 400, "The recording upload failed.")
@@ -127,6 +127,10 @@ defmodule CommaWeb.RecordingTranscription do
 
   defp payload({:error, :asr_not_configured}),
     do: %{status: "error", reason: "Meeting ASR is not configured on the server."}
+
+  # The desktop app matches this exact reason to offer the local model install.
+  defp payload({:error, :local_asr_model_not_installed}),
+    do: %{status: "error", reason: "local_asr_model_not_installed"}
 
   defp payload({:error, :timeout}),
     do: %{status: "error", reason: "Transcription timed out. The audio remains in Drive."}

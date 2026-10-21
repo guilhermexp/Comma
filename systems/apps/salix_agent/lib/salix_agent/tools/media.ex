@@ -18,7 +18,7 @@ defmodule SalixAgent.Tools.Media do
   @audio_transcribe_desc """
   Transcribe an audio or video file from the current agent-visible workspace and save the complete transcript as a text artifact.
 
-  Params: path (required absolute VFS file path, at most 30 MiB), output_path (optional absolute .txt artifact path).
+  Params: path (required absolute VFS file path, at most 64 MiB; chunked chat_completions ASR templates accept at most 30 MiB), output_path (optional absolute .txt artifact path).
 
   For video download and transcription requests, the Router delegates a Task to a Worker. The Worker completes these steps:
   1. Download the media in an authorized execution environment that permits file reads.
@@ -189,6 +189,10 @@ defmodule SalixAgent.Tools.Media do
 
       {:error, :asr_audio_empty} ->
         raise "audio file is empty"
+
+      {:error, :local_asr_model_not_installed} ->
+        raise "local_asr_model_not_installed: local meeting transcription is not installed; " <>
+                "install it in Settings > Meeting"
 
       {:error, :asr_audio_too_large} ->
         raise "audio file exceeds the supported size"

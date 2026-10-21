@@ -139,7 +139,8 @@ At launch, Main (`src/main/local-backend/`):
 2. Chooses free ports on `127.0.0.1`, keeps them in `state.json`, and replaces
    a port that another program took.
 3. Stops processes that a forced quit left, then starts Postgres (`initdb` and
-   `createdb` the first time), Redis, and MinIO.
+   `createdb` the first time), Redis, MinIO, and the transcription helper
+   (see local transcription).
 4. Dumps the database to `backups/` with `pg_dump` when the app version
    changed. It keeps the three most recent dumps.
 5. Runs `bin/comma eval "Comma.LocalInstall.run()"`, which creates the storage
@@ -147,6 +148,26 @@ At launch, Main (`src/main/local-backend/`):
    with `COMMA_ENVIRONMENT=local` and `COMMA_DESKTOP_LOCAL=1`.
 6. Creates the owner (`owner@local.comma`) and a local Session through the
    loopback-only admin API. The renderer receives neither token.
+
+#### Local transcription helper
+
+`Contents/Resources/native/macos/CommaTranscriber` transcribes meeting
+recordings on the Mac with FluidAudio (Parakeet TDT 0.6B v3 and the
+Community-1 speaker diarization). The app contains no model weights.
+`Contents/Resources/licenses/fluidaudio/` contains the FluidAudio license and
+the model licenses and notices.
+
+- Main starts `/usr/sbin/taskpolicy -c utility CommaTranscriber serve` on a
+  `127.0.0.1` port from `state.json`, after MinIO and before the backend. It
+  starts also when no model is installed.
+- The helper reads its bearer token from `asr-token` (mode 0600), never from
+  the command line. A request without the token gets `401`.
+- `config.json` sets `meetings.asr_template: "local-meeting-asr"` and
+  `meetings.local_asr`. `Comma.LocalInstall.run/0` points the
+  `local-meeting-asr` template at the helper on each launch. See
+  [the backend configuration](../../../systems/DEPLOYMENT.md).
+- The helper loads the model only for a transcription and releases it after
+  the transcription. It runs one transcription at a time.
 
 A process that stops restarts after 1, 2, 4 … 30 seconds. Five stops within two
 minutes show the error screen. Quit stops the backend, Postgres in fast mode,
@@ -236,6 +257,53 @@ from `Comma.app/Contents/Resources/local-backend`, and remove
 makes the stored subscription accounts unreadable; remove the whole folder or
 keep it.
 
+### Local transcription
+
+Comma can transcribe meeting recordings on the Mac, with a speaker label on
+each line. The audio does not leave the Mac. The model is not part of the app.
+Install it only if you want this feature.
+
+Requirements: Apple silicon, macOS 15 or later, and the local backend. On other
+Macs, Settings shows the reason and no Install button.
+
+To install the model:
+
+1. Open Settings > Work > Meeting.
+2. In Local transcription, click Install. The download is about 654 MB.
+3. Wait for Ready. The status shows Downloading with a percentage, then
+   Preparing. Comma checks the SHA-256 and the size of each file before it
+   marks the model ready. A failed or cancelled download leaves no model.
+   Ready closes the "Install local transcription" notices.
+
+The model stays in `~/Library/Application Support/Comma/Models`, outside
+`local/`. Removing one does not remove the other.
+
+After the install, each new meeting recording gets `<name>.transcript.txt` and
+`<name>.transcript.json` beside it in Drive. Each line has the form
+`[HH:MM:SS] Speaker N: text`. Without the model, Comma saves the recording and
+shows "Install local transcription" with an Install button. To transcribe a saved recording later,
+select Transcribe on the recording in Drive. Recordings up to 64 MiB (about
+two hours) are accepted.
+
+To remove the model, click Remove in the same section and confirm. Comma
+deletes the `Models` folder. Remove is refused while a transcription runs.
+
+Limits:
+
+- The model learned Portuguese mostly from European Portuguese. Names and
+  slang in Brazilian Portuguese can be wrong.
+- When two people speak at the same time, the line gets one speaker.
+- A word more than one second away from any detected speech has no speaker
+  and starts a line without a `Speaker N` label.
+- The first transcription after a macOS update can be slower, because macOS
+  prepares the model again.
+
+Attribution: FluidAudio (Apache-2.0, Fluid Inference). Parakeet TDT 0.6B v3
+(CC BY 4.0, NVIDIA; Core ML conversion by Fluid Inference). Speaker
+diarization Community-1 (CC BY 4.0, pyannote; with WeSpeaker and BUT
+Speech@FIT components). The full texts are in
+`Comma.app/Contents/Resources/licenses/fluidaudio/`.
+
 ## Rehearse an update locally
 
 The release command runs locally with the same steps as the workflow.
@@ -270,4 +338,15 @@ apps/electron/test/local-backend-runtime.test.ts` starts the real tree on an
 --dir clients exec playwright test apps/electron/e2e/local-mode-packaged.spec.ts
 --no-deps` launches it with `PATH=/usr/bin:/bin`, checks Home without login,
   a Router answer, quit, and reopen.
+- With a packaged app on Apple silicon, add
+  `COMMA_ELECTRON_LOCAL_ASR_AUDIO=<short two-voice .m4a>` to the command above
+  and select `-g "local transcription"`. The test downloads the real model,
+  checks the install notice, Downloading, Preparing, and Ready (which closes
+  the notice), a transcript with Speaker 1 and Speaker 2 lines, and Remove
+  with its confirmation. It moves the profile's Drive
+  source to a temporary folder first, because Drive otherwise publishes
+  `~/Comma Drive`. Set `COMMA_PLAYWRIGHT_SKIP_WEB_SERVER=1` for both packaged
+  tests.
+- `swift test` in `native/macos/CommaTranscriber` checks the model manifest,
+  the staged install, the speaker merge, and the HTTP routes of the helper.
 - Unit tests do not prove signing, packaging, or an update. Those need a build.

@@ -36,6 +36,7 @@ const ports: LocalBackendPorts = {
   comma: 52006,
   transfer: 52007,
   metrics: 52008,
+  asr: 52009,
 };
 
 class FakeChild implements ChildHandle {
@@ -104,7 +105,9 @@ class FakeRuntime implements LocalBackendRuntime {
     }
   }
 
-  async httpOk() {
+  readonly probed: string[] = [];
+  async httpOk(url: string) {
+    this.probed.push(url);
     return true;
   }
   async redisPing() {
@@ -148,10 +151,17 @@ function install(previous?: { appVersion: string }) {
   return { dataDir, resourcesDir: join(root, "Resources", "local-backend") };
 }
 
+const transcriber = {
+  executable:
+    "/Applications/Comma.app/Contents/Resources/native/macos/CommaTranscriber",
+  modelsDir: "/Users/owner/Library/Application Support/Comma/Models",
+};
+
 function service(
   layout: ReturnType<typeof install>,
   runtime: FakeRuntime,
-  appVersion = "0.0.3"
+  appVersion = "0.0.3",
+  options: { transcriber?: typeof transcriber } = {}
 ) {
   const snapshots: LocalBackendSnapshot[] = [];
   const logs: string[] = [];
@@ -159,6 +169,7 @@ function service(
     layout,
     appVersion,
     runtime,
+    ...options,
     onSnapshot: (snapshot) => snapshots.push(snapshot),
     log: (message) => logs.push(message),
   });
@@ -415,6 +426,127 @@ describe("local backend service", () => {
     expect(backend.snapshot()).toMatchObject({
       phase: "failed",
       failure: { code: "process_stopped" },
+    });
+  });
+
+  describe("with the local transcription helper", () => {
+    it("starts it at utility priority after MinIO and before the backend, with its token in a private file", async () => {
+      const layout = install();
+      const runtime = new FakeRuntime();
+      const { backend, logs } = service(layout, runtime, "0.0.3", { transcriber });
+
+      await backend.prepare();
+      expect(await backend.start()).toBe(true);
+
+      const at = (event: string) => runtime.events.indexOf(event);
+      expect(at("spawn minio")).toBeLessThan(at("spawn asr"));
+      expect(at("spawn asr")).toBeLessThan(at("spawn backend"));
+      const tokenFile = join(layout.dataDir, "asr-token");
+      const asr = runtime.child("asr").spec;
+      expect([asr.command, ...asr.args]).toEqual([
+        "/usr/sbin/taskpolicy",
+        "-c",
+        "utility",
+        transcriber.executable,
+        "serve",
+        "--port",
+        "52009",
+        "--token-file",
+        tokenFile,
+        "--models-dir",
+        transcriber.modelsDir,
+      ]);
+      expect(asr.logFile).toBe(join(layout.dataDir, "logs", "asr.log"));
+      expect(runtime.probed).toContain("http://127.0.0.1:52009/health");
+
+      const secrets = JSON.parse(
+        readFileSync(join(layout.dataDir, "secrets.json"), "utf8")
+      );
+      expect(readFileSync(tokenFile, "utf8")).toBe(secrets.asrToken);
+      expect(statSync(tokenFile).mode & 0o777).toBe(0o600);
+      for (const child of runtime.children) {
+        expect(JSON.stringify([child.spec.args, child.spec.env])).not.toContain(
+          secrets.asrToken
+        );
+      }
+      expect(logs.join("\n")).not.toContain(secrets.asrToken);
+      const config = JSON.parse(
+        readFileSync(join(layout.dataDir, "config.json"), "utf8")
+      );
+      expect(config.meetings).toEqual({
+        asr_template: "local-meeting-asr",
+        local_asr: { base_url: "http://127.0.0.1:52009/v1", api_key: secrets.asrToken },
+      });
+      expect(Object.keys(readLocalBackendState(layout.dataDir).processes)).toContain(
+        "asr"
+      );
+    });
+
+    it("leaves meeting transcription unconfigured when the app has no helper", async () => {
+      const layout = install();
+      const runtime = new FakeRuntime();
+      const { backend } = service(layout, runtime);
+
+      await backend.prepare();
+      expect(await backend.start()).toBe(true);
+      expect(runtime.events).not.toContain("spawn asr");
+      const config = JSON.parse(
+        readFileSync(join(layout.dataDir, "config.json"), "utf8")
+      );
+      expect(config).not.toHaveProperty("meetings");
+    });
+
+    it("restarts a stopped helper and stops it after the backend on quit", async () => {
+      const layout = install({ appVersion: "0.0.3" });
+      const runtime = new FakeRuntime();
+      runtime.databaseExists = true;
+      const { backend } = service(layout, runtime, "0.0.3", { transcriber });
+      await backend.prepare();
+      await backend.start();
+      vi.useFakeTimers();
+
+      const first = runtime.child("asr");
+      first.crash();
+      await vi.advanceTimersByTimeAsync(1_000);
+      const second = runtime.child("asr");
+      expect(second).not.toBe(first);
+      expect(second.spec.command).toBe("/usr/sbin/taskpolicy");
+      expect(backend.snapshot().phase).toBe("ready");
+
+      vi.useRealTimers();
+      const order: string[] = [];
+      for (const child of runtime.children) {
+        const kill = child.kill.bind(child);
+        child.kill = (signal) => {
+          order.push(`${child.spec.name} ${signal}`);
+          kill(signal);
+        };
+      }
+      await backend.stop();
+      expect(order.indexOf("backend SIGTERM")).toBeLessThan(
+        order.indexOf("asr SIGTERM")
+      );
+      expect(order.indexOf("asr SIGTERM")).toBeLessThan(
+        order.indexOf("postgres SIGINT")
+      );
+      expect(second.signals).toEqual(["SIGTERM"]);
+    });
+
+    it("stops a helper a forced quit left behind", async () => {
+      const layout = install({ appVersion: "0.0.3" });
+      const runtime = new FakeRuntime();
+      runtime.databaseExists = true;
+      runtime.alive.add(98);
+      runtime.executables.set(98, transcriber.executable);
+      writeLocalBackendState(layout.dataDir, {
+        ...readLocalBackendState(layout.dataDir),
+        processes: { asr: { pid: 98, executable: transcriber.executable } },
+      });
+      const { backend } = service(layout, runtime, "0.0.3", { transcriber });
+      await backend.prepare();
+
+      expect(await backend.start()).toBe(true);
+      expect(runtime.killed).toEqual([[98, "SIGTERM"]]);
     });
   });
 });

@@ -53,6 +53,8 @@ import {
   sessionStateChangedEvent,
   surfacesChangedEvent,
   audioCaptureStateChangedEvent,
+  localTranscriptionNoticeEvent,
+  type AudioCaptureRecording,
   meetingPresenceStateChangedEvent,
   meetingRecorderStateChangedEvent,
   audioCaptureStartCapability,
@@ -188,6 +190,10 @@ import {
   remoteBackendProvider,
   type LocalBackendProvider,
 } from "../local-backend/provider";
+import {
+  unavailableLocalTranscriptionProvider,
+  type LocalTranscriptionProvider,
+} from "../local-transcription/provider";
 import { MeetingPresenceService } from "./meeting-presence";
 import { MeetingRecorderService } from "./meeting-recorder";
 import { createMeetingAppIconReader } from "./meeting-presence/app-icon";
@@ -341,6 +347,13 @@ export interface ElectronMainRuntimeDeps {
   deferSessionInitialize?: boolean | undefined;
   /** Local mode's startup status and actions; other builds report a remote backend. */
   localBackend?: LocalBackendProvider | undefined;
+  /** Local mode's speech models; other builds transcribe on the server. */
+  localTranscription?:
+    | (LocalTranscriptionProvider & {
+        needsInstall(): boolean;
+        refresh(): Promise<void>;
+      })
+    | undefined;
   computeNodeAdapter?: ComputeNodeRuntimeAdapter | undefined;
   computeNodeFilePath?: string | undefined;
   computeNodeLifecyclePath?: string | undefined;
@@ -1034,6 +1047,13 @@ export async function createElectronMainContext(
     deps.openDownloadedFilePath,
     currentMainLocale
   );
+  // Local mode: a recording saved while the speech model is missing is kept,
+  // and the renderer offers the install (openspec add-local-meeting-asr).
+  const noticeLocalModelMissing = (recording: AudioCaptureRecording) =>
+    nativeEventBus.emit(localTranscriptionNoticeEvent, {
+      reason: "local_asr_model_not_installed",
+      recording,
+    });
   const recordingTranscription = new RecordingTranscriptionService(
     recordingDrive,
     () => {
@@ -1047,6 +1067,12 @@ export async function createElectronMainContext(
           }
         },
       };
+    },
+    {
+      onModelMissing: (recording) => {
+        void deps.localTranscription?.refresh();
+        noticeLocalModelMissing(recording);
+      },
     }
   );
   const meetingTasks = await MeetingTaskService.open({
@@ -1082,6 +1108,7 @@ export async function createElectronMainContext(
     locale: currentMainLocale,
     onSaved: (recording, target, sourcePath) =>
       recordingTranscription.process(recording, target, sourcePath),
+    transcribeSaved: (driveFile) => recordingTranscription.transcribeSaved(driveFile),
     onStateChanged: (state) => {
       nativeEventBus.emit(audioCaptureStateChangedEvent, state);
       meetingRecorder?.acceptCapture(state);
@@ -1165,6 +1192,10 @@ export async function createElectronMainContext(
             finish();
             return result;
           }
+          // The meeting's own transcript comes from the backend's audio.transcribe,
+          // which uses the same local model; without it, ask for the install now.
+          if (deps.localTranscription?.needsInstall())
+            noticeLocalModelMissing(result.recording);
           return { ...result, summary };
         },
       });
@@ -1556,6 +1587,8 @@ export function registerNativeBridgeHandlersFromContext(context: ElectronMainCon
   };
   registerNativeBridgeHandlers({
     localBackend: context.runtimeDeps.localBackend ?? remoteBackendProvider,
+    localTranscription:
+      context.runtimeDeps.localTranscription ?? unavailableLocalTranscriptionProvider,
     airDrop: context.airDropReception,
     appPreferences: context.appPreferences,
     computerUse: context.runtimeDeps.computerUse ?? {
