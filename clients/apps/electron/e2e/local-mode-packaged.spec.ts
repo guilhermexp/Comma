@@ -941,8 +941,8 @@ function transcriptSaved(
  * provider is a loopback fake that the test stops, which the helper reports
  * as cloud_unreachable. Optional, for task 6.2:
  * COMMA_ELECTRON_CLOUD_ASR_LONG_AUDIO, a recording above Groq's 24 MB
- * piece limit whose speech says "Sentence number N" once for each N, sent
- * to Groq; and COMMA_ELECTRON_CLOUD_ASR_FAKE_AUDIO, a two-hour recording sent
+ * piece limit whose speech says "Sentence number N is about <word>" once
+ * for each N, sent to Groq; and COMMA_ELECTRON_CLOUD_ASR_FAKE_AUDIO, a two-hour recording sent
  * to the fake provider, whose first upload gets 429 with retry-after.
  * The run also downloads the local model (about 632 MB) for the fallback.
  */
@@ -1091,10 +1091,15 @@ test.describe("packaged cloud transcription", () => {
           join(evidence(), "cloud-05-long-groq.transcript.txt"),
           transcript
         );
+        // A seam that sends speech twice repeats a sentence right after
+        // itself, within the 2 s overlap. A number the recognizer misheard
+        // matches one far away, so only nearby repeats count.
         const said = [...transcript.matchAll(/sentence (?:number )?(\d+)/gi)].map(
           ([, n]) => Number(n)
         );
-        const repeated = said.filter((n, index) => said.indexOf(n) !== index);
+        const repeated = said.filter((n, index) =>
+          said.slice(index + 1, index + 4).includes(n)
+        );
         const times = lineTimes(transcript);
         const audioSeconds = audioDuration(longAudio);
         report.longGroq = {
