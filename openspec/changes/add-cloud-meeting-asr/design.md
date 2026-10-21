@@ -178,7 +178,7 @@ Folhas relacionadas:
 
 - **Árvore de modelos instalada pela versão anterior:** conta como `asr` + `diarization` (D3).
 - **Instalações existentes:** começam em Local; nada é enviado à nuvem sem ação do usuário.
-- **Rollback:** a versão anterior do helper ignora `asr-provider.bin` e marcadores de componente. A árvore continua válida para ela se os dois componentes estiverem instalados; se só houver o separador, ela mostra "não instalado", que é o comportamento correto.
+- **Rollback:** a versão anterior do helper ignora `asr-provider.bin` e os marcadores de componente, e considera instalado qualquer `<root>/<manifest.id>` existente. Com os dois componentes instalados, a árvore continua válida para ela. Com só o separador, ela informaria "instalado" e falharia o trabalho com 500. Por isso, antes de voltar de versão com só o separador instalado, é preciso usar "Remover" (ou apagar `Comma/Models`).
 
 ## Perguntas em aberto
 
