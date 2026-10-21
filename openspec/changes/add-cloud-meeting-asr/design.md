@@ -144,6 +144,7 @@ Alternativa descartada: o backend chamar a Groq direto. Exigiria ffmpeg para cor
   - `200 {"ok":true}`;
   - `200 {"ok":false,"reason":"cloud_auth_rejected"|"cloud_unreachable"|"cloud_server_error"|"cloud_bad_response"}`.
 - **`GET /health`** acrescenta `"provider":{"kind":"local"|"groq"|"openai_compatible","configured":bool}` e `"components":{"asr":bool,"diarization":bool}`. O campo `model` de C2 continua refletindo o componente `asr`.
+  - `provider.lastFailure` (opcional): `{"reason":"cloud_…","provider":"groq"|"openai_compatible","at":"<ISO-8601 UTC>"}`, a última falha da nuvem sem modelo local para assumir (o 502 `cloud_asr_failed`). Some no próximo trabalho da nuvem que termina sem fallback e a cada `PUT /v1/provider`. Nunca traz a chave. O Main a lê quando uma tarefa de resumo de reunião termina sem transcrição, porque esse trabalho chega ao helper pelo backend e não pelo Main, e então emite o aviso `cloud_failed`.
 
 ### C7. Resposta de `POST /v1/audio/transcriptions` (extensão de C2)
 
