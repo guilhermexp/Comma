@@ -11,6 +11,7 @@ defmodule CommaWeb.Application do
     Application.put_env(:salix_im, :wechat_command_handler, CommaWeb.WeChatCommands)
     Application.put_env(:comma_core, :salix_client, CommaWeb.SalixClient)
     Application.put_env(:salix_agent, :agent_management_ports, CommaWeb.AgentManagement)
+    Application.put_env(:salix_agent, :calendar_sources_mod, CommaWeb.AgentCalendarSources)
 
     Application.put_env(
       :salix_agent,

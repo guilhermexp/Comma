@@ -52,62 +52,82 @@ defmodule CommaWeb.GoogleCalendarAgenda do
     "10" => "#0b8043",
     "11" => "#d50000"
   }
-  @public_errors ~w(invalid_composio_request composio_access_denied calendar_write_permission_required calendar_event_conflict provider_unavailable provider_timeout)a
+  @public_errors ~w(invalid_composio_request composio_access_denied calendar_write_permission_required calendar_event_conflict provider_unavailable provider_timeout read_only)a
 
   # Member-facing closed action: neither Agent consent nor Routine enrollment.
   def run(user, session, workspace_id, params) do
-    with {:ok, request} <- validate(params),
+    with {:ok, request} <- request(params),
          {:ok, workspace} <- Workspaces.authorize(user, session, workspace_id),
-         {:ok, account, binding} <- current(workspace, user["id"], params["account_id"]) do
+         scope = scope(workspace, user["id"]),
+         {:ok, account, binding} <- account(scope, params["account_id"]) do
       authorize = fn ->
         with {:ok, fresh} <- Workspaces.authorize(user, session, workspace_id),
              true <-
                Map.take(fresh, ~w(salix_tenant_id default_group_id)) ==
                  Map.take(workspace, ~w(salix_tenant_id default_group_id)),
-             {:ok, ^account, ^binding} <- current(fresh, user["id"], params["account_id"]) do
+             {:ok, ^account, ^binding} <- account(scope(fresh, user["id"]), params["account_id"]) do
           :ok
         else
           _ -> {:error, :composio_access_denied}
         end
       end
 
-      execute = fn kind, operation, arguments ->
-        executor =
-          if kind == :write,
-            do: &Connect.execute_calendar_write/7,
-            else: &Connect.execute_calendar_read/7
-
-        with :ok <- authorize.(),
-             result =
-               executor.(
-                 workspace["salix_tenant_id"],
-                 workspace["default_group_id"],
-                 user["id"],
-                 account,
-                 operation,
-                 arguments,
-                 authorize
-               ),
-             :ok <- authorize.() do
-          case result do
-            {:error, :provider_forbidden} when kind == :write ->
-              {:error, :calendar_write_permission_required}
-
-            {:error, :provider_forbidden} ->
-              {:error, :composio_access_denied}
-
-            other ->
-              other
-          end
-        end
-      end
-
-      Read.deadline(30_000)
-      |> Read.within(fn -> perform(request, execute) end)
-      |> public()
+      call(scope, account, request, authorize)
     else
       error -> public(error)
     end
+  end
+
+  defp scope(w, user),
+    do: %{tenant: w["salix_tenant_id"], group_id: w["default_group_id"], user_id: user}
+
+  @doc """
+  Runs a validated `request/1` against `account` of `scope` within 30 seconds.
+
+  `authorize` returns `:ok` while the caller may still use the account. It runs
+  before and after each provider call, and inside the executor before the effect.
+  With `agent: true`, events carry `ical_uid`, a missing event is `:not_found`,
+  and a write to a calendar with a known read-only role is `:read_only`.
+  """
+  def call(scope, account, request, authorize, opts \\ []) do
+    request = if opts[:agent], do: Map.put(request, :agent, true), else: request
+
+    execute = fn kind, operation, arguments ->
+      executor =
+        if kind == :write,
+          do: &Connect.execute_calendar_write/7,
+          else: &Connect.execute_calendar_read/7
+
+      with :ok <- authorize.(),
+           result =
+             executor.(
+               scope.tenant,
+               scope.group_id,
+               scope.user_id,
+               account,
+               operation,
+               arguments,
+               authorize
+             ),
+           :ok <- authorize.() do
+        case result do
+          {:error, :provider_forbidden} when kind == :write ->
+            {:error, :calendar_write_permission_required}
+
+          {:error, :provider_forbidden} ->
+            {:error, :composio_access_denied}
+
+          other ->
+            other
+        end
+      end
+    end
+
+    Read.deadline(30_000)
+    |> Read.within(fn ->
+      with :ok <- writable(request, execute), do: perform(request, execute)
+    end)
+    |> public()
   end
 
   defp public({:ok, _} = ok), do: ok
@@ -120,27 +140,35 @@ defmodule CommaWeb.GoogleCalendarAgenda do
 
   defp public(_), do: {:error, :provider_unavailable}
 
-  defp current(w, user, id) do
+  @doc """
+  The enabled ACTIVE `googlecalendar` account `id` of the scope's member, in
+  the mode of a connected profile, with the profile's transport authorization.
+  """
+  def account(scope, id) do
     with true <- is_binary(id) and byte_size(id) in 1..256,
          {:ok, %{"status" => "connected", "mode" => mode} = profile} <-
-           Access.profile(w["salix_tenant_id"], w["default_group_id"], user),
+           Access.profile(scope.tenant, scope.group_id, scope.user_id),
          true <- mode in ~w(connect project),
-         {:ok,
-          %{
-            "toolkit" => "googlecalendar",
-            "enabled" => true,
-            "status" => "ACTIVE",
-            "mode" => ^mode
-          } = account} <- Access.account(w["salix_tenant_id"], w["default_group_id"], user, id) do
+         {:ok, account} <- Access.account(scope.tenant, scope.group_id, scope.user_id, id),
+         true <- calendar_account?(account, mode) do
       {:ok, account, Transport.authorization(profile)}
     else
       _ -> {:error, :composio_access_denied}
     end
   end
 
+  @doc "Whether a stored account is a usable Calendar account in profile `mode`."
+  def calendar_account?(account, mode) do
+    match?(
+      %{"toolkit" => "googlecalendar", "enabled" => true, "status" => "ACTIVE", "mode" => ^mode},
+      account
+    )
+  end
+
   ## Validation (C1)
 
-  defp validate(%{"account_id" => id, "operation" => op} = p) when is_binary(id) do
+  @doc "Validates C1 params (`account_id`, `operation` and its arguments) into a request."
+  def request(%{"account_id" => id, "operation" => op} = p) when is_binary(id) do
     keys = Map.keys(p) -- ~w(account_id operation)
 
     result =
@@ -217,7 +245,7 @@ defmodule CommaWeb.GoogleCalendarAgenda do
     end
   end
 
-  defp validate(_), do: {:error, :invalid_composio_request}
+  def request(_), do: {:error, :invalid_composio_request}
 
   defp target(p) do
     etag = p["etag"]
@@ -293,6 +321,21 @@ defmodule CommaWeb.GoogleCalendarAgenda do
 
   ## Operations
 
+  # An Agent write first reads the calendar roles; a known read-only role
+  # refuses it before any provider write.
+  defp writable(%{agent: true, op: op} = r, execute) when op in [:create, :update, :delete] do
+    with {:ok, roles} <- roles(execute) do
+      if Enum.all?(
+           [r.calendar_id, r[:target]],
+           &(is_nil(roles[&1]) or roles[&1] in ~w(owner writer))
+         ),
+         do: :ok,
+         else: {:error, :read_only}
+    end
+  end
+
+  defp writable(_, _), do: :ok
+
   defp perform(%{op: :calendars}, execute) do
     with {:ok, data} <- execute.(:read, "calendars", %{"max_results" => 250}),
          rows when is_list(rows) <- data["calendars"] || data["items"] do
@@ -305,6 +348,14 @@ defmodule CommaWeb.GoogleCalendarAgenda do
     end
   end
 
+  # An Agent read without calendar ids reads the account's selected calendars.
+  defp perform(%{op: :events, ids: :selected} = r, execute) do
+    with {:ok, %{"calendars" => rows}} <- perform(%{op: :calendars}, execute) do
+      ids = for(%{"selected" => true, "id" => id} <- rows, do: id) |> Enum.take(@max_calendar_ids)
+      events(%{r | ids: ids}, role_map(rows), execute)
+    end
+  end
+
   defp perform(%{op: :events} = r, execute) do
     with {:ok, roles} <- roles(execute) do
       events(r, roles, execute)
@@ -314,10 +365,10 @@ defmodule CommaWeb.GoogleCalendarAgenda do
   defp perform(%{op: :event} = r, execute) do
     with {:ok, event} <- get(execute, r.calendar_id, r.event_id),
          {:ok, rules} <- rules(execute, r.calendar_id, event),
-         %{} = row <- event(event, r.calendar_id, nil) do
+         %{} = row <- event(event, r.calendar_id, nil, r) do
       {:ok, %{"event" => Map.put(row, "recurrence", classify(rules, event["start"]))}}
     else
-      {:error, :provider_not_found} -> {:error, :invalid_composio_request}
+      {:error, :provider_not_found} -> missing(r, :invalid_composio_request)
       {:error, _} = error -> error
       _ -> {:error, :invalid_provider_response}
     end
@@ -339,7 +390,7 @@ defmodule CommaWeb.GoogleCalendarAgenda do
       |> put_rule(input["recurrence"])
 
     with {:ok, data} <- execute.(:write, "create", args),
-         %{} = row <- data |> created() |> event(r.calendar_id, nil) do
+         %{} = row <- data |> created() |> event(r.calendar_id, nil, r) do
       {:ok, %{"event" => row}}
     else
       {:error, _} = error -> error
@@ -360,7 +411,7 @@ defmodule CommaWeb.GoogleCalendarAgenda do
          calendar = r.target || r.calendar_id,
          {:ok, moved} <- move(execute, r, id),
          {:ok, data} <- patch(execute, calendar, id, Map.merge(r.patch, times), moved),
-         %{} = row <- data |> created() |> event(calendar, nil) do
+         %{} = row <- data |> created() |> event(calendar, nil, r) do
       {:ok, %{"event" => row}}
     else
       false -> {:error, :invalid_composio_request}
@@ -380,7 +431,7 @@ defmodule CommaWeb.GoogleCalendarAgenda do
            execute.(:write, "delete", %{"calendar_id" => r.calendar_id, "event_id" => id}) do
       {:ok, %{"deleted" => true}}
     else
-      {:error, :provider_not_found} -> {:error, :calendar_event_conflict}
+      {:error, :provider_not_found} -> missing(r, :calendar_event_conflict)
       {:error, _} = error -> error
     end
   end
@@ -392,9 +443,7 @@ defmodule CommaWeb.GoogleCalendarAgenda do
       {:ok, data} ->
         rows = data["calendars"] || data["items"]
         rows = if is_list(rows), do: Enum.flat_map(rows, &calendar/1), else: []
-        roles = Map.new(rows, &{&1["id"], &1["access_role"]})
-        primary = Enum.find(rows, & &1["primary"])
-        {:ok, if(primary, do: Map.put(roles, "primary", primary["access_role"]), else: roles)}
+        {:ok, role_map(rows)}
 
       {:error, reason} when reason in [:composio_access_denied, :member_read_deadline] ->
         {:error, reason}
@@ -404,8 +453,15 @@ defmodule CommaWeb.GoogleCalendarAgenda do
     end
   end
 
+  defp role_map(rows) do
+    roles = Map.new(rows, &{&1["id"], &1["access_role"]})
+    primary = Enum.find(rows, & &1["primary"])
+    if primary, do: Map.put(roles, "primary", primary["access_role"]), else: roles
+  end
+
   defp events(r, roles, execute) do
-    initial = {:ok, %{events: [], bytes: 0, truncated: false, failed: [], roles: roles}}
+    initial =
+      {:ok, %{events: [], bytes: 0, truncated: false, failed: [], roles: roles, request: r}}
 
     r.ids
     |> Enum.reduce_while(initial, fn id, {:ok, acc} ->
@@ -476,7 +532,7 @@ defmodule CommaWeb.GoogleCalendarAgenda do
   defp add_event(%{"status" => "cancelled"}, _, acc), do: {:cont, acc}
 
   defp add_event(item, id, acc) do
-    case event(item, id, acc.roles[id]) do
+    case event(item, id, acc.roles[id], acc.request) do
       nil ->
         {:cont, acc}
 
@@ -507,12 +563,15 @@ defmodule CommaWeb.GoogleCalendarAgenda do
         {:error, :calendar_event_conflict}
 
       {:error, :provider_not_found} ->
-        {:error, :calendar_event_conflict}
+        missing(r, :calendar_event_conflict)
 
       error ->
         error
     end
   end
+
+  defp missing(%{agent: true}, _agenda), do: {:error, :not_found}
+  defp missing(_, agenda), do: {:error, agenda}
 
   defp instance_only_change?(r), do: Map.has_key?(r.patch, "recurrence") or not is_nil(r.target)
 
@@ -637,6 +696,17 @@ defmodule CommaWeb.GoogleCalendarAgenda do
   defp created(event), do: event
 
   ## Projections
+
+  # The Agent projection also carries the iCalendar UID, to match one event
+  # seen through two sources.
+  defp event(e, calendar_id, role, %{agent: true}) do
+    with %{} = row <- event(e, calendar_id, role) do
+      uid = e["iCalUID"]
+      Map.put(row, "ical_uid", if(is_binary(uid) and byte_size(uid) <= 1024, do: uid))
+    end
+  end
+
+  defp event(e, calendar_id, role, _request), do: event(e, calendar_id, role)
 
   defp calendar(%{"id" => id} = row) do
     if calendar_id?(id) do
