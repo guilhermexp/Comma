@@ -65,7 +65,7 @@
   - logs sem título, local ou observações.
 
   Verificar com os testes do Electron.
-- [ ] 2.6 Prova real no Electron de desenvolvimento:
+- [x] 2.6 Prova real no Electron de desenvolvimento:
   - pedir acesso;
   - listar;
   - criar, mover só uma ocorrência e apagar um evento de teste "[Comma teste]" num calendário local;
@@ -107,10 +107,10 @@
 
 ## 4. Integração e prova (worktree `feat/agenda`, depois de 1, 2 e 3)
 
-- [ ] 4.1 Merge de `feat/agenda-backend`, `feat/agenda-mac-calendar` e `feat/agenda-ui` em `feat/agenda` e regeneração dos artefatos gerados. Verificar: `pnpm generate:native-bridge` sem diff e os testes das três frentes passando juntos.
-- [ ] 4.2 `macCalendarSource` sobre as folhas C2 (estado, pedido de acesso, Ajustes do Sistema, `subscribe` pela revisão) e a fonte Mac só quando a capacidade existe. Verificar com testes da fonte, usando o `mock` da ponte.
-- [ ] 4.3 Entrada "Agenda event projection" em `docs/architecture/DOMAIN_CONCEPTS.md`, mais a lacuna dos eventos locais do Salix apontada no levantamento, se for parte do mesmo texto. Verificar: a entrada tem identidade, dono, ciclo de vida e links.
-- [ ] 4.4 Prova ponta a ponta no app desktop com backend local, conta Google real e Calendário do Mac real:
+- [x] 4.1 Merge de `feat/agenda-backend`, `feat/agenda-mac-calendar` e `feat/agenda-ui` em `feat/agenda` e regeneração dos artefatos gerados. Verificar: `pnpm generate:native-bridge` sem diff e os testes das três frentes passando juntos.
+- [x] 4.2 `macCalendarSource` sobre as folhas C2 (estado, pedido de acesso, Ajustes do Sistema, `subscribe` pela revisão) e a fonte Mac só quando a capacidade existe. Verificar com testes da fonte, usando o `mock` da ponte.
+- [x] 4.3 Entrada "Agenda event projection" em `docs/architecture/DOMAIN_CONCEPTS.md`, mais a lacuna dos eventos locais do Salix apontada no levantamento, se for parte do mesmo texto. Verificar: a entrada tem identidade, dono, ciclo de vida e links.
+- [x] 4.4 Prova ponta a ponta no app desktop com backend local, conta Google real e Calendário do Mac real:
   - abrir pela sidebar;
   - ver eventos das duas fontes sem duplicar;
   - criar, mover só uma ocorrência e apagar um evento "[Comma teste]" em cada fonte;
@@ -118,7 +118,7 @@
   - permissão negada mostrando "Abrir Ajustes do Sistema".
 
   Verificar com capturas e registro. Os eventos de teste são apagados no fim.
-- [ ] 4.5 Web: a Agenda abre só com o Google, sem o grupo do Mac. Verificar com uma captura no navegador.
+- [x] 4.5 Web: a Agenda abre só com o Google, sem o grupo do Mac. Verificar com uma captura no navegador.
 
 ## Workflow follow-up
 

@@ -59,7 +59,8 @@ Fora: o que a proposta exclui.
 | `delete` | `GOOGLECALENDAR_DELETE_EVENT` |
 
 - Os argumentos de cada slug seguem o schema atual da Composio para a ferramenta, conferido com a operação `schema` existente (`composio_connect.ex:300`). Não segue a API do Google diretamente.
-- `scope: "series"` age sobre o `series_id` (`recurringEventId`). `scope: "instance"` age sobre o id da ocorrência.
+- O cliente manda sempre o id da ocorrência. `scope: "series"` age sobre o `recurringEventId` dela, que o backend resolve. `scope: "instance"` age sobre a própria ocorrência.
+- `start`, `end` e `all_day` vão juntos num patch. Ao arrastar, o cliente completa `all_day` com o valor do evento.
 - Mover a série por arraste ("Todos os eventos"): a interface manda o início e o fim da ocorrência arrastada com `scope: "series"`. A primeira data da série anda a mesma diferença em dias que a ocorrência e recebe a nova hora e a nova duração. A primeira data nunca vira a data da ocorrência arrastada. O CalendarKit faz o mesmo no Mac.
 - Escrita com `etag`: o backend lê o evento (`EVENTS_GET`) e compara antes do patch ou delete. Se mudou, responde `calendar_event_conflict`. [Risco: há uma janela curta entre a leitura e a escrita; aceita.]
 - `events` com vários calendários roda as chamadas em sequência, todas dentro do prazo de 30 s. Um calendário que falha entra em `failed_calendar_ids` sem derrubar os outros.
