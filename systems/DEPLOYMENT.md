@@ -198,6 +198,14 @@ OpenAI-compatible transcription API:
   reason `local_asr_model_not_installed` in the
   `/v1/comma/me/recordings/transcribe` SSE result and in the `audio.transcribe`
   tool error.
+- A `409` response with error code `cloud_asr_not_ready` and reason
+  `diarization_missing` or `provider_unconfigured` gives the reason
+  `cloud_asr_not_ready:<reason>`.
+- A `502` response with error code `cloud_asr_failed` and a `cloud_…` reason
+  gives the reason `cloud_asr_failed:<reason>`. Other `409` and `502` bodies
+  stay generic transcription failures.
+- When the response has `provider`, `model`, or `fallback` (`{from, reason}`),
+  the SSE `ready` result contains these fields unchanged.
 
 Templates without `protocol`, or with `protocol: "chat_completions"`, keep the
 chunked `chat/completions` path. That path needs ffmpeg and accepts up to

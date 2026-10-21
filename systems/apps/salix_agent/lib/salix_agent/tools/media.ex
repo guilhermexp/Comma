@@ -194,6 +194,13 @@ defmodule SalixAgent.Tools.Media do
         raise "local_asr_model_not_installed: local meeting transcription is not installed; " <>
                 "install it in Settings > Meeting"
 
+      {:error, {:cloud_asr_failed, reason}} ->
+        raise "cloud_asr_failed:#{reason}: the cloud transcription provider failed (#{reason})"
+
+      {:error, {:cloud_asr_not_ready, reason}} ->
+        raise "cloud_asr_not_ready:#{reason}: cloud meeting transcription is not ready; " <>
+                "finish its setup in Settings > Meeting"
+
       {:error, :asr_audio_too_large} ->
         raise "audio file exceeds the supported size"
 
