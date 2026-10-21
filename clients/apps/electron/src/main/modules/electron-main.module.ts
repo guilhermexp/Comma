@@ -1294,10 +1294,11 @@ export async function createElectronMainContext(
     dragWindow: (input) => deps.dragMeetingRecorderWindow?.(input),
     setInteractive: (interactive) => deps.setMeetingRecorderInteractive?.(interactive),
   });
+  const readAppIcon = createMeetingAppIconReader(deps.microphoneHostPath);
   const meetingPresence = new MeetingPresenceService({
     browserBundleIdentifier: deps.browserAppBundleIdentifier,
     readBrowserMeetings: async () => browserSidebarService?.readMeetings() ?? [],
-    readAppIcon: createMeetingAppIconReader(deps.microphoneHostPath),
+    readAppIcon,
     onStateChanged: (state) => {
       nativeEventBus.emit(meetingPresenceStateChangedEvent, state);
       meetingRecorder?.acceptPresence(state);
@@ -1311,6 +1312,7 @@ export async function createElectronMainContext(
     },
     onStateChanged: (state) => nativeEventBus.emit(calendarStateChangedEvent, state),
     openExternal: deps.openExternalUrl,
+    readAppIcon,
   });
   calendar.start();
   void meetingTasks.retryPending();

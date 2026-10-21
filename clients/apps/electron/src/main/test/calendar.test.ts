@@ -329,3 +329,22 @@ describe("CalendarService logs", () => {
     }
   });
 });
+
+describe("CalendarService app icon", () => {
+  const png = "data:image/png;base64,iVBORw0KGgo=";
+
+  it("reads only the Calendar app's icon", async () => {
+    const readAppIcon = vi.fn(async () => png);
+    const { calendar } = service(fakeAddon().addon, { readAppIcon });
+    await expect(calendar.appIcon()).resolves.toBe(png);
+    expect(readAppIcon).toHaveBeenCalledExactlyOnceWith("com.apple.iCal");
+  });
+
+  it("returns null when the icon cannot be read", async () => {
+    const { calendar } = service(fakeAddon().addon, {
+      readAppIcon: async () => undefined,
+    });
+    await expect(calendar.appIcon()).resolves.toBeNull();
+    await expect(service(fakeAddon().addon).calendar.appIcon()).resolves.toBeNull();
+  });
+});

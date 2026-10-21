@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 
-/** OS-owned bundle icon; only catalogued meeting products are looked up, once each. */
+/** OS-owned bundle icon, read once each; callers pass only the bundles they own (catalogued meeting products, the Calendar app). */
 export function createMeetingAppIconReader(helperPath: string | undefined) {
   const cache = new Map<string, Promise<string | undefined>>();
   return (bundleIdentifier: string): Promise<string | undefined> => {

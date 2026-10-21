@@ -40,10 +40,14 @@ export const CALENDAR_PRIVACY_SETTINGS_URLS = [
   "x-apple.systempreferences:com.apple.preference.security",
 ] as const;
 
+/** The only app icon this provider reads. */
+export const CALENDAR_APP_BUNDLE_IDENTIFIER = "com.apple.iCal";
+
 export interface CalendarProvider {
   state(input: void): Promise<CalendarState>;
   requestAccess(input: void): Promise<CalendarAccess>;
   openPrivacySettings(input: void): Promise<void>;
+  appIcon(input: void): Promise<string | null>;
   calendars(input: void): Promise<CalendarCalendarsResult>;
   events(input: CalendarEventsInput): Promise<CalendarEventsResult>;
   event(input: CalendarEventReference): Promise<CalendarEventResult>;
@@ -91,6 +95,7 @@ export class CalendarService implements CalendarProvider {
   readonly #logger: CalendarLogger;
   readonly #onStateChanged: (state: CalendarState) => void;
   readonly #openExternal: (url: string) => Promise<void>;
+  readonly #readAppIcon: ((bundleIdentifier: string) => Promise<string | undefined>) | undefined;
   readonly #setTimeout: (fn: () => void, ms: number) => unknown;
   readonly #clearTimeout: (handle: unknown) => void;
 
@@ -105,6 +110,7 @@ export class CalendarService implements CalendarProvider {
     logger = console,
     onStateChanged,
     openExternal,
+    readAppIcon,
     setTimeout: setTimeoutImpl = (fn, ms) => setTimeout(fn, ms),
   }: {
     addon: CalendarKitAddon;
@@ -112,12 +118,14 @@ export class CalendarService implements CalendarProvider {
     logger?: CalendarLogger;
     onStateChanged: (state: CalendarState) => void;
     openExternal: (url: string) => Promise<void>;
+    readAppIcon?: (bundleIdentifier: string) => Promise<string | undefined>;
     setTimeout?: (fn: () => void, ms: number) => unknown;
   }) {
     this.#addon = addon;
     this.#logger = logger;
     this.#onStateChanged = onStateChanged;
     this.#openExternal = openExternal;
+    this.#readAppIcon = readAppIcon;
     this.#setTimeout = setTimeoutImpl;
     this.#clearTimeout = clearTimeoutImpl;
   }
@@ -165,6 +173,10 @@ export class CalendarService implements CalendarProvider {
       }
     }
     this.#warn("openPrivacySettings", "calendar_unavailable");
+  }
+
+  async appIcon(): Promise<string | null> {
+    return (await this.#readAppIcon?.(CALENDAR_APP_BUNDLE_IDENTIFIER)) ?? null;
   }
 
   calendars(): Promise<CalendarCalendarsResult> {

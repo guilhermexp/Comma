@@ -42,6 +42,7 @@ import {
   browserSidebarOpenTabRequestedEvent,
   browserSidebarShowPermissionsCapability,
   browserSidebarUpdateCapability,
+  calendarAppIconCapability,
   calendarCalendarsCapability,
   calendarCreateEventCapability,
   calendarDeleteEventCapability,
@@ -439,6 +440,7 @@ export const generatedNativeCapabilityContracts = {
   calendarState: calendarStateCapability.contract,
   calendarRequestAccess: calendarRequestAccessCapability.contract,
   calendarOpenPrivacySettings: calendarOpenPrivacySettingsCapability.contract,
+  calendarAppIcon: calendarAppIconCapability.contract,
   calendarCalendars: calendarCalendarsCapability.contract,
   calendarEvents: calendarEventsCapability.contract,
   calendarEvent: calendarEventCapability.contract,
@@ -656,6 +658,7 @@ export const generatedNativeWebFallbacks = {
   calendarState: calendarStateCapability.webFallback,
   calendarRequestAccess: calendarRequestAccessCapability.webFallback,
   calendarOpenPrivacySettings: calendarOpenPrivacySettingsCapability.webFallback,
+  calendarAppIcon: calendarAppIconCapability.webFallback,
   calendarCalendars: calendarCalendarsCapability.webFallback,
   calendarEvents: calendarEventsCapability.webFallback,
   calendarEvent: calendarEventCapability.webFallback,
@@ -932,6 +935,7 @@ export const generatedNativePreloadBindings = {
     state: calendarStateCapability.contract,
     requestAccess: calendarRequestAccessCapability.contract,
     openPrivacySettings: calendarOpenPrivacySettingsCapability.contract,
+    appIcon: calendarAppIconCapability.contract,
     calendars: calendarCalendarsCapability.contract,
     events: calendarEventsCapability.contract,
     event: calendarEventCapability.contract,
@@ -2502,6 +2506,14 @@ export const generatedNativeMainBindingsById = {
     sessionAdmission: calendarOpenPrivacySettingsCapability.sessionAdmission,
     sessionAdmissionRationale:
       calendarOpenPrivacySettingsCapability.sessionAdmissionRationale,
+  },
+  "calendar.appIcon": {
+    contract: calendarAppIconCapability.contract,
+    id: calendarAppIconCapability.id,
+    method: "appIcon",
+    provider: "calendar",
+    sessionAdmission: calendarAppIconCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarAppIconCapability.sessionAdmissionRationale,
   },
   "calendar.calendars": {
     contract: calendarCalendarsCapability.contract,
@@ -4476,6 +4488,16 @@ export const generatedNativeCapabilityManifest = [
     sessionAdmissionRationale:
       calendarOpenPrivacySettingsCapability.sessionAdmissionRationale,
     transport: calendarOpenPrivacySettingsCapability.transport,
+  },
+  {
+    bridge: calendarAppIconCapability.bridge,
+    channel: calendarAppIconCapability.channel,
+    id: calendarAppIconCapability.id,
+    payloadClass: calendarAppIconCapability.payloadClass,
+    permission: calendarAppIconCapability.permission,
+    sessionAdmission: calendarAppIconCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarAppIconCapability.sessionAdmissionRationale,
+    transport: calendarAppIconCapability.transport,
   },
   {
     bridge: calendarCalendarsCapability.bridge,
@@ -8778,6 +8800,26 @@ export const generatedNativeCapabilityIndex = {
       calendarOpenPrivacySettingsCapability.sessionAdmissionRationale,
     transport: calendarOpenPrivacySettingsCapability.transport,
   },
+  "calendar.appIcon": {
+    artifacts: {
+      contract: "calendarAppIconContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["calendar.appIcon"]',
+      leaf: "calendarAppIconCapability",
+      mainBinding: 'generatedNativeMainBindingsById["calendar.appIcon"]',
+      mock: "calendarAppIconCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.calendar.appIcon",
+      webFallback: "generatedNativeWebFallbacks.calendarAppIcon",
+    },
+    bridge: calendarAppIconCapability.bridge,
+    channel: calendarAppIconCapability.channel,
+    handler: calendarAppIconCapability.handler,
+    id: calendarAppIconCapability.id,
+    payloadClass: calendarAppIconCapability.payloadClass,
+    permission: calendarAppIconCapability.permission,
+    sessionAdmission: calendarAppIconCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarAppIconCapability.sessionAdmissionRationale,
+    transport: calendarAppIconCapability.transport,
+  },
   "calendar.calendars": {
     artifacts: {
       contract: "calendarCalendarsContract",
@@ -10768,6 +10810,8 @@ export const calendarRequestAccessContract =
   generatedNativeCapabilityContracts.calendarRequestAccess;
 export const calendarOpenPrivacySettingsContract =
   generatedNativeCapabilityContracts.calendarOpenPrivacySettings;
+export const calendarAppIconContract =
+  generatedNativeCapabilityContracts.calendarAppIcon;
 export const calendarCalendarsContract =
   generatedNativeCapabilityContracts.calendarCalendars;
 export const calendarEventsContract = generatedNativeCapabilityContracts.calendarEvents;
@@ -11008,6 +11052,7 @@ export type NativeCapabilityTypeMap = {
   "calendar.state": typeof calendarStateCapability;
   "calendar.requestAccess": typeof calendarRequestAccessCapability;
   "calendar.openPrivacySettings": typeof calendarOpenPrivacySettingsCapability;
+  "calendar.appIcon": typeof calendarAppIconCapability;
   "calendar.calendars": typeof calendarCalendarsCapability;
   "calendar.events": typeof calendarEventsCapability;
   "calendar.event": typeof calendarEventCapability;
@@ -11551,6 +11596,7 @@ export type GeneratedNativeBridge = {
     openPrivacySettings: GeneratedNativeCommandBridgeMethod<
       typeof calendarOpenPrivacySettingsCapability
     >;
+    appIcon: GeneratedNativeCommandBridgeMethod<typeof calendarAppIconCapability>;
     calendars: GeneratedNativeCommandBridgeMethod<typeof calendarCalendarsCapability>;
     events: GeneratedNativeCommandBridgeMethod<typeof calendarEventsCapability>;
     event: GeneratedNativeCommandBridgeMethod<typeof calendarEventCapability>;
@@ -12237,6 +12283,7 @@ export function createGeneratedNativePreloadBridge(
         helpers.invoke(calendarRequestAccessCapability.contract, undefined),
       openPrivacySettings: () =>
         helpers.invoke(calendarOpenPrivacySettingsCapability.contract, undefined),
+      appIcon: () => helpers.invoke(calendarAppIconCapability.contract, undefined),
       calendars: () => helpers.invoke(calendarCalendarsCapability.contract, undefined),
       events: (input: GeneratedNativeCommandInput<typeof calendarEventsCapability>) =>
         helpers.invoke(calendarEventsCapability.contract, input),
@@ -12904,6 +12951,7 @@ export function createGeneratedNativeWebBridge(): GeneratedNativeBridge {
       requestAccess: async () => calendarRequestAccessCapability.webFallback,
       openPrivacySettings: async () =>
         calendarOpenPrivacySettingsCapability.webFallback,
+      appIcon: async () => calendarAppIconCapability.webFallback,
       calendars: async () => calendarCalendarsCapability.webFallback,
       events: async (
         _input: GeneratedNativeCommandInput<typeof calendarEventsCapability>
@@ -13788,6 +13836,7 @@ export function createGeneratedNativeBridgeMock(
       openPrivacySettings: helpers.command(
         async () => calendarOpenPrivacySettingsCapability.mock
       ),
+      appIcon: helpers.command(async () => calendarAppIconCapability.mock),
       calendars: helpers.command(async () => calendarCalendarsCapability.mock),
       events: helpers.command(
         async (_input: GeneratedNativeCommandInput<typeof calendarEventsCapability>) =>

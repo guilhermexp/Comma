@@ -264,6 +264,7 @@ export type NativeCapabilityHandlerTypeMap = {
   "calendar.state": CalendarProvider["state"];
   "calendar.requestAccess": CalendarProvider["requestAccess"];
   "calendar.openPrivacySettings": CalendarProvider["openPrivacySettings"];
+  "calendar.appIcon": CalendarProvider["appIcon"];
   "calendar.calendars": CalendarProvider["calendars"];
   "calendar.events": CalendarProvider["events"];
   "calendar.event": CalendarProvider["event"];
@@ -547,6 +548,7 @@ export function registerGeneratedNativeMainBindings({
     "calendar.requestAccess": async (input) => providers.calendar.requestAccess(input),
     "calendar.openPrivacySettings": async (input) =>
       providers.calendar.openPrivacySettings(input),
+    "calendar.appIcon": async (input) => providers.calendar.appIcon(input),
     "calendar.calendars": async (input) => providers.calendar.calendars(input),
     "calendar.events": async (input) => providers.calendar.events(input),
     "calendar.event": async (input) => providers.calendar.event(input),

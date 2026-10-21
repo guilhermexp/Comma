@@ -7150,6 +7150,27 @@ export const calendarOpenPrivacySettingsCapability = defineNativeCapability({
   webFallback: undefined,
 });
 
+export const calendarAppIconCapability = defineNativeCapability({
+  bridge: { method: "appIcon", namespace: "calendar" },
+  channel: "comma:calendar:app-icon",
+  handler: {
+    exportName: "CalendarProvider",
+    member: "appIcon",
+    module: "../../../apps/electron/src/main/modules/calendar/index",
+    provider: "calendar",
+  },
+  id: "calendar.appIcon",
+  input: z.void(),
+  mock: null,
+  output: z.string().startsWith("data:image/png;base64,").max(90_000).nullable(),
+  payloadClass: "binary",
+  permission: "calendar.read",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Reads the public OS icon of the Mac Calendar app only; no event data or Session state.",
+  webFallback: null,
+});
+
 export const calendarCalendarsCapability = defineNativeCapability({
   bridge: { method: "calendars", namespace: "calendar" },
   channel: "comma:calendar:calendars",
@@ -9445,6 +9466,7 @@ export const nativeCapabilityRegistry = [
   calendarStateCapability,
   calendarRequestAccessCapability,
   calendarOpenPrivacySettingsCapability,
+  calendarAppIconCapability,
   calendarCalendarsCapability,
   calendarEventsCapability,
   calendarEventCapability,
