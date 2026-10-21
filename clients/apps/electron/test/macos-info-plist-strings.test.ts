@@ -47,6 +47,25 @@ it("words the macOS privacy prompts in each app language the bundle ships", asyn
   );
 });
 
+it("asks for the Mac Calendar on every macOS version, saying Comma reads and edits it", async () => {
+  const resources = await runHook("darwin");
+  const portuguese = (
+    await readFile(join(resources, "pt_BR.lproj", "InfoPlist.strings"))
+  ).toString("utf16le");
+  // macOS 14+ reads the full-access key; macOS 13 and earlier only the other.
+  for (const key of ["NSCalendarsFullAccessUsageDescription", "NSCalendarsUsageDescription"]) {
+    expect(portuguese).toContain(`"${key}" = "`);
+  }
+  const english = macosUsageDescriptions("en");
+  expect(english.NSCalendarsFullAccessUsageDescription).toMatch(/reads and edits/);
+  expect(english.NSCalendarsUsageDescription).toBe(
+    english.NSCalendarsFullAccessUsageDescription
+  );
+  expect(macosUsageDescriptions("pt-BR").NSCalendarsFullAccessUsageDescription).toMatch(
+    /lê e edita/
+  );
+});
+
 it("leaves other platforms' packages untouched", async () => {
   const resources = await runHook("linux");
   expect(existsSync(resources)).toBe(false);

@@ -10,6 +10,10 @@
   <!-- Core Audio process taps and microphone intake both gate on audio-input. -->
   <key>com.apple.security.device.audio-input</key>
   <true/>
+  <!-- EventKit refuses a hardened-runtime app without it; Main reads and
+       writes the Mac Calendar for the Agenda (native/macos/CalendarKit). -->
+  <key>com.apple.security.personal-information.calendars</key>
+  <true/>
   <!-- Velopack signs the outer bundle with the hardened runtime. Ad hoc code has
        no team ID, so library validation would refuse Electron's frameworks. -->
   <key>com.apple.security.cs.disable-library-validation</key>

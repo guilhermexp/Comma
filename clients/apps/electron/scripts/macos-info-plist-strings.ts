@@ -10,6 +10,9 @@ const usageDescriptionKeys = {
   NSMicrophoneUsageDescription: "electron_macos_microphone_usage",
   NSAudioCaptureUsageDescription: "electron_macos_audio_capture_usage",
   NSScreenCaptureUsageDescription: "electron_macos_screen_capture_usage",
+  // macOS 14+ asks with the full-access text; macOS 13 and earlier with the other.
+  NSCalendarsFullAccessUsageDescription: "electron_macos_calendars_full_access_usage",
+  NSCalendarsUsageDescription: "electron_macos_calendars_usage",
 } as const;
 
 /**

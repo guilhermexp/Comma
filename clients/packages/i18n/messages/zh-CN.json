@@ -2969,6 +2969,8 @@
   "electron_macos_microphone_usage": "Comma 会在录音时以及你允许的网站（包括会议通话）中使用你的麦克风。",
   "electron_macos_audio_capture_usage": "Comma 会录制此 Mac 上正在播放的会议音频，以便转写和总结。",
   "electron_macos_screen_capture_usage": "Comma 会列出正在播放音频的应用，以便将录音限定在其中一个应用。",
+  "electron_macos_calendars_full_access_usage": "Comma 会读取和编辑 Mac 日历中的事件，让你在日程中查看和更改它们。这些事件只保留在此 Mac 上。",
+  "electron_macos_calendars_usage": "Comma 会读取和编辑 Mac 日历中的事件，让你在日程中查看和更改它们。这些事件只保留在此 Mac 上。",
   "ui_media_pause": "暂停",
   "ui_media_play_kind": "播放{kind}",
   "ui_media_pause_kind": "暂停{kind}",
