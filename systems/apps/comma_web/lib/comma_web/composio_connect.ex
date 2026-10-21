@@ -16,10 +16,16 @@ defmodule CommaWeb.ComposioConnect do
   def command(user, session, workspace_id, action, params) do
     with {:ok, scope} <- scope(user, session, workspace_id),
          {:ok, result} <-
-           if(action == "google_drive",
-             do: CommaWeb.GoogleDriveBrowser.browse(user, session, workspace_id, params),
-             else: run(scope, action, params)
-           ) do
+           (case action do
+              "google_drive" ->
+                CommaWeb.GoogleDriveBrowser.browse(user, session, workspace_id, params)
+
+              "google_calendar" ->
+                CommaWeb.GoogleCalendarAgenda.run(user, session, workspace_id, params)
+
+              _ ->
+                run(scope, action, params)
+            end) do
       {:ok,
        Map.drop(
          result,
