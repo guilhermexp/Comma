@@ -86,6 +86,14 @@ test("default navigation shortcuts open Search and reach their destinations", as
   await page.keyboard.press("KeyP");
   await expect(page).toHaveURL(/#\/plugins$/);
 
+  await page.keyboard.press("KeyG");
+  await page.keyboard.press("KeyA");
+  await expect(page).toHaveURL(/#\/agenda$/);
+
+  await page.keyboard.press("KeyG");
+  await page.keyboard.press("KeyP");
+  await expect(page).toHaveURL(/#\/plugins$/);
+
   // The web client has no Drive entry, so its sequence goes nowhere.
   await page.keyboard.press("KeyG");
   await page.keyboard.press("KeyD");
@@ -125,6 +133,11 @@ test("sidebar navigation tooltips stay beside their item with the matching short
       itemName: "Plugins",
       label: "Go to Plugins",
       keys: ["G", "P"],
+    },
+    {
+      itemName: "Agenda",
+      label: "Go to Agenda",
+      keys: ["G", "A"],
     },
     {
       // Settings raises a modal instead of navigating, so its rail item is a
