@@ -84,3 +84,29 @@ private let second = AudioChunk(url: URL(fileURLWithPath: "/b.m4a"), start: 10, 
     #expect(joined.words?.map(\.text) == ["50", "number", "51"])
     #expect(joined.segments.map(\.text) == ["50", "number 51"])
 }
+
+@Test func segmentsCutDifferentlyInTheOverlapAreAlignedByText() {
+    // Overlap 10...12. The later piece repeats words the earlier one already
+    // has, inside differently cut segments.
+    let duplicateRisk = joinChunks([
+        (first, ChunkTranscript(
+            duration: 12, words: nil, segments: [word("Hello there.", 1, 4), word("We cut the", 9.5, 11.6)])),
+        (second, ChunkTranscript(
+            duration: 8, words: nil, segments: [word("cut the cake now.", 0.2, 3), word("Bye.", 4, 5)])),
+    ])
+    // The later piece's first segment ends before the earlier one does, so
+    // timing alone would drop "c" with it.
+    let lossRisk = joinChunks([
+        (first, ChunkTranscript(duration: 12, words: nil, segments: [word("a b", 8, 12)])),
+        (second, ChunkTranscript(duration: 8, words: nil, segments: [word("b c", 0.5, 2.5), word("d", 3, 4)])),
+    ])
+    // Text the earlier piece does not have is kept, even inside the overlap.
+    let unmatched = joinChunks([
+        (first, ChunkTranscript(duration: 12, words: nil, segments: [word("one two", 9, 11.5)])),
+        (second, ChunkTranscript(duration: 8, words: nil, segments: [word("three four", 1.6, 3)])),
+    ])
+
+    #expect(duplicateRisk.units.map(\.text) == ["Hello there.", "We cut the", "cake now.", "Bye."])
+    #expect(lossRisk.units.map(\.text) == ["a b", "c", "d"])
+    #expect(unmatched.units.map(\.text) == ["one two", "three four"])
+}

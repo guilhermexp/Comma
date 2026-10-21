@@ -31,8 +31,13 @@ public struct JoinedTranscript: Sendable, Equatable {
 /// piece, the others from the later one. The two pieces time the same word
 /// a little differently, so the later piece skips a unit whose middle lies
 /// within the last unit kept, and keeps one the earlier piece left out.
+///
+/// Segments span many words and the two pieces cut them differently, so
+/// timing cannot tell which words of a segment the earlier piece already
+/// has. In the overlap, a later segment instead drops the leading words
+/// that repeat the end of the text kept so far, and keeps the rest.
 public func joinChunks(_ pieces: [(chunk: AudioChunk, transcript: ChunkTranscript)]) -> JoinedTranscript {
-    func join(_ units: (ChunkTranscript) -> [TimedWord]) -> [TimedWord] {
+    func join(_ units: (ChunkTranscript) -> [TimedWord], alignText: Bool = false) -> [TimedWord] {
         var joined: [TimedWord] = []
         for (index, piece) in pieces.enumerated() {
             let start = piece.chunk.start
@@ -45,9 +50,16 @@ public func joinChunks(_ pieces: [(chunk: AudioChunk, transcript: ChunkTranscrip
             // the one it follows; the speaker merge needs time order.
             let ordered = units(piece.transcript).enumerated()
                 .sorted { ($0.element.start, $0.offset) < ($1.element.start, $1.offset) }.map(\.element)
+            // Where the earlier piece's audio ends; nil for the first piece.
+            let overlapEnd = index == 0 ? nil : pieces[index - 1].chunk.duration.map { pieces[index - 1].chunk.start + $0 }
             for unit in ordered {
                 let rebased = TimedWord(text: unit.text, start: start + unit.start, end: start + unit.end)
-                guard rebased.start < middle, (rebased.start + rebased.end) / 2 >= coveredUntil else { continue }
+                guard rebased.start < middle else { continue }
+                if alignText, let overlapEnd, rebased.start < overlapEnd {
+                    if let rest = dropRepeatedLead(rebased, after: joined, from: start) { joined.append(rest) }
+                    continue
+                }
+                guard (rebased.start + rebased.end) / 2 >= coveredUntil else { continue }
                 joined.append(rebased)
             }
         }
@@ -63,5 +75,29 @@ public func joinChunks(_ pieces: [(chunk: AudioChunk, transcript: ChunkTranscrip
     return JoinedTranscript(
         duration: duration,
         words: hasWords ? join { $0.words ?? [] } : nil,
-        segments: join(\.segments))
+        segments: join(\.segments, alignText: true))
+}
+
+/// `unit` without the leading words that repeat the end of the text joined
+/// so far (compared without case or punctuation), its start moved in
+/// proportion; nil when every word repeats. Only text that ends after
+/// `from`, the later piece's start, can be repeated.
+func dropRepeatedLead(_ unit: TimedWord, after joined: [TimedWord], from: Double) -> TimedWord? {
+    func normalized(_ word: Substring) -> String {
+        word.lowercased().filter { $0.isLetter || $0.isNumber }
+    }
+    let words = unit.text.split(whereSeparator: \.isWhitespace)
+    let tail = joined.filter { $0.end > from }.flatMap { $0.text.split(whereSeparator: \.isWhitespace) }
+        .map(normalized)
+    let lead = words.map(normalized)
+    var repeated = 0
+    for count in stride(from: min(lead.count, tail.count), through: 1, by: -1)
+    where Array(tail.suffix(count)) == Array(lead.prefix(count)) {
+        repeated = count
+        break
+    }
+    guard repeated < words.count else { return nil }
+    guard repeated > 0 else { return unit }
+    let start = unit.start + (unit.end - unit.start) * Double(repeated) / Double(words.count)
+    return TimedWord(text: words.dropFirst(repeated).joined(separator: " "), start: start, end: unit.end)
 }

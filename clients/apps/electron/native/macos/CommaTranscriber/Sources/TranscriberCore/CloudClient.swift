@@ -39,6 +39,20 @@ public enum CloudFailure: String, Error, Sendable, Equatable {
     case timeout = "cloud_timeout"
     case badResponse = "cloud_bad_response"
     case quota = "cloud_quota"
+    /// The recording could not be read or cut for upload, before any provider answer.
+    case audioUnprepared = "cloud_audio_unprepared"
+}
+
+/// Refuses every redirect, as Main's verification does (`redirect: "error"`):
+/// a 3xx would otherwise send the meeting audio and the key to another
+/// origin. The 3xx itself becomes the response, a bad response.
+private final class RefuseRedirects: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest
+    ) async -> URLRequest? {
+        nil
+    }
 }
 
 /// Sends one file to `{baseURL}/audio/transcriptions` and reads
@@ -55,7 +69,7 @@ public struct CloudClient: Sendable {
         configuration.urlCache = nil
         configuration.httpCookieStorage = nil
         configuration.urlCredentialStorage = nil
-        session = URLSession(configuration: configuration)
+        session = URLSession(configuration: configuration, delegate: RefuseRedirects(), delegateQueue: nil)
     }
 
     public func transcribe(_ file: URL, provider: CloudProvider, deadline: ContinuousClock.Instant)
@@ -161,9 +175,12 @@ public struct CloudClient: Sendable {
             }
         }
         let duration = (object["duration"] as? NSNumber)?.doubleValue
-        let words = try timed(object["words"], textKey: "word")
+        var words = try timed(object["words"], textKey: "word")
         var segments = try timed(object["segments"], textKey: "text") ?? []
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // An empty list beside recognized text means no word timestamps; an
+        // empty list for silence keeps the piece's word timing.
+        if words?.isEmpty == true, !trimmed.isEmpty { words = nil }
         if segments.isEmpty, words == nil, !trimmed.isEmpty {
             // Only text: one segment over the whole piece.
             segments = [TimedWord(text: trimmed, start: 0, end: duration ?? 0)]

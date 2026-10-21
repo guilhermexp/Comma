@@ -6,15 +6,21 @@ import Testing
 /// A cloud provider that returns the fake engine's words, or fails.
 final class FakeCloud: CloudTranscribing {
     let failure: OSAllocatedUnfairLock<CloudFailure?>
+    /// Thrown instead, for an error that is not a provider's (a file, AVFoundation).
+    let error: (any Error & Sendable)?
     let calls = OSAllocatedUnfairLock<[CloudProvider]>(initialState: [])
 
-    init(failing failure: CloudFailure? = nil) { self.failure = OSAllocatedUnfairLock(initialState: failure) }
+    init(failing failure: CloudFailure? = nil, throwing error: (any Error & Sendable)? = nil) {
+        self.failure = OSAllocatedUnfairLock(initialState: failure)
+        self.error = error
+    }
 
     func transcribe(audio: URL, provider: CloudProvider, workDirectory: URL, deadline: ContinuousClock.Instant)
         async throws -> JoinedTranscript
     {
         calls.withLock { $0.append(provider) }
         if let failure = failure.withLock({ $0 }) { throw failure }
+        if let error { throw error }
         return JoinedTranscript(
             duration: 3.1,
             words: [
@@ -330,4 +336,40 @@ private final class LogCapture: Sendable {
     #expect(lines.contains { $0.contains("PUT /v1/provider") })
     #expect(!lines.isEmpty)
     #expect(lines.allSatisfy { !$0.contains(testKey) })
+}
+
+@Test func aLocalErrorDuringTheCloudAttemptFollowsTheCloudErrorContract() async throws {
+    let cutFailure = AudioChunker.Failure(description: "the recording cannot be exported")
+    let withModel = try await Harness(cloud: FakeCloud(throwing: cutFailure))
+    try await useGroq(withModel)
+    let fellBack = try await transcribe(withModel.port)
+    #expect(fellBack.status == 200)
+    #expect(fellBack.json?["provider"] as? String == "local")
+    #expect(fellBack.json?["fallback"] as? NSDictionary == ["from": "groq", "reason": "cloud_audio_unprepared"])
+    await withModel.stop()
+
+    let withoutModel = try await Harness(installed: [.diarization], cloud: FakeCloud(throwing: CocoaError(.fileReadNoSuchFile)))
+    try await useGroq(withoutModel)
+    let failed = try await transcribe(withoutModel.port)
+    #expect(failed.status == 502)
+    let error = try #require(failed.json?["error"] as? NSDictionary)
+    #expect(error["code"] as? String == "cloud_asr_failed")
+    #expect(error["reason"] as? String == "cloud_audio_unprepared")
+    #expect(error["provider"] as? String == "groq")
+    await withoutModel.stop()
+}
+
+@Test func verifyDoesNotFollowARedirectToAnotherOrigin() async throws {
+    let elsewhere = try await FakeProvider([.respond(status: 200, body: verboseJSON(duration: 1, words: []))])
+    let target = elsewhere.baseURL.appendingPathComponent("audio/transcriptions").absoluteString
+    let redirecting = try await FakeProvider([.respond(status: 307, headers: ["location": target], body: "")])
+    defer { [elsewhere, redirecting].forEach { $0.stop() } }
+    let harness = try await Harness()
+
+    let reply = try await request(harness.port, "POST", "/v1/provider/verify", json: groqBody(redirecting.baseURL))
+
+    #expect(reply.json == ["ok": false, "reason": "cloud_bad_response"])
+    #expect(redirecting.requests.count == 1)
+    #expect(elsewhere.requests.isEmpty)
+    await harness.stop()
 }

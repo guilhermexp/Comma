@@ -365,6 +365,8 @@ private struct Exchange {
             switch failure {
             case .quota: return .json(200, ["ok": true])
             case .timeout: return .json(200, ["ok": false, "reason": CloudFailure.unreachable.rawValue])
+            // C6 lists only provider answers; a test file that cannot be cut is not one.
+            case .audioUnprepared: return .json(200, ["ok": false, "reason": CloudFailure.badResponse.rawValue])
             default: return .json(200, ["ok": false, "reason": failure.rawValue])
             }
         } catch {
@@ -482,20 +484,31 @@ private struct Exchange {
                 return nil
             }
         }()
+        let failure: CloudFailure
         do {
             let transcript = try await configuration.cloud.transcribe(
                 audio: audio, provider: provider, workDirectory: directory,
                 deadline: .now + configuration.cloudDeadline)
             return .cloud(provider, transcript, turns: await diarized ?? [])
-        } catch let failure as CloudFailure {
-            let turns = await diarized ?? []
-            log("\(provider.kind.rawValue) failed: \(failure.rawValue)")
-            guard store.isInstalled(.asr) else { throw CloudFailed(provider: provider.kind, failure: failure) }
-            let result = try await engine.transcribe(audio: audio, installed: store.installedURL, speakers: false)
-            return .local(
-                EngineResult(duration: result.duration, words: result.words, turns: turns),
-                fallback: (provider.kind, failure))
+        } catch let error as CloudFailure {
+            failure = error
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // Reading or cutting the recording failed before a provider
+            // answered (AudioChunker, AVFoundation, the file): the same
+            // contract as a provider failure, so the fallback still applies.
+            if Task.isCancelled { throw CancellationError() }
+            log("\(provider.kind.rawValue) attempt could not prepare the audio: \(error)")
+            failure = .audioUnprepared
         }
+        let turns = await diarized ?? []
+        log("\(provider.kind.rawValue) failed: \(failure.rawValue)")
+        guard store.isInstalled(.asr) else { throw CloudFailed(provider: provider.kind, failure: failure) }
+        let result = try await engine.transcribe(audio: audio, installed: store.installedURL, speakers: false)
+        return .local(
+            EngineResult(duration: result.duration, words: result.words, turns: turns),
+            fallback: (provider.kind, failure))
     }
 
     private func readBody(into url: URL, received: Data, length: Int64?, chunked: Bool, limit: Int64)

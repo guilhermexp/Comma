@@ -143,3 +143,38 @@ private func failure(
     dump(provider, to: &dumped)
     #expect(!dumped.contains(testKey))
 }
+
+@Test func aRedirectIsNotFollowedSoTheAudioStaysWithTheProvider() async throws {
+    let elsewhere = try await FakeProvider([.respond(status: 200, body: verboseJSON(duration: 1, words: [("x", 0, 0.3)]))])
+    defer { elsewhere.stop() }
+    let target = elsewhere.baseURL.appendingPathComponent("audio/transcriptions").absoluteString
+    for status in [301, 302, 303, 307, 308] {
+        let redirecting = try await FakeProvider([.respond(status: status, headers: ["location": target], body: "")])
+        defer { redirecting.stop() }
+        await #expect(throws: CloudFailure.badResponse) {
+            try await CloudClient().transcribe(
+                try audioFile(), provider: cloudProvider(redirecting.baseURL), deadline: .now + .seconds(420))
+        }
+        #expect(redirecting.requests.count == 1)
+    }
+    // Neither the audio nor the key reached the other origin.
+    #expect(elsewhere.requests.isEmpty)
+}
+
+@Test func emptyWordsWithTextFallBackToSegmentsThenText() throws {
+    let segmented = try CloudClient.parse(Data("""
+        {"text":"Hello there","duration":2,"words":[],"segments":[{"text":"Hello there","start":0.2,"end":1.4}]}
+        """.utf8))
+    #expect(segmented.words == nil)
+    #expect(segmented.segments == [TimedWord(text: "Hello there", start: 0.2, end: 1.4)])
+
+    let textOnly = try CloudClient.parse(Data("{\"text\":\" Hi \",\"duration\":3,\"words\":[],\"segments\":[]}".utf8))
+    #expect(textOnly.words == nil)
+    #expect(textOnly.segments == [TimedWord(text: "Hi", start: 0, end: 3)])
+
+    // Silence: no words and no text still counts as word timestamps, so one
+    // quiet piece does not take word timing away from the others.
+    let silent = try CloudClient.parse(Data("{\"text\":\"\",\"duration\":3,\"words\":[],\"segments\":[]}".utf8))
+    #expect(silent.words == [])
+    #expect(silent.segments.isEmpty)
+}
