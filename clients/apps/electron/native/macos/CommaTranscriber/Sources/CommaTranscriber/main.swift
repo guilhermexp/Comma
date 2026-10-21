@@ -40,9 +40,9 @@ switch command {
 case .status(let modelsDir):
     emit(Status.current(store: ModelStore(root: modelsDir, manifest: manifest), platform: .current()).jsonLine)
 
-case .install(let modelsDir):
+case .install(let modelsDir, let components):
     let installer = Installer(
-        store: ModelStore(root: modelsDir, manifest: manifest), platform: .current(),
+        store: ModelStore(root: modelsDir, manifest: manifest), components: components, platform: .current(),
         downloader: FluidModelDownloader(), preparer: FluidModelPreparer())
     let task = Task { await installer.install(emit: { emit($0.jsonLine) }) }
     let signals = onTermination { task.cancel() }
@@ -50,9 +50,9 @@ case .install(let modelsDir):
     signals.forEach { $0.cancel() }
     exit(outcome == .ok ? 0 : 1)
 
-case .remove(let modelsDir):
+case .remove(let modelsDir, let components):
     do {
-        try ModelStore(root: modelsDir, manifest: manifest).remove()
+        try ModelStore(root: modelsDir, manifest: manifest).remove(components)
         emit(InstallEvent.result(.ok).jsonLine)
     } catch {
         emit(InstallEvent.result(.failed(.io, error.localizedDescription)).jsonLine)

@@ -1,30 +1,42 @@
 import Foundation
 
 /// Lines the non-`serve` subcommands write to stdout, one JSON object each
-/// (design contract C1).
+/// (design contracts C1 and C5).
 public struct Status: Sendable, Equatable {
     public let supported: Bool
     public let reason: PlatformSupport.Reason?
-    public let installed: Bool
-    public let downloadBytes: Int64
+    public let components: [ModelComponent: Bool]
+    public let componentBytes: [ModelComponent: Int64]
 
-    public init(supported: Bool, reason: PlatformSupport.Reason?, installed: Bool, downloadBytes: Int64) {
+    public init(
+        supported: Bool, reason: PlatformSupport.Reason?, components: [ModelComponent: Bool],
+        componentBytes: [ModelComponent: Int64]
+    ) {
         self.supported = supported
         self.reason = reason
-        self.installed = installed
-        self.downloadBytes = downloadBytes
+        self.components = components
+        self.componentBytes = componentBytes
     }
 
     public static func current(store: ModelStore, platform: PlatformSupport) -> Status {
-        Status(
+        let installed = store.installedComponents
+        return Status(
             supported: platform.reason == nil, reason: platform.reason,
-            installed: store.isInstalled, downloadBytes: store.manifest.totalBytes)
+            components: Dictionary(uniqueKeysWithValues: ModelComponent.allCases.map { ($0, installed.contains($0)) }),
+            componentBytes: Dictionary(
+                uniqueKeysWithValues: ModelComponent.allCases.map { ($0, store.manifest.bytes(of: $0)) }))
     }
+
+    /// Both components, as before components existed.
+    public var installed: Bool { ModelComponent.allCases.allSatisfy { components[$0] == true } }
+    public var downloadBytes: Int64 { componentBytes.values.reduce(0, +) }
 
     public var jsonLine: String {
         jsonLineOf([
             "type": "status", "supported": supported, "reason": reason?.rawValue ?? NSNull(),
             "installed": installed, "downloadBytes": downloadBytes,
+            "components": Dictionary(uniqueKeysWithValues: components.map { ($0.key.rawValue, $0.value) }),
+            "componentBytes": Dictionary(uniqueKeysWithValues: componentBytes.map { ($0.key.rawValue, $0.value) }),
         ])
     }
 }
