@@ -78,7 +78,7 @@ Alternativa descartada: aceitar qualquer `principal_ref`. Permitiria escrita dis
 ### D4. Mac pelo conector
 
 - **Escolha do dispositivo:** o backend procura o dispositivo do dono no grupo com a capacidade `calendar` anunciada e `connected`, pelos registros do `Control`. Sem dispositivo assim, a fonte fica `unavailable`, com o motivo `desktop_offline`.
-- **Chamada:** `EnvDispatch.request(agent_id, target, "calendar", %{op, input})`.
+- **Chamada:** `SalixWeb.ConnectorRecovery.request(target, "calendar", %{op, input})`, a partir de `CommaWeb.AgentCalendarSources.Mac`. O `EnvDispatch` foi descartado porque recebe um `agent_id`, e não o dono, e porque devolve `permission_required` antes da liberação "Permitir operações", que o método `calendar` dispensa de propósito.
 - **Conector Go:**
   - método novo `calendar`, despachado antes da checagem de escopo, como `device_access`, porque a permissão do macOS e a ativação na Agenda já são o consentimento;
   - faz `POST /v1/invoke {module:"calendar", api:op, input}` no client-control, sem redirecionamento e com resposta de até 1 MiB;
