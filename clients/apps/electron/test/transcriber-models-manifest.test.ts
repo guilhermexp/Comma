@@ -12,6 +12,7 @@ const pin: ModelPin = {
   revision: "abc1234def",
   folder: "model",
   variant: "v2",
+  component: "diarization",
   runtime: ["Model.mlmodelc", "vocab.json"],
   provenance: "provenance.json",
   licenses: [{ path: "LICENSE", as: "model-LICENSE" }],
@@ -77,6 +78,8 @@ describe("transcriber model manifest", () => {
     );
 
     expect(manifest.id).toBe("model@abc1234+v2");
+    // The helper installs and removes each component's folders on their own.
+    expect(manifest.components).toEqual({ diarization: ["model"] });
     expect(manifest.files).toEqual([
       { path: "model/.fluidaudio-revision", size: 11, sha256: sha("abc1234def\n") },
       { path: "model/Model.mlmodelc/model.mil", size: 3, sha256: sha("mil") },

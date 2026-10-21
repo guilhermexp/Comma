@@ -1,6 +1,7 @@
 /**
  * Generates the CommaTranscriber model manifest and the license texts the app
- * ships for it (openspec add-local-meeting-asr, D2 and C4).
+ * ships for it (openspec add-local-meeting-asr, D2 and C4; components from
+ * add-cloud-meeting-asr, D3).
  *
  *   pnpm --dir clients/apps/electron exec tsx scripts/transcriber-models-manifest.ts
  *   pnpm --dir clients/apps/electron exec tsx scripts/transcriber-models-manifest.ts --check
@@ -22,6 +23,9 @@ export const fluidAudioVersion = "0.17.7";
  * refuses to load the diarizer without it (ModelCache.matchesRevision). */
 export const revisionMarkerName = ".fluidaudio-revision";
 
+/** Parts the helper installs and removes on their own (`install --component`). */
+export type ModelComponent = "asr" | "diarization";
+
 export type ModelPin = {
   repo: string;
   revision: string;
@@ -29,6 +33,7 @@ export type ModelPin = {
   folder: string;
   /** `ModelHub.download` variant. */
   variant: string;
+  component: ModelComponent;
   /** Bundles and root files the loaders read. Anything else the SDK downloads is removed. */
   runtime: string[];
   /** Publisher file with SHA-256 for every artifact, checked against ours. */
@@ -43,6 +48,7 @@ export const modelPins: ModelPin[] = [
     revision: "7dd20fe6b1797d35f5e3307e8b1732d9a178edfe",
     folder: "parakeet-tdt-0.6b-v3",
     variant: "int8-v2",
+    component: "asr",
     runtime: [
       "Encoder_v2.mlmodelc",
       "Decoder.mlmodelc",
@@ -57,6 +63,7 @@ export const modelPins: ModelPin[] = [
     revision: "df2625ac79a7ac6b65ad868fee6d80f320da4232",
     folder: "speaker-diarization",
     variant: "offline",
+    component: "diarization",
     runtime: [
       "Segmentation.mlmodelc",
       "FBank.mlmodelc",
@@ -84,7 +91,10 @@ export type Manifest = {
   /** Name of the installed folder under the models directory. */
   id: string;
   fluidAudio: string;
-  repos: Omit<ModelPin, "runtime" | "provenance" | "licenses">[];
+  repos: Omit<ModelPin, "component" | "runtime" | "provenance" | "licenses">[];
+  /** Folders of each component. The installed id stays the same, so a tree
+   * installed before components existed is still this manifest's. */
+  components: Partial<Record<ModelComponent, string[]>>;
   files: ManifestFile[];
   licenses: { file: string; source: string }[];
 };
@@ -240,6 +250,10 @@ export async function generateTranscriberManifest(
 
   files.sort((a, b) => a.path.localeCompare(b.path, "en"));
   licenses.sort((a, b) => a.file.localeCompare(b.file, "en"));
+  const components: Manifest["components"] = {};
+  for (const pin of pins) {
+    components[pin.component] = [...(components[pin.component] ?? []), pin.folder];
+  }
   const id = pins.map((pin) => `${pin.folder}@${pin.revision.slice(0, 7)}`).join("+");
 
   return {
@@ -253,6 +267,7 @@ export async function generateTranscriberManifest(
         folder,
         variant,
       })),
+      components,
       files,
       licenses,
     },
