@@ -1,5 +1,6 @@
 import type { LocalBackendProvider } from "../../local-backend/provider";
 import type { LocalTranscriptionProvider } from "../../local-transcription/provider";
+import type { MeetingTranscriptionProvider } from "../../local-transcription/meeting-provider";
 import type {
   LocalComputeOverview,
   LocalComputeDisposalResult,
@@ -106,6 +107,7 @@ import type { LocalFilePickerProvider } from "../local-files/picker";
 import type { RecommendationMediaProvider } from "../recommendation-media";
 import type { AudioCaptureProvider } from "../audio-capture";
 import type { MeetingPresenceProvider } from "../meeting-presence";
+import type { CalendarProvider } from "../calendar";
 import type { MeetingRecorderProvider } from "../meeting-recorder";
 import type { AirDropReceptionProvider } from "../airdrop/reception";
 import { getCurrentNativeCallerContext, NativeCallerBindingError } from "../ipc";
@@ -792,12 +794,14 @@ function currentChatEnvelope<Envelope>(
 export function registerNativeBridgeHandlers({
   localBackend,
   localTranscription,
+  meetingTranscription,
   airDrop,
   appPreferences,
   computerUse,
   audioCapture,
   browserSidebar,
   meetingPresence,
+  calendar,
   sitePermissionMenu = unavailableSitePermissionMenu,
   onboardingWindow = unavailableOnboardingWindow,
   meetingRecorder,
@@ -837,6 +841,7 @@ export function registerNativeBridgeHandlers({
   audioCapture: AudioCaptureProvider;
   browserSidebar: BrowserSidebarProvider;
   meetingPresence: MeetingPresenceProvider;
+  calendar: CalendarProvider;
   sitePermissionMenu?: SitePermissionMenuProvider;
   onboardingWindow?: OnboardingWindowProvider;
   meetingRecorder: MeetingRecorderProvider;
@@ -868,12 +873,14 @@ export function registerNativeBridgeHandlers({
   windows: WindowsProvider;
   localBackend: LocalBackendProvider;
   localTranscription: LocalTranscriptionProvider;
+  meetingTranscription: MeetingTranscriptionProvider;
 }) {
   registerGeneratedNativeMainBindings({
     gateway,
     providers: {
       localBackend,
       localTranscription,
+      meetingTranscription,
       airDrop,
       applicationMenu: applicationMenuProvider,
       appPreferences,
@@ -881,6 +888,7 @@ export function registerNativeBridgeHandlers({
       audioCapture,
       browserSidebar,
       meetingPresence,
+      calendar,
       sitePermissionMenu,
       onboardingWindow,
       meetingRecorder,

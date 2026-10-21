@@ -1007,6 +1007,7 @@ export const commaClientAppShortcutIds = [
   "go-drive",
   "go-tasks",
   "go-plugins",
+  "go-agenda",
   "toggle-left-sidebar",
   "history-back",
   "history-forward",
@@ -1109,6 +1110,7 @@ export const commaClientAppShortcutOverridesSchema = z
     "go-drive": commaClientAppKeybindingSchema.nullable().optional(),
     "go-tasks": commaClientAppKeybindingSchema.nullable().optional(),
     "go-plugins": commaClientAppKeybindingSchema.nullable().optional(),
+    "go-agenda": commaClientAppKeybindingSchema.nullable().optional(),
     "toggle-left-sidebar": commaClientAppKeybindingSchema.nullable().optional(),
     "history-back": commaClientAppKeybindingSchema.nullable().optional(),
     "history-forward": commaClientAppKeybindingSchema.nullable().optional(),
@@ -6867,6 +6869,406 @@ export const meetingPresenceStateLeaf = defineNativeState({
   id: "meetingPresence.state",
   subscribe: meetingPresenceStateChangedEvent,
 });
+
+// ---------------------------------------------------------------------------
+// Calendar — the Mac Calendar read and written through EventKit in Main.
+//
+// macOS grants Calendar access to the calling app, so the addon runs in
+// Comma's own process. Events never leave this computer: no Session, backend
+// or telemetry path sees them. Domain failures come back as `{ error }`
+// results, because a thrown handler error reaches the renderer only as a
+// generic INTERNAL_ERROR.
+
+export const calendarMaxCalendars = 500;
+export const calendarMaxEvents = 2_500;
+export const calendarMaxRangeDays = 62;
+
+export const calendarAccessSchema = z.enum([
+  "notDetermined",
+  "denied",
+  "restricted",
+  "writeOnly",
+  "fullAccess",
+  "unavailable",
+]);
+export type CalendarAccess = z.infer<typeof calendarAccessSchema>;
+
+export const calendarStateSchema = z
+  .object({
+    access: calendarAccessSchema,
+    available: z.boolean(),
+    /** Grows on every coalesced change of the Calendar database. */
+    revision: z.number().int().positive(),
+  })
+  .strict();
+export type CalendarState = z.infer<typeof calendarStateSchema>;
+
+export const unavailableCalendarState: CalendarState = {
+  access: "unavailable",
+  available: false,
+  revision: 1,
+};
+
+export const calendarErrorCodeSchema = z.enum([
+  "calendar_access_denied",
+  "calendar_read_only",
+  "calendar_event_not_found",
+  "calendar_unavailable",
+]);
+export type CalendarErrorCode = z.infer<typeof calendarErrorCodeSchema>;
+
+export const calendarErrorSchema = z
+  .object({ error: calendarErrorCodeSchema })
+  .strict();
+export type CalendarError = z.infer<typeof calendarErrorSchema>;
+
+const unavailableCalendarError: CalendarError = { error: "calendar_unavailable" };
+
+const calendarIdentifierSchema = z.string().min(1).max(1024);
+/** An instant with its UTC offset, as EventKit dates are absolute. */
+export const calendarInstantSchema = z.iso.datetime({ offset: true });
+/** `YYYY-MM-DD` for all-day bounds (end exclusive), an instant otherwise. */
+export const calendarEventDateSchema = z.union([z.iso.date(), calendarInstantSchema]);
+
+export const calendarSummarySchema = z
+  .object({
+    color: z.string().regex(/^#[0-9a-f]{6}$/),
+    id: calendarIdentifierSchema,
+    isDefault: z.boolean(),
+    /** The account title, for example `ana@gmail.com` for a Google account. */
+    sourceTitle: z.string().max(1024),
+    sourceType: z.enum([
+      "local",
+      "exchange",
+      "calDAV",
+      "mobileMe",
+      "subscribed",
+      "birthdays",
+      "unknown",
+    ]),
+    title: z.string().max(1024),
+    writable: z.boolean(),
+  })
+  .strict();
+export type CalendarSummary = z.infer<typeof calendarSummarySchema>;
+
+export const calendarSimpleRecurrenceSchema = z.enum([
+  "none",
+  "daily",
+  "weekly",
+  "monthly",
+  "yearly",
+]);
+
+export const calendarEventSchema = z
+  .object({
+    allDay: z.boolean(),
+    calendarId: calendarIdentifierSchema,
+    /** A moved or edited occurrence of a series, still keyed by its original date. */
+    detached: z.boolean(),
+    editable: z.boolean(),
+    end: calendarEventDateSchema,
+    /** The series identity: `calendarItemIdentifier` without a `/RID=` suffix. */
+    eventId: calendarIdentifierSchema,
+    externalId: z.string().max(1024).nullable(),
+    location: z.string().max(4096).nullable(),
+    notes: z.string().max(65_536).nullable(),
+    /** The original occurrence date of a recurring event, even after a move. */
+    occurrenceDate: calendarInstantSchema.nullable(),
+    occurrenceId: z.string().min(1).max(2048),
+    recurrence: z.enum([...calendarSimpleRecurrenceSchema.options, "custom"]),
+    start: calendarEventDateSchema,
+    title: z.string().max(4096),
+    url: z.string().max(8192).nullable(),
+  })
+  .strict();
+export type CalendarEvent = z.infer<typeof calendarEventSchema>;
+
+const calendarEventInputFields = {
+  allDay: z.boolean(),
+  description: z.string().max(65_536).nullable().optional(),
+  end: calendarEventDateSchema,
+  location: z.string().max(4096).nullable().optional(),
+  recurrence: calendarSimpleRecurrenceSchema,
+  start: calendarEventDateSchema,
+  timeZone: z.string().min(1).max(128),
+  title: z.string().max(4096),
+};
+export const calendarEventInputSchema = z.object(calendarEventInputFields).strict();
+export type CalendarEventInput = z.infer<typeof calendarEventInputSchema>;
+export const calendarEventPatchSchema = calendarEventInputSchema.partial().strict();
+export type CalendarEventPatch = z.infer<typeof calendarEventPatchSchema>;
+
+export const calendarEventsInputSchema = z
+  .object({
+    calendarIds: z.array(calendarIdentifierSchema).max(calendarMaxCalendars),
+    end: calendarInstantSchema,
+    start: calendarInstantSchema,
+  })
+  .strict()
+  .refine(
+    ({ end, start }) => {
+      const span = Date.parse(end) - Date.parse(start);
+      return span > 0 && span <= calendarMaxRangeDays * 24 * 60 * 60 * 1000;
+    },
+    { message: `The range must be positive and at most ${calendarMaxRangeDays} days.` }
+  );
+export type CalendarEventsInput = z.infer<typeof calendarEventsInputSchema>;
+
+const calendarOccurrenceReferenceFields = {
+  eventId: calendarIdentifierSchema,
+  occurrenceDate: calendarInstantSchema.nullable(),
+};
+export const calendarEventReferenceSchema = z
+  .object(calendarOccurrenceReferenceFields)
+  .strict();
+export type CalendarEventReference = z.infer<typeof calendarEventReferenceSchema>;
+
+export const calendarWriteScopeSchema = z.enum(["instance", "series"]);
+
+export const calendarCreateEventInputSchema = z
+  .object({ calendarId: calendarIdentifierSchema, event: calendarEventInputSchema })
+  .strict();
+export type CalendarCreateEventInput = z.infer<typeof calendarCreateEventInputSchema>;
+
+export const calendarUpdateEventInputSchema = z
+  .object({
+    ...calendarOccurrenceReferenceFields,
+    patch: calendarEventPatchSchema,
+    scope: calendarWriteScopeSchema,
+    targetCalendarId: calendarIdentifierSchema.optional(),
+  })
+  .strict();
+export type CalendarUpdateEventInput = z.infer<typeof calendarUpdateEventInputSchema>;
+
+export const calendarDeleteEventInputSchema = z
+  .object({ ...calendarOccurrenceReferenceFields, scope: calendarWriteScopeSchema })
+  .strict();
+export type CalendarDeleteEventInput = z.infer<typeof calendarDeleteEventInputSchema>;
+
+export const calendarCalendarsResultSchema = z.union([
+  z
+    .object({ calendars: z.array(calendarSummarySchema).max(calendarMaxCalendars) })
+    .strict(),
+  calendarErrorSchema,
+]);
+export type CalendarCalendarsResult = z.infer<typeof calendarCalendarsResultSchema>;
+
+export const calendarEventsResultSchema = z.union([
+  z
+    .object({
+      events: z.array(calendarEventSchema).max(calendarMaxEvents),
+      truncated: z.boolean(),
+    })
+    .strict(),
+  calendarErrorSchema,
+]);
+export type CalendarEventsResult = z.infer<typeof calendarEventsResultSchema>;
+
+export const calendarEventResultSchema = z.union([
+  calendarEventSchema,
+  calendarErrorSchema,
+]);
+export type CalendarEventResult = z.infer<typeof calendarEventResultSchema>;
+
+export const calendarDeleteEventResultSchema = z.union([z.void(), calendarErrorSchema]);
+export type CalendarDeleteEventResult = z.infer<typeof calendarDeleteEventResultSchema>;
+
+export const calendarStateCapability = defineNativeCapability({
+  bridge: { method: "state", namespace: "calendar" },
+  channel: "comma:calendar:state",
+  handler: {
+    exportName: "CalendarProvider",
+    member: "state",
+    module: "../../../apps/electron/src/main/modules/calendar/index",
+    provider: "calendar",
+  },
+  id: "calendar.state",
+  input: z.void(),
+  mock: unavailableCalendarState,
+  output: calendarStateSchema,
+  permission: "calendar.read",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Reports the Mac Calendar permission and a change counter; no event data or Session state.",
+  webFallback: unavailableCalendarState,
+});
+
+export const calendarStateChangedEvent = defineNativeEvent({
+  channel: "comma:calendar:state-changed",
+  id: "calendar.state.changed",
+  mock: unavailableCalendarState,
+  payload: calendarStateSchema,
+  permission: calendarStateCapability.permission,
+  target: { type: "all" },
+});
+
+export const calendarStateLeaf = defineNativeState({
+  bridge: { method: "state", namespace: "calendar" },
+  get: calendarStateCapability,
+  id: "calendar.state",
+  subscribe: calendarStateChangedEvent,
+});
+
+export const calendarRequestAccessCapability = defineNativeCapability({
+  bridge: { method: "requestAccess", namespace: "calendar" },
+  channel: "comma:calendar:request-access",
+  handler: {
+    exportName: "CalendarProvider",
+    member: "requestAccess",
+    module: "../../../apps/electron/src/main/modules/calendar/index",
+    provider: "calendar",
+  },
+  id: "calendar.requestAccess",
+  input: z.void(),
+  mock: "unavailable" as CalendarAccess,
+  output: calendarAccessSchema,
+  permission: "calendar.read",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Shows the macOS Calendar permission prompt for this app; no Session state involved.",
+  webFallback: "unavailable" as CalendarAccess,
+});
+
+export const calendarOpenPrivacySettingsCapability = defineNativeCapability({
+  bridge: { method: "openPrivacySettings", namespace: "calendar" },
+  channel: "comma:calendar:open-privacy-settings",
+  handler: {
+    exportName: "CalendarProvider",
+    member: "openPrivacySettings",
+    module: "../../../apps/electron/src/main/modules/calendar/index",
+    provider: "calendar",
+  },
+  id: "calendar.openPrivacySettings",
+  input: z.void(),
+  mock: undefined,
+  output: z.void(),
+  permission: "calendar.read",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Opens System Settings at Privacy > Calendars; no Session state involved.",
+  webFallback: undefined,
+});
+
+export const calendarCalendarsCapability = defineNativeCapability({
+  bridge: { method: "calendars", namespace: "calendar" },
+  channel: "comma:calendar:calendars",
+  handler: {
+    exportName: "CalendarProvider",
+    member: "calendars",
+    module: "../../../apps/electron/src/main/modules/calendar/index",
+    provider: "calendar",
+  },
+  id: "calendar.calendars",
+  input: z.void(),
+  mock: unavailableCalendarError,
+  output: calendarCalendarsResultSchema,
+  permission: "calendar.read",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Reads the local Mac Calendar through EventKit with this app's own permission; no Session state, backend or telemetry receives the events.",
+  webFallback: unavailableCalendarError,
+});
+
+export const calendarEventsCapability = defineNativeCapability({
+  bridge: { method: "events", namespace: "calendar" },
+  channel: "comma:calendar:events",
+  handler: {
+    exportName: "CalendarProvider",
+    member: "events",
+    module: "../../../apps/electron/src/main/modules/calendar/index",
+    provider: "calendar",
+  },
+  id: "calendar.events",
+  input: calendarEventsInputSchema,
+  mock: unavailableCalendarError,
+  output: calendarEventsResultSchema,
+  permission: "calendar.read",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Reads the local Mac Calendar through EventKit with this app's own permission; no Session state, backend or telemetry receives the events.",
+  webFallback: unavailableCalendarError,
+});
+
+export const calendarEventCapability = defineNativeCapability({
+  bridge: { method: "event", namespace: "calendar" },
+  channel: "comma:calendar:event",
+  handler: {
+    exportName: "CalendarProvider",
+    member: "event",
+    module: "../../../apps/electron/src/main/modules/calendar/index",
+    provider: "calendar",
+  },
+  id: "calendar.event",
+  input: calendarEventReferenceSchema,
+  mock: unavailableCalendarError,
+  output: calendarEventResultSchema,
+  permission: "calendar.read",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Reads the local Mac Calendar through EventKit with this app's own permission; no Session state, backend or telemetry receives the events.",
+  webFallback: unavailableCalendarError,
+});
+
+export const calendarCreateEventCapability = defineNativeCapability({
+  bridge: { method: "createEvent", namespace: "calendar" },
+  channel: "comma:calendar:create-event",
+  handler: {
+    exportName: "CalendarProvider",
+    member: "createEvent",
+    module: "../../../apps/electron/src/main/modules/calendar/index",
+    provider: "calendar",
+  },
+  id: "calendar.createEvent",
+  input: calendarCreateEventInputSchema,
+  mock: unavailableCalendarError,
+  output: calendarEventResultSchema,
+  permission: "calendar.write",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Writes one event to the local Mac Calendar through EventKit after an explicit user action; nothing is sent to a Session or the backend.",
+  webFallback: unavailableCalendarError,
+});
+
+export const calendarUpdateEventCapability = defineNativeCapability({
+  bridge: { method: "updateEvent", namespace: "calendar" },
+  channel: "comma:calendar:update-event",
+  handler: {
+    exportName: "CalendarProvider",
+    member: "updateEvent",
+    module: "../../../apps/electron/src/main/modules/calendar/index",
+    provider: "calendar",
+  },
+  id: "calendar.updateEvent",
+  input: calendarUpdateEventInputSchema,
+  mock: unavailableCalendarError,
+  output: calendarEventResultSchema,
+  permission: "calendar.write",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Writes one event to the local Mac Calendar through EventKit after an explicit user action; nothing is sent to a Session or the backend.",
+  webFallback: unavailableCalendarError,
+});
+
+export const calendarDeleteEventCapability = defineNativeCapability({
+  bridge: { method: "deleteEvent", namespace: "calendar" },
+  channel: "comma:calendar:delete-event",
+  handler: {
+    exportName: "CalendarProvider",
+    member: "deleteEvent",
+    module: "../../../apps/electron/src/main/modules/calendar/index",
+    provider: "calendar",
+  },
+  id: "calendar.deleteEvent",
+  input: calendarDeleteEventInputSchema,
+  mock: unavailableCalendarError,
+  output: calendarDeleteEventResultSchema,
+  permission: "calendar.write",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Writes one event to the local Mac Calendar through EventKit after an explicit user action; nothing is sent to a Session or the backend.",
+  webFallback: unavailableCalendarError,
+});
 export const meetingTaskReferenceSchema = z
   .object({ groupId: z.string(), taskId: z.string() })
   .strict();
@@ -8258,6 +8660,7 @@ export const applicationMenuCommandSchema = z.enum([
   "go-drive",
   "go-tasks",
   "go-plugins",
+  "go-agenda",
   "go-routines",
   "go-shortcuts",
   "go-recording-settings",
@@ -8609,23 +9012,262 @@ export const localTranscriptionRemoveCapability = defineNativeCapability({
 });
 
 /**
- * A saved recording could not be transcribed because the local model is not
- * installed. The renderer shows the install notice beside the saved toast.
+ * Meeting transcription providers (openspec add-cloud-meeting-asr, D8 and
+ * contract C8): which engine transcribes meeting recordings (this Mac's
+ * model, Groq, or an OpenAI-compatible API) and whether it is ready. Main
+ * owns the saved configuration and its API key; the state carries only
+ * whether a key is saved, never its value. The local model's own state stays
+ * in `localTranscription`.
  */
-export const localTranscriptionNoticeSchema = z
+export const meetingTranscriptionProviderSchema = z.enum([
+  "local",
+  "groq",
+  "openai_compatible",
+]);
+export type MeetingTranscriptionProvider = z.output<
+  typeof meetingTranscriptionProviderSchema
+>;
+
+/** The Groq preset's fixed URL and models (D7); the first model is the default. */
+export const groqTranscriptionBaseUrl = "https://api.groq.com/openai/v1";
+export const groqTranscriptionModels = [
+  "whisper-large-v3",
+  "whisper-large-v3-turbo",
+] as const;
+
+export const meetingTranscriptionStateSchema = z
   .object({
-    reason: z.literal("local_asr_model_not_installed"),
+    provider: meetingTranscriptionProviderSchema,
+    ready: z.boolean(),
+    reason: z
+      .enum([
+        "local_model_missing",
+        "key_missing",
+        "key_rejected",
+        "diarization_missing",
+        "secure_storage_unavailable",
+        "unsupported",
+      ])
+      .optional(),
+    /**
+     * The saved cloud provider, kept while Local is selected so switching
+     * back needs no new key; absent once its key is deleted.
+     */
+    cloud: z
+      .object({
+        kind: z.enum(["groq", "openai_compatible"]),
+        model: z.string().max(200),
+        /** The provider's host, which the privacy notice names. */
+        baseHost: z.string().max(253),
+        hasKey: z.boolean(),
+        verification: z.enum(["idle", "checking", "valid", "rejected", "unreachable"]),
+      })
+      .strict()
+      .optional(),
+    /** The local speaker separator that cloud providers need. */
+    diarization: z.enum(["not_installed", "downloading", "ready", "failed"]),
+    /**
+     * The saved provider has not reached the helper yet (for example a Local
+     * switch while it was busy); Main keeps sending it until acknowledged.
+     */
+    applying: z.literal(true).optional(),
+  })
+  .strict();
+export type MeetingTranscriptionState = z.output<
+  typeof meetingTranscriptionStateSchema
+>;
+
+export const unavailableMeetingTranscriptionState: MeetingTranscriptionState = {
+  provider: "local",
+  ready: false,
+  reason: "unsupported",
+  diarization: "not_installed",
+};
+
+export const meetingTranscriptionStateCapability = defineNativeCapability({
+  bridge: { method: "state", namespace: "meetingTranscription" },
+  channel: "comma:meeting-transcription:state",
+  handler: {
+    exportName: "MeetingTranscriptionProvider",
+    member: "state",
+    module: "../../../apps/electron/src/main/local-transcription/meeting-provider",
+    provider: "meetingTranscription",
+  },
+  id: "meetingTranscription.state",
+  input: z.void(),
+  mock: unavailableMeetingTranscriptionState,
+  output: meetingTranscriptionStateSchema,
+  permission: "meeting-transcription.read",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Reports which engine transcribes this Mac's meeting recordings and whether it is ready; it carries no key and no account data.",
+  webFallback: unavailableMeetingTranscriptionState,
+});
+
+export const meetingTranscriptionStateChangedEvent = defineNativeEvent({
+  channel: "comma:meeting-transcription:state-changed",
+  id: "meetingTranscription.state.changed",
+  mock: unavailableMeetingTranscriptionState,
+  payload: meetingTranscriptionStateSchema,
+  permission: meetingTranscriptionStateCapability.permission,
+  target: { type: "all" },
+});
+
+export const meetingTranscriptionStateLeaf = defineNativeState({
+  bridge: { method: "state", namespace: "meetingTranscription" },
+  get: meetingTranscriptionStateCapability,
+  id: "meetingTranscription.state",
+  subscribe: meetingTranscriptionStateChangedEvent,
+});
+
+const meetingTranscriptionApiKeySchema = z.string().trim().min(1).max(1024);
+
+/**
+ * Settings → Meeting → Save. Without `baseUrl`, Main reuses the saved URL of
+ * the same provider. Without `apiKey`, Main reuses the saved key of the same
+ * provider and URL origin; a key never follows a changed origin.
+ */
+export const meetingTranscriptionSetProviderInputSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("local") }).strict(),
+  z
+    .object({
+      kind: z.literal("groq"),
+      model: z.enum(groqTranscriptionModels),
+      apiKey: meetingTranscriptionApiKeySchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("openai_compatible"),
+      baseUrl: z.string().trim().min(1).max(2048).optional(),
+      model: z.string().trim().min(1).max(200),
+      apiKey: meetingTranscriptionApiKeySchema.optional(),
+    })
+    .strict(),
+]);
+export type MeetingTranscriptionSetProviderInput = z.input<
+  typeof meetingTranscriptionSetProviderInputSchema
+>;
+
+export const meetingTranscriptionActionResultSchema = z
+  .object({
+    accepted: z.boolean(),
+    /** Why the configuration was refused; the previous one stays selected. */
+    reason: z
+      .enum([
+        "invalid_url",
+        "insecure_url",
+        "key_missing",
+        "key_rejected",
+        "unreachable",
+        "server_error",
+        "bad_response",
+        "secure_storage_unavailable",
+        "in_progress",
+        "unsupported",
+        // The helper did not acknowledge the new provider; the saved one stays.
+        "helper_unavailable",
+      ])
+      .optional(),
+  })
+  .strict();
+export type MeetingTranscriptionActionResult = z.output<
+  typeof meetingTranscriptionActionResultSchema
+>;
+
+const refusedMeetingTranscriptionAction: MeetingTranscriptionActionResult = {
+  accepted: false,
+  reason: "unsupported",
+};
+
+export const meetingTranscriptionSetProviderCapability = defineNativeCapability({
+  bridge: { method: "setProvider", namespace: "meetingTranscription" },
+  channel: "comma:meeting-transcription:set-provider",
+  handler: {
+    exportName: "MeetingTranscriptionProvider",
+    member: "setProvider",
+    module: "../../../apps/electron/src/main/local-transcription/meeting-provider",
+    provider: "meetingTranscription",
+  },
+  id: "meetingTranscription.setProvider",
+  input: meetingTranscriptionSetProviderInputSchema,
+  mock: refusedMeetingTranscriptionAction,
+  output: meetingTranscriptionActionResultSchema,
+  permission: "meeting-transcription.control",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Verifies and stores this Mac's transcription provider key in the Keychain-protected store; no account data is involved.",
+  webFallback: refusedMeetingTranscriptionAction,
+});
+
+/** Deletes the saved key; a selected cloud provider returns to Local. */
+export const meetingTranscriptionClearKeyCapability = defineNativeCapability({
+  bridge: { method: "clearKey", namespace: "meetingTranscription" },
+  channel: "comma:meeting-transcription:clear-key",
+  handler: {
+    exportName: "MeetingTranscriptionProvider",
+    member: "clearKey",
+    module: "../../../apps/electron/src/main/local-transcription/meeting-provider",
+    provider: "meetingTranscription",
+  },
+  id: "meetingTranscription.clearKey",
+  input: z.void(),
+  mock: refusedMeetingTranscriptionAction,
+  output: meetingTranscriptionActionResultSchema,
+  permission: "meeting-transcription.control",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Deletes this Mac's saved transcription provider key; no account data is involved.",
+  webFallback: refusedMeetingTranscriptionAction,
+});
+
+/** Checks the saved key against its provider again, for example after it was rejected. */
+export const meetingTranscriptionRetryVerifyCapability = defineNativeCapability({
+  bridge: { method: "retryVerify", namespace: "meetingTranscription" },
+  channel: "comma:meeting-transcription:retry-verify",
+  handler: {
+    exportName: "MeetingTranscriptionProvider",
+    member: "retryVerify",
+    module: "../../../apps/electron/src/main/local-transcription/meeting-provider",
+    provider: "meetingTranscription",
+  },
+  id: "meetingTranscription.retryVerify",
+  input: z.void(),
+  mock: refusedMeetingTranscriptionAction,
+  output: meetingTranscriptionActionResultSchema,
+  permission: "meeting-transcription.control",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Checks this Mac's saved transcription provider key against the provider; no account data is involved.",
+  webFallback: refusedMeetingTranscriptionAction,
+});
+
+/**
+ * A saved recording needs the user's attention: it was transcribed on this
+ * Mac because the cloud provider failed (`fallback`, with the cloud reason),
+ * the cloud provider failed and no local model took over (`cloud_failed`,
+ * with the reason and the provider), the selected cloud provider is not
+ * configured (`configure`), or the Local provider's model is missing
+ * (`install_local`).
+ */
+export const meetingTranscriptionNoticeSchema = z
+  .object({
+    kind: z.enum(["fallback", "cloud_failed", "configure", "install_local"]),
+    reason: z.string().max(200).optional(),
+    provider: z.enum(["groq", "openai_compatible"]).optional(),
     recording: audioCaptureRecordingSchema,
   })
   .strict();
-export type LocalTranscriptionNotice = z.output<typeof localTranscriptionNoticeSchema>;
+export type MeetingTranscriptionNotice = z.output<
+  typeof meetingTranscriptionNoticeSchema
+>;
 
-export const localTranscriptionNoticeEvent = defineNativeEvent({
-  bridge: { method: "onNotice", namespace: "localTranscription" },
-  channel: "comma:local-transcription:notice",
-  id: "localTranscription.notice",
+export const meetingTranscriptionNoticeEvent = defineNativeEvent({
+  bridge: { method: "onNotice", namespace: "meetingTranscription" },
+  channel: "comma:meeting-transcription:notice",
+  id: "meetingTranscription.notice",
   mock: {
-    reason: "local_asr_model_not_installed",
+    kind: "install_local",
     recording: {
       channels: 1,
       durationMs: 0,
@@ -8634,8 +9276,8 @@ export const localTranscriptionNoticeEvent = defineNativeEvent({
       sampleRate: 48_000,
     },
   },
-  payload: localTranscriptionNoticeSchema,
-  permission: localTranscriptionStateCapability.permission,
+  payload: meetingTranscriptionNoticeSchema,
+  permission: meetingTranscriptionStateCapability.permission,
   target: { role: "main-window", type: "role" },
 });
 
@@ -8647,6 +9289,10 @@ export const nativeCapabilityRegistry = [
   localTranscriptionInstallCapability,
   localTranscriptionCancelCapability,
   localTranscriptionRemoveCapability,
+  meetingTranscriptionStateCapability,
+  meetingTranscriptionSetProviderCapability,
+  meetingTranscriptionClearKeyCapability,
+  meetingTranscriptionRetryVerifyCapability,
   computerUsePermissionsCapability,
   computerUsePermissionFlowCapability,
   applicationMenuUpdateCapability,
@@ -8796,6 +9442,15 @@ export const nativeCapabilityRegistry = [
   audioCaptureOpenPermissionSettingsCapability,
   meetingPresenceStateCapability,
   meetingPresenceIconCapability,
+  calendarStateCapability,
+  calendarRequestAccessCapability,
+  calendarOpenPrivacySettingsCapability,
+  calendarCalendarsCapability,
+  calendarEventsCapability,
+  calendarEventCapability,
+  calendarCreateEventCapability,
+  calendarUpdateEventCapability,
+  calendarDeleteEventCapability,
   meetingRecorderStateCapability,
   meetingRecorderActionCapability,
   meetingRecorderRetryTaskSyncCapability,
@@ -8835,7 +9490,8 @@ export const nativeCapabilityRegistry = [
 export const nativeEventRegistry = [
   localBackendStatusChangedEvent,
   localTranscriptionStateChangedEvent,
-  localTranscriptionNoticeEvent,
+  meetingTranscriptionStateChangedEvent,
+  meetingTranscriptionNoticeEvent,
   applicationMenuCommandEvent,
   sitePermissionMenuChangedEvent,
   appPreferencesChangedEvent,
@@ -8858,6 +9514,7 @@ export const nativeEventRegistry = [
   computeNodeStateChangedEvent,
   audioCaptureStateChangedEvent,
   meetingPresenceStateChangedEvent,
+  calendarStateChangedEvent,
   meetingRecorderStateChangedEvent,
   surfacesWindowResizeSettledEvent,
   airDropStateChangedEvent,
@@ -8867,6 +9524,7 @@ export const nativeEventRegistry = [
 export const nativeStateRegistry = [
   localBackendStateLeaf,
   localTranscriptionStateLeaf,
+  meetingTranscriptionStateLeaf,
   sitePermissionMenuStateLeaf,
   appPreferencesStateLeaf,
   connectorRuntimeStateLeaf,
@@ -8883,6 +9541,7 @@ export const nativeStateRegistry = [
   computeNodeStateLeaf,
   audioCaptureStateLeaf,
   meetingPresenceStateLeaf,
+  calendarStateLeaf,
   meetingRecorderStateLeaf,
   airDropStateLeaf,
   driveCatalogStateLeaf,

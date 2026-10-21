@@ -27,6 +27,8 @@ import {
   filesOpenDownloadInputSchema,
   filesListOpenApplicationsResultSchema,
   maxBrowserSidebarSessionsPerOwner,
+  meetingTranscriptionSetProviderInputSchema,
+  meetingTranscriptionStateSchema,
   nativeCapabilityRegistry,
   nativeEventRegistry,
   nativeStateRegistry,
@@ -581,6 +583,9 @@ describe("peer channel bridge", () => {
   });
 });
 
+const parseMeetingProvider = (input: unknown) =>
+  meetingTranscriptionSetProviderInputSchema.safeParse(input).success;
+
 describe("native bridge contracts", () => {
   it("classifies every native command for Session admission", () => {
     const lifecycleIds = nativeCapabilityRegistry
@@ -682,7 +687,8 @@ describe("native bridge contracts", () => {
     expect(nativeEventRegistry.map((event) => event.id)).toEqual([
       "localBackend.state.changed",
       "localTranscription.state.changed",
-      "localTranscription.notice",
+      "meetingTranscription.state.changed",
+      "meetingTranscription.notice",
       "applicationMenu.command",
       "sitePermissionMenu.changed",
       "appPreferences.state.changed",
@@ -705,6 +711,7 @@ describe("native bridge contracts", () => {
       "computeNode.state.changed",
       "audioCapture.state.changed",
       "meetingPresence.state.changed",
+      "calendar.state.changed",
       "meetingRecorder.state.changed",
       "surfaces.windowResizeSettled",
       "airDrop.state.changed",
@@ -724,9 +731,15 @@ describe("native bridge contracts", () => {
         target: { type: "all" },
       },
       {
-        channel: "comma:local-transcription:notice",
-        id: "localTranscription.notice",
-        permission: "local-transcription.read",
+        channel: "comma:meeting-transcription:state-changed",
+        id: "meetingTranscription.state.changed",
+        permission: "meeting-transcription.read",
+        target: { type: "all" },
+      },
+      {
+        channel: "comma:meeting-transcription:notice",
+        id: "meetingTranscription.notice",
+        permission: "meeting-transcription.read",
         target: { role: "main-window", type: "role" },
       },
       {
@@ -862,6 +875,12 @@ describe("native bridge contracts", () => {
         target: { type: "all" },
       },
       {
+        channel: "comma:calendar:state-changed",
+        id: "calendar.state.changed",
+        permission: "calendar.read",
+        target: { type: "all" },
+      },
+      {
         channel: "comma:meeting-recorder:state-changed",
         id: "meetingRecorder.state.changed",
         permission: "meeting-recorder.read",
@@ -916,10 +935,71 @@ describe("native bridge contracts", () => {
     );
   });
 
+  it("keeps meeting transcription keys renderer-to-Main only and admits only the Groq models", () => {
+    expect(generatedNativeCapabilityManifest).toEqual(
+      expect.arrayContaining(
+        ["setProvider", "clearKey", "retryVerify"].map((method) =>
+          expect.objectContaining({
+            id: `meetingTranscription.${method}`,
+            permission: "meeting-transcription.control",
+            sessionAdmission: "local_only",
+          })
+        )
+      )
+    );
+    expect(parseMeetingProvider({ kind: "local" })).toBe(true);
+    expect(
+      parseMeetingProvider({ kind: "groq", model: "whisper-large-v3", apiKey: "gsk_x" })
+    ).toBe(true);
+    expect(
+      parseMeetingProvider({ kind: "groq", model: "whisper-large-v3-turbo" })
+    ).toBe(true);
+    expect(
+      parseMeetingProvider({ kind: "groq", model: "distil-whisper", apiKey: "gsk_x" })
+    ).toBe(false);
+    // The Groq preset's URL is fixed in Main; the renderer cannot redirect it.
+    expect(
+      parseMeetingProvider({
+        kind: "groq",
+        model: "whisper-large-v3",
+        baseUrl: "https://evil.example",
+      })
+    ).toBe(false);
+    expect(
+      parseMeetingProvider({
+        kind: "openai_compatible",
+        baseUrl: "https://asr.example/v1",
+        model: "m",
+      })
+    ).toBe(true);
+    expect(
+      parseMeetingProvider({ kind: "openai_compatible", baseUrl: "", model: "m" })
+    ).toBe(false);
+    expect(
+      parseMeetingProvider({ kind: "groq", model: "whisper-large-v3", apiKey: "   " })
+    ).toBe(false);
+    // The state says whether a key is saved and nothing more.
+    expect(
+      meetingTranscriptionStateSchema.safeParse({
+        provider: "groq",
+        ready: true,
+        cloud: {
+          model: "whisper-large-v3",
+          baseHost: "api.groq.com",
+          hasKey: true,
+          verification: "valid",
+          apiKey: "gsk_x",
+        },
+        diarization: "ready",
+      }).success
+    ).toBe(false);
+  });
+
   it("publishes state leaves with generated get and subscribe bindings", () => {
     expect(nativeStateRegistry.map((state) => state.id)).toEqual([
       "localBackend.state",
       "localTranscription.state",
+      "meetingTranscription.state",
       "sitePermissionMenu.state",
       "appPreferences.state",
       "connectorRuntime.state",
@@ -936,6 +1016,7 @@ describe("native bridge contracts", () => {
       "computeNode.state",
       "audioCapture.state",
       "meetingPresence.state",
+      "calendar.state",
       "meetingRecorder.state",
       "airDrop.state",
       "driveCatalog.state",
@@ -974,6 +1055,24 @@ describe("native bridge contracts", () => {
           channel: "comma:local-transcription:state-changed",
           id: "localTranscription.state.changed",
           permission: "local-transcription.read",
+          target: { type: "all" },
+        },
+      },
+      {
+        bridge: { method: "state", namespace: "meetingTranscription" },
+        get: {
+          channel: "comma:meeting-transcription:state",
+          id: "meetingTranscription.state",
+          permission: "meeting-transcription.read",
+          sessionAdmission: "local_only",
+          sessionAdmissionRationale:
+            "Reports which engine transcribes this Mac's meeting recordings and whether it is ready; it carries no key and no account data.",
+        },
+        id: "meetingTranscription.state",
+        subscribe: {
+          channel: "comma:meeting-transcription:state-changed",
+          id: "meetingTranscription.state.changed",
+          permission: "meeting-transcription.read",
           target: { type: "all" },
         },
       },
@@ -1256,6 +1355,24 @@ describe("native bridge contracts", () => {
           channel: "comma:meeting-presence:state-changed",
           id: "meetingPresence.state.changed",
           permission: "meeting-presence.read",
+          target: { type: "all" },
+        },
+      },
+      {
+        bridge: { method: "state", namespace: "calendar" },
+        get: {
+          channel: "comma:calendar:state",
+          id: "calendar.state",
+          permission: "calendar.read",
+          sessionAdmission: "local_only",
+          sessionAdmissionRationale:
+            "Reports the Mac Calendar permission and a change counter; no event data or Session state.",
+        },
+        id: "calendar.state",
+        subscribe: {
+          channel: "comma:calendar:state-changed",
+          id: "calendar.state.changed",
+          permission: "calendar.read",
           target: { type: "all" },
         },
       },

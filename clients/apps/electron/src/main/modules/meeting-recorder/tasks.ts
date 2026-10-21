@@ -3,7 +3,11 @@ import {
   meetingSubmissionError,
   type MeetingSubmissionStage,
 } from "./submission-error";
-import { MeetingOutputArchive, meetingOutputExtensions } from "./outputs";
+import {
+  MeetingOutputArchive,
+  meetingOutputExtensions,
+  type MeetingTranscriptFallback,
+} from "./outputs";
 import { defaultLocale, messages } from "@comma/i18n";
 import { readMainLocale, type MainLocaleSource } from "../../main-locale";
 import { randomUUID } from "node:crypto";
@@ -78,6 +82,11 @@ interface Dependencies {
   files: Pick<LocalFileSnapshotStore, "snapshot" | "markBound">;
   registrar: Pick<LocalFileRouteRegistrationService, "register">;
   publish(key: string, state: MeetingTaskState): void;
+  /** A meeting's saved transcript came from this Mac after the cloud failed. */
+  onFallback?(
+    recording: AudioCaptureRecording,
+    fallback: MeetingTranscriptFallback
+  ): void;
   resolveRecovery(name: string): Promise<"resume" | "new">;
 }
 
@@ -119,6 +128,10 @@ export class MeetingTaskService {
             entry.outputs = [...job.completed];
             await this.#persist();
           }
+        },
+        fallback: (job, fallback) => {
+          if (!this.#closed && job.account === deps.account())
+            deps.onFallback?.(job.recording, fallback);
         },
         publish: (job, archive) => {
           if (!this.#closed && job.account === deps.account()) {

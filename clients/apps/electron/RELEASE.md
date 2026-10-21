@@ -168,6 +168,12 @@ the model licenses and notices.
   [the backend configuration](../../../systems/DEPLOYMENT.md).
 - The helper loads the model only for a transcription and releases it after
   the transcription. It runs one transcription at a time.
+- Main sends the selected meeting provider to the helper with
+  `PUT /v1/provider` (bearer required) after each start and each change. The
+  helper keeps it, with a cloud API key, only in memory. When `GET /health`
+  reports `provider.configured: false`, Main sends it again. `/health` also
+  reports the installed model components and, in `provider.lastFailure`, the
+  last cloud failure that no local model took over.
 
 A process that stops restarts after 1, 2, 4 … 30 seconds. Five stops within two
 minutes show the error screen. Quit stops the backend, Postgres in fast mode,
@@ -237,15 +243,16 @@ longer, because Comma backs up the database and applies migrations first.
 
 The local data stays in `~/Library/Application Support/Comma/local`:
 
-| Path           | Contents                                         |
-| -------------- | ------------------------------------------------ |
-| `postgres/`    | The database                                     |
-| `minio/`       | Files                                            |
-| `redis/`       | Cache and rate-limit state                       |
-| `logs/`        | One log per process; Show logs opens this folder |
-| `backups/`     | The three most recent pre-update database dumps  |
-| `secrets.json` | This installation's keys (mode 0600)             |
-| `state.json`   | Ports, process IDs, app version, owner ID        |
+| Path               | Contents                                             |
+| ------------------ | ---------------------------------------------------- |
+| `postgres/`        | The database                                         |
+| `minio/`           | Files                                                |
+| `redis/`           | Cache and rate-limit state                           |
+| `logs/`            | One log per process; Show logs opens this folder     |
+| `backups/`         | The three most recent pre-update database dumps      |
+| `secrets.json`     | This installation's keys (mode 0600)                 |
+| `asr-provider.bin` | The meeting provider and cloud key, encrypted (0600) |
+| `state.json`       | Ports, process IDs, app version, owner ID            |
 
 Updates keep this folder. To restore a backup, quit Comma and run
 `pg_restore` from `Comma.app/Contents/Resources/local-backend/postgres/bin`
@@ -304,6 +311,82 @@ diarization Community-1 (CC BY 4.0, pyannote; with WeSpeaker and BUT
 Speech@FIT components). The full texts are in
 `Comma.app/Contents/Resources/licenses/fluidaudio/`.
 
+### Cloud transcription
+
+Comma can also send meeting recordings to Groq or to another
+OpenAI-compatible transcription API. Local is the default. Comma sends no
+audio until you select a cloud provider and save a key that the provider
+accepts. The requirements are the same as for local transcription.
+
+To use Groq:
+
+1. Open Settings > Work > Meeting.
+2. In Transcription engine, select Groq.
+3. Paste the API key. Select `whisper-large-v3` (default, more accurate) or
+   `whisper-large-v3-turbo` (faster).
+4. Click Save. Comma checks the key with the provider. A refused key shows
+   "The provider rejected this key.", and the previous engine stays selected.
+   The previous engine also stays when the transcription helper does not
+   confirm the change.
+5. Wait for Ready. Comma installs only the speaker separator (about 22 MB),
+   with the same SHA-256 and size checks. It does not download the 632 MB
+   speech model.
+
+For another API, select OpenAI-compatible API and enter the base URL, the key,
+and the model name. The URL must use `https:`. `http:` is accepted only for
+`127.0.0.1` and `localhost`.
+
+Privacy: with a cloud provider, the audio of each recording goes to that
+provider. Settings names the provider (Groq, or the host of the URL). The
+speaker labels come from the separator on the Mac, not from the provider.
+
+The key:
+
+- Comma encrypts the provider and the key with Electron `safeStorage` into
+  `~/Library/Application Support/Comma/local/asr-provider.bin` (mode 0600). The
+  encryption key is the `Comma Safe Storage` item in the macOS Keychain.
+- Main gives the key to the helper only through the loopback route in memory.
+  The key is not in a command line, an environment variable, a log, or the
+  interface after Save. Settings shows only that a key is saved, with Replace
+  and Delete.
+- If the Keychain is not available, the cloud providers are not available.
+  Comma never stores the key as plain text.
+- Selecting Local keeps the saved key. Delete removes it. If that provider was
+  selected, the engine goes back to Local.
+- Selecting Local and Delete always apply at once, also when the helper is
+  busy. Until the helper confirms, the engine shows Checking, and Comma sends
+  Local to it again before the next transcription it starts.
+
+Groq free plan limits: 20 requests per minute, 2,000 requests per day,
+7,200 seconds of audio per hour, and 28,800 seconds per day. A two-hour
+recording uses the full hourly limit. Comma cuts a recording above 24 MB into
+pieces of at most 10 minutes with a 2-second overlap, and sends them one at a
+time. The helper does not follow redirects, so the audio and the key go only
+to the configured URL. A `429` response with a short `retry-after` makes Comma wait and
+continue. If the wait does not fit in the 420-second cloud budget, the
+attempt fails as a quota error.
+
+When the cloud attempt fails (no connection, quota, refused key, server error,
+timeout, or a recording that cannot be prepared for upload):
+
+- With the local speech model installed, Comma transcribes the recording on
+  the Mac and shows "Transcribed on this Mac: <provider> unavailable
+  (<reason>)". The `.transcript.json` records `fallback` with `from` and
+  `reason`.
+- Without the local speech model, Comma keeps the recording and shows the
+  provider's error with Try again. It does not offer the local install.
+- A refused key also shows as refused in Settings.
+
+Each `.transcript.json` records `provider` and `model`. Meeting summary Tasks
+use the same engine, and their `.transcript.json` records the same fields.
+Comma shows the fallback notice, or the error with Try again, after the Task
+ends.
+
+Remove in the speech model row removes only the speech model while a cloud
+provider is selected. Before you install an earlier Comma version with only
+the speaker separator installed, click Remove with Local selected, or delete
+the `Models` folder. The earlier version counts any model folder as installed.
+
 ## Rehearse an update locally
 
 The release command runs locally with the same steps as the workflow.
@@ -347,6 +430,20 @@ apps/electron/test/local-backend-runtime.test.ts` starts the real tree on an
   source to a temporary folder first, because Drive otherwise publishes
   `~/Comma Drive`. Set `COMMA_PLAYWRIGHT_SKIP_WEB_SERVER=1` for both packaged
   tests.
+- For cloud transcription, also set `COMMA_ELECTRON_CLOUD_ASR_KEY_FILE` (a
+  file with a Groq key, mode 0600) and select `-g "cloud transcription"`. The
+  test types the key into Settings, checks the separator-only install, a Groq
+  transcript with Speaker 1 and Speaker 2, the provider error with Try again,
+  the local fallback, and the return to Local. It searches the profile, the
+  logs, and `ps -axww` for the key. Its OpenAI-compatible provider is a
+  loopback fake that the test stops to make the provider unreachable.
+  `COMMA_ELECTRON_CLOUD_ASR_LONG_AUDIO` adds a recording above 24 MB sent to
+  Groq (mind the hourly quota). `COMMA_ELECTRON_CLOUD_ASR_FAKE_AUDIO` adds a
+  two-hour recording sent to the fake, whose first upload gets `429` with
+  `retry-after`. The fake returns placeholder words, so it proves the pieces,
+  the seams, and the timing, not recognition. `cloud-report.json` in the
+  evidence folder has the counts.
 - `swift test` in `native/macos/CommaTranscriber` checks the model manifest,
-  the staged install, the speaker merge, and the HTTP routes of the helper.
+  the staged install, the speaker merge, the audio pieces and seams, the cloud
+  client, the provider routes, and the HTTP routes of the helper.
 - Unit tests do not prove signing, packaging, or an update. Those need a build.

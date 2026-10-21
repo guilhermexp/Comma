@@ -6,6 +6,7 @@ import {
   applicationMenuCommandEvent,
   localBackendStatusChangedEvent,
   localTranscriptionStateChangedEvent,
+  meetingTranscriptionStateChangedEvent,
 } from "@comma/native-bridge";
 import { applyBrowserSidebarAppearance } from "./browser-sidebar-appearance";
 import { OpenCommaShortcut } from "./open-comma-shortcut";
@@ -34,6 +35,7 @@ import {
   globalShortcut,
   nativeImage,
   nativeTheme,
+  safeStorage,
   screen,
   session,
   shell,
@@ -115,6 +117,7 @@ import {
   type FontFamiliesAddon,
 } from "../../native/macos/FontFamilies";
 import { loadNotificationAuthorizationAddon } from "../../native/macos/NotificationAuthorization";
+import { loadCalendarKitAddon } from "../../native/macos/CalendarKit";
 import {
   runningMacAppBundleId,
   systemNotificationsStatusFromAuthorization,
@@ -229,6 +232,9 @@ const localBackend = createMainLocalBackend({
     appContext?.nativeEventBus.emit(localBackendStatusChangedEvent, status),
   emitTranscriptionState: (state) =>
     appContext?.nativeEventBus.emit(localTranscriptionStateChangedEvent, state),
+  emitMeetingTranscriptionState: (state) =>
+    appContext?.nativeEventBus.emit(meetingTranscriptionStateChangedEvent, state),
+  safeStorage,
   systemVersion: process.getSystemVersion(),
   openPath: (path) => shell.openPath(path),
   log: (message) => log.info(message),
@@ -1844,6 +1850,8 @@ async function createElectronMainContext() {
           observabilityFileLocation,
         }
       : {}),
+    // In Main's own process: macOS grants Calendar access to the calling app.
+    calendarKit: loadCalendarKitAddon({ isPackaged: app.isPackaged, logger: log }),
     microphoneHostPath: app.isPackaged
       ? join(process.resourcesPath, "native", "macos", "MicCaptureHost")
       : join(app.getAppPath(), "dist", "native", "macos", "MicCaptureHost"),
@@ -1858,6 +1866,7 @@ async function createElectronMainContext() {
     deferSessionInitialize: Boolean(localBackend),
     localBackend,
     localTranscription: localBackend?.localTranscription,
+    meetingTranscription: localBackend?.meetingTranscription,
     computeNodeLifecyclePath: e2eHooks.computeNodeLifecyclePath,
   });
   await applyElectronE2eHooks(e2eHooks, context.secureSessionStore, context.session);

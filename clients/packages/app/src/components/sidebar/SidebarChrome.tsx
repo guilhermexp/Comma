@@ -43,8 +43,9 @@ type SidebarItem = {
     | "go-inbox"
     | "go-drive"
     | "go-tasks"
-    | "go-plugins";
-  to: "/" | "/inbox" | "/drive" | "/tasks" | "/plugins";
+    | "go-plugins"
+    | "go-agenda";
+  to: "/" | "/inbox" | "/drive" | "/tasks" | "/plugins" | "/agenda";
 };
 
 const sidebarItems: Record<SidebarNavItemId, SidebarItem> = {
@@ -53,6 +54,7 @@ const sidebarItems: Record<SidebarNavItemId, SidebarItem> = {
   drive: { icon: "drive", id: "drive", shortcutId: "go-drive", to: "/drive" },
   tasks: { icon: "tasks", id: "tasks", shortcutId: "go-tasks", to: "/tasks" },
   plugins: { icon: "plugins", id: "plugins", shortcutId: "go-plugins", to: "/plugins" },
+  agenda: { icon: "agenda", id: "agenda", shortcutId: "go-agenda", to: "/agenda" },
 };
 
 /**
@@ -199,6 +201,7 @@ function SidebarNavLink({
     drive: messages.nav_drive(),
     tasks: messages.nav_tasks(),
     plugins: messages.nav_plugins(),
+    agenda: messages.agenda_nav(),
   }[item.id];
   const tooltipLabel = {
     home: messages.nav_go_home(),
@@ -206,6 +209,7 @@ function SidebarNavLink({
     drive: messages.nav_go_drive(),
     tasks: messages.nav_go_tasks(),
     plugins: messages.nav_go_plugins(),
+    agenda: messages.agenda_nav_go(),
   }[item.id];
   const iconRef = useRef<HTMLSpanElement>(null);
 

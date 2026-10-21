@@ -1796,8 +1796,8 @@ describe("CommaApp", () => {
     const links = within(nav).getAllByRole("link");
 
     // Drive needs the Electron host's synchronicity node, so the web rail omits it.
-    expect(links).toHaveLength(4);
-    ["Home", "Inbox", "Tasks", "Plugins"].forEach((name, index) => {
+    expect(links).toHaveLength(5);
+    ["Home", "Inbox", "Tasks", "Plugins", "Agenda"].forEach((name, index) => {
       expect(links[index]).toHaveAccessibleName(name);
       expect(links[index]).toHaveAttribute("data-slot", "left-rail-item");
       expect(links[index]).toHaveClass("comma-sidebar-link");
@@ -1807,15 +1807,18 @@ describe("CommaApp", () => {
       "#/inbox",
       "#/tasks",
       "#/plugins",
+      "#/agenda",
     ]);
     expect(links.map((link) => link.getAttribute("aria-current"))).toEqual([
       "page",
       null,
       null,
       null,
+      null,
     ]);
     expect(links.map((link) => link.getAttribute("data-selected"))).toEqual([
       "true",
+      "false",
       "false",
       "false",
       "false",

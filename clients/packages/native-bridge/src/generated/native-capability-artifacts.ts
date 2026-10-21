@@ -42,6 +42,17 @@ import {
   browserSidebarOpenTabRequestedEvent,
   browserSidebarShowPermissionsCapability,
   browserSidebarUpdateCapability,
+  calendarCalendarsCapability,
+  calendarCreateEventCapability,
+  calendarDeleteEventCapability,
+  calendarEventCapability,
+  calendarEventsCapability,
+  calendarOpenPrivacySettingsCapability,
+  calendarRequestAccessCapability,
+  calendarStateCapability,
+  calendarStateChangedEvent,
+  calendarStateLeaf,
+  calendarUpdateEventCapability,
   chatAcceptTaskReviewCapability,
   chatAcknowledgeIntakeFailuresCapability,
   chatAttachCapability,
@@ -117,7 +128,6 @@ import {
   localFilesPreviewCapability,
   localTranscriptionCancelCapability,
   localTranscriptionInstallCapability,
-  localTranscriptionNoticeEvent,
   localTranscriptionRemoveCapability,
   localTranscriptionStateCapability,
   localTranscriptionStateChangedEvent,
@@ -137,6 +147,13 @@ import {
   meetingRecorderStateCapability,
   meetingRecorderStateChangedEvent,
   meetingRecorderStateLeaf,
+  meetingTranscriptionClearKeyCapability,
+  meetingTranscriptionNoticeEvent,
+  meetingTranscriptionRetryVerifyCapability,
+  meetingTranscriptionSetProviderCapability,
+  meetingTranscriptionStateCapability,
+  meetingTranscriptionStateChangedEvent,
+  meetingTranscriptionStateLeaf,
   messageNotificationsEvent,
   nativeInfoCapability,
   notchCloseCapability,
@@ -259,6 +276,10 @@ export const generatedNativeCapabilityContracts = {
   localTranscriptionInstall: localTranscriptionInstallCapability.contract,
   localTranscriptionCancel: localTranscriptionCancelCapability.contract,
   localTranscriptionRemove: localTranscriptionRemoveCapability.contract,
+  meetingTranscriptionState: meetingTranscriptionStateCapability.contract,
+  meetingTranscriptionSetProvider: meetingTranscriptionSetProviderCapability.contract,
+  meetingTranscriptionClearKey: meetingTranscriptionClearKeyCapability.contract,
+  meetingTranscriptionRetryVerify: meetingTranscriptionRetryVerifyCapability.contract,
   computerUsePermissions: computerUsePermissionsCapability.contract,
   computerUsePermissionFlow: computerUsePermissionFlowCapability.contract,
   applicationMenuUpdate: applicationMenuUpdateCapability.contract,
@@ -415,6 +436,15 @@ export const generatedNativeCapabilityContracts = {
     audioCaptureOpenPermissionSettingsCapability.contract,
   meetingPresenceState: meetingPresenceStateCapability.contract,
   meetingPresenceIcon: meetingPresenceIconCapability.contract,
+  calendarState: calendarStateCapability.contract,
+  calendarRequestAccess: calendarRequestAccessCapability.contract,
+  calendarOpenPrivacySettings: calendarOpenPrivacySettingsCapability.contract,
+  calendarCalendars: calendarCalendarsCapability.contract,
+  calendarEvents: calendarEventsCapability.contract,
+  calendarEvent: calendarEventCapability.contract,
+  calendarCreateEvent: calendarCreateEventCapability.contract,
+  calendarUpdateEvent: calendarUpdateEventCapability.contract,
+  calendarDeleteEvent: calendarDeleteEventCapability.contract,
   meetingRecorderState: meetingRecorderStateCapability.contract,
   meetingRecorderAction: meetingRecorderActionCapability.contract,
   meetingRecorderRetryTaskSync: meetingRecorderRetryTaskSyncCapability.contract,
@@ -459,6 +489,12 @@ export const generatedNativeWebFallbacks = {
   localTranscriptionInstall: localTranscriptionInstallCapability.webFallback,
   localTranscriptionCancel: localTranscriptionCancelCapability.webFallback,
   localTranscriptionRemove: localTranscriptionRemoveCapability.webFallback,
+  meetingTranscriptionState: meetingTranscriptionStateCapability.webFallback,
+  meetingTranscriptionSetProvider:
+    meetingTranscriptionSetProviderCapability.webFallback,
+  meetingTranscriptionClearKey: meetingTranscriptionClearKeyCapability.webFallback,
+  meetingTranscriptionRetryVerify:
+    meetingTranscriptionRetryVerifyCapability.webFallback,
   computerUsePermissions: computerUsePermissionsCapability.webFallback,
   computerUsePermissionFlow: computerUsePermissionFlowCapability.webFallback,
   applicationMenuUpdate: applicationMenuUpdateCapability.webFallback,
@@ -617,6 +653,15 @@ export const generatedNativeWebFallbacks = {
     audioCaptureOpenPermissionSettingsCapability.webFallback,
   meetingPresenceState: meetingPresenceStateCapability.webFallback,
   meetingPresenceIcon: meetingPresenceIconCapability.webFallback,
+  calendarState: calendarStateCapability.webFallback,
+  calendarRequestAccess: calendarRequestAccessCapability.webFallback,
+  calendarOpenPrivacySettings: calendarOpenPrivacySettingsCapability.webFallback,
+  calendarCalendars: calendarCalendarsCapability.webFallback,
+  calendarEvents: calendarEventsCapability.webFallback,
+  calendarEvent: calendarEventCapability.webFallback,
+  calendarCreateEvent: calendarCreateEventCapability.webFallback,
+  calendarUpdateEvent: calendarUpdateEventCapability.webFallback,
+  calendarDeleteEvent: calendarDeleteEventCapability.webFallback,
   meetingRecorderState: meetingRecorderStateCapability.webFallback,
   meetingRecorderAction: meetingRecorderActionCapability.webFallback,
   meetingRecorderRetryTaskSync: meetingRecorderRetryTaskSyncCapability.webFallback,
@@ -666,6 +711,12 @@ export const generatedNativePreloadBindings = {
     install: localTranscriptionInstallCapability.contract,
     cancel: localTranscriptionCancelCapability.contract,
     remove: localTranscriptionRemoveCapability.contract,
+  },
+  meetingTranscription: {
+    state: meetingTranscriptionStateCapability.contract,
+    setProvider: meetingTranscriptionSetProviderCapability.contract,
+    clearKey: meetingTranscriptionClearKeyCapability.contract,
+    retryVerify: meetingTranscriptionRetryVerifyCapability.contract,
   },
   computerUse: {
     getPermissions: computerUsePermissionsCapability.contract,
@@ -877,6 +928,17 @@ export const generatedNativePreloadBindings = {
     state: meetingPresenceStateCapability.contract,
     icon: meetingPresenceIconCapability.contract,
   },
+  calendar: {
+    state: calendarStateCapability.contract,
+    requestAccess: calendarRequestAccessCapability.contract,
+    openPrivacySettings: calendarOpenPrivacySettingsCapability.contract,
+    calendars: calendarCalendarsCapability.contract,
+    events: calendarEventsCapability.contract,
+    event: calendarEventCapability.contract,
+    createEvent: calendarCreateEventCapability.contract,
+    updateEvent: calendarUpdateEventCapability.contract,
+    deleteEvent: calendarDeleteEventCapability.contract,
+  },
   meetingRecorder: {
     state: meetingRecorderStateCapability.contract,
     action: meetingRecorderActionCapability.contract,
@@ -927,7 +989,10 @@ export const generatedNativePreloadEventBindings = {
   },
   localTranscription: {
     state: localTranscriptionStateChangedEvent,
-    notice: localTranscriptionNoticeEvent,
+  },
+  meetingTranscription: {
+    state: meetingTranscriptionStateChangedEvent,
+    notice: meetingTranscriptionNoticeEvent,
   },
   applicationMenu: {
     command: applicationMenuCommandEvent,
@@ -986,6 +1051,9 @@ export const generatedNativePreloadEventBindings = {
   meetingPresence: {
     state: meetingPresenceStateChangedEvent,
   },
+  calendar: {
+    state: calendarStateChangedEvent,
+  },
   meetingRecorder: {
     state: meetingRecorderStateChangedEvent,
   },
@@ -1008,6 +1076,12 @@ export const generatedNativeStateBindings = {
     state: {
       get: localTranscriptionStateCapability.contract,
       subscribe: localTranscriptionStateChangedEvent,
+    },
+  },
+  meetingTranscription: {
+    state: {
+      get: meetingTranscriptionStateCapability.contract,
+      subscribe: meetingTranscriptionStateChangedEvent,
     },
   },
   sitePermissionMenu: {
@@ -1100,6 +1174,12 @@ export const generatedNativeStateBindings = {
       subscribe: meetingPresenceStateChangedEvent,
     },
   },
+  calendar: {
+    state: {
+      get: calendarStateCapability.contract,
+      subscribe: calendarStateChangedEvent,
+    },
+  },
   meetingRecorder: {
     state: {
       get: meetingRecorderStateCapability.contract,
@@ -1180,6 +1260,42 @@ export const generatedNativeMainBindingsById = {
     sessionAdmission: localTranscriptionRemoveCapability.sessionAdmission,
     sessionAdmissionRationale:
       localTranscriptionRemoveCapability.sessionAdmissionRationale,
+  },
+  "meetingTranscription.state": {
+    contract: meetingTranscriptionStateCapability.contract,
+    id: meetingTranscriptionStateCapability.id,
+    method: "state",
+    provider: "meetingTranscription",
+    sessionAdmission: meetingTranscriptionStateCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionStateCapability.sessionAdmissionRationale,
+  },
+  "meetingTranscription.setProvider": {
+    contract: meetingTranscriptionSetProviderCapability.contract,
+    id: meetingTranscriptionSetProviderCapability.id,
+    method: "setProvider",
+    provider: "meetingTranscription",
+    sessionAdmission: meetingTranscriptionSetProviderCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionSetProviderCapability.sessionAdmissionRationale,
+  },
+  "meetingTranscription.clearKey": {
+    contract: meetingTranscriptionClearKeyCapability.contract,
+    id: meetingTranscriptionClearKeyCapability.id,
+    method: "clearKey",
+    provider: "meetingTranscription",
+    sessionAdmission: meetingTranscriptionClearKeyCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionClearKeyCapability.sessionAdmissionRationale,
+  },
+  "meetingTranscription.retryVerify": {
+    contract: meetingTranscriptionRetryVerifyCapability.contract,
+    id: meetingTranscriptionRetryVerifyCapability.id,
+    method: "retryVerify",
+    provider: "meetingTranscription",
+    sessionAdmission: meetingTranscriptionRetryVerifyCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionRetryVerifyCapability.sessionAdmissionRationale,
   },
   "computerUse.getPermissions": {
     contract: computerUsePermissionsCapability.contract,
@@ -2361,6 +2477,80 @@ export const generatedNativeMainBindingsById = {
     sessionAdmission: meetingPresenceIconCapability.sessionAdmission,
     sessionAdmissionRationale: meetingPresenceIconCapability.sessionAdmissionRationale,
   },
+  "calendar.state": {
+    contract: calendarStateCapability.contract,
+    id: calendarStateCapability.id,
+    method: "state",
+    provider: "calendar",
+    sessionAdmission: calendarStateCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarStateCapability.sessionAdmissionRationale,
+  },
+  "calendar.requestAccess": {
+    contract: calendarRequestAccessCapability.contract,
+    id: calendarRequestAccessCapability.id,
+    method: "requestAccess",
+    provider: "calendar",
+    sessionAdmission: calendarRequestAccessCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      calendarRequestAccessCapability.sessionAdmissionRationale,
+  },
+  "calendar.openPrivacySettings": {
+    contract: calendarOpenPrivacySettingsCapability.contract,
+    id: calendarOpenPrivacySettingsCapability.id,
+    method: "openPrivacySettings",
+    provider: "calendar",
+    sessionAdmission: calendarOpenPrivacySettingsCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      calendarOpenPrivacySettingsCapability.sessionAdmissionRationale,
+  },
+  "calendar.calendars": {
+    contract: calendarCalendarsCapability.contract,
+    id: calendarCalendarsCapability.id,
+    method: "calendars",
+    provider: "calendar",
+    sessionAdmission: calendarCalendarsCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarCalendarsCapability.sessionAdmissionRationale,
+  },
+  "calendar.events": {
+    contract: calendarEventsCapability.contract,
+    id: calendarEventsCapability.id,
+    method: "events",
+    provider: "calendar",
+    sessionAdmission: calendarEventsCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarEventsCapability.sessionAdmissionRationale,
+  },
+  "calendar.event": {
+    contract: calendarEventCapability.contract,
+    id: calendarEventCapability.id,
+    method: "event",
+    provider: "calendar",
+    sessionAdmission: calendarEventCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarEventCapability.sessionAdmissionRationale,
+  },
+  "calendar.createEvent": {
+    contract: calendarCreateEventCapability.contract,
+    id: calendarCreateEventCapability.id,
+    method: "createEvent",
+    provider: "calendar",
+    sessionAdmission: calendarCreateEventCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarCreateEventCapability.sessionAdmissionRationale,
+  },
+  "calendar.updateEvent": {
+    contract: calendarUpdateEventCapability.contract,
+    id: calendarUpdateEventCapability.id,
+    method: "updateEvent",
+    provider: "calendar",
+    sessionAdmission: calendarUpdateEventCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarUpdateEventCapability.sessionAdmissionRationale,
+  },
+  "calendar.deleteEvent": {
+    contract: calendarDeleteEventCapability.contract,
+    id: calendarDeleteEventCapability.id,
+    method: "deleteEvent",
+    provider: "calendar",
+    sessionAdmission: calendarDeleteEventCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarDeleteEventCapability.sessionAdmissionRationale,
+  },
   "meetingRecorder.state": {
     contract: meetingRecorderStateCapability.contract,
     id: meetingRecorderStateCapability.id,
@@ -2732,6 +2922,50 @@ export const generatedNativeCapabilityManifest = [
     sessionAdmissionRationale:
       localTranscriptionRemoveCapability.sessionAdmissionRationale,
     transport: localTranscriptionRemoveCapability.transport,
+  },
+  {
+    bridge: meetingTranscriptionStateCapability.bridge,
+    channel: meetingTranscriptionStateCapability.channel,
+    id: meetingTranscriptionStateCapability.id,
+    payloadClass: meetingTranscriptionStateCapability.payloadClass,
+    permission: meetingTranscriptionStateCapability.permission,
+    sessionAdmission: meetingTranscriptionStateCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionStateCapability.sessionAdmissionRationale,
+    transport: meetingTranscriptionStateCapability.transport,
+  },
+  {
+    bridge: meetingTranscriptionSetProviderCapability.bridge,
+    channel: meetingTranscriptionSetProviderCapability.channel,
+    id: meetingTranscriptionSetProviderCapability.id,
+    payloadClass: meetingTranscriptionSetProviderCapability.payloadClass,
+    permission: meetingTranscriptionSetProviderCapability.permission,
+    sessionAdmission: meetingTranscriptionSetProviderCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionSetProviderCapability.sessionAdmissionRationale,
+    transport: meetingTranscriptionSetProviderCapability.transport,
+  },
+  {
+    bridge: meetingTranscriptionClearKeyCapability.bridge,
+    channel: meetingTranscriptionClearKeyCapability.channel,
+    id: meetingTranscriptionClearKeyCapability.id,
+    payloadClass: meetingTranscriptionClearKeyCapability.payloadClass,
+    permission: meetingTranscriptionClearKeyCapability.permission,
+    sessionAdmission: meetingTranscriptionClearKeyCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionClearKeyCapability.sessionAdmissionRationale,
+    transport: meetingTranscriptionClearKeyCapability.transport,
+  },
+  {
+    bridge: meetingTranscriptionRetryVerifyCapability.bridge,
+    channel: meetingTranscriptionRetryVerifyCapability.channel,
+    id: meetingTranscriptionRetryVerifyCapability.id,
+    payloadClass: meetingTranscriptionRetryVerifyCapability.payloadClass,
+    permission: meetingTranscriptionRetryVerifyCapability.permission,
+    sessionAdmission: meetingTranscriptionRetryVerifyCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionRetryVerifyCapability.sessionAdmissionRationale,
+    transport: meetingTranscriptionRetryVerifyCapability.transport,
   },
   {
     bridge: computerUsePermissionsCapability.bridge,
@@ -4212,6 +4446,98 @@ export const generatedNativeCapabilityManifest = [
     transport: meetingPresenceIconCapability.transport,
   },
   {
+    bridge: calendarStateCapability.bridge,
+    channel: calendarStateCapability.channel,
+    id: calendarStateCapability.id,
+    payloadClass: calendarStateCapability.payloadClass,
+    permission: calendarStateCapability.permission,
+    sessionAdmission: calendarStateCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarStateCapability.sessionAdmissionRationale,
+    transport: calendarStateCapability.transport,
+  },
+  {
+    bridge: calendarRequestAccessCapability.bridge,
+    channel: calendarRequestAccessCapability.channel,
+    id: calendarRequestAccessCapability.id,
+    payloadClass: calendarRequestAccessCapability.payloadClass,
+    permission: calendarRequestAccessCapability.permission,
+    sessionAdmission: calendarRequestAccessCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      calendarRequestAccessCapability.sessionAdmissionRationale,
+    transport: calendarRequestAccessCapability.transport,
+  },
+  {
+    bridge: calendarOpenPrivacySettingsCapability.bridge,
+    channel: calendarOpenPrivacySettingsCapability.channel,
+    id: calendarOpenPrivacySettingsCapability.id,
+    payloadClass: calendarOpenPrivacySettingsCapability.payloadClass,
+    permission: calendarOpenPrivacySettingsCapability.permission,
+    sessionAdmission: calendarOpenPrivacySettingsCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      calendarOpenPrivacySettingsCapability.sessionAdmissionRationale,
+    transport: calendarOpenPrivacySettingsCapability.transport,
+  },
+  {
+    bridge: calendarCalendarsCapability.bridge,
+    channel: calendarCalendarsCapability.channel,
+    id: calendarCalendarsCapability.id,
+    payloadClass: calendarCalendarsCapability.payloadClass,
+    permission: calendarCalendarsCapability.permission,
+    sessionAdmission: calendarCalendarsCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarCalendarsCapability.sessionAdmissionRationale,
+    transport: calendarCalendarsCapability.transport,
+  },
+  {
+    bridge: calendarEventsCapability.bridge,
+    channel: calendarEventsCapability.channel,
+    id: calendarEventsCapability.id,
+    payloadClass: calendarEventsCapability.payloadClass,
+    permission: calendarEventsCapability.permission,
+    sessionAdmission: calendarEventsCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarEventsCapability.sessionAdmissionRationale,
+    transport: calendarEventsCapability.transport,
+  },
+  {
+    bridge: calendarEventCapability.bridge,
+    channel: calendarEventCapability.channel,
+    id: calendarEventCapability.id,
+    payloadClass: calendarEventCapability.payloadClass,
+    permission: calendarEventCapability.permission,
+    sessionAdmission: calendarEventCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarEventCapability.sessionAdmissionRationale,
+    transport: calendarEventCapability.transport,
+  },
+  {
+    bridge: calendarCreateEventCapability.bridge,
+    channel: calendarCreateEventCapability.channel,
+    id: calendarCreateEventCapability.id,
+    payloadClass: calendarCreateEventCapability.payloadClass,
+    permission: calendarCreateEventCapability.permission,
+    sessionAdmission: calendarCreateEventCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarCreateEventCapability.sessionAdmissionRationale,
+    transport: calendarCreateEventCapability.transport,
+  },
+  {
+    bridge: calendarUpdateEventCapability.bridge,
+    channel: calendarUpdateEventCapability.channel,
+    id: calendarUpdateEventCapability.id,
+    payloadClass: calendarUpdateEventCapability.payloadClass,
+    permission: calendarUpdateEventCapability.permission,
+    sessionAdmission: calendarUpdateEventCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarUpdateEventCapability.sessionAdmissionRationale,
+    transport: calendarUpdateEventCapability.transport,
+  },
+  {
+    bridge: calendarDeleteEventCapability.bridge,
+    channel: calendarDeleteEventCapability.channel,
+    id: calendarDeleteEventCapability.id,
+    payloadClass: calendarDeleteEventCapability.payloadClass,
+    permission: calendarDeleteEventCapability.permission,
+    sessionAdmission: calendarDeleteEventCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarDeleteEventCapability.sessionAdmissionRationale,
+    transport: calendarDeleteEventCapability.transport,
+  },
+  {
     bridge: meetingRecorderStateCapability.bridge,
     channel: meetingRecorderStateCapability.channel,
     id: meetingRecorderStateCapability.id,
@@ -4586,10 +4912,16 @@ export const generatedNativeEventManifest = [
     target: localTranscriptionStateChangedEvent.target,
   },
   {
-    channel: localTranscriptionNoticeEvent.channel,
-    id: localTranscriptionNoticeEvent.id,
-    permission: localTranscriptionNoticeEvent.permission,
-    target: localTranscriptionNoticeEvent.target,
+    channel: meetingTranscriptionStateChangedEvent.channel,
+    id: meetingTranscriptionStateChangedEvent.id,
+    permission: meetingTranscriptionStateChangedEvent.permission,
+    target: meetingTranscriptionStateChangedEvent.target,
+  },
+  {
+    channel: meetingTranscriptionNoticeEvent.channel,
+    id: meetingTranscriptionNoticeEvent.id,
+    permission: meetingTranscriptionNoticeEvent.permission,
+    target: meetingTranscriptionNoticeEvent.target,
   },
   {
     channel: applicationMenuCommandEvent.channel,
@@ -4724,6 +5056,12 @@ export const generatedNativeEventManifest = [
     target: meetingPresenceStateChangedEvent.target,
   },
   {
+    channel: calendarStateChangedEvent.channel,
+    id: calendarStateChangedEvent.id,
+    permission: calendarStateChangedEvent.permission,
+    target: calendarStateChangedEvent.target,
+  },
+  {
     channel: meetingRecorderStateChangedEvent.channel,
     id: meetingRecorderStateChangedEvent.id,
     permission: meetingRecorderStateChangedEvent.permission,
@@ -4783,6 +5121,24 @@ export const generatedNativeStateManifest = [
       id: localTranscriptionStateLeaf.subscribe.id,
       permission: localTranscriptionStateLeaf.subscribe.permission,
       target: localTranscriptionStateLeaf.subscribe.target,
+    },
+  },
+  {
+    bridge: meetingTranscriptionStateLeaf.bridge,
+    get: {
+      channel: meetingTranscriptionStateLeaf.get.channel,
+      id: meetingTranscriptionStateLeaf.get.id,
+      permission: meetingTranscriptionStateLeaf.get.permission,
+      sessionAdmission: meetingTranscriptionStateLeaf.get.sessionAdmission,
+      sessionAdmissionRationale:
+        meetingTranscriptionStateLeaf.get.sessionAdmissionRationale,
+    },
+    id: meetingTranscriptionStateLeaf.id,
+    subscribe: {
+      channel: meetingTranscriptionStateLeaf.subscribe.channel,
+      id: meetingTranscriptionStateLeaf.subscribe.id,
+      permission: meetingTranscriptionStateLeaf.subscribe.permission,
+      target: meetingTranscriptionStateLeaf.subscribe.target,
     },
   },
   {
@@ -5064,6 +5420,23 @@ export const generatedNativeStateManifest = [
     },
   },
   {
+    bridge: calendarStateLeaf.bridge,
+    get: {
+      channel: calendarStateLeaf.get.channel,
+      id: calendarStateLeaf.get.id,
+      permission: calendarStateLeaf.get.permission,
+      sessionAdmission: calendarStateLeaf.get.sessionAdmission,
+      sessionAdmissionRationale: calendarStateLeaf.get.sessionAdmissionRationale,
+    },
+    id: calendarStateLeaf.id,
+    subscribe: {
+      channel: calendarStateLeaf.subscribe.channel,
+      id: calendarStateLeaf.subscribe.id,
+      permission: calendarStateLeaf.subscribe.permission,
+      target: calendarStateLeaf.subscribe.target,
+    },
+  },
+  {
     bridge: meetingRecorderStateLeaf.bridge,
     get: {
       channel: meetingRecorderStateLeaf.get.channel,
@@ -5260,6 +5633,92 @@ export const generatedNativeCapabilityIndex = {
     sessionAdmissionRationale:
       localTranscriptionRemoveCapability.sessionAdmissionRationale,
     transport: localTranscriptionRemoveCapability.transport,
+  },
+  "meetingTranscription.state": {
+    artifacts: {
+      contract: "meetingTranscriptionStateContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["meetingTranscription.state"]',
+      leaf: "meetingTranscriptionStateCapability",
+      mainBinding: 'generatedNativeMainBindingsById["meetingTranscription.state"]',
+      mock: "meetingTranscriptionStateCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.meetingTranscription.state",
+      webFallback: "generatedNativeWebFallbacks.meetingTranscriptionState",
+    },
+    bridge: meetingTranscriptionStateCapability.bridge,
+    channel: meetingTranscriptionStateCapability.channel,
+    handler: meetingTranscriptionStateCapability.handler,
+    id: meetingTranscriptionStateCapability.id,
+    payloadClass: meetingTranscriptionStateCapability.payloadClass,
+    permission: meetingTranscriptionStateCapability.permission,
+    sessionAdmission: meetingTranscriptionStateCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionStateCapability.sessionAdmissionRationale,
+    transport: meetingTranscriptionStateCapability.transport,
+  },
+  "meetingTranscription.setProvider": {
+    artifacts: {
+      contract: "meetingTranscriptionSetProviderContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["meetingTranscription.setProvider"]',
+      leaf: "meetingTranscriptionSetProviderCapability",
+      mainBinding:
+        'generatedNativeMainBindingsById["meetingTranscription.setProvider"]',
+      mock: "meetingTranscriptionSetProviderCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.meetingTranscription.setProvider",
+      webFallback: "generatedNativeWebFallbacks.meetingTranscriptionSetProvider",
+    },
+    bridge: meetingTranscriptionSetProviderCapability.bridge,
+    channel: meetingTranscriptionSetProviderCapability.channel,
+    handler: meetingTranscriptionSetProviderCapability.handler,
+    id: meetingTranscriptionSetProviderCapability.id,
+    payloadClass: meetingTranscriptionSetProviderCapability.payloadClass,
+    permission: meetingTranscriptionSetProviderCapability.permission,
+    sessionAdmission: meetingTranscriptionSetProviderCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionSetProviderCapability.sessionAdmissionRationale,
+    transport: meetingTranscriptionSetProviderCapability.transport,
+  },
+  "meetingTranscription.clearKey": {
+    artifacts: {
+      contract: "meetingTranscriptionClearKeyContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["meetingTranscription.clearKey"]',
+      leaf: "meetingTranscriptionClearKeyCapability",
+      mainBinding: 'generatedNativeMainBindingsById["meetingTranscription.clearKey"]',
+      mock: "meetingTranscriptionClearKeyCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.meetingTranscription.clearKey",
+      webFallback: "generatedNativeWebFallbacks.meetingTranscriptionClearKey",
+    },
+    bridge: meetingTranscriptionClearKeyCapability.bridge,
+    channel: meetingTranscriptionClearKeyCapability.channel,
+    handler: meetingTranscriptionClearKeyCapability.handler,
+    id: meetingTranscriptionClearKeyCapability.id,
+    payloadClass: meetingTranscriptionClearKeyCapability.payloadClass,
+    permission: meetingTranscriptionClearKeyCapability.permission,
+    sessionAdmission: meetingTranscriptionClearKeyCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionClearKeyCapability.sessionAdmissionRationale,
+    transport: meetingTranscriptionClearKeyCapability.transport,
+  },
+  "meetingTranscription.retryVerify": {
+    artifacts: {
+      contract: "meetingTranscriptionRetryVerifyContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["meetingTranscription.retryVerify"]',
+      leaf: "meetingTranscriptionRetryVerifyCapability",
+      mainBinding:
+        'generatedNativeMainBindingsById["meetingTranscription.retryVerify"]',
+      mock: "meetingTranscriptionRetryVerifyCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.meetingTranscription.retryVerify",
+      webFallback: "generatedNativeWebFallbacks.meetingTranscriptionRetryVerify",
+    },
+    bridge: meetingTranscriptionRetryVerifyCapability.bridge,
+    channel: meetingTranscriptionRetryVerifyCapability.channel,
+    handler: meetingTranscriptionRetryVerifyCapability.handler,
+    id: meetingTranscriptionRetryVerifyCapability.id,
+    payloadClass: meetingTranscriptionRetryVerifyCapability.payloadClass,
+    permission: meetingTranscriptionRetryVerifyCapability.permission,
+    sessionAdmission: meetingTranscriptionRetryVerifyCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionRetryVerifyCapability.sessionAdmissionRationale,
+    transport: meetingTranscriptionRetryVerifyCapability.transport,
   },
   "computerUse.getPermissions": {
     artifacts: {
@@ -8257,6 +8716,188 @@ export const generatedNativeCapabilityIndex = {
     sessionAdmissionRationale: meetingPresenceIconCapability.sessionAdmissionRationale,
     transport: meetingPresenceIconCapability.transport,
   },
+  "calendar.state": {
+    artifacts: {
+      contract: "calendarStateContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["calendar.state"]',
+      leaf: "calendarStateCapability",
+      mainBinding: 'generatedNativeMainBindingsById["calendar.state"]',
+      mock: "calendarStateCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.calendar.state",
+      webFallback: "generatedNativeWebFallbacks.calendarState",
+    },
+    bridge: calendarStateCapability.bridge,
+    channel: calendarStateCapability.channel,
+    handler: calendarStateCapability.handler,
+    id: calendarStateCapability.id,
+    payloadClass: calendarStateCapability.payloadClass,
+    permission: calendarStateCapability.permission,
+    sessionAdmission: calendarStateCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarStateCapability.sessionAdmissionRationale,
+    transport: calendarStateCapability.transport,
+  },
+  "calendar.requestAccess": {
+    artifacts: {
+      contract: "calendarRequestAccessContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["calendar.requestAccess"]',
+      leaf: "calendarRequestAccessCapability",
+      mainBinding: 'generatedNativeMainBindingsById["calendar.requestAccess"]',
+      mock: "calendarRequestAccessCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.calendar.requestAccess",
+      webFallback: "generatedNativeWebFallbacks.calendarRequestAccess",
+    },
+    bridge: calendarRequestAccessCapability.bridge,
+    channel: calendarRequestAccessCapability.channel,
+    handler: calendarRequestAccessCapability.handler,
+    id: calendarRequestAccessCapability.id,
+    payloadClass: calendarRequestAccessCapability.payloadClass,
+    permission: calendarRequestAccessCapability.permission,
+    sessionAdmission: calendarRequestAccessCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      calendarRequestAccessCapability.sessionAdmissionRationale,
+    transport: calendarRequestAccessCapability.transport,
+  },
+  "calendar.openPrivacySettings": {
+    artifacts: {
+      contract: "calendarOpenPrivacySettingsContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["calendar.openPrivacySettings"]',
+      leaf: "calendarOpenPrivacySettingsCapability",
+      mainBinding: 'generatedNativeMainBindingsById["calendar.openPrivacySettings"]',
+      mock: "calendarOpenPrivacySettingsCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.calendar.openPrivacySettings",
+      webFallback: "generatedNativeWebFallbacks.calendarOpenPrivacySettings",
+    },
+    bridge: calendarOpenPrivacySettingsCapability.bridge,
+    channel: calendarOpenPrivacySettingsCapability.channel,
+    handler: calendarOpenPrivacySettingsCapability.handler,
+    id: calendarOpenPrivacySettingsCapability.id,
+    payloadClass: calendarOpenPrivacySettingsCapability.payloadClass,
+    permission: calendarOpenPrivacySettingsCapability.permission,
+    sessionAdmission: calendarOpenPrivacySettingsCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      calendarOpenPrivacySettingsCapability.sessionAdmissionRationale,
+    transport: calendarOpenPrivacySettingsCapability.transport,
+  },
+  "calendar.calendars": {
+    artifacts: {
+      contract: "calendarCalendarsContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["calendar.calendars"]',
+      leaf: "calendarCalendarsCapability",
+      mainBinding: 'generatedNativeMainBindingsById["calendar.calendars"]',
+      mock: "calendarCalendarsCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.calendar.calendars",
+      webFallback: "generatedNativeWebFallbacks.calendarCalendars",
+    },
+    bridge: calendarCalendarsCapability.bridge,
+    channel: calendarCalendarsCapability.channel,
+    handler: calendarCalendarsCapability.handler,
+    id: calendarCalendarsCapability.id,
+    payloadClass: calendarCalendarsCapability.payloadClass,
+    permission: calendarCalendarsCapability.permission,
+    sessionAdmission: calendarCalendarsCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarCalendarsCapability.sessionAdmissionRationale,
+    transport: calendarCalendarsCapability.transport,
+  },
+  "calendar.events": {
+    artifacts: {
+      contract: "calendarEventsContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["calendar.events"]',
+      leaf: "calendarEventsCapability",
+      mainBinding: 'generatedNativeMainBindingsById["calendar.events"]',
+      mock: "calendarEventsCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.calendar.events",
+      webFallback: "generatedNativeWebFallbacks.calendarEvents",
+    },
+    bridge: calendarEventsCapability.bridge,
+    channel: calendarEventsCapability.channel,
+    handler: calendarEventsCapability.handler,
+    id: calendarEventsCapability.id,
+    payloadClass: calendarEventsCapability.payloadClass,
+    permission: calendarEventsCapability.permission,
+    sessionAdmission: calendarEventsCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarEventsCapability.sessionAdmissionRationale,
+    transport: calendarEventsCapability.transport,
+  },
+  "calendar.event": {
+    artifacts: {
+      contract: "calendarEventContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["calendar.event"]',
+      leaf: "calendarEventCapability",
+      mainBinding: 'generatedNativeMainBindingsById["calendar.event"]',
+      mock: "calendarEventCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.calendar.event",
+      webFallback: "generatedNativeWebFallbacks.calendarEvent",
+    },
+    bridge: calendarEventCapability.bridge,
+    channel: calendarEventCapability.channel,
+    handler: calendarEventCapability.handler,
+    id: calendarEventCapability.id,
+    payloadClass: calendarEventCapability.payloadClass,
+    permission: calendarEventCapability.permission,
+    sessionAdmission: calendarEventCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarEventCapability.sessionAdmissionRationale,
+    transport: calendarEventCapability.transport,
+  },
+  "calendar.createEvent": {
+    artifacts: {
+      contract: "calendarCreateEventContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["calendar.createEvent"]',
+      leaf: "calendarCreateEventCapability",
+      mainBinding: 'generatedNativeMainBindingsById["calendar.createEvent"]',
+      mock: "calendarCreateEventCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.calendar.createEvent",
+      webFallback: "generatedNativeWebFallbacks.calendarCreateEvent",
+    },
+    bridge: calendarCreateEventCapability.bridge,
+    channel: calendarCreateEventCapability.channel,
+    handler: calendarCreateEventCapability.handler,
+    id: calendarCreateEventCapability.id,
+    payloadClass: calendarCreateEventCapability.payloadClass,
+    permission: calendarCreateEventCapability.permission,
+    sessionAdmission: calendarCreateEventCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarCreateEventCapability.sessionAdmissionRationale,
+    transport: calendarCreateEventCapability.transport,
+  },
+  "calendar.updateEvent": {
+    artifacts: {
+      contract: "calendarUpdateEventContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["calendar.updateEvent"]',
+      leaf: "calendarUpdateEventCapability",
+      mainBinding: 'generatedNativeMainBindingsById["calendar.updateEvent"]',
+      mock: "calendarUpdateEventCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.calendar.updateEvent",
+      webFallback: "generatedNativeWebFallbacks.calendarUpdateEvent",
+    },
+    bridge: calendarUpdateEventCapability.bridge,
+    channel: calendarUpdateEventCapability.channel,
+    handler: calendarUpdateEventCapability.handler,
+    id: calendarUpdateEventCapability.id,
+    payloadClass: calendarUpdateEventCapability.payloadClass,
+    permission: calendarUpdateEventCapability.permission,
+    sessionAdmission: calendarUpdateEventCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarUpdateEventCapability.sessionAdmissionRationale,
+    transport: calendarUpdateEventCapability.transport,
+  },
+  "calendar.deleteEvent": {
+    artifacts: {
+      contract: "calendarDeleteEventContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["calendar.deleteEvent"]',
+      leaf: "calendarDeleteEventCapability",
+      mainBinding: 'generatedNativeMainBindingsById["calendar.deleteEvent"]',
+      mock: "calendarDeleteEventCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.calendar.deleteEvent",
+      webFallback: "generatedNativeWebFallbacks.calendarDeleteEvent",
+    },
+    bridge: calendarDeleteEventCapability.bridge,
+    channel: calendarDeleteEventCapability.channel,
+    handler: calendarDeleteEventCapability.handler,
+    id: calendarDeleteEventCapability.id,
+    payloadClass: calendarDeleteEventCapability.payloadClass,
+    permission: calendarDeleteEventCapability.permission,
+    sessionAdmission: calendarDeleteEventCapability.sessionAdmission,
+    sessionAdmissionRationale: calendarDeleteEventCapability.sessionAdmissionRationale,
+    transport: calendarDeleteEventCapability.transport,
+  },
   "meetingRecorder.state": {
     artifacts: {
       contract: "meetingRecorderStateContract",
@@ -8981,15 +9622,25 @@ export const generatedNativeEventIndex = {
     permission: localTranscriptionStateChangedEvent.permission,
     target: localTranscriptionStateChangedEvent.target,
   },
-  "localTranscription.notice": {
+  "meetingTranscription.state.changed": {
     artifacts: {
-      leaf: "localTranscriptionNoticeEvent",
-      mock: "localTranscriptionNoticeEvent.mock",
+      leaf: "meetingTranscriptionStateChangedEvent",
+      mock: "meetingTranscriptionStateChangedEvent.mock",
     },
-    channel: localTranscriptionNoticeEvent.channel,
-    id: localTranscriptionNoticeEvent.id,
-    permission: localTranscriptionNoticeEvent.permission,
-    target: localTranscriptionNoticeEvent.target,
+    channel: meetingTranscriptionStateChangedEvent.channel,
+    id: meetingTranscriptionStateChangedEvent.id,
+    permission: meetingTranscriptionStateChangedEvent.permission,
+    target: meetingTranscriptionStateChangedEvent.target,
+  },
+  "meetingTranscription.notice": {
+    artifacts: {
+      leaf: "meetingTranscriptionNoticeEvent",
+      mock: "meetingTranscriptionNoticeEvent.mock",
+    },
+    channel: meetingTranscriptionNoticeEvent.channel,
+    id: meetingTranscriptionNoticeEvent.id,
+    permission: meetingTranscriptionNoticeEvent.permission,
+    target: meetingTranscriptionNoticeEvent.target,
   },
   "applicationMenu.command": {
     artifacts: {
@@ -9211,6 +9862,16 @@ export const generatedNativeEventIndex = {
     permission: meetingPresenceStateChangedEvent.permission,
     target: meetingPresenceStateChangedEvent.target,
   },
+  "calendar.state.changed": {
+    artifacts: {
+      leaf: "calendarStateChangedEvent",
+      mock: "calendarStateChangedEvent.mock",
+    },
+    channel: calendarStateChangedEvent.channel,
+    id: calendarStateChangedEvent.id,
+    permission: calendarStateChangedEvent.permission,
+    target: calendarStateChangedEvent.target,
+  },
   "meetingRecorder.state.changed": {
     artifacts: {
       leaf: "meetingRecorderStateChangedEvent",
@@ -9301,6 +9962,31 @@ export const generatedNativeStateIndex = {
       id: localTranscriptionStateLeaf.subscribe.id,
       permission: localTranscriptionStateLeaf.subscribe.permission,
       target: localTranscriptionStateLeaf.subscribe.target,
+    },
+  },
+  "meetingTranscription.state": {
+    artifacts: {
+      get: "generatedNativeStateBindings.meetingTranscription.state.get",
+      leaf: "meetingTranscriptionStateLeaf",
+      mock: "meetingTranscriptionStateLeaf.mock",
+      subscribe: "generatedNativeStateBindings.meetingTranscription.state.subscribe",
+      webFallback: "meetingTranscriptionStateLeaf.webFallback",
+    },
+    bridge: meetingTranscriptionStateLeaf.bridge,
+    get: {
+      channel: meetingTranscriptionStateLeaf.get.channel,
+      id: meetingTranscriptionStateLeaf.get.id,
+      permission: meetingTranscriptionStateLeaf.get.permission,
+      sessionAdmission: meetingTranscriptionStateLeaf.get.sessionAdmission,
+      sessionAdmissionRationale:
+        meetingTranscriptionStateLeaf.get.sessionAdmissionRationale,
+    },
+    id: meetingTranscriptionStateLeaf.id,
+    subscribe: {
+      channel: meetingTranscriptionStateLeaf.subscribe.channel,
+      id: meetingTranscriptionStateLeaf.subscribe.id,
+      permission: meetingTranscriptionStateLeaf.subscribe.permission,
+      target: meetingTranscriptionStateLeaf.subscribe.target,
     },
   },
   "sitePermissionMenu.state": {
@@ -9693,6 +10379,30 @@ export const generatedNativeStateIndex = {
       target: meetingPresenceStateLeaf.subscribe.target,
     },
   },
+  "calendar.state": {
+    artifacts: {
+      get: "generatedNativeStateBindings.calendar.state.get",
+      leaf: "calendarStateLeaf",
+      mock: "calendarStateLeaf.mock",
+      subscribe: "generatedNativeStateBindings.calendar.state.subscribe",
+      webFallback: "calendarStateLeaf.webFallback",
+    },
+    bridge: calendarStateLeaf.bridge,
+    get: {
+      channel: calendarStateLeaf.get.channel,
+      id: calendarStateLeaf.get.id,
+      permission: calendarStateLeaf.get.permission,
+      sessionAdmission: calendarStateLeaf.get.sessionAdmission,
+      sessionAdmissionRationale: calendarStateLeaf.get.sessionAdmissionRationale,
+    },
+    id: calendarStateLeaf.id,
+    subscribe: {
+      channel: calendarStateLeaf.subscribe.channel,
+      id: calendarStateLeaf.subscribe.id,
+      permission: calendarStateLeaf.subscribe.permission,
+      target: calendarStateLeaf.subscribe.target,
+    },
+  },
   "meetingRecorder.state": {
     artifacts: {
       get: "generatedNativeStateBindings.meetingRecorder.state.get",
@@ -9781,6 +10491,14 @@ export const localTranscriptionCancelContract =
   generatedNativeCapabilityContracts.localTranscriptionCancel;
 export const localTranscriptionRemoveContract =
   generatedNativeCapabilityContracts.localTranscriptionRemove;
+export const meetingTranscriptionStateContract =
+  generatedNativeCapabilityContracts.meetingTranscriptionState;
+export const meetingTranscriptionSetProviderContract =
+  generatedNativeCapabilityContracts.meetingTranscriptionSetProvider;
+export const meetingTranscriptionClearKeyContract =
+  generatedNativeCapabilityContracts.meetingTranscriptionClearKey;
+export const meetingTranscriptionRetryVerifyContract =
+  generatedNativeCapabilityContracts.meetingTranscriptionRetryVerify;
 export const computerUsePermissionsContract =
   generatedNativeCapabilityContracts.computerUsePermissions;
 export const computerUsePermissionFlowContract =
@@ -10045,6 +10763,21 @@ export const meetingPresenceStateContract =
   generatedNativeCapabilityContracts.meetingPresenceState;
 export const meetingPresenceIconContract =
   generatedNativeCapabilityContracts.meetingPresenceIcon;
+export const calendarStateContract = generatedNativeCapabilityContracts.calendarState;
+export const calendarRequestAccessContract =
+  generatedNativeCapabilityContracts.calendarRequestAccess;
+export const calendarOpenPrivacySettingsContract =
+  generatedNativeCapabilityContracts.calendarOpenPrivacySettings;
+export const calendarCalendarsContract =
+  generatedNativeCapabilityContracts.calendarCalendars;
+export const calendarEventsContract = generatedNativeCapabilityContracts.calendarEvents;
+export const calendarEventContract = generatedNativeCapabilityContracts.calendarEvent;
+export const calendarCreateEventContract =
+  generatedNativeCapabilityContracts.calendarCreateEvent;
+export const calendarUpdateEventContract =
+  generatedNativeCapabilityContracts.calendarUpdateEvent;
+export const calendarDeleteEventContract =
+  generatedNativeCapabilityContracts.calendarDeleteEvent;
 export const meetingRecorderStateContract =
   generatedNativeCapabilityContracts.meetingRecorderState;
 export const meetingRecorderActionContract =
@@ -10119,6 +10852,10 @@ export type NativeCapabilityTypeMap = {
   "localTranscription.install": typeof localTranscriptionInstallCapability;
   "localTranscription.cancel": typeof localTranscriptionCancelCapability;
   "localTranscription.remove": typeof localTranscriptionRemoveCapability;
+  "meetingTranscription.state": typeof meetingTranscriptionStateCapability;
+  "meetingTranscription.setProvider": typeof meetingTranscriptionSetProviderCapability;
+  "meetingTranscription.clearKey": typeof meetingTranscriptionClearKeyCapability;
+  "meetingTranscription.retryVerify": typeof meetingTranscriptionRetryVerifyCapability;
   "computerUse.getPermissions": typeof computerUsePermissionsCapability;
   "computerUse.openPermissionFlow": typeof computerUsePermissionFlowCapability;
   "applicationMenu.update": typeof applicationMenuUpdateCapability;
@@ -10268,6 +11005,15 @@ export type NativeCapabilityTypeMap = {
   "audioCapture.openPermissionSettings": typeof audioCaptureOpenPermissionSettingsCapability;
   "meetingPresence.state": typeof meetingPresenceStateCapability;
   "meetingPresence.icon": typeof meetingPresenceIconCapability;
+  "calendar.state": typeof calendarStateCapability;
+  "calendar.requestAccess": typeof calendarRequestAccessCapability;
+  "calendar.openPrivacySettings": typeof calendarOpenPrivacySettingsCapability;
+  "calendar.calendars": typeof calendarCalendarsCapability;
+  "calendar.events": typeof calendarEventsCapability;
+  "calendar.event": typeof calendarEventCapability;
+  "calendar.createEvent": typeof calendarCreateEventCapability;
+  "calendar.updateEvent": typeof calendarUpdateEventCapability;
+  "calendar.deleteEvent": typeof calendarDeleteEventCapability;
   "meetingRecorder.state": typeof meetingRecorderStateCapability;
   "meetingRecorder.action": typeof meetingRecorderActionCapability;
   "meetingRecorder.retryTaskSync": typeof meetingRecorderRetryTaskSyncCapability;
@@ -10307,7 +11053,8 @@ export type NativeCapabilityTypeMap = {
 export type NativeEventTypeMap = {
   "localBackend.state.changed": typeof localBackendStatusChangedEvent;
   "localTranscription.state.changed": typeof localTranscriptionStateChangedEvent;
-  "localTranscription.notice": typeof localTranscriptionNoticeEvent;
+  "meetingTranscription.state.changed": typeof meetingTranscriptionStateChangedEvent;
+  "meetingTranscription.notice": typeof meetingTranscriptionNoticeEvent;
   "applicationMenu.command": typeof applicationMenuCommandEvent;
   "sitePermissionMenu.changed": typeof sitePermissionMenuChangedEvent;
   "appPreferences.state.changed": typeof appPreferencesChangedEvent;
@@ -10330,6 +11077,7 @@ export type NativeEventTypeMap = {
   "computeNode.state.changed": typeof computeNodeStateChangedEvent;
   "audioCapture.state.changed": typeof audioCaptureStateChangedEvent;
   "meetingPresence.state.changed": typeof meetingPresenceStateChangedEvent;
+  "calendar.state.changed": typeof calendarStateChangedEvent;
   "meetingRecorder.state.changed": typeof meetingRecorderStateChangedEvent;
   "surfaces.windowResizeSettled": typeof surfacesWindowResizeSettledEvent;
   "airDrop.state.changed": typeof airDropStateChangedEvent;
@@ -10339,6 +11087,7 @@ export type NativeEventTypeMap = {
 export type NativeStateTypeMap = {
   "localBackend.state": typeof localBackendStateLeaf;
   "localTranscription.state": typeof localTranscriptionStateLeaf;
+  "meetingTranscription.state": typeof meetingTranscriptionStateLeaf;
   "sitePermissionMenu.state": typeof sitePermissionMenuStateLeaf;
   "appPreferences.state": typeof appPreferencesStateLeaf;
   "connectorRuntime.state": typeof connectorRuntimeStateLeaf;
@@ -10355,6 +11104,7 @@ export type NativeStateTypeMap = {
   "computeNode.state": typeof computeNodeStateLeaf;
   "audioCapture.state": typeof audioCaptureStateLeaf;
   "meetingPresence.state": typeof meetingPresenceStateLeaf;
+  "calendar.state": typeof calendarStateLeaf;
   "meetingRecorder.state": typeof meetingRecorderStateLeaf;
   "airDrop.state": typeof airDropStateLeaf;
   "driveCatalog.state": typeof driveCatalogStateLeaf;
@@ -10427,7 +11177,19 @@ export type GeneratedNativeBridge = {
       typeof localTranscriptionRemoveCapability
     >;
     state: GeneratedNativeStateBridgeMethod<typeof localTranscriptionStateLeaf>;
-    onNotice: GeneratedNativeEventBridgeMethod<typeof localTranscriptionNoticeEvent>;
+  };
+  meetingTranscription: {
+    setProvider: GeneratedNativeCommandBridgeMethod<
+      typeof meetingTranscriptionSetProviderCapability
+    >;
+    clearKey: GeneratedNativeCommandBridgeMethod<
+      typeof meetingTranscriptionClearKeyCapability
+    >;
+    retryVerify: GeneratedNativeCommandBridgeMethod<
+      typeof meetingTranscriptionRetryVerifyCapability
+    >;
+    state: GeneratedNativeStateBridgeMethod<typeof meetingTranscriptionStateLeaf>;
+    onNotice: GeneratedNativeEventBridgeMethod<typeof meetingTranscriptionNoticeEvent>;
   };
   computerUse: {
     getPermissions: GeneratedNativeCommandBridgeMethod<
@@ -10782,6 +11544,27 @@ export type GeneratedNativeBridge = {
     icon: GeneratedNativeCommandBridgeMethod<typeof meetingPresenceIconCapability>;
     state: GeneratedNativeStateBridgeMethod<typeof meetingPresenceStateLeaf>;
   };
+  calendar: {
+    requestAccess: GeneratedNativeCommandBridgeMethod<
+      typeof calendarRequestAccessCapability
+    >;
+    openPrivacySettings: GeneratedNativeCommandBridgeMethod<
+      typeof calendarOpenPrivacySettingsCapability
+    >;
+    calendars: GeneratedNativeCommandBridgeMethod<typeof calendarCalendarsCapability>;
+    events: GeneratedNativeCommandBridgeMethod<typeof calendarEventsCapability>;
+    event: GeneratedNativeCommandBridgeMethod<typeof calendarEventCapability>;
+    createEvent: GeneratedNativeCommandBridgeMethod<
+      typeof calendarCreateEventCapability
+    >;
+    updateEvent: GeneratedNativeCommandBridgeMethod<
+      typeof calendarUpdateEventCapability
+    >;
+    deleteEvent: GeneratedNativeCommandBridgeMethod<
+      typeof calendarDeleteEventCapability
+    >;
+    state: GeneratedNativeStateBridgeMethod<typeof calendarStateLeaf>;
+  };
   meetingRecorder: {
     action: GeneratedNativeCommandBridgeMethod<typeof meetingRecorderActionCapability>;
     retryTaskSync: GeneratedNativeCommandBridgeMethod<
@@ -10943,8 +11726,23 @@ export function createGeneratedNativePreloadBridge(
         get: localTranscriptionStateCapability.contract,
         subscribe: localTranscriptionStateChangedEvent,
       }),
+    },
+    meetingTranscription: {
+      setProvider: (
+        input: GeneratedNativeCommandInput<
+          typeof meetingTranscriptionSetProviderCapability
+        >
+      ) => helpers.invoke(meetingTranscriptionSetProviderCapability.contract, input),
+      clearKey: () =>
+        helpers.invoke(meetingTranscriptionClearKeyCapability.contract, undefined),
+      retryVerify: () =>
+        helpers.invoke(meetingTranscriptionRetryVerifyCapability.contract, undefined),
+      state: helpers.state({
+        get: meetingTranscriptionStateCapability.contract,
+        subscribe: meetingTranscriptionStateChangedEvent,
+      }),
       onNotice: (listener) =>
-        helpers.subscribe(localTranscriptionNoticeEvent, listener),
+        helpers.subscribe(meetingTranscriptionNoticeEvent, listener),
     },
     computerUse: {
       getPermissions: () =>
@@ -11434,6 +12232,30 @@ export function createGeneratedNativePreloadBridge(
         subscribe: meetingPresenceStateChangedEvent,
       }),
     },
+    calendar: {
+      requestAccess: () =>
+        helpers.invoke(calendarRequestAccessCapability.contract, undefined),
+      openPrivacySettings: () =>
+        helpers.invoke(calendarOpenPrivacySettingsCapability.contract, undefined),
+      calendars: () => helpers.invoke(calendarCalendarsCapability.contract, undefined),
+      events: (input: GeneratedNativeCommandInput<typeof calendarEventsCapability>) =>
+        helpers.invoke(calendarEventsCapability.contract, input),
+      event: (input: GeneratedNativeCommandInput<typeof calendarEventCapability>) =>
+        helpers.invoke(calendarEventCapability.contract, input),
+      createEvent: (
+        input: GeneratedNativeCommandInput<typeof calendarCreateEventCapability>
+      ) => helpers.invoke(calendarCreateEventCapability.contract, input),
+      updateEvent: (
+        input: GeneratedNativeCommandInput<typeof calendarUpdateEventCapability>
+      ) => helpers.invoke(calendarUpdateEventCapability.contract, input),
+      deleteEvent: (
+        input: GeneratedNativeCommandInput<typeof calendarDeleteEventCapability>
+      ) => helpers.invoke(calendarDeleteEventCapability.contract, input),
+      state: helpers.state({
+        get: calendarStateCapability.contract,
+        subscribe: calendarStateChangedEvent,
+      }),
+    },
     meetingRecorder: {
       action: (
         input: GeneratedNativeCommandInput<typeof meetingRecorderActionCapability>
@@ -11577,6 +12399,19 @@ export function createGeneratedNativeWebBridge(): GeneratedNativeBridge {
         GeneratedNativeStateSnapshot<typeof localTranscriptionStateLeaf>,
         GeneratedNativeStateGetInput<typeof localTranscriptionStateLeaf>
       >((_input) => localTranscriptionStateLeaf.webFallback),
+    },
+    meetingTranscription: {
+      setProvider: async (
+        _input: GeneratedNativeCommandInput<
+          typeof meetingTranscriptionSetProviderCapability
+        >
+      ) => meetingTranscriptionSetProviderCapability.webFallback,
+      clearKey: async () => meetingTranscriptionClearKeyCapability.webFallback,
+      retryVerify: async () => meetingTranscriptionRetryVerifyCapability.webFallback,
+      state: createGeneratedWebStateBridge<
+        GeneratedNativeStateSnapshot<typeof meetingTranscriptionStateLeaf>,
+        GeneratedNativeStateGetInput<typeof meetingTranscriptionStateLeaf>
+      >((_input) => meetingTranscriptionStateLeaf.webFallback),
       onNotice: () => () => {},
     },
     computerUse: {
@@ -12065,6 +12900,31 @@ export function createGeneratedNativeWebBridge(): GeneratedNativeBridge {
         GeneratedNativeStateGetInput<typeof meetingPresenceStateLeaf>
       >((_input) => meetingPresenceStateLeaf.webFallback),
     },
+    calendar: {
+      requestAccess: async () => calendarRequestAccessCapability.webFallback,
+      openPrivacySettings: async () =>
+        calendarOpenPrivacySettingsCapability.webFallback,
+      calendars: async () => calendarCalendarsCapability.webFallback,
+      events: async (
+        _input: GeneratedNativeCommandInput<typeof calendarEventsCapability>
+      ) => calendarEventsCapability.webFallback,
+      event: async (
+        _input: GeneratedNativeCommandInput<typeof calendarEventCapability>
+      ) => calendarEventCapability.webFallback,
+      createEvent: async (
+        _input: GeneratedNativeCommandInput<typeof calendarCreateEventCapability>
+      ) => calendarCreateEventCapability.webFallback,
+      updateEvent: async (
+        _input: GeneratedNativeCommandInput<typeof calendarUpdateEventCapability>
+      ) => calendarUpdateEventCapability.webFallback,
+      deleteEvent: async (
+        _input: GeneratedNativeCommandInput<typeof calendarDeleteEventCapability>
+      ) => calendarDeleteEventCapability.webFallback,
+      state: createGeneratedWebStateBridge<
+        GeneratedNativeStateSnapshot<typeof calendarStateLeaf>,
+        GeneratedNativeStateGetInput<typeof calendarStateLeaf>
+      >((_input) => calendarStateLeaf.webFallback),
+    },
     meetingRecorder: {
       action: async (
         _input: GeneratedNativeCommandInput<typeof meetingRecorderActionCapability>
@@ -12212,6 +13072,25 @@ export function createGeneratedNativeBridgeMock(
       state: helpers.state(
         (_input: GeneratedNativeStateGetInput<typeof localTranscriptionStateLeaf>) =>
           localTranscriptionStateLeaf.mock
+      ),
+    },
+    meetingTranscription: {
+      setProvider: helpers.command(
+        async (
+          _input: GeneratedNativeCommandInput<
+            typeof meetingTranscriptionSetProviderCapability
+          >
+        ) => meetingTranscriptionSetProviderCapability.mock
+      ),
+      clearKey: helpers.command(
+        async () => meetingTranscriptionClearKeyCapability.mock
+      ),
+      retryVerify: helpers.command(
+        async () => meetingTranscriptionRetryVerifyCapability.mock
+      ),
+      state: helpers.state(
+        (_input: GeneratedNativeStateGetInput<typeof meetingTranscriptionStateLeaf>) =>
+          meetingTranscriptionStateLeaf.mock
       ),
       onNotice: helpers.event((_listener) => () => {}),
     },
@@ -12904,6 +13783,40 @@ export function createGeneratedNativeBridgeMock(
           meetingPresenceStateLeaf.mock
       ),
     },
+    calendar: {
+      requestAccess: helpers.command(async () => calendarRequestAccessCapability.mock),
+      openPrivacySettings: helpers.command(
+        async () => calendarOpenPrivacySettingsCapability.mock
+      ),
+      calendars: helpers.command(async () => calendarCalendarsCapability.mock),
+      events: helpers.command(
+        async (_input: GeneratedNativeCommandInput<typeof calendarEventsCapability>) =>
+          calendarEventsCapability.mock
+      ),
+      event: helpers.command(
+        async (_input: GeneratedNativeCommandInput<typeof calendarEventCapability>) =>
+          calendarEventCapability.mock
+      ),
+      createEvent: helpers.command(
+        async (
+          _input: GeneratedNativeCommandInput<typeof calendarCreateEventCapability>
+        ) => calendarCreateEventCapability.mock
+      ),
+      updateEvent: helpers.command(
+        async (
+          _input: GeneratedNativeCommandInput<typeof calendarUpdateEventCapability>
+        ) => calendarUpdateEventCapability.mock
+      ),
+      deleteEvent: helpers.command(
+        async (
+          _input: GeneratedNativeCommandInput<typeof calendarDeleteEventCapability>
+        ) => calendarDeleteEventCapability.mock
+      ),
+      state: helpers.state(
+        (_input: GeneratedNativeStateGetInput<typeof calendarStateLeaf>) =>
+          calendarStateLeaf.mock
+      ),
+    },
     meetingRecorder: {
       action: helpers.command(
         async (
@@ -13105,6 +14018,10 @@ export function mergeGeneratedNativeBridgeOverrides(
       ...bridge.localTranscription,
       ...overrides.localTranscription,
     },
+    meetingTranscription: {
+      ...bridge.meetingTranscription,
+      ...overrides.meetingTranscription,
+    },
     computerUse: {
       ...bridge.computerUse,
       ...overrides.computerUse,
@@ -13220,6 +14137,10 @@ export function mergeGeneratedNativeBridgeOverrides(
     meetingPresence: {
       ...bridge.meetingPresence,
       ...overrides.meetingPresence,
+    },
+    calendar: {
+      ...bridge.calendar,
+      ...overrides.calendar,
     },
     meetingRecorder: {
       ...bridge.meetingRecorder,

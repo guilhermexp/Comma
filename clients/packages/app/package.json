@@ -31,6 +31,7 @@
     "@comma/session-contract": "workspace:*",
     "@comma/session-history-runtime": "workspace:*",
     "@comma/ui": "workspace:*",
+    "@internationalized/date": "^3.12.2",
     "@tanstack/react-router": "^1.170.16",
     "@tanstack/react-virtual": "^3.14.12",
     "dompurify": "^3.4.15",

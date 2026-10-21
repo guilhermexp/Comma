@@ -11,6 +11,7 @@ import {
 import { createRequire } from "node:module";
 import { basename, dirname, resolve } from "node:path";
 import { getCommaReleaseConfig } from "../src/release-config";
+import { macosUsageDescriptions } from "./macos-info-plist-strings";
 
 /**
  * The bundle a from-source run of Comma executes as.
@@ -46,6 +47,19 @@ export const notificationSoundPath = resolve(
   appRoot,
   "../../packages/app/src/components/notifications/assets/notification.wav"
 );
+// The packaged ad hoc build's entitlements, so EventKit sees the same grant.
+const devEntitlementsPath = resolve(
+  appRoot,
+  "build/entitlements.mac.adhoc.entitlements"
+);
+/**
+ * Privacy texts the stock Electron.app lacks. TCC terminates a process that
+ * asks for the Calendar without them, so the bundle carries them too.
+ */
+const devUsageDescriptionKeys = [
+  "NSCalendarsFullAccessUsageDescription",
+  "NSCalendarsUsageDescription",
+] as const;
 const launchServices =
   "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 
@@ -91,12 +105,21 @@ export function prepareDevElectronBundle(): DevElectronBundle {
   const notificationSound = createHash("sha256")
     .update(readFileSync(notificationSoundPath))
     .digest("hex");
+  const englishUsage = macosUsageDescriptions("en");
+  const usageDescriptions = devUsageDescriptionKeys.map(
+    (key) => [key, englishUsage[key]] as const
+  );
+  const entitlements = createHash("sha256")
+    .update(readFileSync(devEntitlementsPath))
+    .digest("hex");
   const stamp = JSON.stringify({
     bundleId,
     displayName,
     electronVersion,
+    entitlements,
     notificationSound,
     sourceApp,
+    usageDescriptions,
   });
   const bundle: DevElectronBundle = {
     appPath,
@@ -127,6 +150,7 @@ export function prepareDevElectronBundle(): DevElectronBundle {
     ["CFBundleIdentifier", bundleId],
     ["CFBundleName", displayName],
     ["CFBundleDisplayName", displayName],
+    ...usageDescriptions,
   ] as const) {
     run("plutil", ["-replace", key, "-string", value, infoPlist]);
   }
@@ -142,6 +166,16 @@ export function prepareDevElectronBundle(): DevElectronBundle {
   // Editing Info.plist breaks the prebuilt seal, and an unsealed bundle no
   // longer launches; re-seal the whole tree ad hoc, as the Side Chat host is.
   run("codesign", ["--force", "--deep", "--sign", "-", appPath]);
+  // Then the outer bundle alone with Comma's entitlements: --deep would hand
+  // them to every Electron helper too.
+  run("codesign", [
+    "--force",
+    "--sign",
+    "-",
+    "--entitlements",
+    devEntitlementsPath,
+    appPath,
+  ]);
   run(launchServices, ["-f", appPath]);
   writeFileSync(stampPath, stamp);
 

@@ -3,7 +3,7 @@ import { useBrowserSettingsCategory } from "./chat/useBrowserSettingsCategory";
 import { useAirDropNameSetting } from "./useAirDropNameSetting";
 import { useProactiveSetting } from "./recommendations/useProactiveSetting";
 import { useComputeNodeCategory } from "./useComputeNodeCategory";
-import { useLocalTranscriptionSection } from "./useLocalTranscriptionSection";
+import { useMeetingTranscriptionSection } from "./useMeetingTranscriptionSection";
 import { useComputerUsePermissions } from "./useComputerUsePermissions";
 import { useWeChatIntegration } from "./useWeChatIntegration";
 import { useModelsCategory } from "./models/useModelsCategory";
@@ -158,6 +158,7 @@ const guestHiddenShortcutIds = new Set<AppShortcutId>([
   "go-drive",
   "go-tasks",
   "go-plugins",
+  "go-agenda",
   "toggle-right-sidebar",
 ]);
 
@@ -251,7 +252,7 @@ export function AppSettingsRoute({
   const {
     section: localTranscriptionSection,
     removalDialog: localTranscriptionDialog,
-  } = useLocalTranscriptionSection();
+  } = useMeetingTranscriptionSection();
   const auth = useCommaAuth();
   const guest = auth.isGuest === true;
   // Every category reader below keys off this id, so a guest never loads the
@@ -490,6 +491,10 @@ export function AppSettingsRoute({
     "go-plugins": {
       title: m.settings_go_plugins(),
       description: m.settings_go_plugins_description(),
+    },
+    "go-agenda": {
+      title: m.agenda_settings_go(),
+      description: m.agenda_settings_go_description(),
     },
     "toggle-left-sidebar": {
       title: m.settings_toggle_left_sidebar(),

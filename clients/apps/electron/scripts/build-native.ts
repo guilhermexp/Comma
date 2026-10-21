@@ -19,6 +19,7 @@ import { arch, platform } from "node:process";
 import { join, resolve } from "node:path";
 import { getCommaReleaseConfig } from "../src/release-config";
 import {
+  calendarKitAddonDistPath,
   computerUseAppName,
   computerUseDistAppPath,
   computerUseProductName,
@@ -73,6 +74,9 @@ const notificationAuthorizationAddonDir = resolve(
   appDir,
   "native/macos/NotificationAuthorization"
 );
+const calendarKitAddonDir = resolve(appDir, "native/macos/CalendarKit");
+const calendarKitOutput = calendarKitAddonDistPath(appDir);
+const calendarKitOnly = process.argv.includes("--calendar-kit-only");
 const fileApplicationsAddonDir = resolve(appDir, "native/macos/FileApplications");
 const fileApplicationsOutput = fileApplicationsAddonDistPath(appDir);
 const fileApplicationsOnly = process.argv.includes("--file-applications-only");
@@ -345,6 +349,15 @@ function buildNotificationAuthorizationAddon() {
   });
 }
 
+function buildCalendarKitAddon() {
+  buildNodeAddon({
+    addonDir: calendarKitAddonDir,
+    label: "Native calendar addon",
+    output: calendarKitOutput,
+    targetName: "comma_calendar_kit",
+  });
+}
+
 function buildComputerUseHelper() {
   run(
     "bash",
@@ -512,6 +525,7 @@ function verifyNativeOutputs() {
     "Native notification authorization addon"
   );
   assertFile(fontFamiliesOutput, "Native font families addon");
+  assertFile(calendarKitOutput, "Native calendar addon");
   assertDirectory(sideChatHostOutput, `Native ${sideChatAppName}.app`);
   assertDirectory(computerUseAppPath, `Native ${computerUseAppName}.app`);
   assertFile(
@@ -560,6 +574,14 @@ async function buildNative() {
       );
     }
     buildNotificationAuthorizationAddon();
+    return;
+  }
+
+  if (calendarKitOnly) {
+    if (platform !== "darwin") {
+      throw new Error("The calendar addon can only be built on macOS.");
+    }
+    buildCalendarKitAddon();
     return;
   }
 
@@ -617,6 +639,7 @@ async function buildNative() {
   buildNotificationAuthorizationAddon();
   buildFileApplicationsAddon();
   buildFontFamiliesAddon();
+  buildCalendarKitAddon();
   buildSideChatHost();
   buildComputerUseHelper();
   verifyNativeOutputs();

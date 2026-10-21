@@ -786,6 +786,8 @@ function sampleCommandInput(id: string) {
       return { index: 0, requestId: "11111111-1111-4111-8111-111111111111" };
     case "meetingRecorder.action":
       return { action: "start", meetingKey: "zoom:1", generation: 0 };
+    case "meetingTranscription.setProvider":
+      return { kind: "groq", model: "whisper-large-v3", apiKey: "gsk_sample" };
     case "meetingRecorder.selectMicrophone":
       return { deviceId: "default", meetingKey: "zoom:1", generation: 0 };
     case "meetingRecorder.acknowledgeSaved":
@@ -798,6 +800,35 @@ function sampleCommandInput(id: string) {
       return { phase: "move", screenX: 500, screenY: 100, reducedMotion: false };
     case "meetingPresence.icon":
       return { bundleIdentifier: "us.zoom.xos" };
+    case "calendar.events":
+      return {
+        calendarIds: ["calendar-1"],
+        start: "2026-10-19T00:00:00-03:00",
+        end: "2026-10-26T00:00:00-03:00",
+      };
+    case "calendar.event":
+      return { eventId: "item-1", occurrenceDate: null };
+    case "calendar.createEvent":
+      return {
+        calendarId: "calendar-1",
+        event: {
+          allDay: false,
+          end: "2026-10-21T11:00:00-03:00",
+          recurrence: "none",
+          start: "2026-10-21T10:00:00-03:00",
+          timeZone: "America/Sao_Paulo",
+          title: "[Comma teste]",
+        },
+      };
+    case "calendar.updateEvent":
+      return {
+        eventId: "item-1",
+        occurrenceDate: "2026-10-21T13:00:00Z",
+        patch: { title: "[Comma teste]" },
+        scope: "instance",
+      };
+    case "calendar.deleteEvent":
+      return { eventId: "item-1", occurrenceDate: null, scope: "series" };
     case "audioCapture.selectMicrophone":
       return { session: TEST_SESSION_PRODUCT_LEASE, deviceId: "default" };
     case "audioCapture.start":

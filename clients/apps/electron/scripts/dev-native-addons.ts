@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import {
+  calendarKitAddonDistPath,
   fileApplicationsAddonDistPath,
   fontFamiliesAddonDistPath,
   notificationAuthorizationAddonDistPath,
@@ -14,10 +15,10 @@ import {
  * a checkout that never built it starts with an empty `dist/native`. Main then
  * loads no file applications addon, so `files.listOpenApplications` answers
  * `unavailable` and every "Open in" menu shows "Could not load apps"; the
- * notification authorization readback and the Appearance font list degrade the
- * same way. Each is a few seconds of node-gyp, unlike the Swift and Go hosts,
- * so the start hook builds whichever is missing instead of leaving the run
- * degraded.
+ * notification authorization readback, the Appearance font list and the
+ * Agenda's Mac Calendar degrade the same way. Each is a few seconds of
+ * node-gyp, unlike the Swift and Go hosts, so the start hook builds whichever
+ * is missing instead of leaving the run degraded.
  */
 export interface DevNativeAddon {
   label: string;
@@ -41,6 +42,11 @@ export function devNativeAddons(appDir: string): DevNativeAddon[] {
       label: "font families addon",
       output: fontFamiliesAddonDistPath(appDir),
       buildFlag: "--font-families-only",
+    },
+    {
+      label: "calendar addon",
+      output: calendarKitAddonDistPath(appDir),
+      buildFlag: "--calendar-kit-only",
     },
   ];
 }

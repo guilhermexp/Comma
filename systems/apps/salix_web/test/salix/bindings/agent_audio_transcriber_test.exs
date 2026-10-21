@@ -90,30 +90,31 @@ defmodule Salix.Bindings.AgentAudioTranscriberTest do
     assert_receive {:transcribed, 0, 67_108_864, "audio.ogg", _prompt}
   end
 
-  defmodule MissingModelServer do
+  defmodule HelperServer do
     @moduledoc false
     import Plug.Conn
 
-    def init(opts), do: opts
+    def init(response), do: response
 
-    def call(conn, _opts) do
+    def call(conn, {status, body}) do
       {:ok, _body, conn} = read_body(conn, length: 1_000_000)
 
       conn
       |> put_resp_content_type("application/json")
-      |> send_resp(
-        409,
-        Jason.encode!(%{
-          "error" => %{"code" => "local_asr_model_not_installed", "message" => "Install it."}
-        })
-      )
+      |> send_resp(status, Jason.encode!(body))
     end
   end
 
-  test "a local ASR server without its model returns the missing-model reason" do
+  defp transcribe_with_helper(status, body) do
+    id = make_ref()
+
     {:ok, server} =
       start_supervised(
-        {Bandit, plug: MissingModelServer, ip: {127, 0, 0, 1}, port: 0, startup_log: false}
+        Supervisor.child_spec(
+          {Bandit,
+           plug: {HelperServer, {status, body}}, ip: {127, 0, 0, 1}, port: 0, startup_log: false},
+          id: id
+        )
       )
 
     {:ok, {_ip, port}} = ThousandIsland.listener_info(server)
@@ -125,9 +126,50 @@ defmodule Salix.Bindings.AgentAudioTranscriberTest do
       "model" => "parakeet-tdt-0.6b-v3"
     }
 
+    result =
+      AgentAudioTranscriber.transcribe_upload(["M4A"], 3, "recording.m4a",
+        config_fun: fn -> {:ok, cfg} end
+      )
+
+    stop_supervised!(id)
+    result
+  end
+
+  test "a local ASR server without its model returns the missing-model reason" do
     assert {:error, :local_asr_model_not_installed} =
-             AgentAudioTranscriber.transcribe_upload(["M4A"], 3, "recording.m4a",
-               config_fun: fn -> {:ok, cfg} end
-             )
+             transcribe_with_helper(409, %{
+               "error" => %{"code" => "local_asr_model_not_installed", "message" => "Install it."}
+             })
+  end
+
+  test "a cloud provider result keeps its provider, model and fallback" do
+    assert {:ok, %{provider: "local", model: "parakeet-tdt-0.6b-v3", fallback: fallback}} =
+             transcribe_with_helper(200, %{
+               "text" => "Oi.",
+               "duration" => 2.0,
+               "segments" => [%{"start" => 1.0, "text" => "Oi.", "speaker" => "S1"}],
+               "provider" => "local",
+               "model" => "parakeet-tdt-0.6b-v3",
+               "fallback" => %{"from" => "openai_compatible", "reason" => "cloud_unreachable"}
+             })
+
+    assert fallback == %{from: "openai_compatible", reason: "cloud_unreachable"}
+  end
+
+  test "cloud provider failures and missing prerequisites return their reasons" do
+    assert {:error, {:cloud_asr_failed, "cloud_server_error"}} =
+             transcribe_with_helper(502, %{
+               "error" => %{
+                 "code" => "cloud_asr_failed",
+                 "reason" => "cloud_server_error",
+                 "provider" => "groq",
+                 "message" => "Upstream 503."
+               }
+             })
+
+    assert {:error, {:cloud_asr_not_ready, "provider_unconfigured"}} =
+             transcribe_with_helper(409, %{
+               "error" => %{"code" => "cloud_asr_not_ready", "reason" => "provider_unconfigured"}
+             })
   end
 end

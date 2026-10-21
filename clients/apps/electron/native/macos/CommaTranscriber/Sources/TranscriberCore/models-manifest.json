@@ -16,6 +16,14 @@
       "variant": "offline"
     }
   ],
+  "components": {
+    "asr": [
+      "parakeet-tdt-0.6b-v3"
+    ],
+    "diarization": [
+      "speaker-diarization"
+    ]
+  },
   "files": [
     {
       "path": "parakeet-tdt-0.6b-v3/.fluidaudio-revision",
