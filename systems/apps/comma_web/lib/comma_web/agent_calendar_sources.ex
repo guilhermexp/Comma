@@ -112,15 +112,22 @@ defmodule CommaWeb.AgentCalendarSources do
   end
 
   defp request(operation, account_id, args) when is_map(args) do
+    {key, args} = Map.pop(args, "creation_request_id")
+
     with op when is_binary(op) <- @operations[operation] do
       params = Map.merge(args, %{"account_id" => account_id, "operation" => op})
       params = defaults(op, params)
 
-      if op == "events" and is_nil(args["calendar_ids"]) do
-        with {:ok, r} <- Agenda.request(Map.put(params, "calendar_ids", ["primary"])),
-             do: {:ok, %{r | ids: :selected}}
-      else
-        Agenda.request(params)
+      cond do
+        op == "events" and is_nil(args["calendar_ids"]) ->
+          with {:ok, r} <- Agenda.request(Map.put(params, "calendar_ids", ["primary"])),
+               do: {:ok, %{r | ids: :selected}}
+
+        op == "create" and is_binary(key) and key != "" ->
+          with {:ok, r} <- Agenda.request(params), do: {:ok, Map.put(r, :creation_key, key)}
+
+        true ->
+          Agenda.request(params)
       end
     else
       _ -> {:error, :invalid_composio_request}

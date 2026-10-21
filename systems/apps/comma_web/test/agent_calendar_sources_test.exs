@@ -401,6 +401,44 @@ defmodule CommaWeb.AgentCalendarSourcesTest do
              })
   end
 
+  test "a replayed create with the same creation request id creates one event", c do
+    respond(c, fn
+      "GOOGLECALENDAR_EVENTS_LIST", %{"privateExtendedProperty" => property} = args ->
+        created =
+          for %{"tool_slug" => "GOOGLECALENDAR_CREATE_EVENT", "arguments" => a} <- tools(c),
+              "comma_creation=" <> a["extended_properties"]["private"]["comma_creation"] ==
+                property,
+              do: google("GOOGLECALENDAR_CREATE_EVENT", a)["response_data"]
+
+        assert args["calendarId"] == "me@example.test"
+        %{"items" => created}
+
+      slug, args ->
+        google(slug, args)
+    end)
+
+    create = fn key ->
+      Sources.google(c.owner, "cal", :create, %{
+        "calendar_id" => "me@example.test",
+        "creation_request_id" => key,
+        "event" => %{
+          "title" => "Folga",
+          "start" => "2026-10-22",
+          "end" => "2026-10-23",
+          "all_day" => true,
+          "time_zone" => "America/Sao_Paulo"
+        }
+      })
+    end
+
+    assert {:ok, %{"event" => first}} = create.("msg_1:call_1")
+    assert {:ok, %{"event" => replay}} = create.("msg_1:call_1")
+    assert replay["event_ref"] == first["event_ref"]
+    assert {:ok, _} = create.("msg_1:call_2")
+
+    assert 2 == Enum.count(tools(c), &(&1["tool_slug"] == "GOOGLECALENDAR_CREATE_EVENT"))
+  end
+
   test "a disabled account is not read", c do
     {:ok, _} =
       ComposioAccess.enable_account(

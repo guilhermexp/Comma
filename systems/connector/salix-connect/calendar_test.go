@@ -149,3 +149,21 @@ func TestCalendarCapabilityFollowsMainModule(t *testing.T) {
 		t.Fatal("advertised calendar without a Main client-control")
 	}
 }
+
+func TestCalendarCreatePassesTheCreationKeyToMain(t *testing.T) {
+	var body map[string]any
+	calendarMainServer(t, `{"modules":[]}`, func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		_, _ = w.Write([]byte(`{"eventId":"created-1"}`))
+	})
+	c := &connector{cfg: config{deviceMode: true}, scope: scopeLocalFileRead}
+	input := map[string]any{"calendarId": "cal-1", "creationKey": "msg_1:call_1", "event": map[string]any{"title": "x"}}
+	if _, err := c.methodCalendar(map[string]any{"op": "create-event", "input": input}); err != nil {
+		t.Fatal(err)
+	}
+	if body["api"] != "create-event" || body["input"].(map[string]any)["creationKey"] != "msg_1:call_1" {
+		t.Fatalf("Main received %#v", body)
+	}
+}

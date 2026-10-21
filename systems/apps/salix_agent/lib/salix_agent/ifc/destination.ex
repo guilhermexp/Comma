@@ -535,6 +535,12 @@ defmodule SalixAgent.IFC.Destination do
       name in ~w(calendar.calendars calendar.events calendar.event) ->
         {:read, %{}}
 
+      # Event fields leave for Google or the Mac, and a calendar can be shared
+      # with people the run cannot name. Until that audience is known, a write
+      # with content is public egress.
+      name in ~w(calendar.create calendar.update) ->
+        {:egress, %{"kind" => "public"}}
+
       String.starts_with?(name, "calendar.") ->
         {:none, %{}}
 

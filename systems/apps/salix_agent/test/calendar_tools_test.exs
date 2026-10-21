@@ -292,6 +292,42 @@ defmodule SalixAgent.CalendarToolsTest do
       assert %{"status" => "unavailable", "reason" => "desktop_offline"} = status(result, "mac")
     end
 
+    test "Google calendars that failed are reported, not read as an empty week" do
+      read = fn failed ->
+        Fake.put(%{
+          google_accounts: fn _ -> {:ok, [%{"account_id" => "acc_1", "name" => "Work"}]} end,
+          google: fn
+            _owner, "acc_1", :calendars, _args ->
+              {:ok,
+               %{
+                 "calendars" => [
+                   calendar("google", "acc_1", "primary", "Work"),
+                   calendar("google", "acc_1", "family", "Family")
+                 ]
+               }}
+
+            _owner, "acc_1", :events, _args ->
+              events =
+                if "primary" in failed,
+                  do: [],
+                  else: [event("google", "acc_1", "primary", "g1", "2026-10-20T10:00:00Z")]
+
+              {:ok, %{"events" => events, "truncated" => false, "failed_calendar_ids" => failed}}
+          end
+        })
+
+        status(decode(Calendar.events(@week, %{agent_id: "agent_1"})), "google")
+      end
+
+      assert %{"status" => "partial", "failed_calendar_ids" => ["family"]} = read.(["family"])
+
+      assert %{"status" => "error", "reason" => "calendars_unavailable"} =
+               read.(["primary", "family"])
+
+      assert %{"status" => "ok"} = status = read.([])
+      refute Map.has_key?(status, "failed_calendar_ids")
+    end
+
     test "refuses a period longer than 62 days" do
       args = %{"time_min" => "2026-10-01T00:00:00Z", "time_max" => "2026-12-30T00:00:00Z"}
 
@@ -505,6 +541,29 @@ defmodule SalixAgent.CalendarToolsTest do
                )
 
       assert_received {:internal, :create, ["grp_1", %{"calendar_id" => "cal_comma"}, _, _]}
+    end
+
+    test "Google and Mac creates carry the per-call creation request id" do
+      google_writes()
+
+      Fake.put(%{
+        google: fn _owner, "acc_1", :create, args ->
+          {:ok, %{"event" => event("google", "acc_1", "primary", "new1", args["event"]["start"])}}
+        end,
+        mac: fn _owner, "create-event", input ->
+          {:ok, %{"event" => event("mac", nil, input["calendar_id"], "m1", "x")}}
+        end
+      })
+
+      Calendar.create(%{"calendar_ref" => @google_cal, "event" => @new_event}, owner_ctx())
+      mac_cal = %{"source" => "mac", "calendar_id" => "mac_home"}
+      Calendar.create(%{"calendar_ref" => mac_cal, "event" => @new_event}, owner_ctx())
+
+      assert_received {:calendar_sources, :google,
+                       [_, "acc_1", :create, %{"creation_request_id" => "msg_1:call_1"}]}
+
+      assert_received {:calendar_sources, :mac,
+                       [_, "create-event", %{"creation_request_id" => "msg_1:call_1"}]}
     end
 
     test "a create without a tool call id fails closed" do
@@ -733,6 +792,127 @@ defmodule SalixAgent.CalendarToolsTest do
 
       for text <- [@secret_title, @secret_location, @secret_description],
           do: refute(log =~ text)
+    end
+  end
+
+  defp dispatch_ctx do
+    ctx =
+      Map.merge(owner_ctx(), %{
+        session_id: "ses_calendar_log",
+        role: "router",
+        runtime_kind: :internal
+      })
+
+    Map.put(ctx, :tool_disclosure, SalixAgent.ToolDisclosure.materialize("router", :internal, ctx))
+  end
+
+  describe "the event schema" do
+    test "recurrence is the frequency the Google and Mac sources take" do
+      google_writes()
+
+      create = fn recurrence ->
+        event = Map.put(@new_event, "recurrence", recurrence)
+
+        [result] =
+          SalixAgent.SessionToolDispatch.execute(
+            [
+              %{
+                id: "call_1",
+                name: "calendar.create",
+                args: %{"calendar_ref" => @google_cal, "event" => event}
+              }
+            ],
+            dispatch_ctx()
+          )
+
+        result
+      end
+
+      assert create.("weekly").status == "completed"
+      assert_received {:calendar_sources, :google, [_, _, :create, %{"event" => sent}]}
+      assert sent["recurrence"] == "weekly"
+
+      for recurrence <- [["RRULE:FREQ=WEEKLY"], "RRULE:FREQ=WEEKLY", "hourly"] do
+        refused = create.(recurrence)
+        assert refused.error and refused.content =~ "recurrence", inspect(recurrence)
+        refute_received {:calendar_sources, :google, [_, _, :create, _]}
+      end
+    end
+  end
+
+  describe "diagnostic log" do
+    setup do
+      path = Path.join(System.tmp_dir!(), "calendar-#{System.unique_integer([:positive])}.jsonl")
+      :ok = CommaLog.enable(path)
+
+      on_exit(fn ->
+        CommaLog.disable()
+        File.rm(path)
+      end)
+
+      %{path: path}
+    end
+
+    test "tool_start and tool_end through the dispatcher carry no event text", %{path: path} do
+      secret_event =
+        event("google", "acc_1", "primary", "s1", "2026-10-20T15:00:00-03:00",
+          title: @secret_title,
+          description: @secret_description
+        )
+        |> Map.put("location", @secret_location)
+
+      Fake.put(%{
+        google_accounts: fn _owner -> {:ok, [%{"account_id" => "acc_1", "name" => "Work"}]} end,
+        google: fn
+          _owner, "acc_1", :calendars, _args ->
+            {:ok, %{"calendars" => [calendar("google", "acc_1", "primary", "Work")]}}
+
+          _owner, "acc_1", :events, _args ->
+            {:ok, %{"events" => [secret_event], "truncated" => false}}
+
+          _owner, "acc_1", :create, _args ->
+            {:ok, %{"event" => secret_event}}
+        end,
+        mac: fn _owner, _op, _input -> {:error, "mac_access_not_granted"} end
+      })
+
+      cal = %{"source" => "google", "account_id" => "acc_1", "calendar_id" => "primary"}
+
+      new_event = %{
+        "title" => @secret_title,
+        "location" => @secret_location,
+        "description" => @secret_description,
+        "start" => "2026-10-22T15:00:00-03:00",
+        "end" => "2026-10-22T16:00:00-03:00"
+      }
+
+      results =
+        SalixAgent.SessionToolDispatch.execute(
+          [
+            %{id: "call_events", name: "calendar.events", args: @week},
+            %{
+              id: "call_1",
+              name: "calendar.create",
+              args: %{"calendar_ref" => cal, "event" => new_event}
+            }
+          ],
+          dispatch_ctx()
+        )
+
+      assert Enum.all?(results, &(&1.error == false)), inspect(results)
+      CommaLog.flush()
+      lines = path |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+
+      tool_lines = Enum.filter(lines, &(&1["event"] in ["tool_start", "tool_end"]))
+      assert Enum.map(tool_lines, & &1["tool"]) |> Enum.uniq() |> Enum.sort() ==
+               ["calendar.create", "calendar.events"]
+
+      log = Jason.encode!(lines)
+      for text <- [@secret_title, @secret_location, @secret_description], do: refute(log =~ text)
+
+      # Operation, source and timing stay.
+      assert Enum.any?(tool_lines, &(&1["event"] == "tool_end" and is_integer(&1["duration_ms"])))
+      assert log =~ "google"
     end
   end
 end

@@ -170,6 +170,14 @@ const cdpInputSchema = browserTabInputSchema
   })
   .strict();
 
+// An agent create carries Comma's creation key. A Connector replay (for
+// example after a socket replacement) within this window returns the first
+// result instead of creating the event again.
+const CALENDAR_CREATION_TTL_MS = 10 * 60 * 1000;
+const calendarAgentCreateInputSchema = calendarCreateEventInputSchema.extend({
+  creationKey: z.string().min(1).max(256).optional(),
+});
+
 /** The agent-facing Mac Calendar: never `requestAccess`, which only the user starts. */
 export type ClientControlCalendar = Pick<
   CalendarProvider,
@@ -208,6 +216,39 @@ export function createCommaClientControlRegistry({
     allow: boolean
   ) => Promise<{ allows_operations: boolean }>;
 }) {
+  const calendarCreations = new Map<
+    string,
+    { expiresAt: number; result: Promise<unknown> }
+  >();
+  const createCalendarEvent = (
+    input: z.infer<typeof calendarAgentCreateInputSchema>
+  ) => {
+    const { creationKey, ...eventInput } = input;
+    if (!calendar) throw new ClientControlError(404, "Unknown module.");
+    if (!creationKey)
+      return calendar.createEvent(eventInput as CalendarCreateEventInput);
+    const now = Date.now();
+    for (const [key, entry] of calendarCreations) {
+      if (entry.expiresAt <= now) calendarCreations.delete(key);
+    }
+    const existing = calendarCreations.get(creationKey);
+    if (existing) return existing.result;
+    const result = calendar.createEvent(eventInput as CalendarCreateEventInput);
+    calendarCreations.set(creationKey, {
+      expiresAt: now + CALENDAR_CREATION_TTL_MS,
+      result,
+    });
+    // Only a created event is remembered; a failure may be retried.
+    void result.then(
+      (created) => {
+        if (created && typeof created === "object" && "error" in created) {
+          calendarCreations.delete(creationKey);
+        }
+      },
+      () => calendarCreations.delete(creationKey)
+    );
+    return result;
+  };
   let screenshotSequence = 0;
   let screenshotWriteTail = Promise.resolve();
   let initializedArtifacts = false;
@@ -422,11 +463,13 @@ export function createCommaClientControlRegistry({
               {
                 id: "create-event",
                 description: "Create an event in a writable calendar.",
-                input: calendarCreateEventInputSchema,
-                usage: `comma call calendar create-event --json '{"calendarId":"...","event":{...}}'`,
+                input: calendarAgentCreateInputSchema,
+                usage: `comma call calendar create-event --json '{"calendarId":"...","event":{...},"creationKey":"..."}'`,
                 handler: (input: unknown) =>
                   calendarResult(() =>
-                    calendar.createEvent(input as CalendarCreateEventInput)
+                    createCalendarEvent(
+                      input as z.infer<typeof calendarAgentCreateInputSchema>
+                    )
                   ),
               },
               {

@@ -60,9 +60,10 @@ defmodule SalixAgent.Tools.Schemas do
       "location" => %{"type" => ["string", "null"]},
       "description" => %{"type" => ["string", "null"]},
       "recurrence" => %{
-        "type" => "array",
-        "items" => %{"type" => "string"},
-        "description" => "Optional RRULE lines, e.g. RRULE:FREQ=WEEKLY."
+        "type" => "string",
+        "enum" => ["none", "daily", "weekly", "monthly", "yearly"],
+        "description" =>
+          "Optional repeat frequency for Google and Mac events. The Comma calendar takes single events only."
       }
     }
   }

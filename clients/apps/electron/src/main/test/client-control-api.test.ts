@@ -545,6 +545,43 @@ describe("Comma Main client-control calendar module", () => {
     }
   });
 
+  it("creates one event for a replayed creation key", async () => {
+    const { addon, call, server } = await openCalendarControl({
+      createEvent: vi.fn(async () => macEvent({ eventId: "created-1" })),
+    });
+    try {
+      const created = {
+        calendarId: "cal-1",
+        creationKey: "msg_1:call_1",
+        event: {
+          allDay: false,
+          end: "2026-10-22T16:00:00-03:00",
+          recurrence: "none",
+          start: "2026-10-22T15:00:00-03:00",
+          timeZone: "America/Sao_Paulo",
+          title: "Meeting",
+        },
+      };
+      const [first, concurrent] = await Promise.all([
+        call("create-event", created),
+        call("create-event", created),
+      ]);
+      const replay = await call("create-event", created);
+      expect(first).toMatchObject({ status: 200, body: { eventId: "created-1" } });
+      expect(concurrent.body).toEqual(first.body);
+      expect(replay.body).toEqual(first.body);
+      expect(addon.createEvent).toHaveBeenCalledTimes(1);
+      // The key is Comma's, not EventKit's.
+      const { creationKey: _key, ...eventKitInput } = created;
+      expect(addon.createEvent).toHaveBeenCalledWith(eventKitInput);
+
+      await call("create-event", { ...created, creationKey: "msg_1:call_2" });
+      expect(addon.createEvent).toHaveBeenCalledTimes(2);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("refuses invalid input before EventKit and never exposes the access prompt", async () => {
     const { addon, call, server } = await openCalendarControl();
     try {

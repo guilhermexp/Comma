@@ -11,7 +11,7 @@ defmodule CommaWeb.GoogleCalendarAgenda do
   | `calendars` | `GOOGLECALENDAR_LIST_CALENDARS` `max_results: 250`. Rows come in `data.calendars` (or `items`): `id`, `summary`/`summaryOverride` -> `name`, `backgroundColor` -> `color`, `primary`, `selected`, `accessRole` -> `access_role`. `writable` is `owner` or `writer`; `account_email` is the primary calendar id. |
   | `events` | `GOOGLECALENDAR_LIST_CALENDARS` once for access roles, then `GOOGLECALENDAR_EVENTS_LIST` once per page and calendar: `calendarId`, `timeMin`, `timeMax`, `timeZone`, `singleEvents: true`, `orderBy: "startTime"`, `showDeleted: false`, `maxResults: 250`, `pageToken`. |
   | `event` | `GOOGLECALENDAR_EVENTS_GET` `calendar_id`, `event_id`; for an occurrence, again with its `recurringEventId` to classify the series `recurrence`. |
-  | `create` | `GOOGLECALENDAR_CREATE_EVENT` `calendar_id`, `summary` (title), `start_datetime`/`end_datetime` + `timezone`, or `start_date`/`end_date` (all day, exclusive end), `location`, `description`, `recurrence: ["RRULE:FREQ=…"]`, `create_meeting_room: false`, `exclude_organizer: true`. |
+  | `create` | `GOOGLECALENDAR_CREATE_EVENT` `calendar_id`, `summary` (title), `start_datetime`/`end_datetime` + `timezone`, or `start_date`/`end_date` (all day, exclusive end), `location`, `description`, `recurrence: ["RRULE:FREQ=…"]`, `create_meeting_room: false`, `exclude_organizer: true`. An agent create with a creation key first lists `privateExtendedProperty: "comma_creation=<key>"` and returns a match; otherwise it creates with `extended_properties.private.comma_creation`. |
   | `update` | `GOOGLECALENDAR_EVENTS_GET` (etag and series), then `GOOGLECALENDAR_EVENTS_MOVE` `calendar_id`, `event_id`, `destination` when `target_calendar_id` differs, then `GOOGLECALENDAR_PATCH_EVENT` `calendar_id`, `event_id`, `summary`, `start_time`/`end_time` (RFC3339, or dates when all day), `timezone`, `location`, `description`, `recurrence` (`[]` for none). |
   | `delete` | `GOOGLECALENDAR_EVENTS_GET`, then `GOOGLECALENDAR_DELETE_EVENT` `calendar_id`, `event_id`. |
 
@@ -374,29 +374,34 @@ defmodule CommaWeb.GoogleCalendarAgenda do
     end
   end
 
-  defp perform(%{op: :create} = r, execute) do
-    input = r.input
+  # An agent create carries a creation key. The event keeps it as a private
+  # extended property, so a replayed create returns the event it already made.
+  defp perform(%{op: :create, creation_key: key} = r, execute) do
+    value = Base.url_encode64(key, padding: false)
 
-    args =
-      %{
-        "calendar_id" => r.calendar_id,
-        "summary" => input["title"],
-        "create_meeting_room" => false,
-        "exclude_organizer" => true
-      }
-      |> Map.merge(create_times(input))
-      |> put_text("location", input["location"])
-      |> put_text("description", input["description"])
-      |> put_rule(input["recurrence"])
+    lookup = %{
+      "calendarId" => r.calendar_id,
+      "privateExtendedProperty" => "comma_creation=" <> value,
+      "showDeleted" => false,
+      "maxResults" => 1
+    }
 
-    with {:ok, data} <- execute.(:write, "create", args),
-         %{} = row <- data |> created() |> event(r.calendar_id, nil, r) do
-      {:ok, %{"event" => row}}
-    else
-      {:error, _} = error -> error
-      _ -> {:error, :invalid_provider_response}
+    case execute.(:read, "events", lookup) do
+      {:ok, %{"items" => [%{"id" => _} = existing | _]}} ->
+        case event(existing, r.calendar_id, nil, r) do
+          %{} = row -> {:ok, %{"event" => row}}
+          _ -> {:error, :invalid_provider_response}
+        end
+
+      {:ok, _} ->
+        create(r, execute, %{"private" => %{"comma_creation" => value}})
+
+      {:error, _} = error ->
+        error
     end
   end
+
+  defp perform(%{op: :create} = r, execute), do: create(r, execute, nil)
 
   defp perform(%{op: :update} = r, execute) do
     with {:ok, current} <- current_event(execute, r),
@@ -542,6 +547,35 @@ defmodule CommaWeb.GoogleCalendarAgenda do
         if length(acc.events) >= @max_events or bytes > @max_bytes,
           do: {:halt, %{acc | truncated: true}},
           else: {:cont, %{acc | events: [row | acc.events], bytes: bytes}}
+    end
+  end
+
+  defp create(r, execute, extended_properties) do
+    input = r.input
+
+    args =
+      %{
+        "calendar_id" => r.calendar_id,
+        "summary" => input["title"],
+        "create_meeting_room" => false,
+        "exclude_organizer" => true
+      }
+      |> Map.merge(create_times(input))
+      |> put_text("location", input["location"])
+      |> put_text("description", input["description"])
+      |> put_rule(input["recurrence"])
+
+    args =
+      if extended_properties,
+        do: Map.put(args, "extended_properties", extended_properties),
+        else: args
+
+    with {:ok, data} <- execute.(:write, "create", args),
+         %{} = row <- data |> created() |> event(r.calendar_id, nil, r) do
+      {:ok, %{"event" => row}}
+    else
+      {:error, _} = error -> error
+      _ -> {:error, :invalid_provider_response}
     end
   end
 

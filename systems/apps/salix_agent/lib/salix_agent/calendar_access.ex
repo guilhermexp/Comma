@@ -25,6 +25,7 @@ defmodule SalixAgent.CalendarAccess do
   @default_deadline_ms 35_000
   @scopes ~w(instance series)
   @event_fields ~w(title start end all_day time_zone location description recurrence)
+  @recurrences [nil | ~w(none daily weekly monthly yearly)]
   # C3 names these as atoms; the Mac implementation answers with strings.
   @mac_unavailable ~w(desktop_offline mac_access_not_granted mac_unavailable)
   # Which copy of the same event is primary: Google before Comma before the Mac.
@@ -103,15 +104,19 @@ defmodule SalixAgent.CalendarAccess do
       when is_map(calendar_ref) and is_map(event) do
     event = event |> Map.take(@event_fields) |> with_all_day()
 
-    with {:ok, owner} <- write_owner(ctx),
+    with :ok <- recurrence(event),
+         {:ok, owner} <- write_owner(ctx),
          {:ok, request_id} <- creation_request_id(ctx),
          {:ok, source} <- source_of(calendar_ref) do
       args = %{"calendar_id" => calendar_ref["calendar_id"], "event" => event}
 
+      # Google and the Mac create once per key, so a replayed call does not duplicate.
+      keyed = Map.put(args, "creation_request_id", request_id)
+
       write(source, calendar_ref, fn
         "comma" -> Calendar.create(ctx.agent_id, args, owner_ref(owner), request_id)
-        "google" -> CalendarSources.google(owner, calendar_ref["account_id"], :create, args)
-        "mac" -> CalendarSources.mac(owner, "create-event", args)
+        "google" -> CalendarSources.google(owner, calendar_ref["account_id"], :create, keyed)
+        "mac" -> CalendarSources.mac(owner, "create-event", keyed)
       end)
     end
   end
@@ -121,7 +126,8 @@ defmodule SalixAgent.CalendarAccess do
   @doc "Change one event (or its whole series) in its own calendar."
   def update(ctx, %{"event_ref" => ref, "patch" => patch} = args)
       when is_map(ref) and is_map(patch) do
-    with {:ok, owner} <- write_owner(ctx),
+    with :ok <- recurrence(patch),
+         {:ok, owner} <- write_owner(ctx),
          {:ok, source} <- source_of(ref),
          {:ok, scope} <- scope(args["scope"]),
          {:ok, target} <- target_calendar(ref, args["target_calendar_ref"]) do
@@ -304,18 +310,29 @@ defmodule SalixAgent.CalendarAccess do
            end) do
       ids
       |> Enum.chunk_every(@google_calendar_batch)
-      |> Enum.reduce_while({:ok, [], false}, fn batch, {:ok, acc, cut} ->
+      |> Enum.reduce_while({:ok, [], false, []}, fn batch, {:ok, acc, cut, failed} ->
         case CalendarSources.google(owner, account_id, :events, events_args(batch, period)) do
           {:ok, %{"events" => events} = result} ->
-            {:cont, {:ok, acc ++ events, cut or result["truncated"] == true}}
+            failed = failed ++ List.wrap(result["failed_calendar_ids"])
+            {:cont, {:ok, acc ++ events, cut or result["truncated"] == true, failed}}
 
           {:error, _} = error ->
             {:halt, error}
         end
       end)
       |> case do
-        {:ok, events, cut} -> cap(events, cut)
-        error -> error
+        # Every calendar failed: not an empty period.
+        {:ok, _events, _cut, failed} when ids != [] and length(failed) >= length(ids) ->
+          {:error, "calendars_unavailable"}
+
+        {:ok, events, cut, []} ->
+          cap(events, cut)
+
+        {:ok, events, cut, failed} ->
+          with {:ok, events, cut} <- cap(events, cut), do: {:ok, events, cut, failed}
+
+        error ->
+          error
       end
     end
   end
@@ -412,9 +429,11 @@ defmodule SalixAgent.CalendarAccess do
       |> Enum.zip(tasks)
       |> Enum.map(fn {{_task, outcome}, {key, _}} -> {key, outcome(outcome)} end)
 
+    # A partial source (some calendars failed) still contributes its events.
     results =
-      for {key, {:ok, items, truncated}} <- outcomes,
-          do: {key, {Enum.map(items, &normalize/1), truncated}}
+      for {key, outcome} <- outcomes, elem(outcome, 0) == :ok do
+        {key, {Enum.map(elem(outcome, 1), &normalize/1), elem(outcome, 2)}}
+      end
 
     statuses = Enum.map(outcomes, fn {key, outcome} -> status(key, outcome) end)
     {results, statuses}
@@ -443,6 +462,10 @@ defmodule SalixAgent.CalendarAccess do
   end
 
   defp outcome({:ok, {:ok, items, truncated}}), do: {:ok, items, truncated}
+
+  defp outcome({:ok, {:ok, items, truncated, failed}}) when is_list(failed),
+    do: {:ok, items, truncated, failed}
+
   defp outcome({:ok, {:ok, result}}) when is_map(result), do: {:ok, result, false}
   defp outcome({:ok, {:error, reason}}), do: {:error, reason}
   defp outcome({:ok, _invalid}), do: {:error, :invalid_source_result}
@@ -462,6 +485,9 @@ defmodule SalixAgent.CalendarAccess do
   end
 
   defp outcome_status({:ok, _items, truncated}), do: %{"status" => "ok", "truncated" => truncated}
+
+  defp outcome_status({:ok, _items, truncated, failed}),
+    do: %{"status" => "partial", "truncated" => truncated, "failed_calendar_ids" => failed}
 
   defp outcome_status({:error, reason}) when reason in [:not_connected, "not_connected"],
     do: %{"status" => "not_connected"}
@@ -554,6 +580,12 @@ defmodule SalixAgent.CalendarAccess do
   end
 
   defp target_calendar(_ref, _target), do: {:error, :invalid_calendar_ref}
+
+  # The Google and Mac sources repeat by frequency only.
+  defp recurrence(%{"recurrence" => value}) when value not in @recurrences,
+    do: {:error, :invalid_recurrence}
+
+  defp recurrence(_event), do: :ok
 
   # The model may omit all_day: a date-only start is an all-day event.
   defp with_all_day(%{"start" => start} = event) when is_binary(start),

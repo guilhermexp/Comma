@@ -108,10 +108,16 @@ defmodule CommaWeb.AgentCalendarSources.Mac do
   defp request("event", input), do: occurrence(input)
 
   defp request("create-event", input) do
-    %{
+    request = %{
       "calendarId" => input["calendar_id"],
       "event" => Map.put_new(event_input(input["event"]), "recurrence", "none")
     }
+
+    # Main creates once per key, also when the Connector replays the call.
+    case input["creation_request_id"] do
+      key when is_binary(key) and key != "" -> Map.put(request, "creationKey", key)
+      _ -> request
+    end
   end
 
   defp request("update-event", input) do

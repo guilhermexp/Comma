@@ -216,6 +216,20 @@ defmodule CommaWeb.AgentCalendarSources.MacTest do
            }
   end
 
+  test "a create carries the creation key so Main creates it once" do
+    devices([device("mac")])
+    reply({:ok, mac_event(%{"occurrenceDate" => nil, "recurrence" => "none"})})
+
+    Mac.call(@owner, "create-event", %{
+      "calendar_id" => "cal-1",
+      "creation_request_id" => "msg_1:call_1",
+      "event" => %{"title" => "Meeting"}
+    })
+
+    assert_received {:dispatched, _, "calendar",
+                     %{"op" => "create-event", "input" => %{"creationKey" => "msg_1:call_1"}}, _}
+  end
+
   test "writes translate the normalized input to the Mac Calendar input" do
     devices([device("mac")])
     reply({:ok, mac_event(%{"occurrenceDate" => nil, "recurrence" => "none"})})

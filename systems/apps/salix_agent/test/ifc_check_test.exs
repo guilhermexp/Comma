@@ -1123,6 +1123,54 @@ defmodule SalixAgent.IFCCheckTest do
     end
   end
 
+  describe "writes to the owner's calendars" do
+    test "every event-bearing result is the owner's private data, whatever the op" do
+      for tool <- ~w(calendar.create calendar.update calendar.delete) do
+        write = call(tool, %{}, %{"request" => "src:q-1", "sources" => []})
+
+        [result] =
+          Check.stamp_results(
+            [%{id: write.id, name: tool, content: ~s({"event":{"title":"Dentist"}})}],
+            [write],
+            ctx()
+          )
+
+        assert result[:ifc]["label"] == SalixAgent.IFC.Context.private_wire(),
+               "#{tool} result was not labelled private"
+      end
+    end
+
+    test "event content leaves as public egress, so private content needs a decision" do
+      cal = %{"source" => "google", "account_id" => "acc_1", "calendar_id" => "shared"}
+      ref = Map.put(cal, "event_id", "g1")
+
+      for {tool, params} <- [
+            {"calendar.create", %{"calendar_ref" => cal, "event" => %{"title" => "Q3 numbers"}}},
+            {"calendar.update", %{"event_ref" => ref, "patch" => %{"description" => "Q3"}}}
+          ] do
+        assert {:egress, %{"kind" => "public"}} = Destination.describe(tool, params, %{})
+
+        assert {:blocked, result} =
+                 authorize(
+                   call(tool, params, %{"request" => "src:q-2", "sources" => ["src:t-9"]}),
+                   ctx(requester: @b, source_scope: [@general], request: "src:q-2"),
+                   facts(destination(["public"]))
+                 ),
+               "#{tool} copied private content into a calendar"
+
+        assert result.status == "guidance"
+
+        # The owner's own request, with no private source, still writes.
+        assert {:execute, _} =
+                 authorize(
+                   call(tool, params, %{"request" => "src:q-2", "sources" => []}),
+                   ctx(requester: @b, source_scope: [@general], request: "src:q-2"),
+                   facts(destination(["public"]))
+                 )
+      end
+    end
+  end
+
   describe "T3 — an external guest" do
     test "cannot write outside their own conversation" do
       decision =

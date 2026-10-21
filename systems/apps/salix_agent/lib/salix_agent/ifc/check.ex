@@ -75,9 +75,9 @@ defmodule SalixAgent.IFC.Check do
 
       round ->
         results
-        |> Enum.zip(read_flags(results, calls, ctx))
-        |> Enum.map(fn {result, read?} ->
-          stamp_result_label(result, read?, round)
+        |> Enum.zip(private_flags(results, calls, ctx))
+        |> Enum.map(fn {result, private?} ->
+          stamp_result_label(result, private?, round)
         end)
     end
   end
@@ -86,14 +86,14 @@ defmodule SalixAgent.IFC.Check do
 
   @doc false
   def stamp_result(result, call, ctx, round) do
-    stamp_result_label(result, read?(call, ctx), round)
+    stamp_result_label(result, private_result?(call, ctx), round)
   end
 
-  defp stamp_result_label(result, _read?, nil), do: result
+  defp stamp_result_label(result, _private?, nil), do: result
 
-  defp stamp_result_label(result, read?, round) do
+  defp stamp_result_label(result, private?, round) do
     case result_label(result) do
-      nil when read? -> put_ifc(result, %{"label" => Context.private_wire()})
+      nil when private? -> put_ifc(result, %{"label" => Context.private_wire()})
       nil -> put_ifc(result, %{"label" => round})
       provided -> put_ifc(result, provided)
     end
@@ -556,21 +556,22 @@ defmodule SalixAgent.IFC.Check do
   # decisions, so results arrive in the order of the calls they came from.
   # When that correspondence does not hold there is no way to tell which
   # result came from a read, so nothing claims to be one.
-  defp read_flags(results, calls, ctx) do
+  defp private_flags(results, calls, ctx) do
     if length(results) == length(calls) do
-      Enum.map(calls, &read?(&1, ctx))
+      Enum.map(calls, &private_result?(&1, ctx))
     else
       Enum.map(results, fn _result -> false end)
     end
   end
 
-  defp read?(call, ctx) do
+  defp private_result?(call, ctx) do
     name = to_string(call[:name] || call["name"] || "")
     args = call[:args] || call["args"] || %{}
 
     case Destination.describe(name, args, ctx) do
       {:read, _descriptor} -> true
-      _other -> false
+      # Every calendar result can carry the owner's event, write results too.
+      _other -> String.starts_with?(name, "calendar.")
     end
   end
 
