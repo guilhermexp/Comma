@@ -1,8 +1,8 @@
 import type {
   AudioCaptureRecording,
   CommaNativeBridge,
-  LocalTranscriptionNotice,
   LocalTranscriptionState,
+  MeetingTranscriptionNotice,
 } from "@comma/native-bridge";
 import { SettingsPanel, Toaster, toast } from "@comma/ui";
 import type { Meta, StoryObj } from "@storybook/react-vite";
@@ -23,7 +23,7 @@ const recording: AudioCaptureRecording = {
 
 /**
  * Stands in for Main: the section reads `localTranscription.state` and the
- * notice host listens to `localTranscription.onNotice`, as in the desktop app.
+ * notice host listens to `meetingTranscription.onNotice`, as in the desktop app.
  */
 function WithMockBridge({
   state,
@@ -37,7 +37,7 @@ function WithMockBridge({
   const [ready, setReady] = useState(false);
   useEffect(() => {
     const previous = globalThis.commaNative;
-    const listeners = new Set<(notice: LocalTranscriptionNotice) => void>();
+    const listeners = new Set<(notice: MeetingTranscriptionNotice) => void>();
     const get = async () => state;
     globalThis.commaNative = {
       platform: "electron",
@@ -52,7 +52,12 @@ function WithMockBridge({
         install: async () => ({ accepted: true }),
         cancel: async () => ({ accepted: true }),
         remove: async () => ({ accepted: false, reason: "busy" }),
-        onNotice: (listener: (next: LocalTranscriptionNotice) => void) => {
+      },
+      meetingTranscription: {
+        state: Object.assign(async () => undefined, {
+          subscribe: () => () => undefined,
+        }),
+        onNotice: (listener: (next: MeetingTranscriptionNotice) => void) => {
           listeners.add(listener);
           return () => listeners.delete(listener);
         },
@@ -62,7 +67,7 @@ function WithMockBridge({
     const timer = notice
       ? setTimeout(() => {
           for (const listener of listeners)
-            listener({ reason: "local_asr_model_not_installed", recording });
+            listener({ kind: "install_local", recording });
         }, 50)
       : undefined;
     return () => {

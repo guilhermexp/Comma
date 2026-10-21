@@ -117,6 +117,17 @@ if (command === "install") {
   }
 }
 
+const json = (response, status, body) => {
+  response.writeHead(status, { "content-type": "application/json" });
+  response.end(body === undefined ? undefined : JSON.stringify(body));
+};
+const cloudBody = (body) =>
+  (body.kind === "groq" || body.kind === "openai_compatible") &&
+  typeof body.baseUrl === "string" &&
+  typeof body.model === "string" &&
+  typeof body.apiKey === "string" &&
+  Number.isInteger(body.maxUploadBytes);
+
 // C6: the provider lives in memory only, so a restarted helper reports
 // `configured: false` until Main sends it again. GET /fake/provider is this
 // fake's own probe, so tests can see what Main delivered.
@@ -124,16 +135,6 @@ if (command === "serve") {
   const token = readFileSync(option("--token-file"), "utf8").trim();
   let provider = { kind: "local" };
   let configured = false;
-  const json = (response, status, body) => {
-    response.writeHead(status, { "content-type": "application/json" });
-    response.end(body === undefined ? undefined : JSON.stringify(body));
-  };
-  const cloudBody = (body) =>
-    (body.kind === "groq" || body.kind === "openai_compatible") &&
-    typeof body.baseUrl === "string" &&
-    typeof body.model === "string" &&
-    typeof body.apiKey === "string" &&
-    Number.isInteger(body.maxUploadBytes);
   const server = createServer(async (request, response) => {
     let text = "";
     for await (const chunk of request) text += chunk;

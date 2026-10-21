@@ -27,7 +27,7 @@ const cleanups: (() => void | Promise<void>)[] = [];
 
 afterEach(async () => {
   vi.unstubAllEnvs();
-  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  for (const cleanup of cleanups.splice(0).toReversed()) await cleanup();
 });
 
 function fakeSafeStorage(available = true): SafeStorageLike {

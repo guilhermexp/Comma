@@ -79,6 +79,9 @@ const settled = (subject: LocalTranscriptionManager, phase: string) =>
     { timeout: 5_000 }
   );
 
+const diarizationSettled = (subject: LocalTranscriptionManager, phase: string) =>
+  vi.waitFor(() => expect(subject.diarization()).toBe(phase), { timeout: 5_000 });
+
 describe("local transcription model manager", () => {
   it("reports an installable model with its download size on a supported Mac", async () => {
     const { subject } = manager();
@@ -218,9 +221,6 @@ describe("local transcription model manager", () => {
   });
 
   describe("components (openspec add-cloud-meeting-asr, D3)", () => {
-    const diarizationSettled = (subject: LocalTranscriptionManager, phase: string) =>
-      vi.waitFor(() => expect(subject.diarization()).toBe(phase), { timeout: 5_000 });
-
     it("installs only the speaker separator, without the speech model", async () => {
       const { subject, modelsDir, diarization, states, commands } = manager();
       await subject.state();

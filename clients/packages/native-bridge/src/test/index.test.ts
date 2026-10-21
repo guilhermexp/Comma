@@ -583,6 +583,9 @@ describe("peer channel bridge", () => {
   });
 });
 
+const parseMeetingProvider = (input: unknown) =>
+  meetingTranscriptionSetProviderInputSchema.safeParse(input).success;
+
 describe("native bridge contracts", () => {
   it("classifies every native command for Session admission", () => {
     const lifecycleIds = nativeCapabilityRegistry
@@ -937,35 +940,37 @@ describe("native bridge contracts", () => {
         )
       )
     );
-    const parse = (input: unknown) =>
-      meetingTranscriptionSetProviderInputSchema.safeParse(input).success;
-    expect(parse({ kind: "local" })).toBe(true);
-    expect(parse({ kind: "groq", model: "whisper-large-v3", apiKey: "gsk_x" })).toBe(
-      true
-    );
-    expect(parse({ kind: "groq", model: "whisper-large-v3-turbo" })).toBe(true);
-    expect(parse({ kind: "groq", model: "distil-whisper", apiKey: "gsk_x" })).toBe(
-      false
-    );
+    expect(parseMeetingProvider({ kind: "local" })).toBe(true);
+    expect(
+      parseMeetingProvider({ kind: "groq", model: "whisper-large-v3", apiKey: "gsk_x" })
+    ).toBe(true);
+    expect(
+      parseMeetingProvider({ kind: "groq", model: "whisper-large-v3-turbo" })
+    ).toBe(true);
+    expect(
+      parseMeetingProvider({ kind: "groq", model: "distil-whisper", apiKey: "gsk_x" })
+    ).toBe(false);
     // The Groq preset's URL is fixed in Main; the renderer cannot redirect it.
     expect(
-      parse({
+      parseMeetingProvider({
         kind: "groq",
         model: "whisper-large-v3",
         baseUrl: "https://evil.example",
       })
     ).toBe(false);
     expect(
-      parse({
+      parseMeetingProvider({
         kind: "openai_compatible",
         baseUrl: "https://asr.example/v1",
         model: "m",
       })
     ).toBe(true);
-    expect(parse({ kind: "openai_compatible", baseUrl: "", model: "m" })).toBe(false);
-    expect(parse({ kind: "groq", model: "whisper-large-v3", apiKey: "   " })).toBe(
-      false
-    );
+    expect(
+      parseMeetingProvider({ kind: "openai_compatible", baseUrl: "", model: "m" })
+    ).toBe(false);
+    expect(
+      parseMeetingProvider({ kind: "groq", model: "whisper-large-v3", apiKey: "   " })
+    ).toBe(false);
     // The state says whether a key is saved and nothing more.
     expect(
       meetingTranscriptionStateSchema.safeParse({

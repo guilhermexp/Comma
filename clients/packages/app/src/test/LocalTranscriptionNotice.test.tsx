@@ -1,10 +1,14 @@
 import type {
   AudioCaptureRecording,
-  LocalTranscriptionNotice,
   LocalTranscriptionState,
+  MeetingTranscriptionNotice,
+  MeetingTranscriptionState,
 } from "@comma/native-bridge";
 import { CommaI18nProvider } from "@comma/i18n/react";
-import { installNativeBridgeMock } from "@comma/test-utils/native-bridge";
+import {
+  createNativeStateBridgeMock,
+  installNativeBridgeMock,
+} from "@comma/test-utils/native-bridge";
 import { act, render, screen } from "@comma/test-utils/render";
 import { toast } from "@comma/ui";
 import { useContext } from "react";
@@ -13,6 +17,7 @@ import { CommaAuthContext } from "../components/auth-context";
 import { LocalTranscriptionNoticeHost } from "../components/LocalTranscriptionNoticeHost";
 import {
   transcribableRecordingIds,
+  useRecordingTranscribeReady,
   useRecordingTranscription,
 } from "../components/useRecordingFileActions";
 import type { DriveFile } from "../components/drive/driveStore";
@@ -36,6 +41,18 @@ const recording: AudioCaptureRecording = {
   durationMs: 600_000,
   file: { name: "call.m4a", size: 3_600_000, mediaType: "audio/mp4" },
   driveFile: { space: "comma-drive", path: "recording/2026-10-20/call.m4a" },
+};
+
+const groqReady: MeetingTranscriptionState = {
+  provider: "groq",
+  ready: true,
+  cloud: {
+    model: "whisper-large-v3",
+    baseHost: "api.groq.com",
+    hasKey: true,
+    verification: "valid",
+  },
+  diarization: "ready",
 };
 
 const driveFile = (name: string, folderPath = "recording/2026-10-20"): DriveFile => ({
@@ -73,11 +90,11 @@ function Harness() {
 
 describe("install notice for a recording without the local model", () => {
   it("shows the notice with Install, which opens Settings → Meeting", async () => {
-    let deliver!: (notice: LocalTranscriptionNotice) => void;
+    let deliver!: (notice: MeetingTranscriptionNotice) => void;
     installNativeBridgeMock({
       platform: "electron",
-      localTranscription: {
-        onNotice: (listener: (notice: LocalTranscriptionNotice) => void) => {
+      meetingTranscription: {
+        onNotice: (listener: (notice: MeetingTranscriptionNotice) => void) => {
           deliver = listener;
           return () => undefined;
         },
@@ -86,7 +103,7 @@ describe("install notice for a recording without the local model", () => {
     const shown = vi.spyOn(toast, "info");
     render(withAuth(<LocalTranscriptionNoticeHost />));
 
-    act(() => deliver({ reason: "local_asr_model_not_installed", recording }));
+    act(() => deliver({ kind: "install_local", recording }));
 
     expect(shown).toHaveBeenCalledOnce();
     const [message, options] = shown.mock.calls[0]!;
@@ -102,15 +119,17 @@ describe("install notice for a recording without the local model", () => {
   });
 
   it("dismisses every install notice once the model is ready", async () => {
-    let deliver!: (notice: LocalTranscriptionNotice) => void;
+    let deliver!: (notice: MeetingTranscriptionNotice) => void;
     let publish!: (state: LocalTranscriptionState) => void;
     installNativeBridgeMock({
       platform: "electron",
-      localTranscription: {
-        onNotice: (listener: (notice: LocalTranscriptionNotice) => void) => {
+      meetingTranscription: {
+        onNotice: (listener: (notice: MeetingTranscriptionNotice) => void) => {
           deliver = listener;
           return () => undefined;
         },
+      },
+      localTranscription: {
         state: {
           subscribe: (listener: (state: LocalTranscriptionState) => void) => {
             publish = listener;
@@ -136,7 +155,7 @@ describe("install notice for a recording without the local model", () => {
         </>
       )
     );
-    act(() => deliver({ reason: "local_asr_model_not_installed", recording }));
+    act(() => deliver({ kind: "install_local", recording }));
     await act(async () => screen.getByRole("button", { name: "Transcribe" }).click());
     const noticeIds = [shown, failed].map((spy) => spy.mock.calls.at(-1)![1]!.id);
 
@@ -144,6 +163,81 @@ describe("install notice for a recording without the local model", () => {
     expect(dismissed).not.toHaveBeenCalled();
     act(() => publish({ supported: true, phase: "ready", sizeBytes: 1 }));
     for (const id of noticeIds) expect(dismissed).toHaveBeenCalledWith(id);
+  });
+
+  it("dismisses the install notices once a cloud provider is selected", () => {
+    let deliver!: (notice: MeetingTranscriptionNotice) => void;
+    let publish!: (state: MeetingTranscriptionState) => void;
+    installNativeBridgeMock({
+      platform: "electron",
+      meetingTranscription: {
+        onNotice: (listener: (notice: MeetingTranscriptionNotice) => void) => {
+          deliver = listener;
+          return () => undefined;
+        },
+        state: {
+          subscribe: (listener: (state: MeetingTranscriptionState) => void) => {
+            publish = listener;
+            return () => undefined;
+          },
+        },
+      },
+    } as never);
+    const shown = vi.spyOn(toast, "info");
+    const dismissed = vi.spyOn(toast, "dismiss");
+    render(withAuth(<LocalTranscriptionNoticeHost />));
+    act(() => deliver({ kind: "install_local", recording }));
+    act(() => publish(groqReady));
+    expect(dismissed).toHaveBeenCalledWith(shown.mock.calls.at(-1)![1]!.id);
+  });
+
+  it("asks to set up a cloud provider that is not ready, from Settings → Meeting", () => {
+    let deliver!: (notice: MeetingTranscriptionNotice) => void;
+    installNativeBridgeMock({
+      platform: "electron",
+      meetingTranscription: {
+        onNotice: (listener: (notice: MeetingTranscriptionNotice) => void) => {
+          deliver = listener;
+          return () => undefined;
+        },
+      },
+    } as never);
+    const shown = vi.spyOn(toast, "info");
+    render(withAuth(<LocalTranscriptionNoticeHost />));
+
+    act(() => deliver({ kind: "configure", recording }));
+
+    const [message, options] = shown.mock.calls.at(-1)!;
+    expect(message).toBe("Recording saved. Set up transcription to transcribe it.");
+    expect(options?.actions?.map((action) => action.label)).toEqual([
+      "Set up",
+      "Show in Drive",
+    ]);
+    act(() => options!.actions![0]!.onPress!());
+    expect(window.location.hash).toBe("#/settings?category=meeting");
+  });
+
+  it("says a recording was transcribed on this Mac because Groq was unavailable", async () => {
+    let deliver!: (notice: MeetingTranscriptionNotice) => void;
+    installNativeBridgeMock({
+      platform: "electron",
+      meetingTranscription: {
+        onNotice: (listener: (notice: MeetingTranscriptionNotice) => void) => {
+          deliver = listener;
+          return () => undefined;
+        },
+        state: createNativeStateBridgeMock(() => groqReady),
+      },
+    } as never);
+    const shown = vi.spyOn(toast, "info");
+    render(withAuth(<LocalTranscriptionNoticeHost />));
+    await act(async () => undefined);
+
+    act(() => deliver({ kind: "fallback", reason: "cloud_unreachable", recording }));
+
+    expect(shown.mock.calls.at(-1)![0]).toBe(
+      "Transcribed on this Mac: Groq unavailable (no connection)."
+    );
   });
 
   it("does nothing on the web", () => {
@@ -236,5 +330,69 @@ describe("transcribing a saved recording again", () => {
     );
     const options = failed.mock.calls.at(-1)![1]!;
     expect(options.actions?.map((action) => action.label)).toEqual(["Install"]);
+  });
+
+  it("shows the provider's refusal with Try again when no local model can take over", async () => {
+    const transcribeSaved = vi.fn(async () => ({
+      status: "failed" as const,
+      reason: "cloud_asr_failed:cloud_quota",
+    }));
+    installNativeBridgeMock({
+      platform: "electron",
+      audioCapture: { transcribeSaved } as never,
+      meetingTranscription: { state: createNativeStateBridgeMock(() => groqReady) },
+    } as never);
+    const failed = vi.spyOn(toast, "error");
+    render(withAuth(<Harness />));
+
+    await act(async () => screen.getByRole("button", { name: "Transcribe" }).click());
+
+    expect(failed.mock.calls.at(-1)![0]).toBe(
+      "call.m4a was not transcribed. Groq unavailable: quota reached."
+    );
+    const options = failed.mock.calls.at(-1)![1]!;
+    expect(options.actions?.map((action) => action.label)).toEqual(["Try again"]);
+    await act(async () => options.actions![0]!.onPress!());
+    expect(transcribeSaved).toHaveBeenCalledTimes(2);
+  });
+});
+
+function Gate() {
+  return (
+    <p>{useRecordingTranscribeReady() ? "can transcribe" : "cannot transcribe"}</p>
+  );
+}
+
+describe("Drive's Transcribe gate (add-cloud-meeting-asr, D8)", () => {
+  it.each([
+    [groqReady, "can transcribe"],
+    [
+      { ...groqReady, ready: false, reason: "key_rejected" as const },
+      "cannot transcribe",
+    ],
+    [
+      {
+        provider: "local" as const,
+        ready: true,
+        diarization: "ready" as const,
+      },
+      "can transcribe",
+    ],
+    [
+      {
+        provider: "local" as const,
+        ready: false,
+        reason: "local_model_missing" as const,
+        diarization: "not_installed" as const,
+      },
+      "cannot transcribe",
+    ],
+  ])("follows the selected provider's readiness (%#)", async (state, shown) => {
+    installNativeBridgeMock({
+      platform: "electron",
+      meetingTranscription: { state: createNativeStateBridgeMock(() => state) },
+    } as never);
+    render(withAuth(<Gate />));
+    expect(await screen.findByText(shown)).toBeTruthy();
   });
 });
