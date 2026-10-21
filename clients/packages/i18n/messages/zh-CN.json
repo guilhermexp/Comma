@@ -3369,5 +3369,7 @@
   "agenda_error_generic": "更改未保存，请重试。",
   "agenda_reconnect": "重新连接",
   "agenda_dismiss": "关闭",
-  "agenda_now": "现在"
+  "agenda_now": "现在",
+  "agenda_field_start_time": "开始时间",
+  "agenda_field_end_time": "结束时间"
 }

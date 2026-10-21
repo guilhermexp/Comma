@@ -45,6 +45,8 @@ const autoScrollEdge = 40;
 const autoScrollStep = 12;
 const allDayRowHeight = 24;
 const gutterClassName = "w-16 shrink-0";
+// Below this height a chip cannot show two 14 px lines.
+const compactChipHeight = 32;
 
 export type AgendaGridProps = {
   days: readonly Date[];
@@ -381,7 +383,7 @@ export function AgendaTimeGrid({
               aria-label={`${m.agenda_new_event()} · ${m.agenda_all_day()} · ${formatDayMonth(day, locale)}`}
               className={cx(
                 "border-0 border-l border-secondary bg-transparent p-0",
-                index === todayIndex && "bg-secondary/60"
+                index === todayIndex && "agenda-today"
               )}
               key={day.getTime()}
               onClick={() =>
@@ -419,7 +421,12 @@ export function AgendaTimeGrid({
           ))}
         </div>
       </div>
-      <ScrollArea className="min-h-0 flex-1" ref={viewport} scrollbarVisibility="hover">
+      <ScrollArea
+        className="min-h-0 flex-1"
+        ref={viewport}
+        scrollbarVisibility="hover"
+        viewportProps={{ "data-agenda-hour-viewport": "" } as object}
+      >
         <div className="flex" style={{ height: 24 * hourHeight }}>
           <div className={cx(gutterClassName, "relative")}>
             {Array.from({ length: 23 }, (_, index) => (
@@ -450,7 +457,7 @@ export function AgendaTimeGrid({
               <div
                 className={cx(
                   "relative border-l border-secondary",
-                  index === todayIndex && "bg-secondary/60"
+                  index === todayIndex && "agenda-today"
                 )}
                 data-testid="agenda-day-column"
                 key={day.getTime()}
@@ -459,7 +466,7 @@ export function AgendaTimeGrid({
                   <button
                     aria-label={`${eventTitle(item.event, m)}, ${formatEventTime(item.event, locale)}`}
                     className={cx(
-                      "absolute block overflow-hidden rounded-sm border-0 border-l-[3px] border-solid px-sm py-xxs text-left",
+                      "absolute flex flex-col items-stretch justify-start overflow-hidden rounded-sm border-0 border-l-[3px] border-solid px-sm py-px text-left",
                       item.event.editable ? "cursor-grab" : "cursor-pointer",
                       movingKey === item.event.key && "opacity-40",
                       selectedKey === item.event.key &&
@@ -487,6 +494,10 @@ export function AgendaTimeGrid({
                   >
                     <EventChipText
                       calendar={calendarNameOf(item.event)}
+                      compact={
+                        ((item.endMinute - item.startMinute) / 60) * hourHeight <
+                        compactChipHeight
+                      }
                       time={formatEventTime(item.event, locale)}
                       title={eventTitle(item.event, m)}
                     />
@@ -501,7 +512,7 @@ export function AgendaTimeGrid({
                 ))}
                 {preview?.day === index && (
                   <div
-                    className="pointer-events-none absolute inset-x-0.5 rounded-sm border border-brand bg-brand-secondary/70 px-sm text-xs text-primary"
+                    className="pointer-events-none absolute inset-x-0.5 rounded-sm border border-brand bg-brand-secondary px-sm text-xs text-primary"
                     data-testid="agenda-create-preview"
                     style={{
                       top: (preview.start / 60) * hourHeight,
@@ -527,6 +538,9 @@ export function AgendaTimeGrid({
                   >
                     <EventChipText
                       calendar={calendarNameOf(drag.event)}
+                      compact={
+                        ((drag.end - drag.start) / 60) * hourHeight < compactChipHeight
+                      }
                       time={`${formatTime(atMinute(day, drag.start), locale)}–${formatTime(atMinute(day, drag.end), locale)}`}
                       title={eventTitle(drag.event, m)}
                     />
@@ -542,7 +556,7 @@ export function AgendaTimeGrid({
                 data-testid="agenda-now-line"
                 style={{ top: (minuteOfDay(now) / 60) * hourHeight }}
               >
-                <div className="h-px bg-error-solid/50" />
+                <div className="agenda-now-rule h-px" />
                 <div
                   className="absolute -top-px h-0.5 bg-error-solid"
                   style={{
@@ -561,19 +575,33 @@ export function AgendaTimeGrid({
   );
 }
 
+/**
+ * Two lines (title, then time and calendar) when the chip is tall enough;
+ * one line with the start time otherwise, so a short event's text is never cut.
+ */
 export function EventChipText({
   title,
   time,
   calendar,
+  compact,
 }: {
   title: string;
   time: string;
   calendar: string;
+  compact: boolean;
 }) {
+  if (compact)
+    return (
+      <span className="block truncate text-xs leading-[14px] font-medium text-primary">
+        {title} <span className="font-normal text-tertiary">{time.split("–")[0]}</span>
+      </span>
+    );
   return (
     <>
-      <span className="block truncate text-xs font-medium text-primary">{title}</span>
-      <span className="block truncate text-xs text-tertiary">
+      <span className="block truncate text-xs leading-[14px] font-medium text-primary">
+        {title}
+      </span>
+      <span className="block truncate text-xs leading-[14px] text-tertiary">
         {time} · {calendar}
       </span>
     </>

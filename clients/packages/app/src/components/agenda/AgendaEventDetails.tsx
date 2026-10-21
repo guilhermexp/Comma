@@ -357,7 +357,7 @@ export function AgendaEventDetails({
               />
               {!form.allDay && (
                 <DateTimeInput
-                  label={m.agenda_field_start()}
+                  label={m.agenda_field_start_time()}
                   onChange={(value) => set({ startTime: value })}
                   type="time"
                   value={form.startTime}
@@ -371,7 +371,7 @@ export function AgendaEventDetails({
               />
               {!form.allDay && (
                 <DateTimeInput
-                  label={m.agenda_field_end()}
+                  label={m.agenda_field_end_time()}
                   onChange={(value) => set({ endTime: value })}
                   type="time"
                   value={form.endTime}

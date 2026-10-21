@@ -17,10 +17,21 @@ export function formatBusy(minutes: number, m: Messages): string {
   });
 }
 
+const timeFormats = new Map<string, Intl.DateTimeFormat>();
+
+/** "08:00" where the clock runs to 24 h, "8:00 AM" where it does not. */
 export function formatTime(date: Date, locale: string) {
-  return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(
-    date
-  );
+  let format = timeFormats.get(locale);
+  if (!format) {
+    const cycle = new Intl.DateTimeFormat(locale, { hour: "numeric" }).resolvedOptions()
+      .hourCycle;
+    format = new Intl.DateTimeFormat(locale, {
+      hour: cycle === "h23" || cycle === "h24" ? "2-digit" : "numeric",
+      minute: "2-digit",
+    });
+    timeFormats.set(locale, format);
+  }
+  return format.format(date);
 }
 
 export function formatEventTime(event: AgendaEvent, locale: string) {

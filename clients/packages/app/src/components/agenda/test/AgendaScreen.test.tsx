@@ -114,6 +114,29 @@ describe("Agenda toolbar and grid", () => {
     expect(line.lastElementChild).toHaveStyle({ left: `${(1 / 7) * 100}%` });
   });
 
+  it("opens the hour grid scrolled near the current time", () => {
+    const { entry } = googleWith();
+    renderAgenda([entry]);
+    const viewport = screen
+      .getByTestId("agenda-hour-columns")
+      .closest("[data-agenda-hour-viewport]")!;
+    expect(viewport.scrollTop).toBeCloseTo((14 + 50 / 60 - 1.5) * hourHeight, 0);
+  });
+
+  it("puts a short event's title and start on one line", async () => {
+    const { entry } = googleWith([
+      testEvent(work, "Short", at("2026-10-22", "10:00"), at("2026-10-22", "10:30")),
+      testEvent(work, "Long", at("2026-10-22", "12:00"), at("2026-10-22", "13:00")),
+    ]);
+    renderAgenda([entry]);
+    const short = await screen.findByRole("button", { name: /^Short,/ });
+    expect(short.children).toHaveLength(2);
+    expect(short.firstElementChild).toHaveTextContent("Short 10:00");
+    const long = screen.getByRole("button", { name: /^Long,/ });
+    expect(long.firstElementChild).toHaveTextContent("Long");
+    expect(long.children[1]).toHaveTextContent("12:00–13:00 · Trabalho");
+  });
+
   it("totals each day's busy time and lays out its events", async () => {
     const { entry } = googleWith([
       testEvent(work, "a", at("2026-10-21", "10:15"), at("2026-10-21", "10:45")),

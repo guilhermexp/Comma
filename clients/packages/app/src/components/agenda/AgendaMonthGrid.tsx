@@ -115,7 +115,7 @@ export function AgendaMonthGrid({
                 "flex min-h-0 min-w-0 flex-col gap-xxs border-t border-l border-secondary p-xs",
                 index % 7 === 0 && "border-l-0",
                 index < 7 && "border-t-0",
-                day.getMonth() !== month && "bg-secondary/50"
+                day.getMonth() !== month && "agenda-outside-month"
               )}
               data-testid="agenda-month-day"
               key={key}

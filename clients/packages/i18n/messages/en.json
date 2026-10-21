@@ -3369,5 +3369,7 @@
   "agenda_error_generic": "The change wasn't saved. Try again.",
   "agenda_reconnect": "Reconnect",
   "agenda_dismiss": "Dismiss",
-  "agenda_now": "Now"
+  "agenda_now": "Now",
+  "agenda_field_start_time": "Start time",
+  "agenda_field_end_time": "End time"
 }
