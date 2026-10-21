@@ -36,6 +36,8 @@ const statusLine = z.object({
   reason: z.enum(["unsupported_cpu", "unsupported_os"]).nullable().optional(),
   installed: z.boolean(),
   downloadBytes: z.number().int().nonnegative(),
+  // Contract C5 (add-cloud-meeting-asr); a helper from before it omits them.
+  components: z.object({ asr: z.boolean(), diarization: z.boolean() }).optional(),
 });
 const progressLine = z.object({
   type: z.literal("progress"),
@@ -56,6 +58,9 @@ const helperLine = z.discriminatedUnion("type", [statusLine, progressLine, resul
 type HelperLine = z.infer<typeof helperLine>;
 
 const minimumMacosMajor = 15;
+
+/** The local speaker separator, which cloud providers need (contract C8). */
+export type DiarizationPhase = "not_installed" | "downloading" | "ready" | "failed";
 
 /** Spawns the helper with piped stdout; stderr is its log. */
 export const spawnTranscriber: RunTranscriber = (executable, args) => {
@@ -79,6 +84,10 @@ export const spawnTranscriber: RunTranscriber = (executable, args) => {
  * 3.4). It runs CommaTranscriber's status, install and remove subcommands,
  * turns their JSONL into the `localTranscription` state, and refuses to
  * remove the model while the serving helper reports a transcription.
+ *
+ * The models are two components (add-cloud-meeting-asr, D3): the speech
+ * model (`asr`) and the speaker separator (`diarization`). A cloud provider
+ * needs only the separator, so Remove keeps it while one is selected.
  */
 export class LocalTranscriptionManager {
   readonly #environment: LocalTranscriptionEnvironment;
@@ -86,7 +95,10 @@ export class LocalTranscriptionManager {
   readonly #health: () => Promise<{ busy: boolean } | undefined>;
   readonly #onState: (state: LocalTranscriptionState) => void;
   readonly #log: (message: string) => void;
+  readonly #keepDiarization: () => boolean;
+  readonly #onDiarization: (phase: DiarizationPhase) => void;
   #state: LocalTranscriptionState;
+  #diarization: DiarizationPhase = "not_installed";
   #checked: Promise<void>;
   #install: TranscriberRun | undefined;
   #removing = false;
@@ -98,12 +110,17 @@ export class LocalTranscriptionManager {
     onState: (state: LocalTranscriptionState) => void;
     run?: RunTranscriber | undefined;
     log?: ((message: string) => void) | undefined;
+    /** True while a cloud provider is selected: Remove then keeps the separator. */
+    keepDiarization?: (() => boolean) | undefined;
+    onDiarization?: ((phase: DiarizationPhase) => void) | undefined;
   }) {
     this.#environment = options.environment;
     this.#run = options.run ?? spawnTranscriber;
     this.#health = options.health;
     this.#onState = options.onState;
     this.#log = options.log ?? (() => undefined);
+    this.#keepDiarization = options.keepDiarization ?? (() => false);
+    this.#onDiarization = options.onDiarization ?? (() => undefined);
     const reason = this.#unsupportedReason();
     this.#state = {
       supported: !reason,
@@ -118,6 +135,16 @@ export class LocalTranscriptionManager {
   async state(): Promise<LocalTranscriptionState> {
     await this.#checked;
     return this.#state;
+  }
+
+  /** The last published state, without waiting for the first status check. */
+  currentState(): LocalTranscriptionState {
+    return this.#state;
+  }
+
+  /** The speaker separator's phase, as of the last status or install. */
+  diarization(): DiarizationPhase {
+    return this.#diarization;
   }
 
   /** True when a recording cannot be transcribed until the user installs the model. */
@@ -152,6 +179,29 @@ export class LocalTranscriptionManager {
     return { accepted: true };
   }
 
+  /** Installs only the speaker separator (about 22 MB), for a cloud provider. */
+  async installDiarization(): Promise<LocalTranscriptionActionResult> {
+    await this.#checked;
+    const executable = this.#environment.executable;
+    if (!this.#state.supported || !executable)
+      return { accepted: false, reason: "unsupported" };
+    if (this.#diarization === "ready") return { accepted: true };
+    if (this.#install || this.#removing)
+      return { accepted: false, reason: "in_progress" };
+    const run = this.#run(executable, [
+      "install",
+      ...this.#modelsArgs(),
+      "--component",
+      "diarization",
+    ]);
+    this.#install = run;
+    this.#setDiarization("downloading");
+    void this.#followDiarization(run).finally(() => {
+      this.#install = undefined;
+    });
+    return { accepted: true };
+  }
+
   /** SIGTERM: the helper deletes its staging folder and reports `cancelled`. */
   async cancel(): Promise<LocalTranscriptionActionResult> {
     if (!this.#install) return { accepted: false };
@@ -170,12 +220,20 @@ export class LocalTranscriptionManager {
     if ((await this.#health().catch(() => undefined))?.busy)
       return { accepted: false, reason: "busy" };
     this.#removing = true;
+    const component = this.#keepDiarization() ? "asr" : "all";
     try {
       const { result } = await this.#collect(
-        this.#run(executable, ["remove", ...this.#modelsArgs()])
+        this.#run(executable, [
+          "remove",
+          ...this.#modelsArgs(),
+          "--component",
+          component,
+        ])
       );
-      if (result?.ok) this.#publish({ phase: "not_installed", error: undefined });
-      else
+      if (result?.ok) {
+        if (component === "all") this.#setDiarization("not_installed");
+        this.#publish({ phase: "not_installed", error: undefined });
+      } else
         this.#publish({
           phase: "failed",
           error: {
@@ -222,6 +280,12 @@ export class LocalTranscriptionManager {
       });
       return;
     }
+    const components = status.components ?? {
+      asr: status.installed,
+      diarization: status.installed,
+    };
+    if (this.#diarization !== "failed" || components.diarization)
+      this.#setDiarization(components.diarization ? "ready" : "not_installed");
     this.#publish({
       sizeBytes: status.downloadBytes,
       ...(this.#state.phase === "failed"
@@ -245,6 +309,7 @@ export class LocalTranscriptionManager {
     }
     const code = await run.exited;
     if (result?.ok && code === 0) {
+      this.#setDiarization("ready");
       this.#publish({ phase: "ready", fraction: undefined, error: undefined });
     } else if (result?.error?.code === "cancelled") {
       this.#publish({ phase: "not_installed", fraction: undefined, error: undefined });
@@ -261,6 +326,29 @@ export class LocalTranscriptionManager {
         },
       });
     }
+  }
+
+  async #followDiarization(run: TranscriberRun) {
+    let result: z.infer<typeof resultLine> | undefined;
+    for await (const line of parsedLines(run.lines, this.#log))
+      if (line.type === "result") result = line;
+    const code = await run.exited;
+    if (result?.ok && code === 0) this.#setDiarization("ready");
+    else if (result?.error?.code === "cancelled") this.#setDiarization("not_installed");
+    else {
+      this.#log(
+        `The speaker separator was not installed: ${truncate(
+          result?.error?.message ?? `exit code ${code ?? "unknown"}`
+        )}`
+      );
+      this.#setDiarization("failed");
+    }
+  }
+
+  #setDiarization(phase: DiarizationPhase) {
+    if (this.#diarization === phase) return;
+    this.#diarization = phase;
+    this.#onDiarization(phase);
   }
 
   async #collect(run: TranscriberRun) {

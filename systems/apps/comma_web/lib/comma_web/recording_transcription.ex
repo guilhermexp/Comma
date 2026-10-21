@@ -132,6 +132,13 @@ defmodule CommaWeb.RecordingTranscription do
   defp payload({:error, :local_asr_model_not_installed}),
     do: %{status: "error", reason: "local_asr_model_not_installed"}
 
+  # The desktop app matches the `cloud_asr_*:` prefixes and reads the reason after them.
+  defp payload({:error, {:cloud_asr_failed, reason}}),
+    do: %{status: "error", reason: "cloud_asr_failed:#{reason}"}
+
+  defp payload({:error, {:cloud_asr_not_ready, reason}}),
+    do: %{status: "error", reason: "cloud_asr_not_ready:#{reason}"}
+
   defp payload({:error, :timeout}),
     do: %{status: "error", reason: "Transcription timed out. The audio remains in Drive."}
 

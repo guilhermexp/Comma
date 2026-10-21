@@ -15,3 +15,7 @@ apps/electron/.dev-electron/
 apps/electron/native/**/.build/
 apps/electron/native/**/.derived/
 apps/electron/native/**/.swiftpm/
+# Vendored license texts and model cards stay byte-identical to their sources.
+apps/electron/native/macos/CommaTranscriber/Licenses/
+# Written by scripts/transcriber-models-manifest.ts; its --check compares bytes.
+apps/electron/native/macos/CommaTranscriber/Sources/TranscriberCore/models-manifest.json

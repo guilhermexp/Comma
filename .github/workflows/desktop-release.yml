@@ -218,6 +218,17 @@ jobs:
           Brazilian Portuguese names and slang can be wrong, and overlapping
           speech gets one speaker. Model licenses are in
           `Comma.app/Contents/Resources/licenses/fluidaudio/`.
+
+          Meeting transcription can also use Groq or another OpenAI-compatible
+          API. Local stays the default. In Settings > Work > Meeting, select the
+          engine, paste the key, and click Save. With a cloud engine, the audio
+          of each recording goes to that provider; the speaker separator (about
+          22 MB) still runs on the Mac. The key is encrypted with the macOS
+          Keychain in `~/Library/Application Support/Comma/local/asr-provider.bin`.
+          Groq's free plan transcribes up to 7,200 seconds of audio per hour, so a
+          two-hour recording uses the full hour. If the cloud fails, Comma uses
+          the local model when it is installed and says why; otherwise it shows
+          the provider's error with Try again.
           NOTES
           gh release create "$TAG" release/* \
             --repo "$GITHUB_REPOSITORY" \

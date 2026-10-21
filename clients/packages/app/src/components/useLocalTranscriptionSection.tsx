@@ -19,8 +19,13 @@ function formatMegabytes(bytes: number, locale: string) {
  * status stays text ("Downloading 42%") rather than a spinner, so progress
  * is readable at a glance. Remove asks first, in `removalDialog`, which the
  * caller renders beside its other Settings dialogs.
+ *
+ * With a cloud provider selected the model stays the fallback, so its ready
+ * row names the provider it stands in for (`fallbackProvider`).
  */
-export function useLocalTranscriptionSection(): {
+export function useLocalTranscriptionSection({
+  fallbackProvider,
+}: { fallbackProvider?: string | undefined } = {}): {
   section: SettingsPanelSection;
   removalDialog: ReactNode;
 } {
@@ -75,7 +80,12 @@ export function useLocalTranscriptionSection(): {
         };
       case "ready":
         return {
-          description: m.settings_local_transcription_ready_description({ size }),
+          description: fallbackProvider
+            ? m.settings_meeting_transcription_local_fallback({
+                provider: fallbackProvider,
+                size,
+              })
+            : m.settings_local_transcription_ready_description({ size }),
           status: {
             label: m.settings_local_transcription_status_ready(),
             color: "success",

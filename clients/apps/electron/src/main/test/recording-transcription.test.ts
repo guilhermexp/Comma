@@ -1,10 +1,13 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AudioCaptureRecording } from "@comma/native-bridge";
 import type { DriveRecordingStore } from "../modules/audio-capture/drive-recordings";
-import { RecordingTranscriptionService } from "../modules/audio-capture/transcription";
+import {
+  RecordingTranscriptionService,
+  type RecordingTranscriptionOptions,
+} from "../modules/audio-capture/transcription";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -28,9 +31,7 @@ const result = {
 
 async function fixture(
   frame: Record<string, unknown> = { status: "ready", result },
-  {
-    onModelMissing,
-  }: { onModelMissing?: (recording: AudioCaptureRecording) => void } = {}
+  options: RecordingTranscriptionOptions = {}
 ) {
   const directory = await mkdtemp(join(tmpdir(), "comma-asr-test-"));
   directories.push(directory);
@@ -66,7 +67,7 @@ async function fixture(
       url: new URL("https://comma.example/v1/comma/me/recordings/transcribe"),
       assertCurrent,
     }),
-    onModelMissing ? { onModelMissing } : {}
+    options
   );
   return { path, service, writeTranscript, fetcher, assertCurrent, resolveSaved };
 }
@@ -244,4 +245,90 @@ it("bounds concurrent ASR requests and admits a new recording after completion",
   fetcher.mockResolvedValue(new Response(": ended\n\n"));
   await service.process(recording, target, path);
   expect(fetcher).toHaveBeenCalledTimes(3);
+});
+
+describe("cloud providers (openspec add-cloud-meeting-asr, D6)", () => {
+  it("records the provider and model that produced the transcript", async () => {
+    const { service, path, writeTranscript } = await fixture({
+      status: "ready",
+      result: { ...result, provider: "groq", model: "whisper-large-v3" },
+    });
+    await service.process(recording, target, path);
+    expect(JSON.parse(writeTranscript.mock.calls[1]![3]!)).toEqual({
+      status: "ready",
+      source: recording.driveFile,
+      ...result,
+      provider: "groq",
+      model: "whisper-large-v3",
+    });
+  });
+
+  it("records a local fallback with its reason and reports it", async () => {
+    const onFallback = vi.fn();
+    const fallback = { from: "groq", reason: "cloud_unreachable" };
+    const { service, path, writeTranscript } = await fixture(
+      {
+        status: "ready",
+        result: {
+          ...result,
+          provider: "local",
+          model: "parakeet-tdt-0.6b-v3",
+          fallback,
+        },
+      },
+      { onFallback }
+    );
+    expect(await service.process(recording, target, path)).toEqual({ status: "ready" });
+    expect(JSON.parse(writeTranscript.mock.calls[1]![3]!)).toMatchObject({
+      provider: "local",
+      model: "parakeet-tdt-0.6b-v3",
+      fallback,
+    });
+    expect(onFallback).toHaveBeenCalledExactlyOnceWith(recording, fallback);
+  });
+
+  it("reports a cloud failure without a local model as the provider's reason", async () => {
+    const onCloudFailure = vi.fn();
+    const onModelMissing = vi.fn();
+    const { service, path, writeTranscript } = await fixture(
+      { status: "error", reason: "cloud_asr_failed:cloud_quota" },
+      { onCloudFailure, onModelMissing }
+    );
+    expect(await service.process(recording, target, path)).toEqual({
+      status: "failed",
+      reason: "cloud_asr_failed:cloud_quota",
+    });
+    expect(onCloudFailure).toHaveBeenCalledExactlyOnceWith(recording, "cloud_quota");
+    expect(onModelMissing).not.toHaveBeenCalled();
+    expect(JSON.parse(writeTranscript.mock.calls[0]![3]!).reason).toBe(
+      "cloud_asr_failed:cloud_quota"
+    );
+  });
+
+  it("makes sure the helper holds the provider before it uploads", async () => {
+    const order: string[] = [];
+    const { service, path, fetcher } = await fixture(undefined, {
+      beforeTranscribe: async () => {
+        order.push("deliver");
+      },
+    });
+    fetcher.mockImplementationOnce(async () => {
+      order.push("upload");
+      return new Response(
+        `event: transcription\ndata: ${JSON.stringify({ status: "ready", result })}\n\n`
+      );
+    });
+    await service.process(recording, target, path);
+    expect(order).toEqual(["deliver", "upload"]);
+  });
+
+  it("still uploads when the delivery check fails", async () => {
+    const { service, path, fetcher } = await fixture(undefined, {
+      beforeTranscribe: async () => {
+        throw new Error("helper is down");
+      },
+    });
+    expect(await service.process(recording, target, path)).toEqual({ status: "ready" });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
 });
