@@ -703,6 +703,12 @@ defmodule Salix.Bindings.MeetingSummary do
             ],
        do: true
 
+  defp asr_unavailable_reason?({:cloud_asr_not_ready, _reason}), do: true
+
+  defp asr_unavailable_reason?({:cloud_asr_failed, reason})
+       when reason in ["cloud_unreachable", "cloud_server_error", "cloud_timeout", "cloud_quota"],
+       do: true
+
   defp asr_unavailable_reason?({:asr_chunk_failed, _index, reason}),
     do: asr_unavailable_reason?(reason)
 

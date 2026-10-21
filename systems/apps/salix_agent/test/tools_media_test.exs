@@ -274,6 +274,22 @@ defmodule SalixAgent.ToolsMediaTest do
       end
     end
 
+    test "names cloud transcription failures and missing prerequisites", %{ctx: ctx} do
+      on_exit(fn -> Application.delete_env(:salix_agent, :tools_media_audio_result) end)
+
+      for {result, message} <- [
+            {{:cloud_asr_failed, "cloud_quota"}, ~r/^cloud_asr_failed:cloud_quota: /},
+            {{:cloud_asr_not_ready, "diarization_missing"},
+             ~r/^cloud_asr_not_ready:diarization_missing: /}
+          ] do
+        Application.put_env(:salix_agent, :tools_media_audio_result, {:error, result})
+
+        assert_raise RuntimeError, message, fn ->
+          Media.transcribe_audio(%{"path" => "/uploads/meeting.m4a"}, ctx)
+        end
+      end
+    end
+
     test "uses the current agent scope and writes the complete transcript to VFS", %{
       agent: agent,
       ctx: ctx
