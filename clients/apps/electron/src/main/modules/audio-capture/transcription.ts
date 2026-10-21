@@ -24,6 +24,16 @@ const transcriptResult = z.discriminatedUnion("status", [
           })
         )
         .max(48),
+      // Contract C7 through the backend (add-cloud-meeting-asr, D6): which
+      // provider and model produced it, and why it fell back to this Mac.
+      provider: z.enum(["local", "groq", "openai_compatible"]).optional(),
+      model: z.string().max(200).optional(),
+      fallback: z
+        .object({
+          from: z.enum(["groq", "openai_compatible"]),
+          reason: z.string().max(100),
+        })
+        .optional(),
     }),
   }),
   z.object({ status: z.literal("error"), reason: z.string().max(500) }),
@@ -34,6 +44,25 @@ export const maxTranscriptionBytes = 64 * 1024 * 1024;
 
 /** The server's exact reason when the local transcription model is missing (contract C3). */
 export const localModelMissingReason = "local_asr_model_not_installed";
+
+/** The backend's reason prefix when a cloud provider failed without a local model. */
+const cloudFailedPrefix = "cloud_asr_failed:";
+
+export type RecordingTranscriptFallback = { from: string; reason: string };
+
+export interface RecordingTranscriptionOptions {
+  /** The server has no local model: the renderer shows the install notice. */
+  onModelMissing?: (recording: AudioCaptureRecording) => void;
+  /** The cloud provider failed and this Mac's model transcribed it instead. */
+  onFallback?: (
+    recording: AudioCaptureRecording,
+    fallback: RecordingTranscriptFallback
+  ) => void;
+  /** The cloud provider failed and no local model could take over. */
+  onCloudFailure?: (recording: AudioCaptureRecording, reason: string) => void;
+  /** Runs before the upload, for example to deliver the provider to the helper. */
+  beforeTranscribe?: () => Promise<unknown>;
+}
 
 export interface RecordingASRSession {
   fetch: typeof fetch;
@@ -50,10 +79,7 @@ export class RecordingTranscriptionService {
       "writeTranscript" | "resolveSaved"
     >,
     private readonly bindSession: () => RecordingASRSession,
-    private readonly options: {
-      /** The server has no local model: the renderer shows the install notice. */
-      onModelMissing?: (recording: AudioCaptureRecording) => void;
-    } = {}
+    private readonly options: RecordingTranscriptionOptions = {}
   ) {}
 
   /**
@@ -102,6 +128,8 @@ export class RecordingTranscriptionService {
         throw new Error(
           "ASR accepts recordings up to 64 MiB. The audio remains in Drive."
         );
+      // A failed check leaves the helper as it is; the upload still runs.
+      await this.options.beforeTranscribe?.().catch(() => undefined);
       const result = await transcribeRecording(session, sourcePath);
       session.assertCurrent();
       await this.drive.writeTranscript(recording, target, "txt", result.transcript);
@@ -120,6 +148,7 @@ export class RecordingTranscriptionService {
           2
         )
       );
+      if (result.fallback) this.options.onFallback?.(recording, result.fallback);
       return { status: "ready" };
     } catch (error) {
       session.assertCurrent();
@@ -128,6 +157,11 @@ export class RecordingTranscriptionService {
           ? error.message.slice(0, 500)
           : "Transcription failed. The audio remains in Drive.";
       if (reason === localModelMissingReason) this.options.onModelMissing?.(recording);
+      if (reason.startsWith(cloudFailedPrefix))
+        this.options.onCloudFailure?.(
+          recording,
+          reason.slice(cloudFailedPrefix.length)
+        );
       await this.drive.writeTranscript(
         recording,
         target,

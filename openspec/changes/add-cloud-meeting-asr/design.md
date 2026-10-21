@@ -45,7 +45,11 @@ Alternativa descartada: o backend chamar a Groq direto. Exigiria ffmpeg para cor
 
 ### D2. Chave cifrada com `safeStorage` e entregue ao helper por rota autenticada
 
-- **Guarda:** o Electron guarda `{kind, baseUrl, model, apiKey}` cifrado com `safeStorage.encryptString` em `<dataDir>/asr-provider.bin` (0600). A chave de cifra fica no Keychain ("Comma Safe Storage").
+- **Guarda:** o Electron guarda `{selected, cloud?: {kind, baseUrl, model, apiKey}}` cifrado com `safeStorage.encryptString` em `<dataDir>/asr-provider.bin` (0600). A chave de cifra fica no Keychain ("Comma Safe Storage").
+  - `selected` é o provedor escolhido; `cloud` é a última configuração de nuvem aceita. Um provedor de nuvem escolhido é sempre o de `cloud`.
+  - Escolher Local mantém `cloud`, cifrado. Voltar para esse provedor reusa a chave salva sem colá-la de novo, depois de nova verificação.
+  - Só "Apagar" remove `cloud`. Se esse provedor estava escolhido, o mecanismo volta para Local.
+  - Sem `cloud`, o arquivo não existe.
 - **Entrega:** depois que o helper fica pronto, a cada reinício dele e a cada mudança de configuração, o Electron faz `PUT /v1/provider` (C6) com o token do helper. O helper guarda a configuração só em memória.
 - **Reenvio:** `/health` informa `provider.configured`. Se o helper reiniciou e perdeu a configuração, o gerenciador a reenvia.
 - **Sem `safeStorage`:** se a cifra não estiver disponível, os provedores de nuvem ficam indisponíveis, com motivo explícito. Não há fallback para texto puro.
@@ -155,14 +159,18 @@ Alternativa descartada: o backend chamar a Groq direto. Exigiria ffmpeg para cor
   provider: "local" | "groq" | "openai_compatible",
   ready: bool,
   reason?: "local_model_missing" | "key_missing" | "key_rejected" | "diarization_missing" | "secure_storage_unavailable" | "unsupported",
-  cloud?: { model, baseHost, hasKey, verification: "idle" | "checking" | "valid" | "rejected" | "unreachable" },
+  cloud?: { kind: "groq" | "openai_compatible", model, baseHost, hasKey, verification: "idle" | "checking" | "valid" | "rejected" | "unreachable" },
   diarization: "not_installed" | "downloading" | "ready" | "failed"
 }
 ```
 
+- `cloud` descreve a configuração de nuvem salva, também com Local escolhido; some quando a chave é apagada.
+- `setProvider` sem `apiKey` reusa a chave salva do mesmo provedor e da mesma origem de URL; `openai_compatible` sem `baseUrl` reusa a URL salva.
+
 Folhas relacionadas:
 - `localTranscription` continua como em C1–C4, para o modelo local;
-- evento `meetingTranscription.notice`, com `{kind: "fallback" | "configure" | "install_local", reason?, recording}`.
+- evento `meetingTranscription.notice`, com `{kind: "fallback" | "cloud_failed" | "configure" | "install_local", reason?, provider?, recording}`:
+  - `cloud_failed`: a nuvem falhou sem modelo local para assumir (502 `cloud_asr_failed`). Traz `reason` (`cloud_…`) e `provider` (`groq` | `openai_compatible`). O aviso nomeia o provedor e o motivo em palavras simples, com "Tentar de novo" (transcreve a gravação de novo) e "Mostrar no Drive", sem sugerir instalar o modelo local.
 
 ## Riscos / Trade-offs
 

@@ -117,7 +117,6 @@ import {
   localFilesPreviewCapability,
   localTranscriptionCancelCapability,
   localTranscriptionInstallCapability,
-  localTranscriptionNoticeEvent,
   localTranscriptionRemoveCapability,
   localTranscriptionStateCapability,
   localTranscriptionStateChangedEvent,
@@ -137,6 +136,13 @@ import {
   meetingRecorderStateCapability,
   meetingRecorderStateChangedEvent,
   meetingRecorderStateLeaf,
+  meetingTranscriptionClearKeyCapability,
+  meetingTranscriptionNoticeEvent,
+  meetingTranscriptionRetryVerifyCapability,
+  meetingTranscriptionSetProviderCapability,
+  meetingTranscriptionStateCapability,
+  meetingTranscriptionStateChangedEvent,
+  meetingTranscriptionStateLeaf,
   messageNotificationsEvent,
   nativeInfoCapability,
   notchCloseCapability,
@@ -259,6 +265,10 @@ export const generatedNativeCapabilityContracts = {
   localTranscriptionInstall: localTranscriptionInstallCapability.contract,
   localTranscriptionCancel: localTranscriptionCancelCapability.contract,
   localTranscriptionRemove: localTranscriptionRemoveCapability.contract,
+  meetingTranscriptionState: meetingTranscriptionStateCapability.contract,
+  meetingTranscriptionSetProvider: meetingTranscriptionSetProviderCapability.contract,
+  meetingTranscriptionClearKey: meetingTranscriptionClearKeyCapability.contract,
+  meetingTranscriptionRetryVerify: meetingTranscriptionRetryVerifyCapability.contract,
   computerUsePermissions: computerUsePermissionsCapability.contract,
   computerUsePermissionFlow: computerUsePermissionFlowCapability.contract,
   applicationMenuUpdate: applicationMenuUpdateCapability.contract,
@@ -459,6 +469,12 @@ export const generatedNativeWebFallbacks = {
   localTranscriptionInstall: localTranscriptionInstallCapability.webFallback,
   localTranscriptionCancel: localTranscriptionCancelCapability.webFallback,
   localTranscriptionRemove: localTranscriptionRemoveCapability.webFallback,
+  meetingTranscriptionState: meetingTranscriptionStateCapability.webFallback,
+  meetingTranscriptionSetProvider:
+    meetingTranscriptionSetProviderCapability.webFallback,
+  meetingTranscriptionClearKey: meetingTranscriptionClearKeyCapability.webFallback,
+  meetingTranscriptionRetryVerify:
+    meetingTranscriptionRetryVerifyCapability.webFallback,
   computerUsePermissions: computerUsePermissionsCapability.webFallback,
   computerUsePermissionFlow: computerUsePermissionFlowCapability.webFallback,
   applicationMenuUpdate: applicationMenuUpdateCapability.webFallback,
@@ -666,6 +682,12 @@ export const generatedNativePreloadBindings = {
     install: localTranscriptionInstallCapability.contract,
     cancel: localTranscriptionCancelCapability.contract,
     remove: localTranscriptionRemoveCapability.contract,
+  },
+  meetingTranscription: {
+    state: meetingTranscriptionStateCapability.contract,
+    setProvider: meetingTranscriptionSetProviderCapability.contract,
+    clearKey: meetingTranscriptionClearKeyCapability.contract,
+    retryVerify: meetingTranscriptionRetryVerifyCapability.contract,
   },
   computerUse: {
     getPermissions: computerUsePermissionsCapability.contract,
@@ -927,7 +949,10 @@ export const generatedNativePreloadEventBindings = {
   },
   localTranscription: {
     state: localTranscriptionStateChangedEvent,
-    notice: localTranscriptionNoticeEvent,
+  },
+  meetingTranscription: {
+    state: meetingTranscriptionStateChangedEvent,
+    notice: meetingTranscriptionNoticeEvent,
   },
   applicationMenu: {
     command: applicationMenuCommandEvent,
@@ -1008,6 +1033,12 @@ export const generatedNativeStateBindings = {
     state: {
       get: localTranscriptionStateCapability.contract,
       subscribe: localTranscriptionStateChangedEvent,
+    },
+  },
+  meetingTranscription: {
+    state: {
+      get: meetingTranscriptionStateCapability.contract,
+      subscribe: meetingTranscriptionStateChangedEvent,
     },
   },
   sitePermissionMenu: {
@@ -1180,6 +1211,42 @@ export const generatedNativeMainBindingsById = {
     sessionAdmission: localTranscriptionRemoveCapability.sessionAdmission,
     sessionAdmissionRationale:
       localTranscriptionRemoveCapability.sessionAdmissionRationale,
+  },
+  "meetingTranscription.state": {
+    contract: meetingTranscriptionStateCapability.contract,
+    id: meetingTranscriptionStateCapability.id,
+    method: "state",
+    provider: "meetingTranscription",
+    sessionAdmission: meetingTranscriptionStateCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionStateCapability.sessionAdmissionRationale,
+  },
+  "meetingTranscription.setProvider": {
+    contract: meetingTranscriptionSetProviderCapability.contract,
+    id: meetingTranscriptionSetProviderCapability.id,
+    method: "setProvider",
+    provider: "meetingTranscription",
+    sessionAdmission: meetingTranscriptionSetProviderCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionSetProviderCapability.sessionAdmissionRationale,
+  },
+  "meetingTranscription.clearKey": {
+    contract: meetingTranscriptionClearKeyCapability.contract,
+    id: meetingTranscriptionClearKeyCapability.id,
+    method: "clearKey",
+    provider: "meetingTranscription",
+    sessionAdmission: meetingTranscriptionClearKeyCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionClearKeyCapability.sessionAdmissionRationale,
+  },
+  "meetingTranscription.retryVerify": {
+    contract: meetingTranscriptionRetryVerifyCapability.contract,
+    id: meetingTranscriptionRetryVerifyCapability.id,
+    method: "retryVerify",
+    provider: "meetingTranscription",
+    sessionAdmission: meetingTranscriptionRetryVerifyCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionRetryVerifyCapability.sessionAdmissionRationale,
   },
   "computerUse.getPermissions": {
     contract: computerUsePermissionsCapability.contract,
@@ -2732,6 +2799,50 @@ export const generatedNativeCapabilityManifest = [
     sessionAdmissionRationale:
       localTranscriptionRemoveCapability.sessionAdmissionRationale,
     transport: localTranscriptionRemoveCapability.transport,
+  },
+  {
+    bridge: meetingTranscriptionStateCapability.bridge,
+    channel: meetingTranscriptionStateCapability.channel,
+    id: meetingTranscriptionStateCapability.id,
+    payloadClass: meetingTranscriptionStateCapability.payloadClass,
+    permission: meetingTranscriptionStateCapability.permission,
+    sessionAdmission: meetingTranscriptionStateCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionStateCapability.sessionAdmissionRationale,
+    transport: meetingTranscriptionStateCapability.transport,
+  },
+  {
+    bridge: meetingTranscriptionSetProviderCapability.bridge,
+    channel: meetingTranscriptionSetProviderCapability.channel,
+    id: meetingTranscriptionSetProviderCapability.id,
+    payloadClass: meetingTranscriptionSetProviderCapability.payloadClass,
+    permission: meetingTranscriptionSetProviderCapability.permission,
+    sessionAdmission: meetingTranscriptionSetProviderCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionSetProviderCapability.sessionAdmissionRationale,
+    transport: meetingTranscriptionSetProviderCapability.transport,
+  },
+  {
+    bridge: meetingTranscriptionClearKeyCapability.bridge,
+    channel: meetingTranscriptionClearKeyCapability.channel,
+    id: meetingTranscriptionClearKeyCapability.id,
+    payloadClass: meetingTranscriptionClearKeyCapability.payloadClass,
+    permission: meetingTranscriptionClearKeyCapability.permission,
+    sessionAdmission: meetingTranscriptionClearKeyCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionClearKeyCapability.sessionAdmissionRationale,
+    transport: meetingTranscriptionClearKeyCapability.transport,
+  },
+  {
+    bridge: meetingTranscriptionRetryVerifyCapability.bridge,
+    channel: meetingTranscriptionRetryVerifyCapability.channel,
+    id: meetingTranscriptionRetryVerifyCapability.id,
+    payloadClass: meetingTranscriptionRetryVerifyCapability.payloadClass,
+    permission: meetingTranscriptionRetryVerifyCapability.permission,
+    sessionAdmission: meetingTranscriptionRetryVerifyCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionRetryVerifyCapability.sessionAdmissionRationale,
+    transport: meetingTranscriptionRetryVerifyCapability.transport,
   },
   {
     bridge: computerUsePermissionsCapability.bridge,
@@ -4586,10 +4697,16 @@ export const generatedNativeEventManifest = [
     target: localTranscriptionStateChangedEvent.target,
   },
   {
-    channel: localTranscriptionNoticeEvent.channel,
-    id: localTranscriptionNoticeEvent.id,
-    permission: localTranscriptionNoticeEvent.permission,
-    target: localTranscriptionNoticeEvent.target,
+    channel: meetingTranscriptionStateChangedEvent.channel,
+    id: meetingTranscriptionStateChangedEvent.id,
+    permission: meetingTranscriptionStateChangedEvent.permission,
+    target: meetingTranscriptionStateChangedEvent.target,
+  },
+  {
+    channel: meetingTranscriptionNoticeEvent.channel,
+    id: meetingTranscriptionNoticeEvent.id,
+    permission: meetingTranscriptionNoticeEvent.permission,
+    target: meetingTranscriptionNoticeEvent.target,
   },
   {
     channel: applicationMenuCommandEvent.channel,
@@ -4783,6 +4900,24 @@ export const generatedNativeStateManifest = [
       id: localTranscriptionStateLeaf.subscribe.id,
       permission: localTranscriptionStateLeaf.subscribe.permission,
       target: localTranscriptionStateLeaf.subscribe.target,
+    },
+  },
+  {
+    bridge: meetingTranscriptionStateLeaf.bridge,
+    get: {
+      channel: meetingTranscriptionStateLeaf.get.channel,
+      id: meetingTranscriptionStateLeaf.get.id,
+      permission: meetingTranscriptionStateLeaf.get.permission,
+      sessionAdmission: meetingTranscriptionStateLeaf.get.sessionAdmission,
+      sessionAdmissionRationale:
+        meetingTranscriptionStateLeaf.get.sessionAdmissionRationale,
+    },
+    id: meetingTranscriptionStateLeaf.id,
+    subscribe: {
+      channel: meetingTranscriptionStateLeaf.subscribe.channel,
+      id: meetingTranscriptionStateLeaf.subscribe.id,
+      permission: meetingTranscriptionStateLeaf.subscribe.permission,
+      target: meetingTranscriptionStateLeaf.subscribe.target,
     },
   },
   {
@@ -5260,6 +5395,92 @@ export const generatedNativeCapabilityIndex = {
     sessionAdmissionRationale:
       localTranscriptionRemoveCapability.sessionAdmissionRationale,
     transport: localTranscriptionRemoveCapability.transport,
+  },
+  "meetingTranscription.state": {
+    artifacts: {
+      contract: "meetingTranscriptionStateContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["meetingTranscription.state"]',
+      leaf: "meetingTranscriptionStateCapability",
+      mainBinding: 'generatedNativeMainBindingsById["meetingTranscription.state"]',
+      mock: "meetingTranscriptionStateCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.meetingTranscription.state",
+      webFallback: "generatedNativeWebFallbacks.meetingTranscriptionState",
+    },
+    bridge: meetingTranscriptionStateCapability.bridge,
+    channel: meetingTranscriptionStateCapability.channel,
+    handler: meetingTranscriptionStateCapability.handler,
+    id: meetingTranscriptionStateCapability.id,
+    payloadClass: meetingTranscriptionStateCapability.payloadClass,
+    permission: meetingTranscriptionStateCapability.permission,
+    sessionAdmission: meetingTranscriptionStateCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionStateCapability.sessionAdmissionRationale,
+    transport: meetingTranscriptionStateCapability.transport,
+  },
+  "meetingTranscription.setProvider": {
+    artifacts: {
+      contract: "meetingTranscriptionSetProviderContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["meetingTranscription.setProvider"]',
+      leaf: "meetingTranscriptionSetProviderCapability",
+      mainBinding:
+        'generatedNativeMainBindingsById["meetingTranscription.setProvider"]',
+      mock: "meetingTranscriptionSetProviderCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.meetingTranscription.setProvider",
+      webFallback: "generatedNativeWebFallbacks.meetingTranscriptionSetProvider",
+    },
+    bridge: meetingTranscriptionSetProviderCapability.bridge,
+    channel: meetingTranscriptionSetProviderCapability.channel,
+    handler: meetingTranscriptionSetProviderCapability.handler,
+    id: meetingTranscriptionSetProviderCapability.id,
+    payloadClass: meetingTranscriptionSetProviderCapability.payloadClass,
+    permission: meetingTranscriptionSetProviderCapability.permission,
+    sessionAdmission: meetingTranscriptionSetProviderCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionSetProviderCapability.sessionAdmissionRationale,
+    transport: meetingTranscriptionSetProviderCapability.transport,
+  },
+  "meetingTranscription.clearKey": {
+    artifacts: {
+      contract: "meetingTranscriptionClearKeyContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["meetingTranscription.clearKey"]',
+      leaf: "meetingTranscriptionClearKeyCapability",
+      mainBinding: 'generatedNativeMainBindingsById["meetingTranscription.clearKey"]',
+      mock: "meetingTranscriptionClearKeyCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.meetingTranscription.clearKey",
+      webFallback: "generatedNativeWebFallbacks.meetingTranscriptionClearKey",
+    },
+    bridge: meetingTranscriptionClearKeyCapability.bridge,
+    channel: meetingTranscriptionClearKeyCapability.channel,
+    handler: meetingTranscriptionClearKeyCapability.handler,
+    id: meetingTranscriptionClearKeyCapability.id,
+    payloadClass: meetingTranscriptionClearKeyCapability.payloadClass,
+    permission: meetingTranscriptionClearKeyCapability.permission,
+    sessionAdmission: meetingTranscriptionClearKeyCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionClearKeyCapability.sessionAdmissionRationale,
+    transport: meetingTranscriptionClearKeyCapability.transport,
+  },
+  "meetingTranscription.retryVerify": {
+    artifacts: {
+      contract: "meetingTranscriptionRetryVerifyContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["meetingTranscription.retryVerify"]',
+      leaf: "meetingTranscriptionRetryVerifyCapability",
+      mainBinding:
+        'generatedNativeMainBindingsById["meetingTranscription.retryVerify"]',
+      mock: "meetingTranscriptionRetryVerifyCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.meetingTranscription.retryVerify",
+      webFallback: "generatedNativeWebFallbacks.meetingTranscriptionRetryVerify",
+    },
+    bridge: meetingTranscriptionRetryVerifyCapability.bridge,
+    channel: meetingTranscriptionRetryVerifyCapability.channel,
+    handler: meetingTranscriptionRetryVerifyCapability.handler,
+    id: meetingTranscriptionRetryVerifyCapability.id,
+    payloadClass: meetingTranscriptionRetryVerifyCapability.payloadClass,
+    permission: meetingTranscriptionRetryVerifyCapability.permission,
+    sessionAdmission: meetingTranscriptionRetryVerifyCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      meetingTranscriptionRetryVerifyCapability.sessionAdmissionRationale,
+    transport: meetingTranscriptionRetryVerifyCapability.transport,
   },
   "computerUse.getPermissions": {
     artifacts: {
@@ -8981,15 +9202,25 @@ export const generatedNativeEventIndex = {
     permission: localTranscriptionStateChangedEvent.permission,
     target: localTranscriptionStateChangedEvent.target,
   },
-  "localTranscription.notice": {
+  "meetingTranscription.state.changed": {
     artifacts: {
-      leaf: "localTranscriptionNoticeEvent",
-      mock: "localTranscriptionNoticeEvent.mock",
+      leaf: "meetingTranscriptionStateChangedEvent",
+      mock: "meetingTranscriptionStateChangedEvent.mock",
     },
-    channel: localTranscriptionNoticeEvent.channel,
-    id: localTranscriptionNoticeEvent.id,
-    permission: localTranscriptionNoticeEvent.permission,
-    target: localTranscriptionNoticeEvent.target,
+    channel: meetingTranscriptionStateChangedEvent.channel,
+    id: meetingTranscriptionStateChangedEvent.id,
+    permission: meetingTranscriptionStateChangedEvent.permission,
+    target: meetingTranscriptionStateChangedEvent.target,
+  },
+  "meetingTranscription.notice": {
+    artifacts: {
+      leaf: "meetingTranscriptionNoticeEvent",
+      mock: "meetingTranscriptionNoticeEvent.mock",
+    },
+    channel: meetingTranscriptionNoticeEvent.channel,
+    id: meetingTranscriptionNoticeEvent.id,
+    permission: meetingTranscriptionNoticeEvent.permission,
+    target: meetingTranscriptionNoticeEvent.target,
   },
   "applicationMenu.command": {
     artifacts: {
@@ -9301,6 +9532,31 @@ export const generatedNativeStateIndex = {
       id: localTranscriptionStateLeaf.subscribe.id,
       permission: localTranscriptionStateLeaf.subscribe.permission,
       target: localTranscriptionStateLeaf.subscribe.target,
+    },
+  },
+  "meetingTranscription.state": {
+    artifacts: {
+      get: "generatedNativeStateBindings.meetingTranscription.state.get",
+      leaf: "meetingTranscriptionStateLeaf",
+      mock: "meetingTranscriptionStateLeaf.mock",
+      subscribe: "generatedNativeStateBindings.meetingTranscription.state.subscribe",
+      webFallback: "meetingTranscriptionStateLeaf.webFallback",
+    },
+    bridge: meetingTranscriptionStateLeaf.bridge,
+    get: {
+      channel: meetingTranscriptionStateLeaf.get.channel,
+      id: meetingTranscriptionStateLeaf.get.id,
+      permission: meetingTranscriptionStateLeaf.get.permission,
+      sessionAdmission: meetingTranscriptionStateLeaf.get.sessionAdmission,
+      sessionAdmissionRationale:
+        meetingTranscriptionStateLeaf.get.sessionAdmissionRationale,
+    },
+    id: meetingTranscriptionStateLeaf.id,
+    subscribe: {
+      channel: meetingTranscriptionStateLeaf.subscribe.channel,
+      id: meetingTranscriptionStateLeaf.subscribe.id,
+      permission: meetingTranscriptionStateLeaf.subscribe.permission,
+      target: meetingTranscriptionStateLeaf.subscribe.target,
     },
   },
   "sitePermissionMenu.state": {
@@ -9781,6 +10037,14 @@ export const localTranscriptionCancelContract =
   generatedNativeCapabilityContracts.localTranscriptionCancel;
 export const localTranscriptionRemoveContract =
   generatedNativeCapabilityContracts.localTranscriptionRemove;
+export const meetingTranscriptionStateContract =
+  generatedNativeCapabilityContracts.meetingTranscriptionState;
+export const meetingTranscriptionSetProviderContract =
+  generatedNativeCapabilityContracts.meetingTranscriptionSetProvider;
+export const meetingTranscriptionClearKeyContract =
+  generatedNativeCapabilityContracts.meetingTranscriptionClearKey;
+export const meetingTranscriptionRetryVerifyContract =
+  generatedNativeCapabilityContracts.meetingTranscriptionRetryVerify;
 export const computerUsePermissionsContract =
   generatedNativeCapabilityContracts.computerUsePermissions;
 export const computerUsePermissionFlowContract =
@@ -10119,6 +10383,10 @@ export type NativeCapabilityTypeMap = {
   "localTranscription.install": typeof localTranscriptionInstallCapability;
   "localTranscription.cancel": typeof localTranscriptionCancelCapability;
   "localTranscription.remove": typeof localTranscriptionRemoveCapability;
+  "meetingTranscription.state": typeof meetingTranscriptionStateCapability;
+  "meetingTranscription.setProvider": typeof meetingTranscriptionSetProviderCapability;
+  "meetingTranscription.clearKey": typeof meetingTranscriptionClearKeyCapability;
+  "meetingTranscription.retryVerify": typeof meetingTranscriptionRetryVerifyCapability;
   "computerUse.getPermissions": typeof computerUsePermissionsCapability;
   "computerUse.openPermissionFlow": typeof computerUsePermissionFlowCapability;
   "applicationMenu.update": typeof applicationMenuUpdateCapability;
@@ -10307,7 +10575,8 @@ export type NativeCapabilityTypeMap = {
 export type NativeEventTypeMap = {
   "localBackend.state.changed": typeof localBackendStatusChangedEvent;
   "localTranscription.state.changed": typeof localTranscriptionStateChangedEvent;
-  "localTranscription.notice": typeof localTranscriptionNoticeEvent;
+  "meetingTranscription.state.changed": typeof meetingTranscriptionStateChangedEvent;
+  "meetingTranscription.notice": typeof meetingTranscriptionNoticeEvent;
   "applicationMenu.command": typeof applicationMenuCommandEvent;
   "sitePermissionMenu.changed": typeof sitePermissionMenuChangedEvent;
   "appPreferences.state.changed": typeof appPreferencesChangedEvent;
@@ -10339,6 +10608,7 @@ export type NativeEventTypeMap = {
 export type NativeStateTypeMap = {
   "localBackend.state": typeof localBackendStateLeaf;
   "localTranscription.state": typeof localTranscriptionStateLeaf;
+  "meetingTranscription.state": typeof meetingTranscriptionStateLeaf;
   "sitePermissionMenu.state": typeof sitePermissionMenuStateLeaf;
   "appPreferences.state": typeof appPreferencesStateLeaf;
   "connectorRuntime.state": typeof connectorRuntimeStateLeaf;
@@ -10427,7 +10697,19 @@ export type GeneratedNativeBridge = {
       typeof localTranscriptionRemoveCapability
     >;
     state: GeneratedNativeStateBridgeMethod<typeof localTranscriptionStateLeaf>;
-    onNotice: GeneratedNativeEventBridgeMethod<typeof localTranscriptionNoticeEvent>;
+  };
+  meetingTranscription: {
+    setProvider: GeneratedNativeCommandBridgeMethod<
+      typeof meetingTranscriptionSetProviderCapability
+    >;
+    clearKey: GeneratedNativeCommandBridgeMethod<
+      typeof meetingTranscriptionClearKeyCapability
+    >;
+    retryVerify: GeneratedNativeCommandBridgeMethod<
+      typeof meetingTranscriptionRetryVerifyCapability
+    >;
+    state: GeneratedNativeStateBridgeMethod<typeof meetingTranscriptionStateLeaf>;
+    onNotice: GeneratedNativeEventBridgeMethod<typeof meetingTranscriptionNoticeEvent>;
   };
   computerUse: {
     getPermissions: GeneratedNativeCommandBridgeMethod<
@@ -10943,8 +11225,23 @@ export function createGeneratedNativePreloadBridge(
         get: localTranscriptionStateCapability.contract,
         subscribe: localTranscriptionStateChangedEvent,
       }),
+    },
+    meetingTranscription: {
+      setProvider: (
+        input: GeneratedNativeCommandInput<
+          typeof meetingTranscriptionSetProviderCapability
+        >
+      ) => helpers.invoke(meetingTranscriptionSetProviderCapability.contract, input),
+      clearKey: () =>
+        helpers.invoke(meetingTranscriptionClearKeyCapability.contract, undefined),
+      retryVerify: () =>
+        helpers.invoke(meetingTranscriptionRetryVerifyCapability.contract, undefined),
+      state: helpers.state({
+        get: meetingTranscriptionStateCapability.contract,
+        subscribe: meetingTranscriptionStateChangedEvent,
+      }),
       onNotice: (listener) =>
-        helpers.subscribe(localTranscriptionNoticeEvent, listener),
+        helpers.subscribe(meetingTranscriptionNoticeEvent, listener),
     },
     computerUse: {
       getPermissions: () =>
@@ -11577,6 +11874,19 @@ export function createGeneratedNativeWebBridge(): GeneratedNativeBridge {
         GeneratedNativeStateSnapshot<typeof localTranscriptionStateLeaf>,
         GeneratedNativeStateGetInput<typeof localTranscriptionStateLeaf>
       >((_input) => localTranscriptionStateLeaf.webFallback),
+    },
+    meetingTranscription: {
+      setProvider: async (
+        _input: GeneratedNativeCommandInput<
+          typeof meetingTranscriptionSetProviderCapability
+        >
+      ) => meetingTranscriptionSetProviderCapability.webFallback,
+      clearKey: async () => meetingTranscriptionClearKeyCapability.webFallback,
+      retryVerify: async () => meetingTranscriptionRetryVerifyCapability.webFallback,
+      state: createGeneratedWebStateBridge<
+        GeneratedNativeStateSnapshot<typeof meetingTranscriptionStateLeaf>,
+        GeneratedNativeStateGetInput<typeof meetingTranscriptionStateLeaf>
+      >((_input) => meetingTranscriptionStateLeaf.webFallback),
       onNotice: () => () => {},
     },
     computerUse: {
@@ -12212,6 +12522,25 @@ export function createGeneratedNativeBridgeMock(
       state: helpers.state(
         (_input: GeneratedNativeStateGetInput<typeof localTranscriptionStateLeaf>) =>
           localTranscriptionStateLeaf.mock
+      ),
+    },
+    meetingTranscription: {
+      setProvider: helpers.command(
+        async (
+          _input: GeneratedNativeCommandInput<
+            typeof meetingTranscriptionSetProviderCapability
+          >
+        ) => meetingTranscriptionSetProviderCapability.mock
+      ),
+      clearKey: helpers.command(
+        async () => meetingTranscriptionClearKeyCapability.mock
+      ),
+      retryVerify: helpers.command(
+        async () => meetingTranscriptionRetryVerifyCapability.mock
+      ),
+      state: helpers.state(
+        (_input: GeneratedNativeStateGetInput<typeof meetingTranscriptionStateLeaf>) =>
+          meetingTranscriptionStateLeaf.mock
       ),
       onNotice: helpers.event((_listener) => () => {}),
     },
@@ -13104,6 +13433,10 @@ export function mergeGeneratedNativeBridgeOverrides(
     localTranscription: {
       ...bridge.localTranscription,
       ...overrides.localTranscription,
+    },
+    meetingTranscription: {
+      ...bridge.meetingTranscription,
+      ...overrides.meetingTranscription,
     },
     computerUse: {
       ...bridge.computerUse,

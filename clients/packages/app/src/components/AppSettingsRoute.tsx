@@ -3,7 +3,7 @@ import { useBrowserSettingsCategory } from "./chat/useBrowserSettingsCategory";
 import { useAirDropNameSetting } from "./useAirDropNameSetting";
 import { useProactiveSetting } from "./recommendations/useProactiveSetting";
 import { useComputeNodeCategory } from "./useComputeNodeCategory";
-import { useLocalTranscriptionSection } from "./useLocalTranscriptionSection";
+import { useMeetingTranscriptionSection } from "./useMeetingTranscriptionSection";
 import { useComputerUsePermissions } from "./useComputerUsePermissions";
 import { useWeChatIntegration } from "./useWeChatIntegration";
 import { useModelsCategory } from "./models/useModelsCategory";
@@ -251,7 +251,7 @@ export function AppSettingsRoute({
   const {
     section: localTranscriptionSection,
     removalDialog: localTranscriptionDialog,
-  } = useLocalTranscriptionSection();
+  } = useMeetingTranscriptionSection();
   const auth = useCommaAuth();
   const guest = auth.isGuest === true;
   // Every category reader below keys off this id, so a guest never loads the

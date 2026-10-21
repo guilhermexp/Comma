@@ -1,6 +1,10 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { LocalBackendStatus, LocalTranscriptionState } from "@comma/native-bridge";
+import type {
+  LocalBackendStatus,
+  LocalTranscriptionState,
+  MeetingTranscriptionState,
+} from "@comma/native-bridge";
 import { sessionExpectation } from "@comma/session-contract";
 import type { CommaReleaseConfig } from "../../release-config";
 import {
@@ -9,7 +13,13 @@ import {
 } from "../modules/electron-main.module";
 import type { SecureSessionInput } from "../secure-store";
 import { resolveElectronStartupSession } from "../startup-session";
+import { TranscriberProviderClient } from "../local-transcription/helper-provider-client";
 import { LocalTranscriptionManager } from "../local-transcription/manager";
+import { MeetingTranscriptionService } from "../local-transcription/meeting-transcription";
+import {
+  MeetingProviderStore,
+  type SafeStorageLike,
+} from "../local-transcription/provider-store";
 import { LocalBackendController } from "./controller";
 import {
   localTranscriberPath,
@@ -34,6 +44,8 @@ export function createMainLocalBackend({
   appVersion,
   emitStatus,
   emitTranscriptionState,
+  emitMeetingTranscriptionState,
+  safeStorage,
   systemVersion,
   openPath,
   log,
@@ -48,6 +60,9 @@ export function createMainLocalBackend({
   appVersion: string;
   emitStatus: (status: LocalBackendStatus) => void;
   emitTranscriptionState: (state: LocalTranscriptionState) => void;
+  emitMeetingTranscriptionState: (state: MeetingTranscriptionState) => void;
+  /** Electron's safeStorage, which encrypts the meeting provider's API key. */
+  safeStorage: SafeStorageLike;
   /** process.getSystemVersion(): the macOS version, which decides local transcription. */
   systemVersion: string;
   openPath: (path: string) => Promise<string>;
@@ -62,22 +77,30 @@ export function createMainLocalBackend({
     appData,
     userDataOverride: userDataOverridden ? userData : undefined,
   });
+  const dataDir = resolveLocalBackendDataDir({
+    appData,
+    userDataOverride: userDataOverridden ? userData : undefined,
+  });
+  // Assigned below; the helper and the models call back into it.
+  let meetingTranscription: MeetingTranscriptionService | undefined;
   const service = new LocalBackendService({
     layout: {
       resourcesDir: isPackaged
         ? join(resourcesPath, "local-backend")
         : (process.env.COMMA_LOCAL_BACKEND_DIR ??
           join(appPath, "dist", "local-backend")),
-      dataDir: resolveLocalBackendDataDir({
-        appData,
-        userDataOverride: userDataOverridden ? userData : undefined,
-      }),
+      dataDir,
     },
     appVersion,
     runtime: nodeLocalBackendRuntime,
     onSnapshot: () => controller.publish(),
     log,
     transcriber,
+    onTranscriberStarted: () => void meetingTranscription?.helperStarted(),
+  });
+  const helper = new TranscriberProviderClient({
+    url: () => service.transcriberUrl,
+    token: () => service.transcriberToken,
   });
   const localTranscription = new LocalTranscriptionManager({
     environment: {
@@ -93,15 +116,26 @@ export function createMainLocalBackend({
         }),
     },
     health: async () => {
-      const url = service.transcriberUrl;
-      if (!url) return undefined;
-      const response = await fetch(`${url}/health`, {
-        signal: AbortSignal.timeout(2_000),
-      });
-      const body = (await response.json()) as { busy?: unknown };
-      return { busy: body.busy === true };
+      const health = await helper.health();
+      return health ? { busy: health.busy === true } : undefined;
     },
-    onState: emitTranscriptionState,
+    onState: (state) => {
+      emitTranscriptionState(state);
+      meetingTranscription?.localChanged();
+    },
+    keepDiarization: () => meetingTranscription?.cloudSelected() ?? false,
+    onDiarization: () => meetingTranscription?.localChanged(),
+    log,
+  });
+  meetingTranscription = new MeetingTranscriptionService({
+    store: new MeetingProviderStore({
+      path: join(dataDir, "asr-provider.bin"),
+      safeStorage,
+      log,
+    }),
+    local: localTranscription,
+    helper,
+    onState: emitMeetingTranscriptionState,
     log,
   });
   const controller = new LocalBackendController({
@@ -109,6 +143,7 @@ export function createMainLocalBackend({
     onStatus: emitStatus,
     openPath,
     localTranscription,
+    meetingTranscription,
   });
   return controller;
 }

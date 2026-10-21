@@ -8609,23 +8609,255 @@ export const localTranscriptionRemoveCapability = defineNativeCapability({
 });
 
 /**
- * A saved recording could not be transcribed because the local model is not
- * installed. The renderer shows the install notice beside the saved toast.
+ * Meeting transcription providers (openspec add-cloud-meeting-asr, D8 and
+ * contract C8): which engine transcribes meeting recordings (this Mac's
+ * model, Groq, or an OpenAI-compatible API) and whether it is ready. Main
+ * owns the saved configuration and its API key; the state carries only
+ * whether a key is saved, never its value. The local model's own state stays
+ * in `localTranscription`.
  */
-export const localTranscriptionNoticeSchema = z
+export const meetingTranscriptionProviderSchema = z.enum([
+  "local",
+  "groq",
+  "openai_compatible",
+]);
+export type MeetingTranscriptionProvider = z.output<
+  typeof meetingTranscriptionProviderSchema
+>;
+
+/** The Groq preset's fixed URL and models (D7); the first model is the default. */
+export const groqTranscriptionBaseUrl = "https://api.groq.com/openai/v1";
+export const groqTranscriptionModels = [
+  "whisper-large-v3",
+  "whisper-large-v3-turbo",
+] as const;
+
+export const meetingTranscriptionStateSchema = z
   .object({
-    reason: z.literal("local_asr_model_not_installed"),
+    provider: meetingTranscriptionProviderSchema,
+    ready: z.boolean(),
+    reason: z
+      .enum([
+        "local_model_missing",
+        "key_missing",
+        "key_rejected",
+        "diarization_missing",
+        "secure_storage_unavailable",
+        "unsupported",
+      ])
+      .optional(),
+    /**
+     * The saved cloud provider, kept while Local is selected so switching
+     * back needs no new key; absent once its key is deleted.
+     */
+    cloud: z
+      .object({
+        kind: z.enum(["groq", "openai_compatible"]),
+        model: z.string().max(200),
+        /** The provider's host, which the privacy notice names. */
+        baseHost: z.string().max(253),
+        hasKey: z.boolean(),
+        verification: z.enum(["idle", "checking", "valid", "rejected", "unreachable"]),
+      })
+      .strict()
+      .optional(),
+    /** The local speaker separator that cloud providers need. */
+    diarization: z.enum(["not_installed", "downloading", "ready", "failed"]),
+  })
+  .strict();
+export type MeetingTranscriptionState = z.output<
+  typeof meetingTranscriptionStateSchema
+>;
+
+export const unavailableMeetingTranscriptionState: MeetingTranscriptionState = {
+  provider: "local",
+  ready: false,
+  reason: "unsupported",
+  diarization: "not_installed",
+};
+
+export const meetingTranscriptionStateCapability = defineNativeCapability({
+  bridge: { method: "state", namespace: "meetingTranscription" },
+  channel: "comma:meeting-transcription:state",
+  handler: {
+    exportName: "MeetingTranscriptionProvider",
+    member: "state",
+    module: "../../../apps/electron/src/main/local-transcription/meeting-provider",
+    provider: "meetingTranscription",
+  },
+  id: "meetingTranscription.state",
+  input: z.void(),
+  mock: unavailableMeetingTranscriptionState,
+  output: meetingTranscriptionStateSchema,
+  permission: "meeting-transcription.read",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Reports which engine transcribes this Mac's meeting recordings and whether it is ready; it carries no key and no account data.",
+  webFallback: unavailableMeetingTranscriptionState,
+});
+
+export const meetingTranscriptionStateChangedEvent = defineNativeEvent({
+  channel: "comma:meeting-transcription:state-changed",
+  id: "meetingTranscription.state.changed",
+  mock: unavailableMeetingTranscriptionState,
+  payload: meetingTranscriptionStateSchema,
+  permission: meetingTranscriptionStateCapability.permission,
+  target: { type: "all" },
+});
+
+export const meetingTranscriptionStateLeaf = defineNativeState({
+  bridge: { method: "state", namespace: "meetingTranscription" },
+  get: meetingTranscriptionStateCapability,
+  id: "meetingTranscription.state",
+  subscribe: meetingTranscriptionStateChangedEvent,
+});
+
+const meetingTranscriptionApiKeySchema = z.string().trim().min(1).max(1024);
+
+/**
+ * Settings → Meeting → Save. Without `baseUrl`, Main reuses the saved URL of
+ * the same provider. Without `apiKey`, Main reuses the saved key of the same
+ * provider and URL origin; a key never follows a changed origin.
+ */
+export const meetingTranscriptionSetProviderInputSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("local") }).strict(),
+  z
+    .object({
+      kind: z.literal("groq"),
+      model: z.enum(groqTranscriptionModels),
+      apiKey: meetingTranscriptionApiKeySchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("openai_compatible"),
+      baseUrl: z.string().trim().min(1).max(2048).optional(),
+      model: z.string().trim().min(1).max(200),
+      apiKey: meetingTranscriptionApiKeySchema.optional(),
+    })
+    .strict(),
+]);
+export type MeetingTranscriptionSetProviderInput = z.input<
+  typeof meetingTranscriptionSetProviderInputSchema
+>;
+
+export const meetingTranscriptionActionResultSchema = z
+  .object({
+    accepted: z.boolean(),
+    /** Why the configuration was refused; the previous one stays selected. */
+    reason: z
+      .enum([
+        "invalid_url",
+        "insecure_url",
+        "key_missing",
+        "key_rejected",
+        "unreachable",
+        "server_error",
+        "bad_response",
+        "secure_storage_unavailable",
+        "in_progress",
+        "unsupported",
+      ])
+      .optional(),
+  })
+  .strict();
+export type MeetingTranscriptionActionResult = z.output<
+  typeof meetingTranscriptionActionResultSchema
+>;
+
+const refusedMeetingTranscriptionAction: MeetingTranscriptionActionResult = {
+  accepted: false,
+  reason: "unsupported",
+};
+
+export const meetingTranscriptionSetProviderCapability = defineNativeCapability({
+  bridge: { method: "setProvider", namespace: "meetingTranscription" },
+  channel: "comma:meeting-transcription:set-provider",
+  handler: {
+    exportName: "MeetingTranscriptionProvider",
+    member: "setProvider",
+    module: "../../../apps/electron/src/main/local-transcription/meeting-provider",
+    provider: "meetingTranscription",
+  },
+  id: "meetingTranscription.setProvider",
+  input: meetingTranscriptionSetProviderInputSchema,
+  mock: refusedMeetingTranscriptionAction,
+  output: meetingTranscriptionActionResultSchema,
+  permission: "meeting-transcription.control",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Verifies and stores this Mac's transcription provider key in the Keychain-protected store; no account data is involved.",
+  webFallback: refusedMeetingTranscriptionAction,
+});
+
+/** Deletes the saved key; a selected cloud provider returns to Local. */
+export const meetingTranscriptionClearKeyCapability = defineNativeCapability({
+  bridge: { method: "clearKey", namespace: "meetingTranscription" },
+  channel: "comma:meeting-transcription:clear-key",
+  handler: {
+    exportName: "MeetingTranscriptionProvider",
+    member: "clearKey",
+    module: "../../../apps/electron/src/main/local-transcription/meeting-provider",
+    provider: "meetingTranscription",
+  },
+  id: "meetingTranscription.clearKey",
+  input: z.void(),
+  mock: refusedMeetingTranscriptionAction,
+  output: meetingTranscriptionActionResultSchema,
+  permission: "meeting-transcription.control",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Deletes this Mac's saved transcription provider key; no account data is involved.",
+  webFallback: refusedMeetingTranscriptionAction,
+});
+
+/** Checks the saved key against its provider again, for example after it was rejected. */
+export const meetingTranscriptionRetryVerifyCapability = defineNativeCapability({
+  bridge: { method: "retryVerify", namespace: "meetingTranscription" },
+  channel: "comma:meeting-transcription:retry-verify",
+  handler: {
+    exportName: "MeetingTranscriptionProvider",
+    member: "retryVerify",
+    module: "../../../apps/electron/src/main/local-transcription/meeting-provider",
+    provider: "meetingTranscription",
+  },
+  id: "meetingTranscription.retryVerify",
+  input: z.void(),
+  mock: refusedMeetingTranscriptionAction,
+  output: meetingTranscriptionActionResultSchema,
+  permission: "meeting-transcription.control",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Checks this Mac's saved transcription provider key against the provider; no account data is involved.",
+  webFallback: refusedMeetingTranscriptionAction,
+});
+
+/**
+ * A saved recording needs the user's attention: it was transcribed on this
+ * Mac because the cloud provider failed (`fallback`, with the cloud reason),
+ * the cloud provider failed and no local model took over (`cloud_failed`,
+ * with the reason and the provider), the selected cloud provider is not
+ * configured (`configure`), or the Local provider's model is missing
+ * (`install_local`).
+ */
+export const meetingTranscriptionNoticeSchema = z
+  .object({
+    kind: z.enum(["fallback", "cloud_failed", "configure", "install_local"]),
+    reason: z.string().max(200).optional(),
+    provider: z.enum(["groq", "openai_compatible"]).optional(),
     recording: audioCaptureRecordingSchema,
   })
   .strict();
-export type LocalTranscriptionNotice = z.output<typeof localTranscriptionNoticeSchema>;
+export type MeetingTranscriptionNotice = z.output<
+  typeof meetingTranscriptionNoticeSchema
+>;
 
-export const localTranscriptionNoticeEvent = defineNativeEvent({
-  bridge: { method: "onNotice", namespace: "localTranscription" },
-  channel: "comma:local-transcription:notice",
-  id: "localTranscription.notice",
+export const meetingTranscriptionNoticeEvent = defineNativeEvent({
+  bridge: { method: "onNotice", namespace: "meetingTranscription" },
+  channel: "comma:meeting-transcription:notice",
+  id: "meetingTranscription.notice",
   mock: {
-    reason: "local_asr_model_not_installed",
+    kind: "install_local",
     recording: {
       channels: 1,
       durationMs: 0,
@@ -8634,8 +8866,8 @@ export const localTranscriptionNoticeEvent = defineNativeEvent({
       sampleRate: 48_000,
     },
   },
-  payload: localTranscriptionNoticeSchema,
-  permission: localTranscriptionStateCapability.permission,
+  payload: meetingTranscriptionNoticeSchema,
+  permission: meetingTranscriptionStateCapability.permission,
   target: { role: "main-window", type: "role" },
 });
 
@@ -8647,6 +8879,10 @@ export const nativeCapabilityRegistry = [
   localTranscriptionInstallCapability,
   localTranscriptionCancelCapability,
   localTranscriptionRemoveCapability,
+  meetingTranscriptionStateCapability,
+  meetingTranscriptionSetProviderCapability,
+  meetingTranscriptionClearKeyCapability,
+  meetingTranscriptionRetryVerifyCapability,
   computerUsePermissionsCapability,
   computerUsePermissionFlowCapability,
   applicationMenuUpdateCapability,
@@ -8835,7 +9071,8 @@ export const nativeCapabilityRegistry = [
 export const nativeEventRegistry = [
   localBackendStatusChangedEvent,
   localTranscriptionStateChangedEvent,
-  localTranscriptionNoticeEvent,
+  meetingTranscriptionStateChangedEvent,
+  meetingTranscriptionNoticeEvent,
   applicationMenuCommandEvent,
   sitePermissionMenuChangedEvent,
   appPreferencesChangedEvent,
@@ -8867,6 +9104,7 @@ export const nativeEventRegistry = [
 export const nativeStateRegistry = [
   localBackendStateLeaf,
   localTranscriptionStateLeaf,
+  meetingTranscriptionStateLeaf,
   sitePermissionMenuStateLeaf,
   appPreferencesStateLeaf,
   connectorRuntimeStateLeaf,

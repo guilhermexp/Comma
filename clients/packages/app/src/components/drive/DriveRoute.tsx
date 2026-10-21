@@ -75,9 +75,9 @@ import {
   useDriveBackendLoad,
 } from "./driveBackend";
 import { useDriveFileReveal } from "./useDriveFileReveal";
-import { useLocalTranscription } from "../useLocalTranscription";
 import {
   transcribableRecordingIds,
+  useRecordingTranscribeReady,
   useRecordingTranscription,
 } from "../useRecordingFileActions";
 import { collectDroppedFiles, useDriveDropZone } from "./driveDropZone";
@@ -226,7 +226,7 @@ function LocalDriveRoute({ active }: { active: boolean }) {
     [backend, bridge, locale]
   );
   const { api, productLease } = useCommaAuth();
-  const localTranscription = useLocalTranscription();
+  const transcriptionReady = useRecordingTranscribeReady();
   const transcribe = useRecordingTranscription(productLease);
   // Enrollment is opportunistic: a Workspace without a network yet, or no
   // connection, leaves the node on its own key and the next launch tries again.
@@ -322,13 +322,10 @@ function LocalDriveRoute({ active }: { active: boolean }) {
     [snapshot.files, snapshot.selectedSpaceId, snapshot.originDeviceId, currentDeviceId]
   );
   // Local mode: a recording without a transcript can be sent through the
-  // installed local model again from its row menu.
+  // selected transcription engine again from its row menu, once it is ready.
   const transcribableFileIds = useMemo(
-    () =>
-      localTranscription.state?.phase === "ready"
-        ? transcribableRecordingIds(spaceFiles)
-        : undefined,
-    [localTranscription.state?.phase, spaceFiles]
+    () => (transcriptionReady ? transcribableRecordingIds(spaceFiles) : undefined),
+    [transcriptionReady, spaceFiles]
   );
   const openPreview = useCallback(
     (file: DriveFile) => {

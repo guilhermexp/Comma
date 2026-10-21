@@ -161,7 +161,10 @@ function service(
   layout: ReturnType<typeof install>,
   runtime: FakeRuntime,
   appVersion = "0.0.3",
-  options: { transcriber?: typeof transcriber } = {}
+  options: {
+    transcriber?: typeof transcriber;
+    onTranscriberStarted?: () => void;
+  } = {}
 ) {
   const snapshots: LocalBackendSnapshot[] = [];
   const logs: string[] = [];
@@ -500,9 +503,18 @@ describe("local backend service", () => {
       const layout = install({ appVersion: "0.0.3" });
       const runtime = new FakeRuntime();
       runtime.databaseExists = true;
-      const { backend } = service(layout, runtime, "0.0.3", { transcriber });
+      // Main delivers the meeting provider to every new helper (add-cloud-meeting-asr, D2).
+      const onTranscriberStarted = vi.fn();
+      const { backend } = service(layout, runtime, "0.0.3", {
+        transcriber,
+        onTranscriberStarted,
+      });
       await backend.prepare();
       await backend.start();
+      expect(onTranscriberStarted).toHaveBeenCalledOnce();
+      expect(backend.transcriberToken).toBe(
+        readFileSync(join(layout.dataDir, "asr-token"), "utf8")
+      );
       vi.useFakeTimers();
 
       const first = runtime.child("asr");
@@ -510,6 +522,7 @@ describe("local backend service", () => {
       await vi.advanceTimersByTimeAsync(1_000);
       const second = runtime.child("asr");
       expect(second).not.toBe(first);
+      expect(onTranscriberStarted).toHaveBeenCalledTimes(2);
       expect(second.spec.command).toBe("/usr/sbin/taskpolicy");
       expect(backend.snapshot().phase).toBe("ready");
 
