@@ -5,6 +5,8 @@ defmodule SalixCalendar.Occurrences do
   alias SalixStore.Ids
 
   @max_occurrences 200
+  @max_listed 2_500
+  @max_item_occurrences 1_000
 
   def list(group_id, calendar_id, range_start_ms, range_end_ms, opts \\ [])
 
@@ -39,6 +41,25 @@ defmodule SalixCalendar.Occurrences do
   end
 
   def list(_group_id, _calendar_id, _range_start_ms, _range_end_ms, _opts),
+    do: {:error, :invalid_occurrence_query}
+
+  @doc """
+  The earliest `limit` Event occurrences in a range, with `truncated` set when
+  more exist. Unlike `list/5`, a range with too many occurrences is cut rather
+  than refused; each item still expands within the recurrence bound.
+  """
+  def list_events(group_id, calendar_id, range_start_ms, range_end_ms, limit)
+      when is_integer(range_start_ms) and is_integer(range_end_ms) and is_integer(limit) and
+             limit > 0 and limit <= @max_listed and range_start_ms < range_end_ms do
+    with {:ok, items} <- Server.query_items(group_id, calendar_id, range_start_ms, range_end_ms),
+         {:ok, items} <- select_link_items(group_id, calendar_id, items, nil),
+         {:ok, occurrences} <-
+           expand_earliest(items, range_start_ms, range_end_ms, "Event", limit + 1) do
+      {:ok, Enum.take(occurrences, limit), length(occurrences) > limit}
+    end
+  end
+
+  def list_events(_group_id, _calendar_id, _range_start_ms, _range_end_ms, _limit),
     do: {:error, :invalid_occurrence_query}
 
   def get(group_id, calendar_id, calendar_item_id, occurrence_ref, opts \\ []) do
@@ -116,6 +137,35 @@ defmodule SalixCalendar.Occurrences do
       end
     end)
   end
+
+  # Keeps only the `keep` earliest occurrences while expanding, so memory stays
+  # bounded by the cut instead of by the range. One item still expands within the
+  # recurrence bound and fails past it, as in `list/5`.
+  defp expand_earliest(items, range_start_ms, range_end_ms, object_type, keep) do
+    items
+    |> Enum.reject(
+      &(not is_nil(&1["tombstoned_at"]) or
+          &1["normalization_state"] == "unsupported_timing")
+    )
+    |> Enum.filter(&(get_in(&1, ["object", "@type"]) == object_type))
+    |> Enum.reduce_while({:ok, []}, fn item, {:ok, acc} ->
+      case Recurrence.expand(item, range_start_ms, range_end_ms, limit: @max_item_occurrences) do
+        {:ok, views} ->
+          kept =
+            (acc ++ Enum.map(views, &%{"item" => item, "occurrence" => &1}))
+            |> sort_occurrences()
+            |> Enum.take(keep)
+
+          {:cont, {:ok, kept}}
+
+        {:error, reason} ->
+          {:halt, {:error, {item["calendar_item_id"], reason}}}
+      end
+    end)
+  end
+
+  defp sort_occurrences(occurrences),
+    do: Enum.sort_by(occurrences, &{get_in(&1, ["occurrence", "start_ms"]), item_id(&1)})
 
   defp select_link_items(group_id, calendar_id, items, source_ids) do
     items = Enum.filter(items, &source_selected?(&1, source_ids))

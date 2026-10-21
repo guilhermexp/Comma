@@ -18,9 +18,18 @@ defmodule SalixCalendar.LocalStore do
   def get_local_item(group_id, calendar_id, item_id) do
     if valid_scope?(group_id, calendar_id) and valid_item?(item_id) do
       case CasRecord.get(item_key(group_id, calendar_id, item_id), :invalid_calendar_record) do
-        {:ok, %{"origin" => %{"kind" => "local"}} = item} -> {:ok, item}
-        {:ok, _non_local} -> {:error, :not_found}
-        {:error, _} = error -> error
+        {:ok, %{"origin" => %{"kind" => "local"}, "tombstoned_at" => deleted}}
+        when not is_nil(deleted) ->
+          {:error, :not_found}
+
+        {:ok, %{"origin" => %{"kind" => "local"}} = item} ->
+          {:ok, item}
+
+        {:ok, _non_local} ->
+          {:error, :not_found}
+
+        {:error, _} = error ->
+          error
       end
     else
       {:error, :invalid_local_item}
@@ -82,14 +91,17 @@ defmodule SalixCalendar.LocalStore do
     end
   end
 
-  # A GET that proves the marker stale (`:not_found`) or points at a non-local /
-  # non-owned item is safely skipped. A backend or invalid-record failure is NOT
+  # A GET that proves the marker stale (`:not_found`) or points at a deleted,
+  # non-local or non-owned item is safely skipped. A backend or invalid-record failure is NOT
   # proof of absence, so it fails the whole feed rather than silently omitting an
   # authorized Event (which a calendar client would read as a deletion).
   defp hydrate(group_id, calendar_id, owner, item_ids) do
     item_ids
     |> Enum.reduce_while({:ok, []}, fn item_id, {:ok, acc} ->
       case CasRecord.get(item_key(group_id, calendar_id, item_id), :invalid_calendar_record) do
+        {:ok, %{"tombstoned_at" => deleted}} when not is_nil(deleted) ->
+          {:cont, {:ok, acc}}
+
         {:ok, %{"origin" => %{"kind" => "local"}, "owner_principal_ref" => item_owner} = item} ->
           if canonical(item_owner) == owner,
             do: {:cont, {:ok, [item | acc]}},
@@ -138,7 +150,8 @@ defmodule SalixCalendar.LocalStore do
   defp canonical(_owner), do: %{}
 
   defp valid_scope?(group_id, calendar_id),
-    do: SalixStore.Ids.valid_group_id?(group_id) and SalixStore.Ids.valid_calendar_id?(calendar_id)
+    do:
+      SalixStore.Ids.valid_group_id?(group_id) and SalixStore.Ids.valid_calendar_id?(calendar_id)
 
   defp valid_item?(item_id), do: SalixStore.Ids.valid_calendar_item_id?(item_id)
 

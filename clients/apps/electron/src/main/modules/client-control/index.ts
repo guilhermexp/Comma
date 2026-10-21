@@ -4,13 +4,24 @@ import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   appPreferencesPatchSchema,
+  calendarCreateEventInputSchema,
+  calendarDeleteEventInputSchema,
+  calendarEventReferenceSchema,
+  calendarEventsInputSchema,
+  calendarUpdateEventInputSchema,
   commaClientSettingsPatchSchema,
   defaultCommaClientSettings,
   type AppPreferences,
+  type CalendarCreateEventInput,
+  type CalendarDeleteEventInput,
+  type CalendarEventReference,
+  type CalendarEventsInput,
+  type CalendarUpdateEventInput,
 } from "@comma/native-bridge";
 import { z } from "zod";
 import type { AirDropService } from "../airdrop";
 import { airDropSendInputSchema, type AirDropSendInput } from "../airdrop/sender";
+import type { CalendarProvider } from "../calendar";
 
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -159,12 +170,33 @@ const cdpInputSchema = browserTabInputSchema
   })
   .strict();
 
+// An agent create carries Comma's creation key. A Connector replay (for
+// example after a socket replacement) within this window returns the first
+// result instead of creating the event again.
+const CALENDAR_CREATION_TTL_MS = 10 * 60 * 1000;
+const calendarAgentCreateInputSchema = calendarCreateEventInputSchema.extend({
+  creationKey: z.string().min(1).max(256).optional(),
+});
+
+/** The agent-facing Mac Calendar: never `requestAccess`, which only the user starts. */
+export type ClientControlCalendar = Pick<
+  CalendarProvider,
+  | "state"
+  | "calendars"
+  | "events"
+  | "event"
+  | "createEvent"
+  | "updateEvent"
+  | "deleteEvent"
+>;
+
 export function createCommaClientControlRegistry({
   airdrop,
   airdropSender,
   appPreferences,
   artifactRoot,
   browser,
+  calendar,
   deviceAccess,
 }: {
   airdrop?: Pick<AirDropService, "status" | "files">;
@@ -178,11 +210,45 @@ export function createCommaClientControlRegistry({
   appPreferences: ClientControlPreferences;
   artifactRoot: string;
   browser: ClientControlBrowser;
+  calendar?: ClientControlCalendar;
   deviceAccess?: (
     workspaceId: string,
     allow: boolean
   ) => Promise<{ allows_operations: boolean }>;
 }) {
+  const calendarCreations = new Map<
+    string,
+    { expiresAt: number; result: Promise<unknown> }
+  >();
+  const createCalendarEvent = (
+    input: z.infer<typeof calendarAgentCreateInputSchema>
+  ) => {
+    const { creationKey, ...eventInput } = input;
+    if (!calendar) throw new ClientControlError(404, "Unknown module.");
+    if (!creationKey)
+      return calendar.createEvent(eventInput as CalendarCreateEventInput);
+    const now = Date.now();
+    for (const [key, entry] of calendarCreations) {
+      if (entry.expiresAt <= now) calendarCreations.delete(key);
+    }
+    const existing = calendarCreations.get(creationKey);
+    if (existing) return existing.result;
+    const result = calendar.createEvent(eventInput as CalendarCreateEventInput);
+    calendarCreations.set(creationKey, {
+      expiresAt: now + CALENDAR_CREATION_TTL_MS,
+      result,
+    });
+    // Only a created event is remembered; a failure may be retried.
+    void result.then(
+      (created) => {
+        if (created && typeof created === "object" && "error" in created) {
+          calendarCreations.delete(creationKey);
+        }
+      },
+      () => calendarCreations.delete(creationKey)
+    );
+    return result;
+  };
   let screenshotSequence = 0;
   let screenshotWriteTail = Promise.resolve();
   let initializedArtifacts = false;
@@ -356,6 +422,80 @@ export function createCommaClientControlRegistry({
           },
         ]
       : []),
+    ...(calendar
+      ? [
+          {
+            id: "calendar",
+            description:
+              "Read and write the Mac Calendar through EventKit. Works only after the user granted full access in the Agenda; never asks macOS for access. Failures return { error: code }.",
+            apis: [
+              {
+                id: "state",
+                description: "Read the macOS Calendar access state.",
+                input: emptyInputSchema,
+                usage: "comma call calendar state",
+                handler: () => calendarResult(() => calendar.state()),
+              },
+              {
+                id: "calendars",
+                description: "List the Mac calendars.",
+                input: emptyInputSchema,
+                usage: "comma call calendar calendars",
+                handler: () => calendarResult(() => calendar.calendars()),
+              },
+              {
+                id: "events",
+                description:
+                  "List events of the given calendars (all when empty) in a range of at most 62 days, at most 2,500 events.",
+                input: calendarEventsInputSchema,
+                usage: `comma call calendar events --json '{"calendarIds":[],"start":"2026-10-19T00:00:00-03:00","end":"2026-10-26T00:00:00-03:00"}'`,
+                handler: (input: unknown) =>
+                  calendarResult(() => calendar.events(input as CalendarEventsInput)),
+              },
+              {
+                id: "event",
+                description: "Read one event occurrence.",
+                input: calendarEventReferenceSchema,
+                usage: `comma call calendar event --json '{"eventId":"...","occurrenceDate":null}'`,
+                handler: (input: unknown) =>
+                  calendarResult(() => calendar.event(input as CalendarEventReference)),
+              },
+              {
+                id: "create-event",
+                description: "Create an event in a writable calendar.",
+                input: calendarAgentCreateInputSchema,
+                usage: `comma call calendar create-event --json '{"calendarId":"...","event":{...},"creationKey":"..."}'`,
+                handler: (input: unknown) =>
+                  calendarResult(() =>
+                    createCalendarEvent(
+                      input as z.infer<typeof calendarAgentCreateInputSchema>
+                    )
+                  ),
+              },
+              {
+                id: "update-event",
+                description: "Update one occurrence or the whole series of an event.",
+                input: calendarUpdateEventInputSchema,
+                usage: `comma call calendar update-event --json '{"eventId":"...","occurrenceDate":null,"patch":{...},"scope":"instance"}'`,
+                handler: (input: unknown) =>
+                  calendarResult(() =>
+                    calendar.updateEvent(input as CalendarUpdateEventInput)
+                  ),
+              },
+              {
+                id: "delete-event",
+                description: "Delete one occurrence or the whole series of an event.",
+                input: calendarDeleteEventInputSchema,
+                usage: `comma call calendar delete-event --json '{"eventId":"...","occurrenceDate":null,"scope":"instance"}'`,
+                handler: (input: unknown) =>
+                  calendarResult(() =>
+                    calendar.deleteEvent(input as CalendarDeleteEventInput)
+                  ),
+              },
+            ],
+          },
+        ]
+      : []),
     {
       apis: [
         {
@@ -492,6 +632,17 @@ async function airDropResult(operation: () => unknown) {
       status: "failed",
       error: error instanceof Error ? error.message : "AirDrop could not start.",
     };
+  }
+}
+
+// CalendarService rejects out-of-bounds input with a RangeError that names no
+// event text; a successful delete returns nothing, which JSON cannot carry.
+async function calendarResult(operation: () => Promise<unknown>) {
+  try {
+    return (await operation()) ?? {};
+  } catch (error) {
+    if (error instanceof RangeError) throw new ClientControlError(400, error.message);
+    throw error;
   }
 }
 

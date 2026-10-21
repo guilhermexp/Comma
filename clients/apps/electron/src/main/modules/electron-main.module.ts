@@ -1532,6 +1532,8 @@ export async function createElectronMainContext(
         "client-control-artifacts"
       ),
       browser: clientControlBrowser,
+      // The Connector advertises the Mac Calendar only when this module exists.
+      ...(deps.calendarKit?.loaded ? { calendar } : {}),
       deviceAccess: async (workspaceId, allow) => {
         const state = await connectorRuntime.setScope(
           workspaceId,

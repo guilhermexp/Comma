@@ -1064,6 +1064,8 @@
   "chat_tool_calendar_read_failed": "Couldn’t check your calendar",
   "chat_tool_calendar_write": "Updating your calendar",
   "chat_tool_calendar_write_failed": "Couldn’t update your calendar",
+  "chat_tool_calendar_delete": "Removing a calendar event",
+  "chat_tool_calendar_delete_failed": "Couldn’t remove the calendar event",
   "chat_tool_meeting_join": "Joining the meeting",
   "chat_tool_meeting_join_failed": "Couldn’t join the meeting",
   "chat_tool_meeting_read": "Reviewing the meeting",

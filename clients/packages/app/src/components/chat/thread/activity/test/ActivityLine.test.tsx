@@ -323,7 +323,7 @@ describe("ParticipantStatusSlot", () => {
       status: "running",
       summaryClass: "public" as const,
       summary: "Working",
-      toolName: "calendar.list_items",
+      toolName: "calendar.events",
     };
     const view = render(
       <ParticipantStatusSlot
@@ -335,7 +335,7 @@ describe("ParticipantStatusSlot", () => {
     );
     const slot = screen.getByTestId("participant-status-slot");
     expect(slot).toHaveAttribute("data-presentation", "tool-call");
-    expect(slot).toHaveAttribute("data-tool-name", "calendar.list_items");
+    expect(slot).toHaveAttribute("data-tool-name", "calendar.events");
     expect(screen.getByRole("status")).toHaveTextContent("Checking your calendar");
 
     view.rerender(
@@ -372,13 +372,47 @@ describe("ParticipantStatusSlot", () => {
     expect(slot).not.toHaveAttribute("data-presentation");
   });
 
+  it("names the work of each agent calendar tool", () => {
+    const view = render(
+      <ParticipantStatusSlot
+        activity={{
+          phase: "execution",
+          status: "running",
+          summaryClass: "public",
+          summary: "Working",
+          toolName: "calendar.create",
+        }}
+        hasResponse
+        participantStatus={router}
+        toolPresentation="bubble"
+      />
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Updating your calendar");
+
+    view.rerender(
+      <ParticipantStatusSlot
+        activity={{
+          phase: "execution",
+          status: "running",
+          summaryClass: "public",
+          summary: "Working",
+          toolName: "calendar.delete",
+        }}
+        hasResponse
+        participantStatus={router}
+        toolPresentation="bubble"
+      />
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Removing a calendar event");
+  });
+
   it("does not promote private tool copy and preserves public execution errors", () => {
     const activity = {
       phase: "execution",
       status: "running",
       summaryClass: "none" as const,
       summary: "Internal implementation detail",
-      toolName: "calendar.list_items",
+      toolName: "calendar.events",
     };
     const view = render(
       <ParticipantStatusSlot
@@ -393,7 +427,7 @@ describe("ParticipantStatusSlot", () => {
       "true"
     );
     expect(currentSummary(view.container)).toHaveTextContent("Working");
-    expect(view.container).not.toHaveTextContent("calendar.list_items");
+    expect(view.container).not.toHaveTextContent("calendar.events");
     expect(view.container).not.toHaveTextContent("Internal implementation detail");
     view.rerender(
       <ParticipantStatusSlot
@@ -484,7 +518,7 @@ describe("ParticipantStatusSlot", () => {
           status: "running",
           summaryClass: "public",
           summary: "Working",
-          toolName: "calendar.list_items",
+          toolName: "calendar.events",
         }}
         participantStatus={{
           conversationId: "cnv_1",

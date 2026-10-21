@@ -22,6 +22,56 @@ defmodule SalixAgent.Tools.Schemas do
 
   @meeting_trigger_kinds ["decision", "publication", "deadline_fence"]
   @exec_description_max_length 19
+  @calendar_ref %{
+    "type" => "object",
+    "description" => "A calendar_ref from calendar.calendars, unchanged.",
+    "properties" => %{
+      "source" => %{"type" => "string", "enum" => ["comma", "google", "mac"]},
+      "account_id" => %{"type" => ["string", "null"]},
+      "calendar_id" => %{"type" => "string"}
+    },
+    "required" => ["source", "calendar_id"]
+  }
+  @event_ref %{
+    "type" => "object",
+    "description" => "An event_ref from calendar.events or calendar.event, unchanged.",
+    "properties" => %{
+      "source" => %{"type" => "string", "enum" => ["comma", "google", "mac"]},
+      "account_id" => %{"type" => ["string", "null"]},
+      "calendar_id" => %{"type" => "string"},
+      "event_id" => %{"type" => "string"},
+      "occurrence" => %{"type" => ["string", "object", "null"]},
+      "etag" => %{"type" => ["string", "null"]}
+    },
+    "required" => ["source", "calendar_id", "event_id"]
+  }
+  @calendar_event %{
+    "type" => "object",
+    "additionalProperties" => false,
+    "properties" => %{
+      "title" => %{"type" => "string"},
+      "start" => %{
+        "type" => "string",
+        "description" => "ISO-8601 with offset, or YYYY-MM-DD when all_day."
+      },
+      "end" => %{"type" => "string", "description" => "Exclusive end, same form as start."},
+      "all_day" => %{"type" => "boolean"},
+      "time_zone" => %{"type" => "string", "description" => "IANA time zone."},
+      "location" => %{"type" => ["string", "null"]},
+      "description" => %{"type" => ["string", "null"]},
+      "recurrence" => %{
+        "type" => "string",
+        "enum" => ["none", "daily", "weekly", "monthly", "yearly"],
+        "description" =>
+          "Optional repeat frequency for Google and Mac events. The Comma calendar takes single events only."
+      }
+    }
+  }
+  @calendar_scope %{
+    "type" => "string",
+    "enum" => ["instance", "series"],
+    "description" => "For a recurring event: this occurrence (default) or the whole series."
+  }
   @interaction_locale %{
     "type" => "string",
     "enum" => ["en", "zh-CN"],
@@ -718,31 +768,74 @@ defmodule SalixAgent.Tools.Schemas do
       },
       "required" => ["meeting_id"]
     },
-    "calendar.list_items" => %{
+    "calendar.calendars" => %{
       "type" => "object",
-      "properties" => %{
-        "calendar_id" => %{"type" => "string"},
-        "range_start_ms" => %{"type" => "integer", "description" => "Inclusive UTC Unix ms."},
-        "range_end_ms" => %{"type" => "integer", "description" => "Exclusive UTC Unix ms."},
-        "object_type" => %{"type" => "string", "enum" => ["event", "task"]},
-        "limit" => %{"type" => "integer", "minimum" => 1, "maximum" => 200}
-      },
-      "required" => ["calendar_id", "range_start_ms", "range_end_ms"]
+      "properties" => %{},
+      "required" => [],
+      "additionalProperties" => false
     },
-    "calendar.get_item" => %{
+    "calendar.events" => %{
       "type" => "object",
+      "additionalProperties" => false,
       "properties" => %{
-        "calendar_id" => %{"type" => "string"},
-        "calendar_item_id" => %{"type" => "string"},
-        "occurrence_ref" => %{"type" => "object", "description" => "Optional OccurrenceRef."}
+        "time_min" => %{
+          "type" => "string",
+          "description" =>
+            "Inclusive start, ISO-8601 with offset, e.g. 2026-10-19T00:00:00-03:00."
+        },
+        "time_max" => %{
+          "type" => "string",
+          "description" => "Exclusive end, ISO-8601 with offset; at most 62 days after time_min."
+        },
+        "time_zone" => %{
+          "type" => "string",
+          "description" =>
+            "Optional IANA time zone for all-day boundaries, e.g. America/Sao_Paulo."
+        },
+        "calendar_refs" => %{
+          "type" => "array",
+          "items" => @calendar_ref,
+          "description" => "Optional calendars to read, from calendar.calendars. Omit for all."
+        }
       },
-      "required" => ["calendar_id", "calendar_item_id"]
+      "required" => ["time_min", "time_max"]
+    },
+    "calendar.event" => %{
+      "type" => "object",
+      "additionalProperties" => false,
+      "properties" => %{"event_ref" => @event_ref},
+      "required" => ["event_ref"]
+    },
+    "calendar.create" => %{
+      "type" => "object",
+      "additionalProperties" => false,
+      "properties" => %{
+        "calendar_ref" => @calendar_ref,
+        "event" => Map.put(@calendar_event, "required", ["title", "start", "end", "time_zone"])
+      },
+      "required" => ["calendar_ref", "event"]
+    },
+    "calendar.update" => %{
+      "type" => "object",
+      "additionalProperties" => false,
+      "properties" => %{
+        "event_ref" => @event_ref,
+        "patch" => @calendar_event,
+        "scope" => @calendar_scope,
+        "target_calendar_ref" => @calendar_ref
+      },
+      "required" => ["event_ref", "patch"]
+    },
+    "calendar.delete" => %{
+      "type" => "object",
+      "additionalProperties" => false,
+      "properties" => %{"event_ref" => @event_ref, "scope" => @calendar_scope},
+      "required" => ["event_ref"]
     },
     "calendar.update_context" => %{
       "type" => "object",
       "properties" => %{
-        "calendar_id" => %{"type" => "string"},
-        "occurrence_ref" => %{"type" => "object"},
+        "event_ref" => Map.put(@event_ref, "description", "A Comma event_ref, unchanged."),
         "expected_revision" => %{"type" => "integer", "minimum" => 0},
         "objective" => %{"type" => "string"},
         "background" => %{"type" => "string"},
@@ -750,32 +843,7 @@ defmodule SalixAgent.Tools.Schemas do
         "questions" => %{"type" => "array", "items" => %{"type" => "string"}},
         "resource_refs" => %{"type" => "array", "items" => %{"type" => "object"}}
       },
-      "required" => ["calendar_id", "occurrence_ref", "expected_revision"]
-    },
-    "calendar.create_event" => %{
-      "type" => "object",
-      "properties" => %{
-        "title" => %{"type" => "string", "description" => "Event title."},
-        "start" => %{
-          "type" => "string",
-          "description" => "Local wall time with no offset, e.g. 2026-08-27T19:00:00."
-        },
-        "time_zone" => %{"type" => "string", "description" => "IANA time zone, e.g. Asia/Tokyo."},
-        "duration" => %{
-          "type" => "string",
-          "description" => "Optional ISO-8601 duration, e.g. PT30M. Defaults to PT30M."
-        },
-        "attendees" => %{
-          "type" => "array",
-          "items" => %{
-            "type" => "object",
-            "properties" => %{"display_name" => %{"type" => "string"}},
-            "required" => ["display_name"]
-          },
-          "description" => "Optional attendee display names. Names are not identities or grants."
-        }
-      },
-      "required" => ["title", "start", "time_zone"]
+      "required" => ["event_ref", "expected_revision"]
     },
     "calendar.issue_feed_link" => %{
       "type" => "object",

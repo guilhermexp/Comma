@@ -170,8 +170,9 @@ defmodule SalixAgent.Tools do
     agent.list
     agent.get
     env.runtime_targets
-    calendar.list_items
-    calendar.get_item
+    calendar.calendars
+    calendar.events
+    calendar.event
     meeting.get
     im.connects_list
     im.provider_apis_list
@@ -991,6 +992,26 @@ defmodule SalixAgent.Tools do
     end
   end
 
+  # Calendar arguments and results carry the owner's event text, which the
+  # diagnostic log never records (D6): only the source and the outcome stay.
+  defp log_args("calendar." <> _, args) when is_map(args) do
+    ref = args["event_ref"] || args["calendar_ref"]
+    %{"redacted" => true, "source" => if(is_map(ref), do: ref["source"])}
+  end
+
+  defp log_args(_name, args), do: args
+
+  defp log_content("calendar." <> _, %{error: true, content: content}), do: content
+
+  defp log_content("calendar." <> _, %{content: content}) do
+    case Jason.decode(content) do
+      {:ok, %{"sources" => sources}} -> %{"redacted" => true, "sources" => sources}
+      _ -> %{"redacted" => true}
+    end
+  end
+
+  defp log_content(_name, result), do: result.content
+
   defp run_one_with_timeout(call, ctx) do
     name = call[:name] || call["name"]
     timeout = tool_timeout_ms(name, call[:args] || call["args"] || %{})
@@ -1001,7 +1022,7 @@ defmodule SalixAgent.Tools do
       session_id: Map.get(ctx, :session_id),
       tool: name,
       tool_call_id: tool_call_id(call),
-      args: call[:args] || call["args"] || %{},
+      args: log_args(name, call[:args] || call["args"] || %{}),
       timeout_ms: timeout
     })
 
@@ -1064,7 +1085,7 @@ defmodule SalixAgent.Tools do
       tool: result.name,
       tool_call_id: result.id,
       error: result.error,
-      content: result.content,
+      content: log_content(result.name, result),
       event_count: length(result.events),
       duration_ms: duration_ms
     })

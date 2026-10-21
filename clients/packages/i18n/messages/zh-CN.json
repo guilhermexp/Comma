@@ -1064,6 +1064,8 @@
   "chat_tool_calendar_read_failed": "无法查看日历",
   "chat_tool_calendar_write": "正在更新日历",
   "chat_tool_calendar_write_failed": "无法更新日历",
+  "chat_tool_calendar_delete": "正在删除日历事件",
+  "chat_tool_calendar_delete_failed": "无法删除日历事件",
   "chat_tool_meeting_join": "正在加入会议",
   "chat_tool_meeting_join_failed": "无法加入会议",
   "chat_tool_meeting_read": "正在查看会议内容",

@@ -1,5 +1,5 @@
 defmodule Salix.Bindings.AgentCalendar do
-  @moduledoc "Local coordinator for agent Calendar reads and context-triggered meeting reconciliation."
+  @moduledoc "Local coordinator for the agent's Comma calendar and context-triggered meeting reconciliation."
 
   @behaviour SalixAgent.Calendar
 
@@ -8,12 +8,23 @@ defmodule Salix.Bindings.AgentCalendar do
   alias SalixStore.CalendarFeedSubscriptions
 
   @impl true
-  def list_items(group_id, params, principal_ref),
-    do: AgentAPI.list_items(group_id, params, principal_ref)
+  def calendars(group_id, owner), do: AgentAPI.calendars(group_id, owner)
 
   @impl true
-  def get_item(group_id, params, principal_ref),
-    do: AgentAPI.get_item(group_id, params, principal_ref)
+  def events(group_id, params, owner), do: AgentAPI.events(group_id, params, owner)
+
+  @impl true
+  def event(group_id, params, owner), do: AgentAPI.event(group_id, params, owner)
+
+  @impl true
+  def create(group_id, params, owner, creation_request_id),
+    do: AgentAPI.create(group_id, params, owner, creation_request_id)
+
+  @impl true
+  def update(group_id, params, owner), do: AgentAPI.update(group_id, params, owner)
+
+  @impl true
+  def delete(group_id, params, owner), do: AgentAPI.delete(group_id, params, owner)
 
   @impl true
   def update_context(group_id, params) do
@@ -23,10 +34,6 @@ defmodule Salix.Bindings.AgentCalendar do
       {:ok, context}
     end
   end
-
-  @impl true
-  def create_event(group_id, params, principal_ref, creation_request_id),
-    do: AgentAPI.create_event(group_id, params, principal_ref, creation_request_id)
 
   # Issuance mints the credential and returns its URL for the caller to show the
   # requesting human. Rotation stays fenced so a concurrent reissue cannot
