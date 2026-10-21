@@ -5,15 +5,19 @@ defmodule SalixCalendar.LocalItem do
 
   A local Event is `origin.kind=local` and carries an immutable
   `owner_principal_ref`. The agent supplies only the structured proposal
-  (title/start/timezone/duration/attendees); the server supplies owner identity,
-  ids and the creation request. Attendee names are bounded display data and never
-  become principals or Feed grants. v1 accepts one non-recurring Event only.
+  (title/start/timezone/duration/description/location/attendees); the server
+  supplies owner identity, ids and the creation request. Attendee names are
+  bounded display data and never become principals or Feed grants. v1 accepts
+  one non-recurring Event only; its owner may edit the proposal fields.
   """
 
   alias SalixCalendar.Recurrence
   alias SalixStore.{Crypto, JSON}
 
   @max_title 512
+  @max_description 8_000
+  @max_location 512
+  @content_keys ~w(title start time_zone duration description location)
   @max_participants 50
   @max_participant_name 256
   # Bounded ISO 8601 duration subset: PnDTnHnMnS with at least one component.
@@ -26,10 +30,7 @@ defmodule SalixCalendar.LocalItem do
       when is_binary(item_id) and is_binary(calendar_id) and is_map(proposal) and
              is_binary(creation_request_id) do
     with {:ok, owner} <- owner(owner),
-         {:ok, title} <- title(proposal["title"]),
-         {:ok, zone} <- time_zone(proposal["time_zone"]),
-         {:ok, start, start_ms} <- start(proposal["start"], zone),
-         {:ok, duration} <- duration(proposal["duration"]),
+         {:ok, content, start_ms} <- content(proposal),
          {:ok, participants} <- participants(proposal["attendees"]) do
       now = now_ms()
 
@@ -37,14 +38,11 @@ defmodule SalixCalendar.LocalItem do
         %{
           "@type" => "Event",
           "uid" => uid(item_id),
-          "title" => title,
-          "start" => start,
-          "timeZone" => zone,
-          "duration" => duration,
           "status" => "confirmed",
           "privacy" => "private",
           "freeBusyStatus" => "busy"
         }
+        |> Map.merge(content)
         |> put_participants(participants)
 
       envelope = %{
@@ -66,10 +64,102 @@ defmodule SalixCalendar.LocalItem do
     end
   end
 
+  @doc """
+  Apply an owner's edit to a stored local Event.
+
+  `patch` uses the proposal keys (title/start/time_zone/duration/description/
+  location); absent keys keep their stored value and a `nil` description or
+  location clears it. The merged proposal is validated exactly as on creation.
+  Identity, owner, origin and attendees never change.
+  """
+  @spec patch(map(), map()) :: {:ok, map()} | {:error, term()}
+  def patch(%{"object" => object} = envelope, patch) when is_map(object) and is_map(patch) do
+    proposal = Map.merge(proposal(object), Map.take(patch, @content_keys))
+
+    with {:ok, content, start_ms} <- content(proposal) do
+      object =
+        object
+        |> Map.drop(~w(description locations))
+        |> Map.merge(content)
+
+      {:ok,
+       %{
+         envelope:
+           envelope
+           |> Map.put("object", object)
+           |> Map.update("revision", 1, &(&1 + 1))
+           |> Map.put("updated_at", now_ms()),
+         start_ms: start_ms
+       }}
+    end
+  end
+
+  def patch(_envelope, _patch), do: {:error, :invalid_local_item}
+
+  @doc "The stored proposal fields of a local Event object."
+  @spec proposal(map()) :: map()
+  def proposal(object) when is_map(object) do
+    %{
+      "title" => object["title"],
+      "start" => object["start"],
+      "time_zone" => object["timeZone"],
+      "duration" => object["duration"],
+      "description" => object["description"],
+      "location" => location(object)
+    }
+  end
+
+  @doc "Epoch-millisecond start of a stored local Event."
+  @spec start_ms(map()) :: {:ok, integer()} | {:error, term()}
+  def start_ms(%{"object" => object}) when is_map(object) do
+    with {:ok, zone} <- time_zone(object["timeZone"]),
+         {:ok, _start, ms} <- start(object["start"], zone),
+         do: {:ok, ms}
+  end
+
+  def start_ms(_envelope), do: {:error, :invalid_local_item}
+
+  # The validated, owner-editable part of the object.
+  defp content(proposal) do
+    with {:ok, title} <- title(proposal["title"]),
+         {:ok, zone} <- time_zone(proposal["time_zone"]),
+         {:ok, start, start_ms} <- start(proposal["start"], zone),
+         {:ok, duration} <- duration(proposal["duration"]),
+         {:ok, description} <- description(proposal["description"]),
+         {:ok, location} <- location_name(proposal["location"]) do
+      content =
+        %{"title" => title, "start" => start, "timeZone" => zone, "duration" => duration}
+        |> put_optional("description", description)
+        |> put_optional("locations", location && %{"l1" => %{"name" => location}})
+
+      {:ok, content, start_ms}
+    end
+  end
+
+  defp location(object) do
+    case object["locations"] do
+      %{} = locations ->
+        locations
+        |> Enum.sort_by(fn {id, _} -> id end)
+        |> Enum.find_value(fn {_id, value} -> is_map(value) && value["name"] end)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp put_optional(map, _key, nil), do: map
+  defp put_optional(map, key, value), do: Map.put(map, key, value)
+
   @doc "Canonical typed digest of a complete principal_ref, for owner index markers."
   @spec owner_digest(map()) :: String.t()
   def owner_digest(%{} = owner),
-    do: owner |> canonical_owner() |> JSON.stringify() |> :erlang.term_to_binary([:deterministic]) |> Crypto.hex()
+    do:
+      owner
+      |> canonical_owner()
+      |> JSON.stringify()
+      |> :erlang.term_to_binary([:deterministic])
+      |> Crypto.hex()
 
   @doc "UTC year-month bucket (\"yyyy-mm\") for an epoch-millisecond instant."
   @spec month_bucket(integer()) :: String.t()
@@ -127,6 +217,30 @@ defmodule SalixCalendar.LocalItem do
   end
 
   defp start(_value, _zone), do: {:error, :invalid_event_start}
+
+  defp description(nil), do: {:ok, nil}
+
+  defp description(value) when is_binary(value) do
+    if String.length(value) <= @max_description,
+      do: {:ok, blank_to_nil(value)},
+      else: {:error, :invalid_event_description}
+  end
+
+  defp description(_value), do: {:error, :invalid_event_description}
+
+  defp location_name(nil), do: {:ok, nil}
+
+  defp location_name(value) when is_binary(value) do
+    trimmed = String.trim(value)
+
+    if String.length(trimmed) <= @max_location,
+      do: {:ok, blank_to_nil(trimmed)},
+      else: {:error, :invalid_event_location}
+  end
+
+  defp location_name(_value), do: {:error, :invalid_event_location}
+
+  defp blank_to_nil(value), do: if(String.trim(value) == "", do: nil, else: value)
 
   defp duration(value) when is_binary(value) do
     if Regex.match?(@duration_regex, value),

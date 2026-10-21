@@ -49,6 +49,42 @@ defmodule SalixCalendar.Server do
       when is_map(proposal) and is_map(owner) and is_binary(creation_request_id),
       do: call(group_id, calendar_id, {:create_local_item, proposal, owner, creation_request_id})
 
+  @doc "Edit one owner's Comma-local Event (see `SalixCalendar.LocalItems.update/6`)."
+  def update_local_item(group_id, calendar_id, item_id, owner, patch, expected_revision)
+      when is_binary(item_id) and is_map(owner) and is_map(patch),
+      do:
+        call(
+          group_id,
+          calendar_id,
+          {:update_local_item, item_id, owner, patch, expected_revision}
+        )
+
+  @doc "Delete one owner's Comma-local Event (see `SalixCalendar.LocalItems.delete/5`)."
+  def delete_local_item(group_id, calendar_id, item_id, owner, expected_revision)
+      when is_binary(item_id) and is_map(owner),
+      do: call(group_id, calendar_id, {:delete_local_item, item_id, owner, expected_revision})
+
+  @doc """
+  The calendar an `ensure_calendar/3` identity names, without creating it.
+  Returns `{:error, :not_found}` when that calendar was never ensured.
+  """
+  def lookup_calendar(group_id, identity) when is_map(identity) do
+    identity = JSON.stringify(identity)
+
+    with true <- Ids.valid_group_id?(group_id) or {:error, :invalid_calendar_owner_identity},
+         {:ok, %{"identity" => ^identity, "calendar_id" => calendar_id}} <-
+           CasRecord.get(
+             Keys.ctl_calendar_ensure(group_id, digest(identity)),
+             :invalid_calendar_binding
+           ),
+         true <- Ids.valid_calendar_id?(calendar_id) or {:error, :invalid_calendar_binding} do
+      get_calendar(group_id, calendar_id)
+    else
+      {:ok, _other} -> {:error, :calendar_identity_conflict}
+      {:error, _} = error -> error
+    end
+  end
+
   @doc "Read one Comma-local item by id (read-only; not a source projection)."
   def get_local_item(group_id, calendar_id, item_id),
     do: LocalStore.get_local_item(group_id, calendar_id, item_id)
