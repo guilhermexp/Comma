@@ -31,16 +31,18 @@ describe("from-source native addons", () => {
       "--file-applications-only",
       "--notification-authorization-only",
       "--font-families-only",
+      "--calendar-kit-only",
     ]);
     expect(built).toEqual(missing.map((addon) => addon.buildFlag));
   });
 
   it("builds only what is absent and nothing once every addon is present", () => {
-    const [fileApplications, notificationAuthorization, fontFamilies] =
+    const [fileApplications, notificationAuthorization, fontFamilies, calendarKit] =
       devNativeAddons(appDir);
     mkdirSync(dirname(fileApplications!.output), { recursive: true });
     writeFileSync(fileApplications!.output, "");
     writeFileSync(fontFamilies!.output, "");
+    writeFileSync(calendarKit!.output, "");
 
     const built: string[] = [];
     ensureDevNativeAddons({ appDir, env: {}, build: (_dir, flag) => built.push(flag) });
@@ -67,6 +69,6 @@ describe("from-source native addons", () => {
         throw new Error("must not build");
       },
     });
-    expect(missing).toHaveLength(3);
+    expect(missing).toHaveLength(4);
   });
 });

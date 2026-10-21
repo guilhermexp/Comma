@@ -12,6 +12,7 @@ export const sideChatBackdropAddonName = "comma-side-chat-backdrop.node";
 export const fileApplicationsAddonName = "comma-file-applications.node";
 export const notificationAuthorizationAddonName =
   "comma-notification-authorization.node";
+export const calendarKitAddonName = "comma-calendar-kit.node";
 export const fontFamiliesAddonName = "comma-font-families.node";
 export const computerUseAppName = `${getCommaReleaseConfig().productName} Computer Use`;
 export const computerUseProductName = "CommaComputerUseDaemon";
@@ -91,6 +92,10 @@ export function notificationAuthorizationAddonDistPath(appDir: string) {
   return resolve(sharedMacOSNativeDistDir(appDir), notificationAuthorizationAddonName);
 }
 
+export function calendarKitAddonDistPath(appDir: string) {
+  return resolve(sharedMacOSNativeDistDir(appDir), calendarKitAddonName);
+}
+
 export function fontFamiliesAddonDistPath(appDir: string) {
   return resolve(sharedMacOSNativeDistDir(appDir), fontFamiliesAddonName);
 }
@@ -133,6 +138,10 @@ export function packagedNotificationAuthorizationAddonPath(appBundle: string) {
     "Contents/Resources/native/macos",
     notificationAuthorizationAddonName
   );
+}
+
+export function packagedCalendarKitAddonPath(appBundle: string) {
+  return resolve(appBundle, "Contents/Resources/native/macos", calendarKitAddonName);
 }
 
 export function packagedComputerUseAppPath(
