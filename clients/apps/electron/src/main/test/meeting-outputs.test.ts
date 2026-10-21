@@ -40,7 +40,9 @@ function harness() {
       status: "active",
       messages: [] as SalixMessage[],
     })),
-    fetchConversationAttachment: vi.fn(async () => new Blob(["artifact"])),
+    fetchConversationAttachment: vi.fn<CommaApiClient["fetchConversationAttachment"]>(
+      async () => new Blob(["artifact"])
+    ),
     streamConversationListEvents: vi.fn(async (_group, opts) => {
       streams.push(opts.signal);
       if (!opts.signal.aborted)
