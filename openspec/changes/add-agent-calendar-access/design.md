@@ -126,6 +126,30 @@ google(owner, account_id, operation, args) :: {:ok, map} | {:error, public_code}
 mac(owner, op, input) :: {:ok, map} | {:error, :desktop_offline | :mac_access_not_granted | :mac_unavailable | term}
 ```
 
+### C4. Formas normalizadas da porta
+
+A porta C3 devolve sempre mapas com chaves em string, já normalizados. O `salix_agent` não conhece formatos do Google nem do Mac.
+
+- **Calendário:** `%{"calendar_ref" => %{"source" => "google"|"mac", "account_id" => id|nil, "calendar_id" => id}, "name", "writable" => bool, "color" => hex|nil}`.
+- **Evento:**
+  - `%{"event_ref" => %{"source", "account_id", "calendar_id", "event_id", "occurrence" => iso8601|nil, "etag" => s|nil}, "calendar_ref", "title", "start", "end", "all_day" => bool, "time_zone", "location", "description", "recurring" => bool, "writable" => bool, "ical_uid" => s|nil}`;
+  - `start` e `end` em ISO-8601 com deslocamento; em dia inteiro, `YYYY-MM-DD`.
+- **Operações Google** (`google/4`):
+  - `:calendars`;
+  - `:events %{"calendar_ids", "time_min", "time_max", "time_zone"}`;
+  - `:event %{"calendar_id", "event_id"}`;
+  - `:create %{"calendar_id", "event"}`;
+  - `:update %{"calendar_id", "event_id", "scope", "etag", "patch", "target_calendar_id"}`;
+  - `:delete %{"calendar_id", "event_id", "scope", "etag"}`.
+
+  `event` e `patch` usam os campos do evento normalizado (`title`, `start`, `end`, `all_day`, `time_zone`, `location`, `description`, `recurrence`).
+- **Operações Mac** (`mac/3`): as mesmas, com os nomes de C1 (`"calendars"`, `"events"`, `"event"`, `"create-event"`, `"update-event"`, `"delete-event"`). A entrada é normalizada como acima; `occurrence` é o `occurrenceDate`.
+- **Resultados:** listas como `{:ok, %{"calendars" => [...]}}` e `{:ok, %{"events" => [...], "truncated" => bool}}`; um evento como `{:ok, %{"event" => ...}}`; apagar como `{:ok, %{}}`.
+- **Erros públicos:**
+  - Google: `"not_connected"`, `"composio_access_denied"`, `"calendar_write_permission_required"`, `"calendar_event_conflict"`, `"provider_unavailable"`, `"provider_timeout"`, `"read_only"`, `"not_found"`;
+  - Mac: `"desktop_offline"`, `"mac_access_not_granted"`, `"mac_unavailable"`, `"read_only"`, `"not_found"`.
+- **Módulo:** a porta fica em `CommaWeb.AgentCalendarSources`, com `mac/3` delegando a `CommaWeb.AgentCalendarSources.Mac.call/3`.
+
 ## Riscos / Trade-offs
 
 - **[R1] Rotina lê e o modelo é induzido a vazar a agenda:** → IFC classifica o resultado como privado; a escrita nunca vem de rotina.
