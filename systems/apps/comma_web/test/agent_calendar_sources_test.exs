@@ -331,6 +331,13 @@ defmodule CommaWeb.AgentCalendarSourcesTest do
     assert Enum.all?(tools(c), &(&1["account"] == "cal"))
   end
 
+  test "events without a time zone read in UTC, as calendar.events allows", c do
+    args = Map.delete(week(), "time_zone") |> Map.put("calendar_ids", ["me@example.test"])
+
+    assert {:ok, %{"events" => [_ | _]}} = Sources.google(c.owner, "cal", :events, args)
+    assert Enum.any?(tools(c), &(&1["arguments"]["timeZone"] == "UTC"))
+  end
+
   test "calendars and a single event are normalized", c do
     assert {:ok, %{"calendars" => [me, holidays, _hidden]}} =
              Sources.google(c.owner, "cal", :calendars, %{})
@@ -378,6 +385,20 @@ defmodule CommaWeb.AgentCalendarSourcesTest do
              })
 
     assert %{"title" => "Folga", "start" => "2026-10-22", "all_day" => true} = event
+  end
+
+  test "create without a recurrence makes a single event", c do
+    assert {:ok, %{"event" => %{"title" => "Folga"}}} =
+             Sources.google(c.owner, "cal", :create, %{
+               "calendar_id" => "me@example.test",
+               "event" => %{
+                 "title" => "Folga",
+                 "start" => "2026-10-22",
+                 "end" => "2026-10-23",
+                 "all_day" => true,
+                 "time_zone" => "America/Sao_Paulo"
+               }
+             })
   end
 
   test "a disabled account is not read", c do

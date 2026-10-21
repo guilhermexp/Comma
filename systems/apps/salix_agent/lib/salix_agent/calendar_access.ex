@@ -101,7 +101,7 @@ defmodule SalixAgent.CalendarAccess do
   @doc "Create one event in the chosen calendar, on the owner's own request."
   def create(ctx, %{"calendar_ref" => calendar_ref, "event" => event})
       when is_map(calendar_ref) and is_map(event) do
-    event = Map.take(event, @event_fields)
+    event = event |> Map.take(@event_fields) |> with_all_day()
 
     with {:ok, owner} <- write_owner(ctx),
          {:ok, request_id} <- creation_request_id(ctx),
@@ -129,7 +129,7 @@ defmodule SalixAgent.CalendarAccess do
         "calendar_id" => ref["calendar_id"],
         "event_id" => ref["event_id"],
         "scope" => scope,
-        "patch" => Map.take(patch, @event_fields)
+        "patch" => patch |> Map.take(@event_fields) |> with_all_day()
       }
 
       write(source, ref, fn
@@ -554,6 +554,12 @@ defmodule SalixAgent.CalendarAccess do
   end
 
   defp target_calendar(_ref, _target), do: {:error, :invalid_calendar_ref}
+
+  # The model may omit all_day: a date-only start is an all-day event.
+  defp with_all_day(%{"start" => start} = event) when is_binary(start),
+    do: Map.put_new(event, "all_day", String.length(start) == 10)
+
+  defp with_all_day(event), do: event
 
   defp compact(map), do: map |> Enum.reject(fn {_key, value} -> is_nil(value) end) |> Map.new()
 

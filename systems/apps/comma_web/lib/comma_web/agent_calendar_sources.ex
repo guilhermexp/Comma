@@ -114,6 +114,7 @@ defmodule CommaWeb.AgentCalendarSources do
   defp request(operation, account_id, args) when is_map(args) do
     with op when is_binary(op) <- @operations[operation] do
       params = Map.merge(args, %{"account_id" => account_id, "operation" => op})
+      params = defaults(op, params)
 
       if op == "events" and is_nil(args["calendar_ids"]) do
         with {:ok, r} <- Agenda.request(Map.put(params, "calendar_ids", ["primary"])),
@@ -127,6 +128,15 @@ defmodule CommaWeb.AgentCalendarSources do
   end
 
   defp request(_, _, _), do: {:error, :invalid_composio_request}
+
+  # The agent tools make these optional; the bounds carry offsets, and a new
+  # event without a recurrence is a single event.
+  defp defaults("events", params), do: Map.put_new(params, "time_zone", "UTC")
+
+  defp defaults("create", %{"event" => %{} = event} = params),
+    do: %{params | "event" => Map.put_new(event, "recurrence", "none")}
+
+  defp defaults(_op, params), do: params
 
   defp public({:ok, _} = ok), do: ok
   defp public({:error, :invalid_composio_request}), do: {:error, "invalid_request"}

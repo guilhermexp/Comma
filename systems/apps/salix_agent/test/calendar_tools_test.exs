@@ -467,6 +467,25 @@ defmodule SalixAgent.CalendarToolsTest do
                        [@owner, "acc_1", :create, %{"calendar_id" => "primary", "event" => event}]}
 
       assert event["title"] == "Reunião com a Ana"
+      # The model may omit all_day; the sources take it explicitly.
+      assert event["all_day"] == false
+    end
+
+    test "date-only times are an all-day event, and a time patch carries all_day" do
+      google_writes()
+      day = %{@new_event | "start" => "2026-10-22", "end" => "2026-10-23"}
+      Calendar.create(%{"calendar_ref" => @google_cal, "event" => day}, owner_ctx())
+
+      assert_received {:calendar_sources, :google, [_, "acc_1", :create, %{"event" => event}]}
+      assert event["all_day"] == true
+
+      ref = Map.put(@google_cal, "event_id", "g1")
+      patch = %{"start" => "2026-10-22T17:00:00-03:00", "end" => "2026-10-22T18:00:00-03:00"}
+      Calendar.update(%{"event_ref" => ref, "patch" => patch}, owner_ctx())
+
+      assert_received {:calendar_sources, :google, [_, "acc_1", :update, %{"patch" => patch}]}
+      assert patch["all_day"] == false
+      refute Map.has_key?(patch, "recurrence")
     end
 
     test "a Comma create carries the owner and a per-call creation request id" do
