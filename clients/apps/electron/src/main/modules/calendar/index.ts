@@ -95,7 +95,9 @@ export class CalendarService implements CalendarProvider {
   readonly #logger: CalendarLogger;
   readonly #onStateChanged: (state: CalendarState) => void;
   readonly #openExternal: (url: string) => Promise<void>;
-  readonly #readAppIcon: ((bundleIdentifier: string) => Promise<string | undefined>) | undefined;
+  readonly #readAppIcon:
+    | ((bundleIdentifier: string) => Promise<string | undefined>)
+    | undefined;
   readonly #setTimeout: (fn: () => void, ms: number) => unknown;
   readonly #clearTimeout: (handle: unknown) => void;
 
