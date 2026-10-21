@@ -191,6 +191,7 @@ export function installApplicationMenu(options: Options) {
           command("go-drive", messages.app_menu_drive),
           command("go-tasks", messages.app_menu_tasks),
           command("go-plugins", messages.app_menu_plugins),
+          command("go-agenda", messages.agenda_app_menu),
           command("go-routines", messages.app_menu_routines),
           command("go-search", messages.app_menu_search_tasks),
           separator,

@@ -45,6 +45,7 @@ type NavigationShortcutId =
   | "go-drive"
   | "go-tasks"
   | "go-plugins"
+  | "go-agenda"
   | "history-back"
   | "history-forward";
 
@@ -58,6 +59,7 @@ const navigationShortcutIds = [
   "go-drive",
   "go-tasks",
   "go-plugins",
+  "go-agenda",
   "history-back",
   "history-forward",
 ] as const satisfies readonly NavigationShortcutId[];
@@ -100,7 +102,7 @@ const navigationShortcutIdSet: ReadonlySet<AppShortcutId> = new Set(
 const navigationTargets: Partial<
   Record<
     NavigationShortcutId,
-    "/" | "/settings" | "/inbox" | "/drive" | "/tasks" | "/plugins"
+    "/" | "/settings" | "/inbox" | "/drive" | "/tasks" | "/plugins" | "/agenda"
   >
 > = {
   "go-comma-assistant": "/",
@@ -108,6 +110,7 @@ const navigationTargets: Partial<
   "go-drive": "/drive",
   "go-tasks": "/tasks",
   "go-plugins": "/plugins",
+  "go-agenda": "/agenda",
 };
 
 function useScopedAppShortcutListener(

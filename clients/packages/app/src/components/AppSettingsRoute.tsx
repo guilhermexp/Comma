@@ -158,6 +158,7 @@ const guestHiddenShortcutIds = new Set<AppShortcutId>([
   "go-drive",
   "go-tasks",
   "go-plugins",
+  "go-agenda",
   "toggle-right-sidebar",
 ]);
 
@@ -490,6 +491,10 @@ export function AppSettingsRoute({
     "go-plugins": {
       title: m.settings_go_plugins(),
       description: m.settings_go_plugins_description(),
+    },
+    "go-agenda": {
+      title: m.agenda_settings_go(),
+      description: m.agenda_settings_go_description(),
     },
     "toggle-left-sidebar": {
       title: m.settings_toggle_left_sidebar(),
