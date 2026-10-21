@@ -7,21 +7,39 @@ import {
   getNativeBridge,
   type AudioCaptureDriveFile,
   type AudioCaptureRecording,
+  type MeetingTranscriptionState,
 } from "@comma/native-bridge";
 import { toast } from "@comma/ui";
 import { useRouter } from "@tanstack/react-router";
-import { useCallback, useContext, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { SessionProductLease } from "@comma/session-contract";
 import { CommaAuthContext } from "./auth-context";
 import type { DriveFile } from "./drive/driveStore";
+import {
+  cloudProviderName,
+  cloudReasonLabel,
+  stateProviderName,
+} from "./useMeetingTranscription";
 
 let revealSequence = 0;
 
 /** Main's exact reason when the local speech model is missing (contract C3). */
 const localModelMissing = "local_asr_model_not_installed";
 
+/** The backend's reason when a cloud provider failed without a local model (D6). */
+const cloudFailedPrefix = "cloud_asr_failed:";
+
 /** Toasts that ask for the install; they are stale once the model is ready. */
 const installNoticeIds = new Set<string>();
+
+/** Toasts that ask to set up a cloud provider; stale once it is ready. */
+const configureNoticeIds = new Set<string>();
+
+/** Dismisses the "set up transcription" notices, once the provider is ready. */
+export function dismissTranscriptionConfigureNotices() {
+  for (const id of configureNoticeIds) toast.dismiss(id);
+  configureNoticeIds.clear();
+}
 
 /** Dismisses every install notice, for example when the model becomes ready. */
 export function dismissLocalTranscriptionInstallNotices() {
@@ -29,7 +47,18 @@ export function dismissLocalTranscriptionInstallNotices() {
   installNoticeIds.clear();
 }
 
-/** Settings → Work → Meeting, where the Local transcription section lives. */
+/** True while the selected transcription engine can take a recording (D8). */
+export function useRecordingTranscribeReady() {
+  const bridge = getNativeBridge();
+  const [ready, setReady] = useState(false);
+  useEffect(
+    () => bridge.meetingTranscription.state.subscribe((state) => setReady(state.ready)),
+    [bridge]
+  );
+  return ready;
+}
+
+/** Settings → Work → Meeting, where the Transcription section lives. */
 export function openLocalTranscriptionSettings() {
   window.location.hash = "/settings?category=meeting";
 }
@@ -252,11 +281,108 @@ export function useRecordingFileActions() {
     [messages, reveal]
   );
 
+  /** The selected cloud provider is not ready: send the user to set it up. */
+  const showConfigureTranscriptionNotice = useCallback(
+    (recording: AudioCaptureRecording) => {
+      configureNoticeIds.add("transcription-configure-notice");
+      toast.info(messages.recording_transcription_configure(), {
+        actions: [
+          {
+            hierarchy: "secondary-gray",
+            label: messages.recording_transcription_configure_action(),
+            onPress: openLocalTranscriptionSettings,
+          },
+          {
+            hierarchy: "tertiary-gray",
+            label: messages.ui_meeting_recorder_show_in_drive(),
+            onPress: () => void reveal(recording),
+          },
+        ],
+        id: "transcription-configure-notice",
+        testId: "transcription-configure-notice",
+      });
+    },
+    [messages, reveal]
+  );
+
+  /** The cloud provider failed and this Mac's model transcribed the recording. */
+  const showFallbackNotice = useCallback(
+    (
+      recording: AudioCaptureRecording,
+      reason: string | undefined,
+      state: MeetingTranscriptionState | undefined
+    ) => {
+      toast.info(
+        messages.recording_transcription_fallback({
+          provider: stateProviderName(messages, state),
+          reason: cloudReasonLabel(messages, reason ?? ""),
+        }),
+        {
+          actions: [
+            {
+              hierarchy: "tertiary-gray",
+              label: messages.ui_meeting_recorder_show_in_drive(),
+              onPress: () => void reveal(recording),
+            },
+          ],
+          id: `transcription-fallback-${recording.driveFile.path}`,
+          testId: "transcription-fallback-notice",
+        }
+      );
+    },
+    [messages, reveal]
+  );
+
+  /**
+   * The cloud provider failed and no local model took over: name the
+   * provider and why, with Try again. It never offers the local install.
+   */
+  const showCloudFailedNotice = useCallback(
+    (
+      recording: AudioCaptureRecording,
+      notice: {
+        reason?: string | undefined;
+        provider?: "groq" | "openai_compatible" | undefined;
+      },
+      state: MeetingTranscriptionState | undefined,
+      retry: (driveFile: AudioCaptureDriveFile) => Promise<void>
+    ) => {
+      toast.error(
+        messages.recording_transcription_cloud_failed_saved({
+          provider: notice.provider
+            ? cloudProviderName(messages, notice.provider, state)
+            : stateProviderName(messages, state),
+          reason: cloudReasonLabel(messages, notice.reason ?? ""),
+        }),
+        {
+          actions: [
+            {
+              hierarchy: "secondary-gray",
+              label: messages.recording_transcription_retry(),
+              onPress: () => void retry(recording.driveFile),
+            },
+            {
+              hierarchy: "tertiary-gray",
+              label: messages.ui_meeting_recorder_show_in_drive(),
+              onPress: () => void reveal(recording),
+            },
+          ],
+          id: `transcription-cloud-failed-${recording.driveFile.path}`,
+          testId: "transcription-cloud-failed-notice",
+        }
+      );
+    },
+    [messages, reveal]
+  );
+
   return {
     error,
     open,
     pending,
     reveal,
+    showCloudFailedNotice,
+    showConfigureTranscriptionNotice,
+    showFallbackNotice,
     showLocalTranscriptionNotice,
     showSaved,
   };
@@ -270,8 +396,8 @@ export function useRecordingTranscription(
   productLease: SessionProductLease | null | undefined
 ) {
   const messages = useCommaMessages();
-  return useCallback(
-    async (driveFile: AudioCaptureDriveFile) => {
+  const transcribe = useCallback(
+    async (driveFile: AudioCaptureDriveFile): Promise<void> => {
       const name = driveFile.path.split("/").at(-1) ?? driveFile.path;
       const id = `recording-transcribe-${driveFile.path}`;
       toast.info(messages.recording_transcribe_started({ name }), { id, testId: id });
@@ -292,6 +418,39 @@ export function useRecordingTranscription(
         reason = result.reason;
       } catch (failure) {
         reason = failure instanceof Error ? failure.message : String(failure);
+      }
+      if (reason.startsWith(cloudFailedPrefix)) {
+        // No local model took over: the provider's own reason, and Try again.
+        let state: MeetingTranscriptionState | undefined;
+        try {
+          state = await getNativeBridge().meetingTranscription.state.get();
+        } catch {
+          state = undefined;
+        }
+        toast.error(
+          messages.recording_transcribe_failed({
+            name,
+            reason: messages.recording_transcription_cloud_failed({
+              provider: stateProviderName(messages, state),
+              reason: cloudReasonLabel(
+                messages,
+                reason.slice(cloudFailedPrefix.length)
+              ),
+            }),
+          }),
+          {
+            id,
+            testId: id,
+            actions: [
+              {
+                hierarchy: "secondary-gray" as const,
+                label: messages.recording_transcription_retry(),
+                onPress: () => void transcribeRef.current?.(driveFile),
+              },
+            ],
+          }
+        );
+        return;
       }
       const missingModel = reason === localModelMissing;
       if (missingModel) installNoticeIds.add(id);
@@ -321,4 +480,7 @@ export function useRecordingTranscription(
     },
     [messages, productLease]
   );
+  const transcribeRef = useRef(transcribe);
+  transcribeRef.current = transcribe;
+  return transcribe;
 }

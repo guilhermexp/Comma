@@ -45,9 +45,14 @@ Alternativa descartada: o backend chamar a Groq direto. Exigiria ffmpeg para cor
 
 ### D2. Chave cifrada com `safeStorage` e entregue ao helper por rota autenticada
 
-- **Guarda:** o Electron guarda `{kind, baseUrl, model, apiKey}` cifrado com `safeStorage.encryptString` em `<dataDir>/asr-provider.bin` (0600). A chave de cifra fica no Keychain ("Comma Safe Storage").
+- **Guarda:** o Electron guarda `{selected, cloud?: {kind, baseUrl, model, apiKey}}` cifrado com `safeStorage.encryptString` em `<dataDir>/asr-provider.bin` (0600). A chave de cifra fica no Keychain ("Comma Safe Storage").
+  - `selected` é o provedor escolhido; `cloud` é a última configuração de nuvem aceita. Um provedor de nuvem escolhido é sempre o de `cloud`.
+  - Escolher Local mantém `cloud`, cifrado. Voltar para esse provedor reusa a chave salva sem colá-la de novo, depois de nova verificação.
+  - Só "Apagar" remove `cloud`. Se esse provedor estava escolhido, o mecanismo volta para Local.
+  - Sem `cloud`, o arquivo não existe.
 - **Entrega:** depois que o helper fica pronto, a cada reinício dele e a cada mudança de configuração, o Electron faz `PUT /v1/provider` (C6) com o token do helper. O helper guarda a configuração só em memória.
 - **Reenvio:** `/health` informa `provider.configured`. Se o helper reiniciou e perdeu a configuração, o gerenciador a reenvia.
+- **Confirmação:** escolher Local e apagar a chave nunca são recusados: são ações de privacidade. O Main grava na hora (apagar remove a chave de `asr-provider.bin` imediatamente), responde aceito e envia `{"kind":"local"}` ao helper até ele confirmar. Enquanto não confirma, o estado traz `applying: true` e a seção mostra o estado "Verificando…" já existente. A troca para um provedor de nuvem, ou de URL, modelo ou chave, só é aceita (e gravada) depois que o helper responde 204 ao `PUT /v1/provider`; sem essa confirmação, o Main a recusa com `helper_unavailable` e mantém a configuração salva. Como o helper pode ter aplicado a mudança sem que a resposta chegasse, a configuração salva passa a ser uma revisão não confirmada. Em todos os casos, o Main reenvia a revisão salva em `ensureDelivered` (que roda antes de cada transcrição pedida pelo Main) e em segundo plano (1 s, dobrando até 30 s) até o helper confirmar essa revisão. Um helper recém-iniciado está em Local, então uma escolha Local salva já conta como confirmada.
 - **Sem `safeStorage`:** se a cifra não estiver disponível, os provedores de nuvem ficam indisponíveis, com motivo explícito. Não há fallback para texto puro.
 - **Alternativas descartadas:**
   - arquivo 0600 em texto puro: quebra a promessa de Keychain;
@@ -72,12 +77,14 @@ Alternativa descartada: o backend chamar a Groq direto. Exigiria ffmpeg para cor
 - **Tamanho do pedaço:** calculado pela taxa de bits real do arquivo para ficar abaixo de `maxUploadBytes` do provedor (Groq: 24 MB, deixando folga de 1 MB), com teto de 10 min por pedaço.
 - **Sobreposição:** pedaços consecutivos se sobrepõem em 2 s. Na emenda, cada palavra fica com o pedaço em que está mais longe da borda: palavras com início antes do meio da sobreposição vêm do pedaço anterior, as demais do seguinte.
 - **Palavras:** pedidas com `timestamp_granularities[]=word` e `segment`. Os tempos são rebaseados pelo início do pedaço.
-- **Provedor sem palavras:** se não devolver `words`, a fusão usa os segmentos como unidade.
+- **Provedor sem palavras:** se não devolver `words`, ou devolver `words` vazio junto com texto, a fusão usa os segmentos como unidade e, sem segmentos, o texto. `words` vazio sem texto (silêncio) continua contando como palavras.
+- **Emenda de segmentos:** os dois pedaços cortam os segmentos de modo diferente, então o tempo não diz quais palavras de um segmento já vieram do pedaço anterior. Na sobreposição, um segmento do pedaço seguinte perde só as palavras iniciais que repetem o fim do texto já juntado (sem diferenciar caixa e pontuação) e mantém o resto, mesmo sem correspondência.
 - **Arquivos pequenos:** um arquivo abaixo do limite vai inteiro, sem cortar.
 
 ### D5. Motor de nuvem, prazos e erros
 
 - **Envio:** cliente `URLSession` em `TranscriberCore`, multipart com `file`, `model`, `response_format=verbose_json` e `temperature=0`. Um pedaço por vez, com timeout de 120 s por requisição.
+- **Redirecionamento:** a sessão recusa todo redirecionamento, no envio e na verificação, como o Main (`redirect: "error"`). Um 3xx vira `cloud_bad_response`, sem levar o áudio nem a chave a outra origem.
 - **Prazo do trabalho:** 420 s para a tentativa na nuvem, deixando margem para o fallback local dentro dos 600 s do backend.
 - **429:** espera o `retry-after` se ele couber no prazo; senão, falha com `cloud_quota`.
 - **Mapeamento de falhas:**
@@ -85,7 +92,8 @@ Alternativa descartada: o backend chamar a Groq direto. Exigiria ffmpeg para cor
   - erro de rede ou DNS → `cloud_unreachable`;
   - 5xx → `cloud_server_error`;
   - prazo estourado → `cloud_timeout`;
-  - resposta inválida → `cloud_bad_response`.
+  - resposta inválida ou redirecionamento → `cloud_bad_response`;
+  - erro local antes de uma resposta do provedor (ler ou cortar a gravação) → `cloud_audio_unprepared`, com o mesmo fallback.
 - **Diarização:** roda localmente sobre o arquivo inteiro, em paralelo com o envio, sob a mesma prioridade `utility`. A fusão reutiliza `mergeWordsWithSpeakers`, com a regra de 1 s do D5 da change anterior.
 
 ### D6. Fallback e marcação do resultado
@@ -138,8 +146,9 @@ Alternativa descartada: o backend chamar a Groq direto. Exigiria ffmpeg para cor
   Respostas: `204`, ou `400 {"error":{"code":"bad_request"}}`.
 - **`POST /v1/provider/verify`**, mesmo corpo de um provedor de nuvem, sem gravar nada:
   - `200 {"ok":true}`;
-  - `200 {"ok":false,"reason":"cloud_auth_rejected"|"cloud_unreachable"|"cloud_server_error"|"cloud_bad_response"}`.
+  - `200 {"ok":false,"reason":"cloud_auth_rejected"|"cloud_unreachable"|"cloud_server_error"|"cloud_bad_response"}`. Uma falha local (`cloud_audio_unprepared`) é informada como `cloud_bad_response`.
 - **`GET /health`** acrescenta `"provider":{"kind":"local"|"groq"|"openai_compatible","configured":bool}` e `"components":{"asr":bool,"diarization":bool}`. O campo `model` de C2 continua refletindo o componente `asr`.
+  - `provider.lastFailure` (opcional): `{"reason":"cloud_…","provider":"groq"|"openai_compatible","at":"<ISO-8601 UTC>"}`, a última falha da nuvem sem modelo local para assumir (o 502 `cloud_asr_failed`). Some no próximo trabalho da nuvem que termina sem fallback e a cada `PUT /v1/provider`. Nunca traz a chave. O Main a lê quando uma tarefa de resumo de reunião termina sem transcrição, porque esse trabalho chega ao helper pelo backend e não pelo Main, e então emite o aviso `cloud_failed`.
 
 ### C7. Resposta de `POST /v1/audio/transcriptions` (extensão de C2)
 
@@ -155,14 +164,19 @@ Alternativa descartada: o backend chamar a Groq direto. Exigiria ffmpeg para cor
   provider: "local" | "groq" | "openai_compatible",
   ready: bool,
   reason?: "local_model_missing" | "key_missing" | "key_rejected" | "diarization_missing" | "secure_storage_unavailable" | "unsupported",
-  cloud?: { model, baseHost, hasKey, verification: "idle" | "checking" | "valid" | "rejected" | "unreachable" },
-  diarization: "not_installed" | "downloading" | "ready" | "failed"
+  cloud?: { kind: "groq" | "openai_compatible", model, baseHost, hasKey, verification: "idle" | "checking" | "valid" | "rejected" | "unreachable" },
+  diarization: "not_installed" | "downloading" | "ready" | "failed",
+  applying?: true   // a revisão salva ainda não foi confirmada pelo helper
 }
 ```
 
+- `cloud` descreve a configuração de nuvem salva, também com Local escolhido; some quando a chave é apagada.
+- `setProvider` sem `apiKey` reusa a chave salva do mesmo provedor e da mesma origem de URL; `openai_compatible` sem `baseUrl` reusa a URL salva.
+
 Folhas relacionadas:
 - `localTranscription` continua como em C1–C4, para o modelo local;
-- evento `meetingTranscription.notice`, com `{kind: "fallback" | "configure" | "install_local", reason?, recording}`.
+- evento `meetingTranscription.notice`, com `{kind: "fallback" | "cloud_failed" | "configure" | "install_local", reason?, provider?, recording}`:
+  - `cloud_failed`: a nuvem falhou sem modelo local para assumir (502 `cloud_asr_failed`). Traz `reason` (`cloud_…`) e `provider` (`groq` | `openai_compatible`). O aviso nomeia o provedor e o motivo em palavras simples, com "Tentar de novo" (transcreve a gravação de novo) e "Mostrar no Drive", sem sugerir instalar o modelo local.
 
 ## Riscos / Trade-offs
 

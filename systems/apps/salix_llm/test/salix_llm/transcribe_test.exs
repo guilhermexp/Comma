@@ -646,6 +646,89 @@ defmodule SalixLlm.TranscribeTest do
                )
     end
 
+    test "passes the helper provider, model and fallback through the metadata",
+         %{cfg: cfg, respond: respond} do
+      segments = [%{"id" => 0, "start" => 1.0, "end" => 2.0, "text" => "Oi.", "speaker" => "S1"}]
+
+      respond.(200, %{
+        "text" => "Oi.",
+        "duration" => 2.0,
+        "segments" => segments,
+        "provider" => "groq",
+        "model" => "whisper-large-v3-turbo"
+      })
+
+      assert {:ok, result} =
+               Transcribe.transcribe_audio_with_metadata(cfg, "M4A", "recording.m4a", "p",
+                 chunker: FailingChunker
+               )
+
+      assert result.transcript == "[00:00:01] Speaker 1: Oi."
+      assert result.provider == "groq"
+      assert result.model == "whisper-large-v3-turbo"
+      refute Map.has_key?(result, :fallback)
+
+      respond.(200, %{
+        "text" => "Oi.",
+        "duration" => 2.0,
+        "segments" => segments,
+        "provider" => "local",
+        "model" => "parakeet-tdt-0.6b-v3",
+        "fallback" => %{"from" => "groq", "reason" => "cloud_quota"}
+      })
+
+      assert {:ok, result} =
+               Transcribe.transcribe_audio_with_metadata(cfg, "M4A", "recording.m4a", "p",
+                 chunker: FailingChunker
+               )
+
+      assert result.provider == "local"
+      assert result.model == "parakeet-tdt-0.6b-v3"
+      assert result.fallback == %{from: "groq", reason: "cloud_quota"}
+    end
+
+    test "maps a cloud provider failure to its reason", %{cfg: cfg, respond: respond} do
+      respond.(502, %{
+        "error" => %{
+          "code" => "cloud_asr_failed",
+          "reason" => "cloud_auth_rejected",
+          "provider" => "groq",
+          "message" => "The provider rejected the key."
+        }
+      })
+
+      assert {:error, {:cloud_asr_failed, "cloud_auth_rejected"}} =
+               Transcribe.transcribe_audio_with_metadata(cfg, "M4A", "recording.m4a", "p",
+                 chunker: FailingChunker
+               )
+
+      respond.(502, %{"error" => %{"code" => "cloud_asr_failed", "reason" => "not a reason"}})
+
+      assert {:error, {:asr_http, 502, _preview}} =
+               Transcribe.transcribe_audio_with_metadata(cfg, "M4A", "recording.m4a", "p",
+                 chunker: FailingChunker
+               )
+    end
+
+    test "maps a cloud provider without prerequisites to its reason",
+         %{cfg: cfg, respond: respond} do
+      for reason <- ["diarization_missing", "provider_unconfigured"] do
+        respond.(409, %{"error" => %{"code" => "cloud_asr_not_ready", "reason" => reason}})
+
+        assert {:error, {:cloud_asr_not_ready, ^reason}} =
+                 Transcribe.transcribe_audio_with_metadata(cfg, "M4A", "recording.m4a", "p",
+                   chunker: FailingChunker
+                 )
+      end
+
+      respond.(409, %{"error" => %{"code" => "cloud_asr_not_ready", "reason" => "other"}})
+
+      assert {:error, {:asr_http, 409, _preview}} =
+               Transcribe.transcribe_audio_with_metadata(cfg, "M4A", "recording.m4a", "p",
+                 chunker: FailingChunker
+               )
+    end
+
     test "rejects a malformed verbose_json response", %{cfg: cfg, respond: respond} do
       respond.(200, %{"text" => "no segments"})
 

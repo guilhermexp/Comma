@@ -274,6 +274,22 @@ defmodule SalixAgent.ToolsMediaTest do
       end
     end
 
+    test "names cloud transcription failures and missing prerequisites", %{ctx: ctx} do
+      on_exit(fn -> Application.delete_env(:salix_agent, :tools_media_audio_result) end)
+
+      for {result, message} <- [
+            {{:cloud_asr_failed, "cloud_quota"}, ~r/^cloud_asr_failed:cloud_quota: /},
+            {{:cloud_asr_not_ready, "diarization_missing"},
+             ~r/^cloud_asr_not_ready:diarization_missing: /}
+          ] do
+        Application.put_env(:salix_agent, :tools_media_audio_result, {:error, result})
+
+        assert_raise RuntimeError, message, fn ->
+          Media.transcribe_audio(%{"path" => "/uploads/meeting.m4a"}, ctx)
+        end
+      end
+    end
+
     test "uses the current agent scope and writes the complete transcript to VFS", %{
       agent: agent,
       ctx: ctx
@@ -326,6 +342,49 @@ defmodule SalixAgent.ToolsMediaTest do
       end
 
       refute_receive {:audio_transcribe, _, _}
+    end
+
+    test "records the provider, model, and local fallback in the meeting metadata", %{
+      agent: agent,
+      ctx: ctx
+    } do
+      on_exit(fn -> Application.delete_env(:salix_agent, :tools_media_audio_result) end)
+
+      Application.put_env(
+        :salix_agent,
+        :tools_media_audio_result,
+        {:ok,
+         %{
+           transcript: "[00:00:01] Speaker 1: complete",
+           duration_seconds: 7,
+           chunks: [
+             %{index: 0, offset_seconds: 0, transcript: "[00:00:01] Speaker 1: complete"}
+           ],
+           provider: "local",
+           model: "parakeet-tdt-0.6b-v3",
+           fallback: %{from: "groq", reason: "cloud_unreachable"}
+         }}
+      )
+
+      args = %{
+        "path" => "/uploads/meeting.m4a",
+        "output_path" => "/artifacts/meetings/two/transcript.txt"
+      }
+
+      assert {content, events} = Media.transcribe_audio(args, ctx)
+      commit_workspace!(agent, "meeting-asr-provider", events)
+
+      expected = %{
+        "provider" => "local",
+        "model" => "parakeet-tdt-0.6b-v3",
+        "fallback" => %{"from" => "groq", "reason" => "cloud_unreachable"}
+      }
+
+      assert {:ok, metadata} =
+               AgentWorkspace.read(agent, "/artifacts/meetings/two/transcript.json")
+
+      assert Map.take(Jason.decode!(metadata), Map.keys(expected)) == expected
+      assert Map.take(Jason.decode!(content), Map.keys(expected)) == expected
     end
 
     test "rejects missing, relative, and runtime paths before dispatch", %{ctx: ctx} do

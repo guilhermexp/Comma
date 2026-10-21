@@ -12,6 +12,7 @@ const pin: ModelPin = {
   revision: "abc1234def",
   folder: "model",
   variant: "v2",
+  component: "diarization",
   runtime: ["Model.mlmodelc", "vocab.json"],
   provenance: "provenance.json",
   licenses: [{ path: "LICENSE", as: "model-LICENSE" }],
@@ -44,7 +45,10 @@ function fakeHub(provenance: { path: string; sha256: string; size: number }[]) {
       ],
     ],
     ["https://huggingface.co/Org/model-coreml/resolve/abc1234def/vocab.json", "vocab"],
-    ["https://huggingface.co/Org/model-coreml/resolve/abc1234def/Model.mlmodelc/model.mil", "mil"],
+    [
+      "https://huggingface.co/Org/model-coreml/resolve/abc1234def/Model.mlmodelc/model.mil",
+      "mil",
+    ],
     ["https://huggingface.co/Org/model-coreml/resolve/abc1234def/LICENSE", "CC BY 4.0"],
     [
       "https://huggingface.co/Org/model-coreml/resolve/abc1234def/provenance.json",
@@ -77,6 +81,8 @@ describe("transcriber model manifest", () => {
     );
 
     expect(manifest.id).toBe("model@abc1234+v2");
+    // The helper installs and removes each component's folders on their own.
+    expect(manifest.components).toEqual({ diarization: ["model"] });
     expect(manifest.files).toEqual([
       { path: "model/.fluidaudio-revision", size: 11, sha256: sha("abc1234def\n") },
       { path: "model/Model.mlmodelc/model.mil", size: 3, sha256: sha("mil") },

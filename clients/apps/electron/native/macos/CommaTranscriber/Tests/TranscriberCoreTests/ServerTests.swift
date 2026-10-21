@@ -3,23 +3,42 @@ import os
 import Testing
 @testable import TranscriberCore
 
+let fakeTurns = [
+    SpeakerTurn(speaker: "S4", start: 0, end: 1.2),
+    SpeakerTurn(speaker: "S2", start: 1.8, end: 3.0),
+]
+
 /// Returns two speakers' words; optionally waits on a gate and records how
 /// many jobs ran at once.
-private final class FakeEngine: TranscriptionEngine {
+final class FakeEngine: TranscriptionEngine {
     struct State {
         var running = 0
         var maxRunning = 0
         var calls = 0
         var gateOpen = true
+        /// `speakers` of each recognition.
+        var speakers: [Bool] = []
+        var diarizations = 0
+        var diarizationFails = false
     }
     let state = OSAllocatedUnfairLock(initialState: State())
 
-    func transcribe(audio: URL, installed: URL) async throws -> EngineResult {
+    func diarize(audio: URL, installed: URL) async throws -> [SpeakerTurn] {
+        let fails = state.withLock {
+            $0.diarizations += 1
+            return $0.diarizationFails
+        }
+        if fails { throw CocoaError(.fileReadCorruptFile) }
+        return fakeTurns
+    }
+
+    func transcribe(audio: URL, installed: URL, speakers: Bool) async throws -> EngineResult {
         let bytes = try Data(contentsOf: audio)
         state.withLock {
             $0.running += 1
             $0.maxRunning = max($0.maxRunning, $0.running)
             $0.calls += 1
+            $0.speakers.append(speakers)
         }
         defer { state.withLock { $0.running -= 1 } }
         while !state.withLock({ $0.gateOpen }) {
@@ -37,14 +56,11 @@ private final class FakeEngine: TranscriptionEngine {
                 TimedWord(text: "Tudo", start: 2.0, end: 2.3),
                 TimedWord(text: "ótimo.", start: 2.3, end: 2.8),
             ],
-            turns: [
-                SpeakerTurn(speaker: "S4", start: 0, end: 1.2),
-                SpeakerTurn(speaker: "S2", start: 1.8, end: 3.0),
-            ])
+            turns: speakers ? fakeTurns : [])
     }
 }
 
-private struct Reply {
+struct Reply {
     let status: Int
     let headers: [String: String]
     let body: Data
@@ -54,7 +70,7 @@ private struct Reply {
 
 /// A raw HTTP/1.1 exchange over a loopback socket, on a Dispatch thread so
 /// the blocking reads do not hold the cooperative pool the server runs on.
-private func exchange(_ port: UInt16, _ request: Data) async throws -> Reply {
+func exchange(_ port: UInt16, _ request: Data) async throws -> Reply {
     try await withCheckedThrowingContinuation { continuation in
         DispatchQueue.global().async {
             continuation.resume(with: Result { try blockingExchange(port, request) })
@@ -107,13 +123,13 @@ private func blockingExchange(_ port: UInt16, _ request: Data) throws -> Reply {
     return Reply(status: status, headers: headers, body: Data(received[separator.upperBound...]))
 }
 
-private func get(_ port: UInt16, _ path: String) async throws -> Reply {
+func get(_ port: UInt16, _ path: String) async throws -> Reply {
     try await exchange(port, Data("GET \(path) HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".utf8))
 }
 
-private let boundary = "comma-test-boundary"
+let boundary = "comma-test-boundary"
 
-private func multipart(file: Data?, format: String? = nil) -> Data {
+func multipart(file: Data?, format: String? = nil) -> Data {
     var body = Data()
     func field(_ name: String, _ value: String) {
         body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".utf8))
@@ -129,7 +145,7 @@ private func multipart(file: Data?, format: String? = nil) -> Data {
     return body
 }
 
-private func post(
+func post(
     _ port: UInt16, token: String? = "secret", body: Data, contentLength: Int? = nil,
     chunked: Bool = false, expectContinue: Bool = false
 ) async throws -> Reply {
@@ -156,22 +172,35 @@ private func post(
     return try await exchange(port, Data((head + "\r\n").utf8) + payload)
 }
 
-private struct Harness {
+/// Marks `components` installed: a tree without markers for both, as the
+/// previous helper left it, else one marker each.
+func install(_ components: Set<ModelComponent>, in store: ModelStore) throws {
+    try FileManager.default.createDirectory(at: store.installedURL, withIntermediateDirectories: true)
+    guard components != ModelComponent.all else { return }
+    for component in components {
+        try Data().write(to: store.installedURL.appendingPathComponent(".installed-\(component.rawValue)"))
+    }
+}
+
+struct Harness {
     let root: URL
     let store: ModelStore
     let engine = FakeEngine()
     let server: TranscriptionServer
     let port: UInt16
 
-    init(installed: Bool = true, maxFileBytes: Int64 = 64 << 20) async throws {
+    init(
+        installed: Set<ModelComponent> = ModelComponent.all, maxFileBytes: Int64 = 64 << 20,
+        cloud: any CloudTranscribing = CloudTranscriber()
+    ) async throws {
         root = try temporaryDirectory()
         store = ModelStore(root: root, manifest: sampleManifest)
-        if installed {
-            try FileManager.default.createDirectory(at: store.installedURL, withIntermediateDirectories: true)
+        if !installed.isEmpty {
+            try install(installed, in: store)
         }
         server = TranscriptionServer(
             configuration: ServerConfiguration(
-                token: "secret", store: store, engine: engine, maxFileBytes: maxFileBytes))
+                token: "secret", store: store, engine: engine, cloud: cloud, maxFileBytes: maxFileBytes))
         port = try await server.start(port: 0)
     }
 
@@ -182,12 +211,20 @@ private struct Harness {
 }
 
 @Test func healthReportsTheModelAndIdleState() async throws {
-    let harness = try await Harness(installed: false)
+    let harness = try await Harness(installed: [])
     let notInstalled = try await get(harness.port, "/health")
     #expect(notInstalled.status == 200)
-    #expect(notInstalled.json == ["status": "ok", "busy": false, "model": "not_installed"])
+    #expect(notInstalled.json == [
+        "status": "ok", "busy": false, "model": "not_installed",
+        "provider": ["kind": "local", "configured": false],
+        "components": ["asr": false, "diarization": false],
+    ])
 
-    try FileManager.default.createDirectory(at: harness.store.installedURL, withIntermediateDirectories: true)
+    try install([.diarization], in: harness.store)
+    let separatorOnly = try await get(harness.port, "/health").json
+    #expect(separatorOnly?["model"] as? String == "not_installed")
+    #expect(separatorOnly?["components"] as? NSDictionary == ["asr": false, "diarization": true])
+    try install([.asr], in: harness.store)
     #expect(try await get(harness.port, "/health").json?["model"] as? String == "ready")
     await harness.stop()
 }
@@ -205,7 +242,7 @@ private struct Harness {
 }
 
 @Test func aRequestWithoutAnInstalledModelGets409() async throws {
-    let harness = try await Harness(installed: false)
+    let harness = try await Harness(installed: [.diarization])
     let reply = try await post(harness.port, body: multipart(file: Data("audio".utf8)))
 
     #expect(reply.status == 409)
@@ -240,6 +277,8 @@ private struct Harness {
     #expect(reply.json == [
         "text": "Olá, tudo bem? Tudo ótimo.",
         "duration": 4.25,
+        "provider": "local",
+        "model": "parakeet-tdt-0.6b-v3",
         "segments": [
             ["id": 0, "start": 0.08, "end": 1.0, "text": "Olá, tudo bem?", "speaker": "S1"],
             ["id": 1, "start": 2.0, "end": 2.8, "text": "Tudo ótimo.", "speaker": "S2"],

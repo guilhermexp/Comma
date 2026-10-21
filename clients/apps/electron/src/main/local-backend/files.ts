@@ -65,7 +65,7 @@ export interface LocalBackendState {
 }
 
 /** Writes a private file atomically: no reader ever sees a partial or wider-mode file. */
-export function writePrivateFile(path: string, contents: string) {
+export function writePrivateFile(path: string, contents: string | Uint8Array) {
   const partial = `${path}.${process.pid}.partial`;
   writeFileSync(partial, contents, { mode: 0o600 });
   chmodSync(partial, 0o600);

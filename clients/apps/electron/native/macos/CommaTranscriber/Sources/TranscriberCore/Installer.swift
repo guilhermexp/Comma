@@ -21,27 +21,30 @@ public protocol ModelDownloading: Sendable {
     ) async throws
 }
 
-/// Loads the installed model once so Core ML compiles it now, not at the
-/// first transcription, then releases it.
+/// Loads the installed `components` once so Core ML compiles them now, not
+/// at the first transcription, then releases them.
 public protocol ModelPreparing: Sendable {
-    func prepare(installed: URL) async throws
+    func prepare(installed: URL, components: Set<ModelComponent>) async throws
 }
 
-/// `install` (contract C1): staging, download, manifest check, atomic
-/// rename, preparation. Any failure or cancellation removes what it wrote,
-/// so the model is installed only after every step succeeded.
+/// `install` (contracts C1 and C5): staging, download, manifest check, atomic
+/// rename, preparation, for the selected components that are not installed
+/// yet. Any failure or cancellation removes what it wrote, so a component is
+/// installed only after every step succeeded; other components stay.
 public struct Installer: Sendable {
     let store: ModelStore
+    let components: Set<ModelComponent>
     let platform: PlatformSupport
     let downloader: any ModelDownloading
     let preparer: any ModelPreparing
     let pollInterval: Duration
 
     public init(
-        store: ModelStore, platform: PlatformSupport, downloader: any ModelDownloading,
-        preparer: any ModelPreparing, pollInterval: Duration = .milliseconds(250)
+        store: ModelStore, components: Set<ModelComponent> = ModelComponent.all, platform: PlatformSupport,
+        downloader: any ModelDownloading, preparer: any ModelPreparing, pollInterval: Duration = .milliseconds(250)
     ) {
         self.store = store
+        self.components = components
         self.platform = platform
         self.downloader = downloader
         self.preparer = preparer
@@ -59,9 +62,11 @@ public struct Installer: Sendable {
         if let reason = platform.reason {
             return .failed(.unsupported, "Local transcription needs Apple silicon and macOS 15 (\(reason.rawValue)).")
         }
-        if store.isInstalled {
+        let missing = components.subtracting(store.installedComponents)
+        if missing.isEmpty {
             return .ok
         }
+        let manifest = store.manifest.subset(missing)
 
         let staging: URL
         do {
@@ -72,10 +77,10 @@ public struct Installer: Sendable {
         var committed = false
         defer {
             try? FileManager.default.removeItem(at: staging)
-            if !committed { try? FileManager.default.removeItem(at: store.installedURL) }
+            if !committed { try? store.remove(missing) }
         }
 
-        let total = store.manifest.totalBytes
+        let total = manifest.totalBytes
         let reported = OSAllocatedUnfairLock<Int64>(initialState: -1)
         // One line per 0.1 %, plus the final total.
         let step = max(1, total / 1000)
@@ -97,7 +102,7 @@ public struct Installer: Sendable {
         do {
             // Files appear in staging only once complete; the downloader
             // also reports bytes within a file.
-            try await downloader.download(manifest: store.manifest, into: staging, progress: report)
+            try await downloader.download(manifest: manifest, into: staging, progress: report)
             poller.cancel()
             try Task.checkCancellation()
         } catch {
@@ -107,7 +112,7 @@ public struct Installer: Sendable {
         report(total)
 
         do {
-            try ManifestVerifier.verify(staging, against: store.manifest)
+            try ManifestVerifier.verify(staging, against: manifest)
         } catch let failure as ManifestVerifier.Failure {
             return .failed(.checksumMismatch, failure.description)
         } catch {
@@ -116,9 +121,9 @@ public struct Installer: Sendable {
 
         do {
             try Task.checkCancellation()
-            try store.commit(staging)
+            try store.commit(staging, components: missing)
             emit(.preparing)
-            try await preparer.prepare(installed: store.installedURL)
+            try await preparer.prepare(installed: store.installedURL, components: missing)
             try Task.checkCancellation()
         } catch {
             return Self.failure(error, else: .io)

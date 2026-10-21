@@ -173,10 +173,11 @@ defmodule SalixAgent.Tools.Media do
 
   defp transcribe_audio_source(ctx, path, output) do
     case AudioTranscriber.transcribe(ctx.agent_id, path) do
-      {:ok, %{transcript: transcript, duration_seconds: duration_seconds, chunks: chunks}}
+      {:ok,
+       %{transcript: transcript, duration_seconds: duration_seconds, chunks: chunks} = result}
       when is_binary(transcript) and transcript != "" and is_integer(duration_seconds) and
              duration_seconds > 0 and is_list(chunks) ->
-        write_transcript_result(ctx, path, transcript, duration_seconds, chunks, output)
+        write_transcript_result(ctx, path, result, output)
 
       {:ok, _invalid_result} ->
         raise "audio transcription failed"
@@ -193,6 +194,13 @@ defmodule SalixAgent.Tools.Media do
       {:error, :local_asr_model_not_installed} ->
         raise "local_asr_model_not_installed: local meeting transcription is not installed; " <>
                 "install it in Settings > Meeting"
+
+      {:error, {:cloud_asr_failed, reason}} ->
+        raise "cloud_asr_failed:#{reason}: the cloud transcription provider failed (#{reason})"
+
+      {:error, {:cloud_asr_not_ready, reason}} ->
+        raise "cloud_asr_not_ready:#{reason}: cloud meeting transcription is not ready; " <>
+                "finish its setup in Settings > Meeting"
 
       {:error, :asr_audio_too_large} ->
         raise "audio file exceeds the supported size"
@@ -238,7 +246,9 @@ defmodule SalixAgent.Tools.Media do
     end
   end
 
-  defp write_transcript_result(ctx, source_path, transcript, duration_seconds, chunks, requested) do
+  defp write_transcript_result(ctx, source_path, asr, requested) do
+    %{transcript: transcript, duration_seconds: duration_seconds, chunks: chunks} = asr
+
     output =
       requested ||
         "/artifacts/transcripts/audio-transcript-" <>
@@ -250,6 +260,8 @@ defmodule SalixAgent.Tools.Media do
       "duration_seconds" => duration_seconds,
       "chunk_count" => length(chunks)
     }
+
+    result = Map.merge(result, provider_fields(asr))
 
     with {:ok, event} <- FileBackend.prepare_write(ctx, output, transcript) do
       if requested do
@@ -276,6 +288,26 @@ defmodule SalixAgent.Tools.Media do
       {:error, _} -> raise "write audio transcript failed"
     end
   end
+
+  # Contract C7 through SalixLlm.Transcribe: which provider and model produced
+  # the transcript, and why it fell back to the local model.
+  defp provider_fields(asr) do
+    %{}
+    |> put_string("provider", asr[:provider])
+    |> put_string("model", asr[:model])
+    |> put_fallback(asr[:fallback])
+  end
+
+  defp put_string(map, key, value) when is_binary(value) and value != "",
+    do: Map.put(map, key, value)
+
+  defp put_string(map, _key, _value), do: map
+
+  defp put_fallback(map, %{from: from, reason: reason})
+       when is_binary(from) and is_binary(reason),
+       do: Map.put(map, "fallback", %{"from" => from, "reason" => reason})
+
+  defp put_fallback(map, _fallback), do: map
 
   defp config!(ctx, key) do
     cfg =

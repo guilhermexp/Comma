@@ -53,8 +53,9 @@ import {
   sessionStateChangedEvent,
   surfacesChangedEvent,
   audioCaptureStateChangedEvent,
-  localTranscriptionNoticeEvent,
+  meetingTranscriptionNoticeEvent,
   type AudioCaptureRecording,
+  type MeetingTranscriptionNotice,
   meetingPresenceStateChangedEvent,
   meetingRecorderStateChangedEvent,
   audioCaptureStartCapability,
@@ -194,6 +195,10 @@ import {
   unavailableLocalTranscriptionProvider,
   type LocalTranscriptionProvider,
 } from "../local-transcription/provider";
+import {
+  unavailableMeetingTranscriptionProvider,
+  type MeetingTranscriptionProvider,
+} from "../local-transcription/meeting-provider";
 import { MeetingPresenceService } from "./meeting-presence";
 import { MeetingRecorderService } from "./meeting-recorder";
 import { createMeetingAppIconReader } from "./meeting-presence/app-icon";
@@ -352,6 +357,19 @@ export interface ElectronMainRuntimeDeps {
     | (LocalTranscriptionProvider & {
         needsInstall(): boolean;
         refresh(): Promise<void>;
+      })
+    | undefined;
+  /** Local mode's choice of transcription engine (openspec add-cloud-meeting-asr). */
+  meetingTranscription?:
+    | (MeetingTranscriptionProvider & {
+        recordingNotice(): Promise<MeetingTranscriptionNotice["kind"] | undefined>;
+        cloudFailed(reason: string): "groq" | "openai_compatible" | undefined;
+        cloudFailureSince(
+          since: Date
+        ): Promise<
+          { reason: string; provider: "groq" | "openai_compatible" } | undefined
+        >;
+        ensureDelivered(): Promise<boolean>;
       })
     | undefined;
   computeNodeAdapter?: ComputeNodeRuntimeAdapter | undefined;
@@ -1047,13 +1065,42 @@ export async function createElectronMainContext(
     deps.openDownloadedFilePath,
     currentMainLocale
   );
-  // Local mode: a recording saved while the speech model is missing is kept,
-  // and the renderer offers the install (openspec add-local-meeting-asr).
-  const noticeLocalModelMissing = (recording: AudioCaptureRecording) =>
-    nativeEventBus.emit(localTranscriptionNoticeEvent, {
-      reason: "local_asr_model_not_installed",
+  // Local mode: a saved recording is kept when it cannot be transcribed, and
+  // the renderer says why (openspec add-local-meeting-asr, add-cloud-meeting-asr D8).
+  const noticeRecording = (
+    kind: MeetingTranscriptionNotice["kind"],
+    recording: AudioCaptureRecording,
+    details: Pick<MeetingTranscriptionNotice, "reason" | "provider"> = {}
+  ) =>
+    nativeEventBus.emit(meetingTranscriptionNoticeEvent, {
+      kind,
+      ...(details.reason ? { reason: details.reason } : {}),
+      ...(details.provider ? { provider: details.provider } : {}),
       recording,
     });
+  // "Install local transcription" belongs to the Local provider only.
+  const noticeRecordingNeeds = async (recording: AudioCaptureRecording) => {
+    const kind = await deps.meetingTranscription?.recordingNotice();
+    if (kind) noticeRecording(kind, recording);
+  };
+  // A meeting Task's audio.transcribe reaches the helper through the backend;
+  // when the Task ends without outputs, ask the helper whether the cloud
+  // failed with no local model to take over, and say so with Try again.
+  const noticeMeetingCloudFailure = async (
+    key: string,
+    recording: AudioCaptureRecording
+  ) => {
+    let since: number;
+    try {
+      since = meetingTasks.archiveTime(key);
+    } catch {
+      return;
+    }
+    const failure = await deps.meetingTranscription
+      ?.cloudFailureSince(new Date(since))
+      .catch(() => undefined);
+    if (failure) noticeRecording("cloud_failed", recording, failure);
+  };
   const recordingTranscription = new RecordingTranscriptionService(
     recordingDrive,
     () => {
@@ -1070,9 +1117,20 @@ export async function createElectronMainContext(
     },
     {
       onModelMissing: (recording) => {
-        void deps.localTranscription?.refresh();
-        noticeLocalModelMissing(recording);
+        void deps.localTranscription
+          ?.refresh()
+          ?.then(() => noticeRecordingNeeds(recording));
       },
+      onFallback: (recording, fallback) => {
+        deps.meetingTranscription?.cloudFailed(fallback.reason);
+        noticeRecording("fallback", recording, { reason: fallback.reason });
+      },
+      // No local model took over: say why, with Try again, never the install.
+      onCloudFailure: (recording, reason) => {
+        const provider = deps.meetingTranscription?.cloudFailed(reason);
+        if (provider) noticeRecording("cloud_failed", recording, { reason, provider });
+      },
+      beforeTranscribe: async () => deps.meetingTranscription?.ensureDelivered(),
     }
   );
   const meetingTasks = await MeetingTaskService.open({
@@ -1087,7 +1145,16 @@ export async function createElectronMainContext(
         : undefined;
     },
     runOwned: async (handler) => sessionAdmissionGuard.runOwned(handler),
-    publish: (key, state) => meetingRecorder?.acceptTask(key, state),
+    publish: (key, state) => {
+      meetingRecorder?.acceptTask(key, state);
+      if (state.archive === "error" && state.recording)
+        void noticeMeetingCloudFailure(key, state.recording);
+    },
+    // Same as the Drive path: the cloud failed and this Mac's model took over.
+    onFallback: (recording, fallback) => {
+      deps.meetingTranscription?.cloudFailed(fallback.reason);
+      noticeRecording("fallback", recording, { reason: fallback.reason });
+    },
     resolveRecovery: async (name) => {
       if (!deps.resolveMeetingRecovery)
         throw new Error(
@@ -1193,9 +1260,8 @@ export async function createElectronMainContext(
             return result;
           }
           // The meeting's own transcript comes from the backend's audio.transcribe,
-          // which uses the same local model; without it, ask for the install now.
-          if (deps.localTranscription?.needsInstall())
-            noticeLocalModelMissing(result.recording);
+          // which uses the same provider; say now when it is not ready.
+          void noticeRecordingNeeds(result.recording);
           return { ...result, summary };
         },
       });
@@ -1589,6 +1655,9 @@ export function registerNativeBridgeHandlersFromContext(context: ElectronMainCon
     localBackend: context.runtimeDeps.localBackend ?? remoteBackendProvider,
     localTranscription:
       context.runtimeDeps.localTranscription ?? unavailableLocalTranscriptionProvider,
+    meetingTranscription:
+      context.runtimeDeps.meetingTranscription ??
+      unavailableMeetingTranscriptionProvider,
     airDrop: context.airDropReception,
     appPreferences: context.appPreferences,
     computerUse: context.runtimeDeps.computerUse ?? {
