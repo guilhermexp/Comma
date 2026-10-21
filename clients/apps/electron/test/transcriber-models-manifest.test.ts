@@ -45,7 +45,10 @@ function fakeHub(provenance: { path: string; sha256: string; size: number }[]) {
       ],
     ],
     ["https://huggingface.co/Org/model-coreml/resolve/abc1234def/vocab.json", "vocab"],
-    ["https://huggingface.co/Org/model-coreml/resolve/abc1234def/Model.mlmodelc/model.mil", "mil"],
+    [
+      "https://huggingface.co/Org/model-coreml/resolve/abc1234def/Model.mlmodelc/model.mil",
+      "mil",
+    ],
     ["https://huggingface.co/Org/model-coreml/resolve/abc1234def/LICENSE", "CC BY 4.0"],
     [
       "https://huggingface.co/Org/model-coreml/resolve/abc1234def/provenance.json",
