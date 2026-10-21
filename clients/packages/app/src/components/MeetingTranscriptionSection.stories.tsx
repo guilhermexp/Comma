@@ -35,6 +35,7 @@ const groqReady: MeetingTranscriptionState = {
   provider: "groq",
   ready: true,
   cloud: {
+    kind: "groq",
     model: "whisper-large-v3",
     baseHost: "api.groq.com",
     hasKey: true,
@@ -110,6 +111,9 @@ function WithMockBridge({ args, children }: { args: Args; children: ReactNode })
               kind,
               recording,
               ...(kind === "fallback" ? { reason: "cloud_unreachable" } : {}),
+              ...(kind === "cloud_failed"
+                ? { reason: "cloud_quota", provider: "groq" as const }
+                : {}),
             });
         }, 50)
       : undefined;
@@ -264,9 +268,35 @@ export const CompatibleReady: Story = {
     meeting: {
       ...groqReady,
       provider: "openai_compatible",
-      cloud: { ...groqReady.cloud!, model: "whisper-1", baseHost: "asr.example.com" },
+      cloud: {
+        ...groqReady.cloud!,
+        kind: "openai_compatible",
+        model: "whisper-1",
+        baseHost: "asr.example.com",
+      },
     },
     local: localReady,
+  },
+};
+
+/** Local is selected; the Groq key stays saved from before. */
+const keptGroqKey: Args = {
+  meeting: {
+    provider: "local",
+    ready: true,
+    diarization: "ready",
+    cloud: groqReady.cloud!,
+  },
+  local: localReady,
+};
+
+export const LocalWithKeptGroqKey: Story = { args: keptGroqKey };
+
+/** Choosing Groq again shows the kept key; Save selects it after a check. */
+export const LocalToGroqReuse: Story = {
+  args: keptGroqKey,
+  play: async ({ canvasElement }) => {
+    await chooseEngine(canvasElement, "Groq");
   },
 };
 
@@ -313,5 +343,11 @@ export const ConfigureNotice: Story = {
 /** Local is selected and its model is missing. */
 export const InstallLocalNotice: Story = {
   args: { notice: "install_local" },
+  render: notices,
+};
+
+/** Groq failed and no local model could take over: Try again, never Install. */
+export const CloudFailedNotice: Story = {
+  args: { meeting: groqReady, notice: "cloud_failed" },
   render: notices,
 };

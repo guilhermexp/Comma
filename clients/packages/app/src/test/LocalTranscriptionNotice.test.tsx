@@ -47,6 +47,7 @@ const groqReady: MeetingTranscriptionState = {
   provider: "groq",
   ready: true,
   cloud: {
+    kind: "groq",
     model: "whisper-large-v3",
     baseHost: "api.groq.com",
     hasKey: true,
@@ -240,6 +241,89 @@ describe("install notice for a recording without the local model", () => {
     );
   });
 
+  it("shows the provider's failure with Try again and Show in Drive, never the install", async () => {
+    let deliver!: (notice: MeetingTranscriptionNotice) => void;
+    const transcribeSaved = vi.fn(async () => ({ status: "ready" as const }));
+    installNativeBridgeMock({
+      platform: "electron",
+      audioCapture: { transcribeSaved } as never,
+      meetingTranscription: {
+        onNotice: (listener: (notice: MeetingTranscriptionNotice) => void) => {
+          deliver = listener;
+          return () => undefined;
+        },
+        state: createNativeStateBridgeMock(() => groqReady),
+      },
+    } as never);
+    const failed = vi.spyOn(toast, "error");
+    render(withAuth(<LocalTranscriptionNoticeHost />));
+    await act(async () => undefined);
+
+    act(() =>
+      deliver({
+        kind: "cloud_failed",
+        reason: "cloud_quota",
+        provider: "groq",
+        recording,
+      })
+    );
+
+    const [message, options] = failed.mock.calls.at(-1)!;
+    expect(message).toBe(
+      "Recording saved, but Groq could not transcribe it: quota exhausted."
+    );
+    expect(options?.actions?.map((action) => action.label)).toEqual([
+      "Try again",
+      "Show in Drive",
+    ]);
+    await act(async () => options!.actions![0]!.onPress!());
+    expect(transcribeSaved).toHaveBeenCalledWith({
+      driveFile: recording.driveFile,
+      session: expect.anything(),
+    });
+  });
+
+  it.each([
+    ["cloud_unreachable", "no connection"],
+    ["cloud_auth_rejected", "key rejected"],
+    ["cloud_server_error", "server error"],
+    ["cloud_timeout", "timed out"],
+  ])("names %s in plain words, with the API's host", async (reason, words) => {
+    let deliver!: (notice: MeetingTranscriptionNotice) => void;
+    installNativeBridgeMock({
+      platform: "electron",
+      meetingTranscription: {
+        onNotice: (listener: (notice: MeetingTranscriptionNotice) => void) => {
+          deliver = listener;
+          return () => undefined;
+        },
+        state: createNativeStateBridgeMock(() => ({
+          ...groqReady,
+          provider: "openai_compatible" as const,
+          cloud: {
+            ...groqReady.cloud!,
+            kind: "openai_compatible" as const,
+            baseHost: "asr.example.com",
+          },
+        })),
+      },
+    } as never);
+    const failed = vi.spyOn(toast, "error");
+    render(withAuth(<LocalTranscriptionNoticeHost />));
+    await act(async () => undefined);
+    act(() =>
+      deliver({
+        kind: "cloud_failed",
+        reason,
+        provider: "openai_compatible",
+        recording,
+      })
+    );
+    expect(failed.mock.calls.at(-1)![0]).toBe(
+      `Recording saved, but asr.example.com could not transcribe it: ${words}.`
+    );
+  });
+
   it("does nothing on the web", () => {
     installNativeBridgeMock({ platform: "web" });
     const { container } = render(withAuth(<LocalTranscriptionNoticeHost />));
@@ -348,7 +432,7 @@ describe("transcribing a saved recording again", () => {
     await act(async () => screen.getByRole("button", { name: "Transcribe" }).click());
 
     expect(failed.mock.calls.at(-1)![0]).toBe(
-      "call.m4a was not transcribed. Groq unavailable: quota reached."
+      "call.m4a was not transcribed. Groq unavailable: quota exhausted."
     );
     const options = failed.mock.calls.at(-1)![1]!;
     expect(options.actions?.map((action) => action.label)).toEqual(["Try again"]);

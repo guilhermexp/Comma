@@ -8,10 +8,11 @@ import {
 import type { TranscriberProviderClient } from "./helper-provider-client";
 import type { LocalTranscriptionManager } from "./manager";
 import type { MeetingTranscriptionProvider } from "./meeting-provider";
-import type {
-  MeetingProviderStore,
-  StoredCloudProvider,
-  StoredMeetingProvider,
+import {
+  selectedProvider,
+  type MeetingProviderStore,
+  type StoredCloudProvider,
+  type StoredMeetingRecord,
 } from "./provider-store";
 import {
   checkProviderUrl,
@@ -40,7 +41,8 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
   readonly #fetch: typeof fetch | undefined;
   readonly #onState: (state: MeetingTranscriptionState) => void;
   readonly #log: (message: string) => void;
-  #provider: StoredMeetingProvider;
+  #record: StoredMeetingRecord;
+  /** The saved cloud key's last check; kept while Local is selected. */
   #verification: Verification = "idle";
   #changing = false;
   #delivery: Promise<unknown> = Promise.resolve();
@@ -60,12 +62,12 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
     this.#fetch = options.fetch;
     this.#onState = options.onState;
     this.#log = options.log ?? (() => undefined);
-    this.#provider = this.#store.read();
+    this.#record = this.#store.read();
   }
 
   /** True while a cloud provider is selected; Remove then keeps the separator (D3). */
   cloudSelected() {
-    return this.#provider.kind !== "local";
+    return this.#record.selected !== "local";
   }
 
   async state(): Promise<MeetingTranscriptionState> {
@@ -79,19 +81,26 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
     if (!(await this.#local.state()).supported)
       return { accepted: false, reason: "unsupported" };
     if (this.#changing) return { accepted: false, reason: "in_progress" };
-    if (input.kind === "local") return this.#select({ kind: "local" }, "idle");
+    // Local keeps the saved cloud key, so choosing that provider again needs no new key.
+    if (input.kind === "local")
+      return this.#select(
+        { selected: "local", cloud: this.#record.cloud },
+        this.#verification
+      );
     if (!this.#store.available())
       return { accepted: false, reason: "secure_storage_unavailable" };
-    const url =
+    const saved = this.#record.cloud;
+    const baseUrl =
       input.kind === "groq"
-        ? ({ ok: true, baseUrl: groqTranscriptionBaseUrl } as const)
-        : checkProviderUrl(input.baseUrl);
+        ? groqTranscriptionBaseUrl
+        : (input.baseUrl ?? (saved?.kind === input.kind ? saved.baseUrl : undefined));
+    if (!baseUrl) return { accepted: false, reason: "invalid_url" };
+    const url = checkProviderUrl(baseUrl);
     if (!url.ok) return { accepted: false, reason: url.reason };
-    const saved = this.#provider;
     // A saved key is reused only by the provider and origin it was saved for.
     const apiKey =
       input.apiKey?.trim() ??
-      (saved.kind === input.kind && sameOrigin(saved.baseUrl, url.baseUrl)
+      (saved?.kind === input.kind && sameOrigin(saved.baseUrl, url.baseUrl)
         ? saved.apiKey
         : undefined);
     if (!apiKey) return { accepted: false, reason: "key_missing" };
@@ -110,28 +119,32 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
         );
         return { accepted: false, reason: refusalReason(outcome) };
       }
-      return await this.#select(candidate, "valid");
+      return await this.#select(
+        { selected: candidate.kind, cloud: candidate },
+        "valid"
+      );
     } finally {
       this.#changing = false;
     }
   }
 
+  /** Deletes the saved key; a selected cloud provider returns to Local. */
   async clearKey(): Promise<MeetingTranscriptionActionResult> {
     if (this.#changing) return { accepted: false, reason: "in_progress" };
-    return this.#select({ kind: "local" }, "idle");
+    return this.#select({ selected: "local" }, "idle");
   }
 
   /** Checks the saved key again; also retries a failed separator install. */
   async retryVerify(): Promise<MeetingTranscriptionActionResult> {
-    const provider = this.#provider;
-    if (provider.kind === "local") return { accepted: false, reason: "key_missing" };
+    const provider = this.#record.cloud;
+    if (!provider) return { accepted: false, reason: "key_missing" };
     if (this.#changing) return { accepted: false, reason: "in_progress" };
     this.#changing = true;
     this.#verification = "checking";
     this.#publish();
     try {
       const outcome = await this.#verify(provider);
-      if (this.#provider !== provider)
+      if (this.#record.cloud !== provider)
         return { accepted: false, reason: "in_progress" };
       this.#verification =
         outcome === "valid"
@@ -159,13 +172,17 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
   /**
    * A transcription reported a cloud failure (`cloud_auth_rejected`, …),
    * through a fallback or `cloud_asr_failed:<reason>`. A rejected key marks
-   * the provider so Settings shows it (D6).
+   * the provider so Settings shows it (D6). Returns the selected cloud
+   * provider, which the notice names.
    */
-  cloudFailed(reason: string) {
-    if (this.cloudSelected() && reason === "cloud_auth_rejected") {
+  cloudFailed(reason: string): StoredCloudProvider["kind"] | undefined {
+    const selected = this.#record.selected;
+    if (selected === "local") return undefined;
+    if (reason === "cloud_auth_rejected") {
       this.#verification = "rejected";
       this.#publish();
     }
+    return selected;
   }
 
   /** The notice a just-saved recording needs, if any (D8). */
@@ -197,25 +214,26 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
       const health = await this.#helper.health();
       // A helper from before C6 reports no provider and runs Local only.
       if (!health?.provider) return false;
-      if (health.provider.configured && health.provider.kind === this.#provider.kind)
+      if (health.provider.configured && health.provider.kind === this.#record.selected)
         return false;
       return this.#deliverNow();
     });
   }
 
   async #select(
-    provider: StoredMeetingProvider,
+    record: StoredMeetingRecord,
     verification: Verification
   ): Promise<MeetingTranscriptionActionResult> {
     try {
-      this.#store.write(provider);
+      this.#store.write(record);
     } catch (error) {
       if (error instanceof Error && error.message === "secure_storage_unavailable")
         return { accepted: false, reason: "secure_storage_unavailable" };
       throw error;
     }
-    this.#provider = provider;
+    this.#record = record;
     this.#verification = verification;
+    const provider = selectedProvider(record);
     this.#log(
       provider.kind === "local"
         ? "Meeting transcription uses this Mac."
@@ -240,7 +258,7 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
   }
 
   async #deliverNow() {
-    const delivered = await this.#helper.setProvider(this.#provider);
+    const delivered = await this.#helper.setProvider(selectedProvider(this.#record));
     if (!delivered) this.#log("The transcription helper did not accept the provider.");
     return delivered;
   }
@@ -248,30 +266,36 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
   #snapshot(): MeetingTranscriptionState {
     const local = this.#local.currentState();
     const diarization = this.#local.diarization();
-    const provider = this.#provider;
-    const base = { provider: provider.kind, diarization } as const;
+    const { selected, cloud: saved } = this.#record;
+    // The saved cloud provider is reported while Local is selected too.
+    const cloud = saved
+      ? {
+          cloud: {
+            kind: saved.kind,
+            model: saved.model,
+            baseHost: new URL(saved.baseUrl).hostname,
+            hasKey: true,
+            verification: this.#verification,
+          },
+        }
+      : {};
+    const base = { provider: selected, diarization, ...cloud } as const;
     if (!local.supported) return { ...base, ready: false, reason: "unsupported" };
     const storageReason = this.#store.available()
       ? undefined
       : ("secure_storage_unavailable" as const);
-    if (provider.kind === "local") {
+    if (selected === "local") {
       const ready = local.phase === "ready";
       const reason = storageReason ?? (ready ? undefined : "local_model_missing");
       return { ...base, ready, ...(reason ? { reason } : {}) };
     }
-    const cloud = {
-      model: provider.model,
-      baseHost: new URL(provider.baseUrl).hostname,
-      hasKey: true,
-      verification: this.#verification,
-    };
     const reason =
       this.#verification === "rejected"
         ? "key_rejected"
         : diarization !== "ready"
           ? "diarization_missing"
           : undefined;
-    return { ...base, ready: !reason, ...(reason ? { reason } : {}), cloud };
+    return { ...base, ready: !reason, ...(reason ? { reason } : {}) };
   }
 
   #publish() {

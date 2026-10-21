@@ -3346,5 +3346,6 @@
   "recording_cloud_reason_server": "erro do servidor",
   "recording_cloud_reason_timeout": "tempo esgotado",
   "recording_cloud_reason_bad_response": "resposta inesperada",
-  "recording_cloud_reason_other": "erro"
+  "recording_cloud_reason_other": "erro",
+  "recording_transcription_cloud_failed_saved": "Gravação salva, mas {provider} não conseguiu transcrevê-la: {reason}."
 }

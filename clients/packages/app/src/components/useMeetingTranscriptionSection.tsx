@@ -32,11 +32,15 @@ interface Draft {
 
 const defaultGroqModel = groqTranscriptionModels[0];
 
-function draftFrom(state: MeetingTranscriptionState | undefined): Draft {
-  const kind = state?.provider ?? "local";
+/** A draft for `kind`, filled from the saved cloud provider when it is that one. */
+function draftFrom(
+  state: MeetingTranscriptionState | undefined,
+  kind: MeetingTranscriptionProvider = state?.provider ?? "local"
+): Draft {
+  const saved = state?.cloud?.kind === kind ? state.cloud : undefined;
   return {
     kind,
-    model: state?.cloud?.model ?? (kind === "groq" ? defaultGroqModel : ""),
+    model: saved?.model ?? (kind === "groq" ? defaultGroqModel : ""),
     baseUrl: "",
     apiKey: "",
     replacing: false,
@@ -117,7 +121,8 @@ export function useMeetingTranscriptionSection(): {
   const keychainMissing = state.reason === "secure_storage_unavailable";
   const editing = { ...draft };
   const update = (patch: Partial<Draft>) => setDraft({ ...editing, ...patch });
-  const savedCloud = state.provider === draft.kind ? state.cloud : undefined;
+  // The saved cloud provider stays while Local is selected (D2).
+  const savedCloud = state.cloud?.kind === draft.kind ? state.cloud : undefined;
   const hasSavedKey = Boolean(savedCloud?.hasKey) && !draft.replacing;
   const verification = savedCloud?.verification;
 
@@ -151,7 +156,8 @@ export function useMeetingTranscriptionSection(): {
         ? { errorMessage: m.settings_meeting_transcription_keychain_unavailable() }
         : {}),
       keywords: ["groq", "openai", "whisper", "api", "cloud", "privacy"],
-      status: engineStatus,
+      // The status is the selected engine's; an unsaved choice has none yet.
+      ...(draft.kind === state.provider ? { status: engineStatus } : {}),
       control: {
         type: "dropdown",
         ariaLabel: m.settings_meeting_transcription_engine(),
@@ -179,17 +185,8 @@ export function useMeetingTranscriptionSection(): {
             if (state.provider !== "local") void setProvider({ kind: "local" });
             return;
           }
-          setDraft(
-            state.provider === kind
-              ? draftFrom(state)
-              : {
-                  kind,
-                  model: kind === "groq" ? defaultGroqModel : "",
-                  baseUrl: "",
-                  apiKey: "",
-                  replacing: false,
-                }
-          );
+          // A kept key of that provider is reused; Save selects it again.
+          setDraft(draftFrom(state, kind));
         },
       },
     },
@@ -357,14 +354,18 @@ export function useMeetingTranscriptionSection(): {
     );
 
     const apiKey = draft.apiKey.trim();
+    const baseUrl = draft.baseUrl.trim();
     const changed =
       Boolean(apiKey) ||
       (savedCloud !== undefined &&
-        (draft.model.trim() !== savedCloud.model || Boolean(draft.baseUrl.trim())));
+        (state.provider !== draft.kind ||
+          draft.model.trim() !== savedCloud.model ||
+          Boolean(baseUrl)));
+    // A saved OpenAI-compatible API keeps its URL unless a new one is typed.
     const ready =
       changed &&
       Boolean(draft.model.trim()) &&
-      (draft.kind === "groq" || Boolean(draft.baseUrl.trim()));
+      (draft.kind === "groq" || Boolean(baseUrl) || savedCloud !== undefined);
     const saving = pending === "setProvider";
     items.push({
       id: "meeting.transcription.save",
@@ -393,7 +394,7 @@ export function useMeetingTranscriptionSection(): {
                 }
               : {
                   kind: "openai_compatible",
-                  baseUrl: draft.baseUrl.trim(),
+                  ...(baseUrl ? { baseUrl } : {}),
                   model: draft.model.trim(),
                   ...(apiKey ? { apiKey } : {}),
                 }

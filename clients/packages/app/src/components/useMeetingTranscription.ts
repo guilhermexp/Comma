@@ -43,6 +43,19 @@ export function cloudReasonLabel(
   }
 }
 
+/** A cloud provider's name for a notice: Groq, or the saved API's host. */
+export function cloudProviderName(
+  m: ReturnType<typeof useCommaMessages>,
+  provider: "groq" | "openai_compatible",
+  state: MeetingTranscriptionState | undefined
+): string {
+  return meetingProviderName(
+    m,
+    provider,
+    state?.cloud?.kind === provider ? state.cloud.baseHost : undefined
+  );
+}
+
 /** The selected provider's name from Main's state, for a notice. */
 export function stateProviderName(
   m: ReturnType<typeof useCommaMessages>,

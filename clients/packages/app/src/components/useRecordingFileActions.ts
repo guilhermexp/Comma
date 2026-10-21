@@ -15,7 +15,11 @@ import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { SessionProductLease } from "@comma/session-contract";
 import { CommaAuthContext } from "./auth-context";
 import type { DriveFile } from "./drive/driveStore";
-import { cloudReasonLabel, stateProviderName } from "./useMeetingTranscription";
+import {
+  cloudProviderName,
+  cloudReasonLabel,
+  stateProviderName,
+} from "./useMeetingTranscription";
 
 let revealSequence = 0;
 
@@ -329,11 +333,54 @@ export function useRecordingFileActions() {
     [messages, reveal]
   );
 
+  /**
+   * The cloud provider failed and no local model took over: name the
+   * provider and why, with Try again. It never offers the local install.
+   */
+  const showCloudFailedNotice = useCallback(
+    (
+      recording: AudioCaptureRecording,
+      notice: {
+        reason?: string | undefined;
+        provider?: "groq" | "openai_compatible" | undefined;
+      },
+      state: MeetingTranscriptionState | undefined,
+      retry: (driveFile: AudioCaptureDriveFile) => Promise<void>
+    ) => {
+      toast.error(
+        messages.recording_transcription_cloud_failed_saved({
+          provider: notice.provider
+            ? cloudProviderName(messages, notice.provider, state)
+            : stateProviderName(messages, state),
+          reason: cloudReasonLabel(messages, notice.reason ?? ""),
+        }),
+        {
+          actions: [
+            {
+              hierarchy: "secondary-gray",
+              label: messages.recording_transcription_retry(),
+              onPress: () => void retry(recording.driveFile),
+            },
+            {
+              hierarchy: "tertiary-gray",
+              label: messages.ui_meeting_recorder_show_in_drive(),
+              onPress: () => void reveal(recording),
+            },
+          ],
+          id: `transcription-cloud-failed-${recording.driveFile.path}`,
+          testId: "transcription-cloud-failed-notice",
+        }
+      );
+    },
+    [messages, reveal]
+  );
+
   return {
     error,
     open,
     pending,
     reveal,
+    showCloudFailedNotice,
     showConfigureTranscriptionNotice,
     showFallbackNotice,
     showLocalTranscriptionNotice,

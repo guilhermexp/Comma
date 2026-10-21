@@ -363,7 +363,7 @@ export interface ElectronMainRuntimeDeps {
   meetingTranscription?:
     | (MeetingTranscriptionProvider & {
         recordingNotice(): Promise<MeetingTranscriptionNotice["kind"] | undefined>;
-        cloudFailed(reason: string): void;
+        cloudFailed(reason: string): "groq" | "openai_compatible" | undefined;
         ensureDelivered(): Promise<boolean>;
       })
     | undefined;
@@ -1065,11 +1065,12 @@ export async function createElectronMainContext(
   const noticeRecording = (
     kind: MeetingTranscriptionNotice["kind"],
     recording: AudioCaptureRecording,
-    reason?: string
+    details: Pick<MeetingTranscriptionNotice, "reason" | "provider"> = {}
   ) =>
     nativeEventBus.emit(meetingTranscriptionNoticeEvent, {
       kind,
-      ...(reason ? { reason } : {}),
+      ...(details.reason ? { reason: details.reason } : {}),
+      ...(details.provider ? { provider: details.provider } : {}),
       recording,
     });
   // "Install local transcription" belongs to the Local provider only.
@@ -1099,10 +1100,13 @@ export async function createElectronMainContext(
       },
       onFallback: (recording, fallback) => {
         deps.meetingTranscription?.cloudFailed(fallback.reason);
-        noticeRecording("fallback", recording, fallback.reason);
+        noticeRecording("fallback", recording, { reason: fallback.reason });
       },
-      onCloudFailure: (_recording, reason) =>
-        deps.meetingTranscription?.cloudFailed(reason),
+      // No local model took over: say why, with Try again, never the install.
+      onCloudFailure: (recording, reason) => {
+        const provider = deps.meetingTranscription?.cloudFailed(reason);
+        if (provider) noticeRecording("cloud_failed", recording, { reason, provider });
+      },
       beforeTranscribe: async () => deps.meetingTranscription?.ensureDelivered(),
     }
   );

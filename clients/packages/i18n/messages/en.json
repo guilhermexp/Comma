@@ -3341,10 +3341,11 @@
   "recording_transcription_cloud_failed": "{provider} unavailable: {reason}.",
   "recording_transcription_retry": "Try again",
   "recording_cloud_reason_unreachable": "no connection",
-  "recording_cloud_reason_quota": "quota reached",
+  "recording_cloud_reason_quota": "quota exhausted",
   "recording_cloud_reason_auth": "key rejected",
   "recording_cloud_reason_server": "server error",
   "recording_cloud_reason_timeout": "timed out",
   "recording_cloud_reason_bad_response": "unexpected answer",
-  "recording_cloud_reason_other": "error"
+  "recording_cloud_reason_other": "error",
+  "recording_transcription_cloud_failed_saved": "Recording saved, but {provider} could not transcribe it: {reason}."
 }

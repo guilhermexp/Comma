@@ -8646,9 +8646,13 @@ export const meetingTranscriptionStateSchema = z
         "unsupported",
       ])
       .optional(),
-    /** The selected cloud provider; absent with Local. */
+    /**
+     * The saved cloud provider, kept while Local is selected so switching
+     * back needs no new key; absent once its key is deleted.
+     */
     cloud: z
       .object({
+        kind: z.enum(["groq", "openai_compatible"]),
         model: z.string().max(200),
         /** The provider's host, which the privacy notice names. */
         baseHost: z.string().max(253),
@@ -8711,8 +8715,9 @@ export const meetingTranscriptionStateLeaf = defineNativeState({
 const meetingTranscriptionApiKeySchema = z.string().trim().min(1).max(1024);
 
 /**
- * Settings → Meeting → Save. Without `apiKey`, Main reuses the saved key of
- * the same provider and URL origin; a key never follows a changed origin.
+ * Settings → Meeting → Save. Without `baseUrl`, Main reuses the saved URL of
+ * the same provider. Without `apiKey`, Main reuses the saved key of the same
+ * provider and URL origin; a key never follows a changed origin.
  */
 export const meetingTranscriptionSetProviderInputSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("local") }).strict(),
@@ -8726,7 +8731,7 @@ export const meetingTranscriptionSetProviderInputSchema = z.discriminatedUnion("
   z
     .object({
       kind: z.literal("openai_compatible"),
-      baseUrl: z.string().trim().min(1).max(2048),
+      baseUrl: z.string().trim().min(1).max(2048).optional(),
       model: z.string().trim().min(1).max(200),
       apiKey: meetingTranscriptionApiKeySchema.optional(),
     })
@@ -8830,13 +8835,16 @@ export const meetingTranscriptionRetryVerifyCapability = defineNativeCapability(
 /**
  * A saved recording needs the user's attention: it was transcribed on this
  * Mac because the cloud provider failed (`fallback`, with the cloud reason),
- * the selected cloud provider is not configured (`configure`), or the Local
- * provider's model is missing (`install_local`).
+ * the cloud provider failed and no local model took over (`cloud_failed`,
+ * with the reason and the provider), the selected cloud provider is not
+ * configured (`configure`), or the Local provider's model is missing
+ * (`install_local`).
  */
 export const meetingTranscriptionNoticeSchema = z
   .object({
-    kind: z.enum(["fallback", "configure", "install_local"]),
+    kind: z.enum(["fallback", "cloud_failed", "configure", "install_local"]),
     reason: z.string().max(200).optional(),
+    provider: z.enum(["groq", "openai_compatible"]).optional(),
     recording: audioCaptureRecordingSchema,
   })
   .strict();

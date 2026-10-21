@@ -185,10 +185,13 @@ describe("meeting transcription provider (openspec add-cloud-meeting-asr)", () =
       `Bearer ${groqKey}`
     );
     expect(store.read()).toEqual({
-      kind: "groq",
-      baseUrl: "https://api.groq.com/openai/v1",
-      model: "whisper-large-v3",
-      apiKey: groqKey,
+      selected: "groq",
+      cloud: {
+        kind: "groq",
+        baseUrl: "https://api.groq.com/openai/v1",
+        model: "whisper-large-v3",
+        apiKey: groqKey,
+      },
     });
     expect(await delivered()).toEqual({
       configured: true,
@@ -207,6 +210,7 @@ describe("meeting transcription provider (openspec add-cloud-meeting-asr)", () =
       provider: "groq",
       ready: true,
       cloud: {
+        kind: "groq",
         model: "whisper-large-v3",
         baseHost: "api.groq.com",
         hasKey: true,
@@ -225,7 +229,7 @@ describe("meeting transcription provider (openspec add-cloud-meeting-asr)", () =
       accepted: false,
       reason: "key_rejected",
     });
-    expect(store.read()).toEqual({ kind: "local" });
+    expect(store.read()).toEqual({ selected: "local" });
     expect((await service.state()).provider).toBe("local");
     expect((await delivered()).provider).toEqual({ kind: "local" });
   });
@@ -285,7 +289,16 @@ describe("meeting transcription provider (openspec add-cloud-meeting-asr)", () =
     expect(await service.setProvider({ ...config, model: "whisper-2" })).toEqual({
       accepted: true,
     });
-    expect(store.read()).toMatchObject({ model: "whisper-2", apiKey: "sk-first" });
+    expect(store.read()).toMatchObject({
+      cloud: { model: "whisper-2", apiKey: "sk-first" },
+    });
+    // Without a URL, the saved one is reused with its key.
+    expect(
+      await service.setProvider({ kind: "openai_compatible", model: "whisper-3" })
+    ).toEqual({ accepted: true });
+    expect(store.read()).toMatchObject({
+      cloud: { baseUrl: "https://asr.example.com/v1", model: "whisper-3" },
+    });
     // A changed origin never receives the saved key.
     expect(
       await service.setProvider({ ...config, baseUrl: "https://other.example.com/v1" })
@@ -293,7 +306,7 @@ describe("meeting transcription provider (openspec add-cloud-meeting-asr)", () =
     expect(
       await service.setProvider({ kind: "groq", model: "whisper-large-v3" })
     ).toEqual({ accepted: false, reason: "key_missing" });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(3);
   });
 
   it("makes cloud providers unavailable without safeStorage", async () => {
@@ -347,6 +360,61 @@ describe("meeting transcription provider (openspec add-cloud-meeting-asr)", () =
     for (const line of [...processes(), ...logs, ...helperLog])
       expect(line).not.toContain(groqKey);
     expect(JSON.stringify(await service.state())).not.toContain(groqKey);
+  });
+
+  it("keeps the Groq key when Local is chosen and reuses it when Groq is chosen again", async () => {
+    const fetcher = groqFetch({ [groqKey]: 200 });
+    const { service, store, delivered } = await fixture({ fetch: fetcher });
+    await service.setProvider(groq);
+
+    expect(await service.setProvider({ kind: "local" })).toEqual({ accepted: true });
+    expect((await delivered()).provider).toEqual({ kind: "local" });
+    expect(store.read()).toMatchObject({
+      selected: "local",
+      cloud: { kind: "groq", apiKey: groqKey },
+    });
+    const local = await service.state();
+    expect(local).toMatchObject({
+      provider: "local",
+      cloud: { kind: "groq", hasKey: true, model: "whisper-large-v3" },
+    });
+    expect(JSON.stringify(local)).not.toContain(groqKey);
+    // Local never hears about a rejected cloud key.
+    expect(local.reason).toBe("local_model_missing");
+
+    expect(
+      await service.setProvider({ kind: "groq", model: "whisper-large-v3-turbo" })
+    ).toEqual({ accepted: true });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect((await delivered()).provider).toMatchObject({
+      kind: "groq",
+      model: "whisper-large-v3-turbo",
+      apiKey: groqKey,
+    });
+    expect((await service.state()).provider).toBe("groq");
+  });
+
+  it("deletes a kept key while Local is selected", async () => {
+    const { service, root, store } = await fixture({
+      fetch: groqFetch({ [groqKey]: 200 }),
+    });
+    await service.setProvider(groq);
+    await service.setProvider({ kind: "local" });
+
+    expect(await service.clearKey()).toEqual({ accepted: true });
+    expect(existsSync(join(root, "asr-provider.bin"))).toBe(false);
+    expect(store.read()).toEqual({ selected: "local" });
+    expect((await service.state()).cloud).toBeUndefined();
+    expect(
+      await service.setProvider({ kind: "groq", model: "whisper-large-v3" })
+    ).toEqual({ accepted: false, reason: "key_missing" });
+  });
+
+  it("names the selected cloud provider for a cloud failure notice", async () => {
+    const { service } = await fixture({ fetch: groqFetch({ [groqKey]: 200 }) });
+    expect(service.cloudFailed("cloud_quota")).toBeUndefined();
+    await service.setProvider(groq);
+    expect(service.cloudFailed("cloud_quota")).toBe("groq");
   });
 
   it("returns to Local and forgets the key when it is deleted", async () => {

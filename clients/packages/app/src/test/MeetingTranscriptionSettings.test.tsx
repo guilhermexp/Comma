@@ -30,6 +30,7 @@ const groqReady: MeetingTranscriptionState = {
   provider: "groq",
   ready: true,
   cloud: {
+    kind: "groq",
     model: "whisper-large-v3",
     baseHost: "api.groq.com",
     hasKey: true,
@@ -268,7 +269,12 @@ describe("Settings → Meeting → Transcription engine (add-cloud-meeting-asr, 
     renderSection({
       ...groqReady,
       provider: "openai_compatible",
-      cloud: { ...groqReady.cloud!, model: "whisper-1", baseHost: "asr.example.com" },
+      cloud: {
+        ...groqReady.cloud!,
+        kind: "openai_compatible",
+        model: "whisper-1",
+        baseHost: "asr.example.com",
+      },
     });
     await engine();
     expect(
@@ -277,6 +283,58 @@ describe("Settings → Meeting → Transcription engine (add-cloud-meeting-asr, 
       )
     ).toBeTruthy();
     expect(screen.getByLabelText("Model")).toHaveValue("whisper-1");
+  });
+
+  it("reuses the kept Groq key when Groq is chosen again after Local", async () => {
+    const { setProvider, clearKey } = renderSection(
+      { provider: "local", ready: true, diarization: "ready", cloud: groqReady.cloud! },
+      { localState: localReady }
+    );
+    expect(await engine()).toHaveTextContent("Local (on this Mac)");
+    expect(
+      screen.getByText(
+        "Recordings are transcribed on this Mac. The audio never leaves your Mac."
+      )
+    ).toBeTruthy();
+
+    // The engine row and the local model row are both ready.
+    expect(screen.getAllByText("Ready")).toHaveLength(2);
+
+    await choose("Groq");
+    // Local's status no longer sits beside the unsaved Groq choice.
+    expect(screen.getAllByText("Ready")).toHaveLength(1);
+    expect(screen.getByText("A key is saved. It is not shown again.")).toBeTruthy();
+    expect(screen.queryByLabelText("API key")).toBeNull();
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    expect(setProvider).toHaveBeenCalledExactlyOnceWith({
+      kind: "groq",
+      model: "whisper-large-v3",
+    });
+
+    const remove = screen.getByRole("button", { name: "Delete" });
+    await waitFor(() => expect(remove).toBeEnabled());
+    fireEvent.click(remove);
+    expect(clearKey).toHaveBeenCalledOnce();
+  });
+
+  it("switches back to a kept OpenAI-compatible API without retyping its URL or key", async () => {
+    const { setProvider } = renderSection({
+      ...local,
+      cloud: {
+        ...groqReady.cloud!,
+        kind: "openai_compatible",
+        model: "whisper-1",
+        baseHost: "asr.example.com",
+      },
+    });
+    await choose("OpenAI-compatible API");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(setProvider).toHaveBeenCalledExactlyOnceWith({
+      kind: "openai_compatible",
+      model: "whisper-1",
+    });
   });
 
   it("returns to Local at once when Local is chosen", async () => {
