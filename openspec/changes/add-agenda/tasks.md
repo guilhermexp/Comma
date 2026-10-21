@@ -2,14 +2,14 @@
 
 ## 1. Backend: ação `google_calendar` (worktree `feat/agenda-backend`)
 
-- [ ] 1.1 Conferir com a operação `schema` existente (`composio_connect.ex:300`), numa conta `googlecalendar` real e no modo `connect`, os argumentos atuais dos seis slugs de D2 (`CALENDAR_LIST_LIST`, `EVENTS_LIST`, `EVENTS_GET`, `CREATE_EVENT`, `PATCH_EVENT`, `DELETE_EVENT`) e de `EVENTS_MOVE`. Registrar o mapeamento C1 → argumentos no `@moduledoc` do módulo novo. Verificar: o mapeamento cobre cada campo de C1.
-- [ ] 1.2 `execute_calendar_read/7` e `execute_calendar_write/7` em `Salix.Control.ComposioConnect`, com slug fixo por operação, modos `connect` e `project` e limite de bytes, começando por testes que falham:
+- [x] 1.1 Conferir com a operação `schema` existente (`composio_connect.ex:300`), numa conta `googlecalendar` real e no modo `connect`, os argumentos atuais dos seis slugs de D2 (`CALENDAR_LIST_LIST`, `EVENTS_LIST`, `EVENTS_GET`, `CREATE_EVENT`, `PATCH_EVENT`, `DELETE_EVENT`) e de `EVENTS_MOVE`. Registrar o mapeamento C1 → argumentos no `@moduledoc` do módulo novo. Verificar: o mapeamento cobre cada campo de C1.
+- [x] 1.2 `execute_calendar_read/7` e `execute_calendar_write/7` em `Salix.Control.ComposioConnect`, com slug fixo por operação, modos `connect` e `project` e limite de bytes, começando por testes que falham:
   - slug fora da lista é recusado;
   - os modos `connect` e `project` chamam o caminho certo;
   - conta de modo desconhecido é negada.
 
   Verificar com `mix test` do app `salix_web`.
-- [ ] 1.3 `CommaWeb.GoogleCalendarAgenda` com validação de C1 e autorização antes e depois (`toolkit == "googlecalendar"`, conta do próprio usuário), começando por testes que falham:
+- [x] 1.3 `CommaWeb.GoogleCalendarAgenda` com validação de C1 e autorização antes e depois (`toolkit == "googlecalendar"`, conta do próprio usuário), começando por testes que falham:
   - operação desconhecida;
   - `calendar_ids` acima de 25;
   - intervalo acima de 62 dias;
@@ -18,22 +18,22 @@
   - conta `googledrive`.
 
   Verificar com `mix test` do app `comma_web`.
-- [ ] 1.4 Projeções:
+- [x] 1.4 Projeções:
   - `calendars`, com `writable` por `access_role` e `account_email` do principal;
   - `events`, com paginação, `truncated` em 2.500 eventos ou 1 MB, cancelados fora e `failed_calendar_ids`;
   - `event`, com classificação da repetição: `FREQ` simples vira `daily`, `weekly`, `monthly` ou `yearly`; qualquer outra regra vira `custom`.
 
   Verificar com testes dos cenários das specs: feriados `reader`, série semanal, `BYDAY=MO,WE,FR` e calendário que falha.
-- [ ] 1.5 Escritas:
+- [x] 1.5 Escritas:
   - `create`;
   - `update`, com patch parcial, `scope`, `target_calendar_id` via `EVENTS_MOVE` e conferência de `etag`;
   - `delete`, com `scope`;
   - 401 e 403 viram `calendar_write_permission_required`.
 
   Verificar com testes que conferem os argumentos enviados à Composio e o conflito de `etag`.
-- [ ] 1.6 Cláusula `"google_calendar"` em `CommaWeb.ComposioConnect.command/5`, ao lado de `google_drive`. Verificar com um teste de rota em `POST /v1/comma/workspaces/:id/composio/google_calendar` que exige sessão e responde C1.
-- [ ] 1.7 `LocalComposioMock` responde os slugs de D2 com dados coerentes (2 calendários, eventos da semana atual, escrita em memória). Verificar: com o backend local, `curl` em `calendars`, `events`, `create`, `update` e `delete` devolve C1.
-- [ ] 1.8 Sem tokens, cabeçalhos ou corpo bruto do provedor em respostas e logs. Verificar com um teste que força um erro do provedor e inspeciona a resposta e o log capturado.
+- [x] 1.6 Cláusula `"google_calendar"` em `CommaWeb.ComposioConnect.command/5`, ao lado de `google_drive`. Verificar com um teste de rota em `POST /v1/comma/workspaces/:id/composio/google_calendar` que exige sessão e responde C1.
+- [x] 1.7 `LocalComposioMock` responde os slugs de D2 com dados coerentes (2 calendários, eventos da semana atual, escrita em memória). Verificar: com o backend local, `curl` em `calendars`, `events`, `create`, `update` e `delete` devolve C1.
+- [x] 1.8 Sem tokens, cabeçalhos ou corpo bruto do provedor em respostas e logs. Verificar com um teste que força um erro do provedor e inspeciona a resposta e o log capturado.
 
 ## 2. Mac: `CalendarKit` e folhas `calendar.*` (worktree `feat/agenda-mac-calendar`)
 
