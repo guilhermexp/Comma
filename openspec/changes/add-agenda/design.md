@@ -62,6 +62,11 @@ Fora: o que a proposta exclui.
 - `scope: "series"` age sobre o `series_id` (`recurringEventId`). `scope: "instance"` age sobre o id da ocorrência.
 - Escrita com `etag`: o backend lê o evento (`EVENTS_GET`) e compara antes do patch ou delete. Se mudou, responde `calendar_event_conflict`. [Risco: há uma janela curta entre a leitura e a escrita; aceita.]
 - `events` com vários calendários roda as chamadas em sequência, todas dentro do prazo de 30 s. Um calendário que falha entra em `failed_calendar_ids` sem derrubar os outros.
+- Paginação de `EVENTS_LIST` (lição do `fastrepl/anarlog`, `crates/calendar/src/fetch.rs`):
+  - para se um `nextPageToken` se repetir;
+  - página vazia com `nextPageToken` não pode virar laço;
+  - falha numa página posterior falha o calendário inteiro (vai para `failed_calendar_ids`), sem resultado parcial;
+  - ocorrências `cancelled` são descartadas mesmo com `showDeleted=false`.
 - Erros: 401 ou 403 numa escrita viram `calendar_write_permission_required`. Fora isso, valem os mesmos erros do Drive.
 - O consentimento é a própria ação explícita do usuário na tela. Não há agente no meio, como no Drive ("Member-facing closed read"). A escrita não passa pelo consentimento de leitura das Rotinas.
 - O `LocalComposioMock` passa a responder os seis slugs para o desenvolvimento local.
@@ -72,7 +77,15 @@ Fora: o que a proposta exclui.
 - No mesmo processo porque a permissão de Calendário do macOS é concedida ao app que chama. Um helper separado teria permissão própria.
 - Usa um único `EKEventStore`, guardado. No macOS 14 ou mais novo, o pedido é `requestFullAccessToEventsWithCompletion`. Em versões anteriores, `requestAccessToEntityType:EKEntityTypeEvent`.
 - Um observador de `EKEventStoreChangedNotification` agrupa os avisos em janelas de 500 ms e incrementa a `revision`.
-- `series` usa `EKSpanFutureEvents` sobre o item buscado por `calendarItemWithIdentifier:`, que representa a série a partir da primeira ocorrência. `instance` usa `EKSpanThisEvent` sobre a ocorrência buscada por `eventWithIdentifier` e `occurrenceDate`.
+- Lições do `fastrepl/anarlog` (`crates/apple-calendar`, `crates/calendar/src/apple_identity.rs`, `plugins/permissions/src/ext.rs`):
+  - **Chave:** `eventIdentifier` não serve de chave, porque muda ao editar e varia por store. A ocorrência é `calendarItemIdentifier` + `occurrenceDate`.
+  - **Ocorrências destacadas:** o sufixo `/RID=…` é removido para obter a série. A ocorrência movida mantém o `occurrenceDate` original, e `MacEvent.detached` sinaliza isso.
+  - **Dia inteiro:** a data é tomada no fuso do evento.
+  - **Chamadas ao EventKit:** todas passam por uma fila serial. "0 calendários depois de >0" é tratado como transitório. Exceções Objective-C são capturadas, com 3 tentativas de 100 ms em falha de XPC.
+  - **Editável:** `allowsContentModifications && !immutable`.
+  - **Ajustes do Sistema:** `x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Calendars`, com fallback para `com.apple.preference.security?Privacy_Calendars`.
+  - **Precedente:** o anarlog só cria eventos (`EKSpanThisEvent`). Alterar, apagar, `EKSpanFutureEvents` e `EKRecurrenceRule` não têm precedente e são cobertos pela prova real.
+- `series` usa `EKSpanFutureEvents` sobre o item buscado por `calendarItemWithIdentifier:`, que representa a série a partir da primeira ocorrência. `instance` usa `EKSpanThisEvent` sobre a ocorrência com o mesmo `calendarItemIdentifier` e `occurrenceDate`, buscada por predicado no dia dessa ocorrência.
 - A repetição simples vira um `EKRecurrenceRule` de frequência e intervalo 1. Qualquer outra regra é classificada como `custom`.
 - O provedor `calendar` fica no main, em `clients/apps/electron/src/main/modules/calendar/`, e registra as folhas.
 - Permissões e empacotamento:
@@ -93,6 +106,7 @@ Fora: o que a proposta exclui.
 - Datas com `Date` e `Intl.DateTimeFormat` no fuso do sistema. Dia inteiro usa datas `YYYY-MM-DD` sem hora.
 - Posicionamento dos eventos sobrepostos: agrupa por colisão e divide a largura em colunas, como no Google Calendar.
 - Arrastar (criar, mover, redimensionar) com eventos de ponteiro próprios, como em `sidebar/useSidebarNavReorder.ts`, encaixando em 15 min. Precisão de pixel e auto-rolagem perto das bordas.
+- Linha do agora com relógio compartilhado que dispara na virada do minuto, pausa com a aba oculta e atualiza ao focar. O "+N" do Mês mede o chip com `ResizeObserver`. As buscas descartam resultados antigos por contador de geração + `AbortSignal`. Calendário que some numa leitura bem-sucedida sai da lista; leitura com falha não remove nada. Padrões vistos em `fastrepl/anarlog` (`apps/desktop/src/calendar`), que não tem grade de horas nem arraste.
 - Estado na URL: `#/agenda?view=week&date=2026-10-20`. Zoom e calendários ocultos em `localStorage`, por workspace.
 - Estilo: tokens e componentes de `@comma/ui` (`Button`, `ButtonGroup`, `Menu`, `Dialog`, `Tooltip`, `ScrollArea`, `CalendarIcon`).
 
@@ -156,7 +170,7 @@ calendar.updateEvent({ eventId, occurrenceDate|null, scope, patch, targetCalenda
 calendar.deleteEvent({ eventId, occurrenceDate|null, scope })              -> void
 
 MacEvent = { occurrenceId, eventId, externalId|null, calendarId, title, start, end, allDay, location|null,
-             notes|null, url|null, editable, recurrence: none|daily|weekly|monthly|yearly|custom, occurrenceDate|null }
+             notes|null, url|null, editable, recurrence: none|daily|weekly|monthly|yearly|custom, occurrenceDate|null, detached }
 Erros: calendar_access_denied, calendar_read_only, calendar_event_not_found, calendar_unavailable
 ```
 
