@@ -160,7 +160,9 @@ describe("googleCalendarSource", () => {
     expect(created.id).toBe("evt-1");
   });
 
-  it("updates an occurrence by its id and the series by the series id", async () => {
+  it("addresses an occurrence by its own id for both scopes", async () => {
+    // The backend finds the series from the occurrence and moves the series by
+    // that occurrence's day shift; the series id alone would lose the shift.
     const { api, composioCommand } = harness(() => ({ event: timed }));
     const source = googleCalendarSource(api, "ws", "acct");
     const [event] = (
@@ -189,7 +191,7 @@ describe("googleCalendarSource", () => {
         account_id: "acct",
         operation: "update",
         calendar_id: "work@group",
-        event_id: "series-1",
+        event_id: "evt-1",
         scope: "series",
         patch: { all_day: true },
       },
@@ -197,7 +199,7 @@ describe("googleCalendarSource", () => {
         account_id: "acct",
         operation: "delete",
         calendar_id: "work@group",
-        event_id: "series-1",
+        event_id: "evt-1",
         scope: "series",
       },
     ]);

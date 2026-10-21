@@ -89,12 +89,13 @@ function inputBody(input: Partial<AgendaEventInput>) {
   return body;
 }
 
-// A series is addressed by its series id; an occurrence by its own id and
-// the etag it was read with.
+// Both scopes name the occurrence: the backend finds its series and moves
+// the series by that occurrence's day shift. Only "instance" sends the etag
+// the occurrence was read with.
 function target(event: AgendaEvent, scope: AgendaScope) {
   return {
     calendar_id: event.calendarId,
-    event_id: scope === "series" ? (event.seriesId ?? event.id) : event.id,
+    event_id: event.id,
     scope,
     ...(scope === "instance" && event.etag ? { etag: event.etag } : {}),
   };
