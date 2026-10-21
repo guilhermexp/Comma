@@ -793,77 +793,83 @@ defmodule SalixCalendar.ServerTest do
     assert changed["revision"] == first["revision"] + 1
   end
 
-  test "agent API exposes bounded occurrences and context only, never source locators", context do
-    assert {:ok, normalized} = SalixTaskSchedule.normalize(task_projection())
-    assert {:ok, [item]} = apply_record(context, normalized)
-    from = unix_ms(~D[2026-07-20], ~T[00:00:00])
-    until = unix_ms(~D[2026-07-21], ~T[00:00:00])
+  test "agent API reads the meeting calendar as unified read-only events with context",
+       context do
+    meeting = meeting_context(context)
+    source = ensure_source(meeting, "meeting")
+    identity = scheduling_identity("agent-view@example.com")
 
-    assert {:ok,
-            %{
-              "data" => [
-                %{
-                  "item" => listed_item,
-                  "occurrence" => occurrence,
-                  "calendar_context" => %{"revision" => 0}
-                }
-              ]
-            }} =
-             AgentAPI.list_items(context.group_id, %{
-               "calendar_id" => context.calendar["calendar_id"],
-               "range_start_ms" => from,
-               "range_end_ms" => until,
-               "object_type" => "task",
-               "limit" => 10
-             })
+    assert {:ok, [item]} =
+             apply_record(
+               meeting,
+               source,
+               event_record("agent-view", identity, "organizer", "Sync", 1)
+             )
 
-    assert listed_item["calendar_item_id"] == item["calendar_item_id"]
+    calendar_id = meeting.calendar["calendar_id"]
 
-    for private <-
-          ~w(origin source_version source_generation scheduling_identity scheduling_revision) do
-      refute Map.has_key?(listed_item, private)
-    end
+    assert {:ok, %{"calendars" => calendars}} = AgentAPI.calendars(context.group_id, nil)
 
-    assert {:ok,
-            %{
-              "item" => public_item,
-              "occurrence" => resolved,
-              "calendar_context" => %{"revision" => 0}
-            }} =
-             AgentAPI.get_item(context.group_id, %{
-               "calendar_id" => context.calendar["calendar_id"],
-               "calendar_item_id" => item["calendar_item_id"],
-               "occurrence_ref" => occurrence["occurrence_ref"]
-             })
+    assert %{"name" => "Meeting calendar", "writable" => false} =
+             Enum.find(calendars, &(get_in(&1, ["calendar_ref", "calendar_id"]) == calendar_id))
 
-    for private <-
-          ~w(origin source_version source_generation scheduling_identity scheduling_revision) do
-      refute Map.has_key?(public_item, private)
-    end
+    assert {:ok, %{"events" => [event], "truncated" => false}} =
+             AgentAPI.events(
+               context.group_id,
+               %{
+                 "range_start_ms" => unix_ms(~D[2026-07-20], ~T[00:00:00]),
+                 "range_end_ms" => unix_ms(~D[2026-07-21], ~T[00:00:00])
+               },
+               nil
+             )
 
-    assert resolved["occurrence_ref"] == occurrence["occurrence_ref"]
+    assert event["event_ref"]["event_id"] == item["calendar_item_id"]
+    assert event["title"] == "Sync"
+    assert event["start"] == "2026-07-20T10:00:00+08:00"
+    assert event["end"] == "2026-07-20T10:30:00+08:00"
+    assert event["writable"] == false
+    assert event["ical_uid"] == "agent-view@example.com"
+
+    assert Map.keys(event) |> Enum.sort() ==
+             ~w(all_day calendar_ref description end event_ref ical_uid location recurring start time_zone title writable)
+
+    occurrence_ref = event["event_ref"]["occurrence"]
+
+    read = %{
+      "calendar_id" => calendar_id,
+      "event_id" => item["calendar_item_id"],
+      "occurrence" => occurrence_ref
+    }
+
+    assert {:ok, %{"event" => %{"context" => %{"revision" => 0}}}} =
+             AgentAPI.event(context.group_id, read, nil)
 
     assert {:ok, context_record} =
              AgentAPI.update_context(context.group_id, %{
-               "calendar_id" => context.calendar["calendar_id"],
-               "occurrence_ref" => occurrence["occurrence_ref"],
+               "calendar_id" => calendar_id,
+               "occurrence_ref" => occurrence_ref,
                "expected_revision" => 0,
                "background" => "Router supplied context",
                "actor" => %{"agent_id" => Ids.new_agent_id(context.group_id)}
              })
 
     assert context_record["revision"] == 1
-    assert context_record["background"] == "Router supplied context"
 
-    assert {:ok, %{"calendar_context" => ^context_record}} =
-             AgentAPI.get_item(context.group_id, %{
-               "calendar_id" => context.calendar["calendar_id"],
-               "calendar_item_id" => item["calendar_item_id"],
-               "occurrence_ref" => occurrence["occurrence_ref"]
-             })
+    assert {:ok, %{"event" => %{"context" => ^context_record}}} =
+             AgentAPI.event(context.group_id, read, nil)
+
+    assert {:error, :read_only} =
+             AgentAPI.delete(
+               context.group_id,
+               %{"calendar_id" => calendar_id, "event_id" => item["calendar_item_id"]},
+               nil
+             )
   end
 
-  test "agent occurrence queries fail explicitly instead of truncating a recurrence", context do
+  test "agent event listing cuts a long recurrence at the limit and says so", context do
+    meeting = meeting_context(context)
+    source = ensure_source(meeting, "meeting")
+
     recurring =
       event_record(
         "bounded-agent-query",
@@ -876,16 +882,21 @@ defmodule SalixCalendar.ServerTest do
         %{"@type" => "RecurrenceRule", "frequency" => "daily"}
       ])
 
-    assert {:ok, [_item]} = apply_record(context, recurring)
+    assert {:ok, [_item]} = apply_record(meeting, source, recurring)
 
-    assert {:error, :occurrence_limit_exceeded} =
-             AgentAPI.list_items(context.group_id, %{
-               "calendar_id" => context.calendar["calendar_id"],
-               "range_start_ms" => unix_ms(~D[2026-07-20], ~T[00:00:00]),
-               "range_end_ms" => unix_ms(~D[2026-07-23], ~T[00:00:00]),
-               "object_type" => "event",
-               "limit" => 1
-             })
+    assert {:ok, %{"events" => [first], "truncated" => true}} =
+             AgentAPI.events(
+               context.group_id,
+               %{
+                 "range_start_ms" => unix_ms(~D[2026-07-20], ~T[00:00:00]),
+                 "range_end_ms" => unix_ms(~D[2026-07-23], ~T[00:00:00]),
+                 "limit" => 1
+               },
+               nil
+             )
+
+    assert first["start"] == "2026-07-20T10:00:00+08:00"
+    assert first["recurring"] == true
   end
 
   test "exact scheduling identity correlates source copies and organizer facts win", context do
@@ -957,13 +968,6 @@ defmodule SalixCalendar.ServerTest do
 
     assert get_in(attendee_selected, ["item", "calendar_item_id"]) ==
              attendee_item["calendar_item_id"]
-
-    assert {:error, :occurrence_copy_changed} =
-             AgentAPI.get_item(context.group_id, %{
-               "calendar_id" => context.calendar["calendar_id"],
-               "calendar_item_id" => attendee_item["calendar_item_id"],
-               "occurrence_ref" => occurrence_ref
-             })
 
     assert {:ok, selected} =
              Occurrences.get(
@@ -3463,6 +3467,17 @@ defmodule SalixCalendar.ServerTest do
     })
 
     Task.await(task)
+  end
+
+  defp meeting_context(context) do
+    assert {:ok, calendar} =
+             Server.ensure_calendar(
+               context.group_id,
+               %{"kind" => "meeting_enrollment", "version" => 1},
+               %{"name" => "Meeting calendar", "default_time_zone" => "UTC"}
+             )
+
+    %{context | calendar: calendar}
   end
 
   defp ensure_source(context, suffix) do

@@ -675,8 +675,19 @@ neither the backend, Sessions nor logs receive event content. Mac calendars of a
 connected Google account start hidden to avoid duplicates.
 
 The Group-scoped [Calendar Item](#6-files-and-proactive-work) in `salix_calendar`
-is a separate, read-only projection for Agent work. The Agenda does not read or
+is a separate projection for Agent work. The Agenda does not read or
 write it, and Agenda edits create no Calendar Item, Task or Routine source.
+
+The agent's `calendar.*` tools read the Comma calendar together with the
+owner's Google accounts and Mac in one event shape. They add no entity: the
+`SalixAgent.CalendarSources` port only reaches the existing owners, each event
+stays in its source, and Comma stores no copy. Reads work in any run of the
+owner's agents. Writes go to the event's own source and need the owner's own
+Comma message in the current run; the port names the owner. Results are the
+owner's private data for information-flow checks.
+Implementation: [tools](../../systems/apps/salix_agent/lib/salix_agent/calendar_access.ex),
+[port](../../systems/apps/salix_agent/lib/salix_agent/calendar_sources.ex),
+[Comma source](../../systems/apps/salix_calendar/lib/salix_calendar/agent_api.ex).
 Implementation: [route and screen](../../clients/packages/app/src/components/agenda/AgendaRoute.tsx),
 [source model](../../clients/packages/app/src/components/agenda/agendaSource.ts),
 [Google source](../../clients/packages/app/src/components/agenda/googleCalendarSource.ts),
@@ -1047,7 +1058,7 @@ See [Signal contracts](../messaging-voice.md#signal).
 | Schedule / Schedule Run | A time-based definition and one occurrence of its execution. They have separate identities and lifecycle facts. |
 | Heartbeat | A periodic Agent-work schedule. It is not the Connector's connection heartbeat. |
 | Background Loop | An Agent-owned eBPF program that spinfoam runs on the Agent's lease-holder node: the VFS path and hash of its compiled object, config, capability grants, target Session, status, and checkpoint. It has no occurrences (not a Schedule), no history (not a Runtime Session), and no visible collaboration facts (not a Task). Its incarnation is a fence value on the row, not another entity. A `script.run` program also runs in spinfoam but is a transient part of one tool call (no row, no incarnation, no checkpoint), not an entity. |
-| Calendar Item / Occurrence | A calendar object and one concrete occurrence. A Calendar Task does not contain the full Agent Task. |
+| Calendar Item / Occurrence | A calendar object and one concrete occurrence. A Calendar Task does not contain the full Agent Task. A Comma-local Event item belongs to one owner principal; only that owner edits it, and deletion leaves a tombstone so a retried creation cannot restore it. |
 | Meeting / Meeting Task | Meeting work and its Task representation, including recording and results. Meeting and Runtime Session identities remain distinct. |
 | Recommendation Profile / Run / Snapshot | Member-scoped settings, one generation attempt, and the current Comma Center result within a Workspace. Runs write in the User's app language; a language change starts one run per Profile with enabled sources. |
 | Member Source Item | One normalized item that reaches a member through a connected source, with its current version. Collection writes it. Proactive attention reads arrivals and changes. Member Routine runs read current items. |

@@ -425,7 +425,10 @@ defmodule SalixAgent.ToolPolicyExtrasTest do
           "composio.request_connection",
           "composio.execute",
           "schedule.create",
-          "preview.publish_html"
+          "preview.publish_html",
+          "calendar.create",
+          "calendar.update",
+          "calendar.delete"
         ] do
       entry = Tools.find_entry(name)
       assert Tools.entry_safety(entry) == "write"
@@ -465,8 +468,9 @@ defmodule SalixAgent.ToolPolicyExtrasTest do
           "agent.list",
           "agent.get",
           "env.runtime_targets",
-          "calendar.list_items",
-          "calendar.get_item",
+          "calendar.calendars",
+          "calendar.events",
+          "calendar.event",
           "im.connects_list",
           "im.provider_apis_list",
           "mcp_manager.definition_list",

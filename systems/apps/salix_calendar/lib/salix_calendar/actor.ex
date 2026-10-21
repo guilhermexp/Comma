@@ -63,6 +63,31 @@ defmodule SalixCalendar.Actor do
   def handle_call({:create_local_item, proposal, owner, creation_request_id}, _from, state),
     do: reply(create_local_item(state, proposal, owner, creation_request_id), state)
 
+  def handle_call({:update_local_item, item_id, owner, patch, expected_revision}, _from, state),
+    do:
+      reply(
+        with_calendar(state, fn ->
+          LocalItems.update(
+            state.group_id,
+            state.calendar_id,
+            item_id,
+            owner,
+            patch,
+            expected_revision
+          )
+        end),
+        state
+      )
+
+  def handle_call({:delete_local_item, item_id, owner, expected_revision}, _from, state),
+    do:
+      reply(
+        with_calendar(state, fn ->
+          LocalItems.delete(state.group_id, state.calendar_id, item_id, owner, expected_revision)
+        end),
+        state
+      )
+
   defp create(state, attrs) do
     attrs = JSON.stringify(attrs)
 
@@ -262,23 +287,30 @@ defmodule SalixCalendar.Actor do
     end
   end
 
-  # A source-bound human request commits one Comma-local Event. The actor validates
-  # the calendar exists (it owns the calendar record) and delegates the item and
-  # index persistence to `LocalItems`, the sole owner of local-item storage keys.
+  # A source-bound human request commits, edits or deletes one Comma-local Event.
+  # The actor validates the calendar exists (it owns the calendar record) and
+  # delegates the item and index persistence to `LocalItems`, the sole owner of
+  # local-item storage keys.
   defp create_local_item(state, proposal, owner, creation_request_id)
        when is_map(proposal) and is_binary(creation_request_id) do
+    with_calendar(state, fn ->
+      LocalItems.create(state.group_id, state.calendar_id, proposal, owner, creation_request_id)
+    end)
+  end
+
+  defp create_local_item(_state, _proposal, _owner, _creation_request_id),
+    do: {:error, :invalid_local_item_request}
+
+  defp with_calendar(state, write) do
     with true <- Ids.valid_group_id?(state.group_id) and Ids.valid_calendar_id?(state.calendar_id),
          {:ok, _calendar} <- get_calendar(state) do
-      LocalItems.create(state.group_id, state.calendar_id, proposal, owner, creation_request_id)
+      write.()
     else
       false -> {:error, :invalid_calendar_identity}
       {:error, :not_found} -> {:error, :calendar_not_found}
       {:error, _} = error -> error
     end
   end
-
-  defp create_local_item(_state, _proposal, _owner, _creation_request_id),
-    do: {:error, :invalid_local_item_request}
 
   defp calendar_key(state), do: Keys.ctl_calendar(state.group_id, state.calendar_id)
 
