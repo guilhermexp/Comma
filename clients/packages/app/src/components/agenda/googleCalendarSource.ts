@@ -199,7 +199,13 @@ export function googleCalendarSource(
         await command({
           operation: "update",
           ...target(event, scope),
-          patch: inputBody(patch),
+          // C1 takes start, end and all_day together; a drag sends only bounds.
+          patch: inputBody(
+            (patch.start !== undefined || patch.end !== undefined) &&
+              patch.allDay === undefined
+              ? { ...patch, allDay: event.allDay }
+              : patch
+          ),
           ...(targetCalendarId && targetCalendarId !== event.calendarId
             ? { target_calendar_id: targetCalendarId }
             : {}),

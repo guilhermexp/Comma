@@ -203,6 +203,35 @@ describe("googleCalendarSource", () => {
     ]);
   });
 
+  it("sends all_day with a moved time, as C1 needs start, end and all_day together", async () => {
+    // A drag moves only the bounds; the backend refuses a time patch without all_day.
+    const { api, composioCommand } = harness(() => ({ event: timed }));
+    const source = googleCalendarSource(api, "ws", "acct");
+    const [event] = (
+      await googleCalendarSource(
+        harness(() => ({ events: [timed], truncated: false, failed_calendar_ids: [] }))
+          .api,
+        "ws",
+        "acct"
+      ).events(["work@group"], "a", "b", signal)
+    ).events;
+
+    await source.update(event!, "instance", {
+      start: "2026-10-23T14:00:00-03:00",
+      end: "2026-10-23T15:30:00-03:00",
+      timeZone: "America/Sao_Paulo",
+    });
+
+    expect(composioCommand.mock.calls[0]?.[2]).toMatchObject({
+      patch: {
+        start: "2026-10-23T14:00:00-03:00",
+        end: "2026-10-23T15:30:00-03:00",
+        all_day: false,
+        time_zone: "America/Sao_Paulo",
+      },
+    });
+  });
+
   it("reads the series repetition", async () => {
     const { api, composioCommand } = harness(() => ({
       event: { ...timed, recurrence: "custom" },
