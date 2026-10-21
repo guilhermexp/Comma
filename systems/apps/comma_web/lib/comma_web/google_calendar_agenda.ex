@@ -9,7 +9,7 @@ defmodule CommaWeb.GoogleCalendarAgenda do
   | C1 operation | Composio slug and arguments |
   |---|---|
   | `calendars` | `GOOGLECALENDAR_LIST_CALENDARS` `max_results: 250`. Rows come in `data.calendars` (or `items`): `id`, `summary`/`summaryOverride` -> `name`, `backgroundColor` -> `color`, `primary`, `selected`, `accessRole` -> `access_role`. `writable` is `owner` or `writer`; `account_email` is the primary calendar id. |
-  | `events` | `GOOGLECALENDAR_EVENTS_LIST` once per page and calendar: `calendarId`, `timeMin`, `timeMax`, `timeZone`, `singleEvents: true`, `orderBy: "startTime"`, `showDeleted: false`, `maxResults: 250`, `pageToken`. |
+  | `events` | `GOOGLECALENDAR_LIST_CALENDARS` once for access roles, then `GOOGLECALENDAR_EVENTS_LIST` once per page and calendar: `calendarId`, `timeMin`, `timeMax`, `timeZone`, `singleEvents: true`, `orderBy: "startTime"`, `showDeleted: false`, `maxResults: 250`, `pageToken`. |
   | `event` | `GOOGLECALENDAR_EVENTS_GET` `calendar_id`, `event_id`; for an occurrence, again with its `recurringEventId` to classify the series `recurrence`. |
   | `create` | `GOOGLECALENDAR_CREATE_EVENT` `calendar_id`, `summary` (title), `start_datetime`/`end_datetime` + `timezone`, or `start_date`/`end_date` (all day, exclusive end), `location`, `description`, `recurrence: ["RRULE:FREQ=…"]`, `create_meeting_room: false`, `exclude_organizer: true`. |
   | `update` | `GOOGLECALENDAR_EVENTS_GET` (etag and series), then `GOOGLECALENDAR_EVENTS_MOVE` `calendar_id`, `event_id`, `destination` when `target_calendar_id` differs, then `GOOGLECALENDAR_PATCH_EVENT` `calendar_id`, `event_id`, `summary`, `start_time`/`end_time` (RFC3339, or dates when all day), `timezone`, `location`, `description`, `recurrence` (`[]` for none). |
@@ -20,9 +20,10 @@ defmodule CommaWeb.GoogleCalendarAgenda do
   time of day and duration. `scope: "instance"` acts on the occurrence id.
   The deployed design named `GOOGLECALENDAR_CALENDAR_LIST_LIST`; Composio
   answers that slug with `Tool_ToolNotFound`, so `LIST_CALENDARS` replaces it.
-  Event `editable` reflects the event alone (not locked, own or shared-calendar
-  organizer, or guests may modify); the client combines it with the calendar's
-  `writable`.
+  In `events`, `editable` needs an `owner` or `writer` calendar and an event
+  that is not locked, a birthday or from Gmail. When the role is unknown (the
+  calendar list failed, or `event`, `create` and `update` answers) the event
+  decides: own or calendar organizer, or guests may modify.
   """
   alias Comma.Workspaces
   alias SalixStore.ComposioAccess, as: Access
@@ -305,38 +306,15 @@ defmodule CommaWeb.GoogleCalendarAgenda do
   end
 
   defp perform(%{op: :events} = r, execute) do
-    initial = {:ok, %{events: [], bytes: 0, truncated: false, failed: []}}
-
-    r.ids
-    |> Enum.reduce_while(initial, fn id, {:ok, acc} ->
-      if acc.truncated do
-        {:halt, {:ok, acc}}
-      else
-        case calendar_events(r, id, acc, execute) do
-          {:ok, acc} -> {:cont, {:ok, acc}}
-          :failed -> {:cont, {:ok, %{acc | failed: acc.failed ++ [id]}}}
-          {:error, _} = error -> {:halt, error}
-        end
-      end
-    end)
-    |> case do
-      {:ok, acc} ->
-        {:ok,
-         %{
-           "events" => Enum.reverse(acc.events),
-           "truncated" => acc.truncated,
-           "failed_calendar_ids" => acc.failed
-         }}
-
-      error ->
-        error
+    with {:ok, roles} <- roles(execute) do
+      events(r, roles, execute)
     end
   end
 
   defp perform(%{op: :event} = r, execute) do
     with {:ok, event} <- get(execute, r.calendar_id, r.event_id),
          {:ok, rules} <- rules(execute, r.calendar_id, event),
-         %{} = row <- event(event, r.calendar_id) do
+         %{} = row <- event(event, r.calendar_id, nil) do
       {:ok, %{"event" => Map.put(row, "recurrence", classify(rules, event["start"]))}}
     else
       {:error, :provider_not_found} -> {:error, :invalid_composio_request}
@@ -361,7 +339,7 @@ defmodule CommaWeb.GoogleCalendarAgenda do
       |> put_rule(input["recurrence"])
 
     with {:ok, data} <- execute.(:write, "create", args),
-         %{} = row <- data |> created() |> event(r.calendar_id) do
+         %{} = row <- data |> created() |> event(r.calendar_id, nil) do
       {:ok, %{"event" => row}}
     else
       {:error, _} = error -> error
@@ -382,7 +360,7 @@ defmodule CommaWeb.GoogleCalendarAgenda do
          calendar = r.target || r.calendar_id,
          {:ok, moved} <- move(execute, r, id),
          {:ok, data} <- patch(execute, calendar, id, Map.merge(r.patch, times), moved),
-         %{} = row <- data |> created() |> event(calendar) do
+         %{} = row <- data |> created() |> event(calendar, nil) do
       {:ok, %{"event" => row}}
     else
       false -> {:error, :invalid_composio_request}
@@ -404,6 +382,54 @@ defmodule CommaWeb.GoogleCalendarAgenda do
     else
       {:error, :provider_not_found} -> {:error, :calendar_event_conflict}
       {:error, _} = error -> error
+    end
+  end
+
+  # One calendar list read gives each calendar's access role, so an event on
+  # a read-only calendar is never editable. Without it, the event alone decides.
+  defp roles(execute) do
+    case execute.(:read, "calendars", %{"max_results" => 250}) do
+      {:ok, data} ->
+        rows = data["calendars"] || data["items"]
+        rows = if is_list(rows), do: Enum.flat_map(rows, &calendar/1), else: []
+        roles = Map.new(rows, &{&1["id"], &1["access_role"]})
+        primary = Enum.find(rows, & &1["primary"])
+        {:ok, if(primary, do: Map.put(roles, "primary", primary["access_role"]), else: roles)}
+
+      {:error, reason} when reason in [:composio_access_denied, :member_read_deadline] ->
+        {:error, reason}
+
+      _ ->
+        {:ok, %{}}
+    end
+  end
+
+  defp events(r, roles, execute) do
+    initial = {:ok, %{events: [], bytes: 0, truncated: false, failed: [], roles: roles}}
+
+    r.ids
+    |> Enum.reduce_while(initial, fn id, {:ok, acc} ->
+      if acc.truncated do
+        {:halt, {:ok, acc}}
+      else
+        case calendar_events(r, id, acc, execute) do
+          {:ok, acc} -> {:cont, {:ok, acc}}
+          :failed -> {:cont, {:ok, %{acc | failed: acc.failed ++ [id]}}}
+          {:error, _} = error -> {:halt, error}
+        end
+      end
+    end)
+    |> case do
+      {:ok, acc} ->
+        {:ok,
+         %{
+           "events" => Enum.reverse(acc.events),
+           "truncated" => acc.truncated,
+           "failed_calendar_ids" => acc.failed
+         }}
+
+      error ->
+        error
     end
   end
 
@@ -450,7 +476,7 @@ defmodule CommaWeb.GoogleCalendarAgenda do
   defp add_event(%{"status" => "cancelled"}, _, acc), do: {:cont, acc}
 
   defp add_event(item, id, acc) do
-    case event(item, id) do
+    case event(item, id, acc.roles[id]) do
       nil ->
         {:cont, acc}
 
@@ -634,7 +660,7 @@ defmodule CommaWeb.GoogleCalendarAgenda do
 
   defp calendar(_), do: []
 
-  defp event(%{"id" => id} = e, calendar_id) do
+  defp event(%{"id" => id} = e, calendar_id, role) do
     with true <- event_id?(id),
          {:ok, start, all_day} <- time(e["start"]),
          {:ok, finish, ^all_day} <- time(e["end"]) do
@@ -655,8 +681,12 @@ defmodule CommaWeb.GoogleCalendarAgenda do
         "color" => @event_colors[e["colorId"]],
         "editable" =>
           e["locked"] != true and e["eventType"] not in ~w(birthday fromGmail) and
-            (organizer["self"] == true or e["guestsCanModify"] == true or
-               organizer["email"] == calendar_id),
+            if(is_binary(role),
+              do: role in ~w(owner writer),
+              else:
+                organizer["self"] == true or e["guestsCanModify"] == true or
+                  organizer["email"] == calendar_id
+            ),
         "etag" => if(is_binary(e["etag"]) and byte_size(e["etag"]) <= 256, do: e["etag"])
       }
     else
@@ -664,7 +694,7 @@ defmodule CommaWeb.GoogleCalendarAgenda do
     end
   end
 
-  defp event(_, _), do: nil
+  defp event(_, _, _), do: nil
 
   defp time(%{"date" => d}) when is_binary(d) do
     case date(d) do

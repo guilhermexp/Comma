@@ -244,8 +244,18 @@ defmodule CommaWeb.GoogleCalendarAgendaTest do
   defp day("weekly_202610" <> rest), do: String.slice(rest, 0, 2)
   defp day(_), do: "19"
 
-  defp respond(c, fun), do: Agent.update(c.provider, &%{&1 | respond: fun})
+  # A test's function answers its own slugs; the calendar list keeps the default.
+  defp respond(c, fun) do
+    respond = fn
+      "GOOGLECALENDAR_LIST_CALENDARS" = slug, args -> google(slug, args)
+      slug, args -> fun.(slug, args)
+    end
+
+    Agent.update(c.provider, &%{&1 | respond: respond})
+  end
+
   defp tools(c), do: Agent.get(c.provider, & &1.tools)
+  defp lists(c), do: Enum.filter(tools(c), &(&1["tool_slug"] == "GOOGLECALENDAR_EVENTS_LIST"))
   defp slugs(c), do: Enum.map(tools(c), & &1["tool_slug"])
 
   defp post(c, body, token \\ :member) do
@@ -403,7 +413,7 @@ defmodule CommaWeb.GoogleCalendarAgendaTest do
              %{"series_id" => "weekly"}
            ] = body["events"]
 
-    [first | _] = tools(c)
+    [first | _] = lists(c)
 
     assert first["arguments"] == %{
              "calendarId" => "primary",
@@ -415,6 +425,18 @@ defmodule CommaWeb.GoogleCalendarAgendaTest do
              "showDeleted" => false,
              "maxResults" => 250
            }
+  end
+
+  test "events on a read-only calendar are not editable", c do
+    holidays = "pt.brazilian#holiday@group.v.calendar.google.com"
+
+    respond(c, fn "GOOGLECALENDAR_EVENTS_LIST", %{"calendarId" => id} ->
+      %{"items" => [instance(19, %{"organizer" => %{"email" => id}})]}
+    end)
+
+    assert {200, %{"events" => [own, holiday]}} = agenda(c, "events", week(["primary", holidays]))
+    assert own["editable"] == true
+    assert holiday["editable"] == false
   end
 
   test "an empty page that still carries a token continues to the next page", c do
@@ -429,7 +451,7 @@ defmodule CommaWeb.GoogleCalendarAgendaTest do
             %{"events" => [%{"id" => "weekly_20261019T130000Z"}], "failed_calendar_ids" => []}} =
              agenda(c, "events", week(["primary"]))
 
-    assert [nil, "b"] == Enum.map(tools(c), & &1["arguments"]["pageToken"])
+    assert [nil, "b"] == Enum.map(lists(c), & &1["arguments"]["pageToken"])
   end
 
   test "a repeated page token fails that calendar instead of looping", c do
@@ -444,7 +466,7 @@ defmodule CommaWeb.GoogleCalendarAgendaTest do
     assert {200, %{"events" => [], "failed_calendar_ids" => ["primary"]}} =
              agenda(c, "events", week(["primary"]))
 
-    assert length(tools(c)) == 3
+    assert length(lists(c)) == 3
   end
 
   test "a failure on a later page fails the whole calendar without partial events", c do
@@ -661,9 +683,8 @@ defmodule CommaWeb.GoogleCalendarAgendaTest do
   end
 
   test "Google 403 on a write asks for write permission, on a read denies access", c do
-    respond(c, fn
-      "GOOGLECALENDAR_CREATE_EVENT", _ -> {:error, "403 Forbidden: insufficientPermissions"}
-      "GOOGLECALENDAR_LIST_CALENDARS", _ -> {:error, "403 Forbidden: insufficientPermissions"}
+    Agent.update(c.provider, fn state ->
+      %{state | respond: fn _, _ -> {:error, "403 Forbidden: insufficientPermissions"} end}
     end)
 
     assert {422, %{"error" => "calendar_write_permission_required"}} =
