@@ -387,7 +387,9 @@ describe("Agenda dragging", () => {
     expect(
       within(details).getByRole("checkbox", { name: "Dia inteiro" })
     ).toBeChecked();
-    expect(within(details).getByLabelText("Data")).toHaveValue("2026-10-24");
+    expect(within(details).getByRole("group", { name: "Data" })).toHaveTextContent(
+      "24/10/2026"
+    );
   });
 });
 

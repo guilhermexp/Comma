@@ -1,6 +1,15 @@
 import { useCommaLocale, useCommaMessages } from "@comma/i18n/react";
 import { Button, Dropdown, InputField, ScrollArea, XIcon } from "@comma/ui";
+import { parseDate, parseTime } from "@internationalized/date";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  DateField,
+  DateInput,
+  DateSegment,
+  I18nProvider,
+  Label,
+  TimeField,
+} from "react-aria-components";
 import { openNativePlatformExternalUrl } from "../../runtime-chat/nativePlatformActions";
 import {
   addDays,
@@ -459,6 +468,8 @@ export function AgendaEventDetails({
   );
 }
 
+// Date and time fields follow the app language, not the browser's: a native
+// date or time input formats by the system locale (10/20/2026, 06:30 PM).
 function DateTimeInput({
   label,
   type,
@@ -470,16 +481,57 @@ function DateTimeInput({
   value: string;
   onChange: (value: string) => void;
 }) {
-  return (
-    <label className="flex flex-col gap-xs text-sm font-medium text-secondary">
-      {label}
-      <input
-        className="h-9 rounded-md border border-primary bg-primary px-sm text-sm font-normal text-primary shadow-xs focus:shadow-focus-gray-shadow-xs focus:outline-none"
-        onChange={(change) => onChange(change.target.value)}
-        step={type === "time" ? 900 : undefined}
-        type={type}
-        value={value}
-      />
-    </label>
+  const locale = useCommaLocale();
+  const input = (
+    <DateInput className="flex h-9 items-center rounded-md border border-primary bg-primary px-sm text-sm font-normal text-primary shadow-xs focus-within:shadow-focus-gray-shadow-xs">
+      {(segment) => (
+        <DateSegment
+          className="rounded-xs px-px tabular-nums outline-none data-[focused]:bg-brand-solid data-[focused]:text-white data-[placeholder]:text-placeholder data-[type=literal]:px-0"
+          segment={segment}
+        />
+      )}
+    </DateInput>
   );
+  const labelElement = (
+    <Label className="text-sm font-medium text-secondary">{label}</Label>
+  );
+  return (
+    <I18nProvider locale={locale}>
+      {type === "date" ? (
+        <DateField
+          className="flex flex-col gap-xs"
+          onChange={(next) => next && onChange(next.toString())}
+          value={parseDateValue(value)}
+        >
+          {labelElement}
+          {input}
+        </DateField>
+      ) : (
+        <TimeField
+          className="flex flex-col gap-xs"
+          onChange={(next) => next && onChange(next.toString().slice(0, 5))}
+          value={parseTimeValue(value)}
+        >
+          {labelElement}
+          {input}
+        </TimeField>
+      )}
+    </I18nProvider>
+  );
+}
+
+function parseDateValue(value: string) {
+  try {
+    return parseDate(value);
+  } catch {
+    return null;
+  }
+}
+
+function parseTimeValue(value: string) {
+  try {
+    return parseTime(value);
+  } catch {
+    return null;
+  }
 }

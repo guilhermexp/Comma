@@ -410,6 +410,9 @@ importers:
       '@comma/ui':
         specifier: workspace:*
         version: link:../ui
+      '@internationalized/date':
+        specifier: ^3.12.2
+        version: 3.12.2
       '@tanstack/react-router':
         specifier: ^1.170.16
         version: 1.170.16(react-dom@19.2.7(react@19.2.7))(react@19.2.7)

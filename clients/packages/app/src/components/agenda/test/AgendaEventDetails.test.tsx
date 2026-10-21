@@ -92,6 +92,39 @@ describe("Agenda event details", () => {
     );
   });
 
+  it("shows and edits date and time in the app language", async () => {
+    const event = testEvent(
+      work,
+      "Revisão",
+      at("2026-10-21", "18:30"),
+      at("2026-10-21", "20:00")
+    );
+    const { google } = setup([event]);
+    const details = await open("Revisão");
+
+    expect(within(details).getByRole("group", { name: "Início" })).toHaveTextContent(
+      "21/10/2026"
+    );
+    const startTime = within(details).getByRole("group", { name: "Hora de início" });
+    expect(startTime).toHaveTextContent("18:30");
+    expect(startTime).not.toHaveTextContent(/PM/);
+
+    const hour = within(startTime).getAllByRole("spinbutton")[0]!;
+    fireEvent.focus(hour);
+    fireEvent.keyDown(hour, { key: "ArrowUp" });
+    fireEvent.click(within(details).getByRole("button", { name: "Salvar" }));
+    await waitFor(() =>
+      expect(google.source.update).toHaveBeenCalledWith(
+        event,
+        "instance",
+        expect.objectContaining({
+          start: expect.stringMatching(/^2026-10-21T19:30:00/),
+        }),
+        undefined
+      )
+    );
+  });
+
   it("moves an event to a calendar of the same account in place", async () => {
     const event = testEvent(
       personal,
