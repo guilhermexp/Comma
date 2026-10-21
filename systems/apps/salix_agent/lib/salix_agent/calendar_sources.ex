@@ -13,6 +13,9 @@ defmodule SalixAgent.CalendarSources do
 
   Every implementation returns string-keyed maps already normalized to the
   unified calendar and event shapes; `salix_agent` never sees provider formats.
+  `google_accounts/1` lists `%{"account_id" => id, "name" => name}`. Errors from
+  `google_accounts/1`, `google/4` and `mac/3` are public string codes, such as
+  `"not_connected"`, `"desktop_offline"` or `"mac_access_not_granted"`.
   `owner/1` resolves the owner of the agent's Group from the server side; the
   model never supplies it.
   """
@@ -24,12 +27,11 @@ defmodule SalixAgent.CalendarSources do
 
   @callback owner(agent_id :: String.t()) :: {:ok, owner()} | {:error, term()}
   @callback google_accounts(owner()) ::
-              {:ok, [%{account_id: String.t(), name: String.t()}]} | {:error, term()}
+              {:ok, [%{String.t() => String.t()}]} | {:error, String.t()}
   @callback google(owner(), account_id :: String.t(), google_operation(), args :: map()) ::
               {:ok, map()} | {:error, String.t()}
   @callback mac(owner(), mac_op(), input :: map()) ::
-              {:ok, map()}
-              | {:error, :desktop_offline | :mac_access_not_granted | :mac_unavailable | term()}
+              {:ok, map()} | {:error, String.t()}
 
   def owner(agent_id), do: impl().owner(agent_id)
   def google_accounts(owner), do: impl().google_accounts(owner)
@@ -57,5 +59,5 @@ defmodule SalixAgent.CalendarSources.None do
   def google(_owner, _account_id, _operation, _args), do: {:error, "not_connected"}
 
   @impl true
-  def mac(_owner, _op, _input), do: {:error, :not_connected}
+  def mac(_owner, _op, _input), do: {:error, "not_connected"}
 end

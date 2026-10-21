@@ -669,10 +669,13 @@ the original only after that succeeds.
 
 Google calls use the closed `google_calendar` Composio action. The server
 fixes each tool slug and rechecks the Workspace, the exact account owner, the
-toolkit, the mode and the active status before and after the provider call. Mac
-events stay on this computer: the `calendar.*` leaves are `local_only`, and
-neither the backend, Sessions nor logs receive event content. Mac calendars of a
-connected Google account start hidden to avoid duplicates.
+toolkit, the mode and the active status before and after the provider call. The
+Agenda reads Mac events on this computer: the `calendar.*` bridge leaves are
+`local_only`. Mac event content leaves the computer only in answers to the
+owner's agent `calendar.*` tools, through the Connector `calendar` method. The
+backend, Connector and Main never write event titles, locations or descriptions
+to logs or telemetry. Mac calendars of a connected Google account start hidden
+to avoid duplicates.
 
 The Group-scoped [Calendar Item](#6-files-and-proactive-work) in `salix_calendar`
 is a separate projection for Agent work. The Agenda does not read or
@@ -687,7 +690,9 @@ Comma message in the current run; the port names the owner. Results are the
 owner's private data for information-flow checks.
 Implementation: [tools](../../systems/apps/salix_agent/lib/salix_agent/calendar_access.ex),
 [port](../../systems/apps/salix_agent/lib/salix_agent/calendar_sources.ex),
-[Comma source](../../systems/apps/salix_calendar/lib/salix_calendar/agent_api.ex).
+[Comma source](../../systems/apps/salix_calendar/lib/salix_calendar/agent_api.ex),
+[Google and Mac sources](../../systems/apps/comma_web/lib/comma_web/agent_calendar_sources.ex),
+[Mac Connector method](../../systems/connector/salix-connect/calendar.go).
 Implementation: [route and screen](../../clients/packages/app/src/components/agenda/AgendaRoute.tsx),
 [source model](../../clients/packages/app/src/components/agenda/agendaSource.ts),
 [Google source](../../clients/packages/app/src/components/agenda/googleCalendarSource.ts),

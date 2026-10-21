@@ -1064,6 +1064,8 @@
   "chat_tool_calendar_read_failed": "Não foi possível verificar sua agenda",
   "chat_tool_calendar_write": "Atualizando sua agenda",
   "chat_tool_calendar_write_failed": "Não foi possível atualizar sua agenda",
+  "chat_tool_calendar_delete": "Removendo um evento da agenda",
+  "chat_tool_calendar_delete_failed": "Não foi possível remover o evento da agenda",
   "chat_tool_meeting_join": "Entrando na reunião",
   "chat_tool_meeting_join_failed": "Não foi possível entrar na reunião",
   "chat_tool_meeting_read": "Revisando a reunião",

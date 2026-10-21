@@ -50,6 +50,7 @@ const workCopy = {
   location: ["chat_tool_location", "chat_tool_location_failed"],
   calendarRead: ["chat_tool_calendar_read", "chat_tool_calendar_read_failed"],
   calendarWrite: ["chat_tool_calendar_write", "chat_tool_calendar_write_failed"],
+  calendarDelete: ["chat_tool_calendar_delete", "chat_tool_calendar_delete_failed"],
   meetingJoin: ["chat_tool_meeting_join", "chat_tool_meeting_join_failed"],
   meetingRead: ["chat_tool_meeting_read", "chat_tool_meeting_read_failed"],
   meetingNotes: ["chat_tool_meeting_notes", "chat_tool_meeting_notes_failed"],

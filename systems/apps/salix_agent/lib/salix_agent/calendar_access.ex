@@ -249,8 +249,7 @@ defmodule SalixAgent.CalendarAccess do
         [{source_key("google"), fn -> {:error, :not_connected} end}]
 
       {:ok, accounts} when is_list(accounts) ->
-        Enum.map(accounts, fn account ->
-          id = account[:account_id] || account["account_id"]
+        Enum.map(accounts, fn %{"account_id" => id} ->
           {source_key("google", id), fn -> read.(owner, id) end}
         end)
 

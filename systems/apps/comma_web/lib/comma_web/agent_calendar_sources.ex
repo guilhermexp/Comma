@@ -13,11 +13,10 @@ defmodule CommaWeb.AgentCalendarSources do
   alias SalixStore.ComposioAccess, as: Access
   alias CommaWeb.GoogleCalendarAgenda, as: Agenda
 
-  if Code.ensure_loaded?(SalixAgent.CalendarSources),
-    do: @behaviour(SalixAgent.CalendarSources)
+  alias CommaWeb.AgentCalendarSources.Mac
 
-  # Owned by the Mac connector change; resolved at runtime so this compiles without it.
-  @mac CommaWeb.AgentCalendarSources.Mac
+  @behaviour SalixAgent.CalendarSources
+
   @operations %{
     calendars: "calendars",
     events: "events",
@@ -29,6 +28,7 @@ defmodule CommaWeb.AgentCalendarSources do
   @codes ~w(composio_access_denied calendar_write_permission_required calendar_event_conflict provider_unavailable provider_timeout read_only not_found not_connected)a
   @max_account_pages 20
 
+  @impl true
   def owner(agent_id) when is_binary(agent_id) do
     with {:ok, %{"tenant_id" => tenant, "group_id" => group}} <-
            SalixAgent.Control.get(agent_id),
@@ -44,6 +44,7 @@ defmodule CommaWeb.AgentCalendarSources do
 
   def owner(_), do: {:error, :not_found}
 
+  @impl true
   def google_accounts(owner) do
     with :ok <- member(owner),
          {:ok, profile} <- Access.profile(owner.tenant, owner.group_id, owner.user_id) do
@@ -74,6 +75,7 @@ defmodule CommaWeb.AgentCalendarSources do
     end
   end
 
+  @impl true
   def google(owner, account_id, operation, args) do
     result =
       with {:ok, request} <- request(operation, account_id, args),
@@ -95,7 +97,8 @@ defmodule CommaWeb.AgentCalendarSources do
     public(result)
   end
 
-  def mac(owner, op, input), do: apply(@mac, :call, [owner, op, input])
+  @impl true
+  def mac(owner, op, input), do: Mac.call(owner, op, input)
 
   # The live owner of the Workspace of the Group, as the Composio broker checks it.
   defp member(%{tenant: tenant, group_id: group, user_id: user})

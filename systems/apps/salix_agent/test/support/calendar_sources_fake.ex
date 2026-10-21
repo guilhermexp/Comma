@@ -38,7 +38,7 @@ defmodule SalixAgent.CalendarSources.Fake do
 
   @impl true
   def mac(owner, op, input),
-    do: answer(:mac, [owner, op, input], fn _, _, _ -> {:error, :desktop_offline} end)
+    do: answer(:mac, [owner, op, input], fn _, _, _ -> {:error, "desktop_offline"} end)
 
   defp answer(name, args, default) do
     answers = Application.get_env(:salix_agent, __MODULE__, %{})

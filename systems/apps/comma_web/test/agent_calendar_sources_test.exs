@@ -492,4 +492,55 @@ defmodule CommaWeb.AgentCalendarSourcesTest do
     respond(c, fn _, _ -> {:error, "502 Bearer ya29.secret"} end)
     assert {:error, "provider_unavailable"} = Sources.google(c.owner, "cal", :calendars, %{})
   end
+
+  test "logs carry no event text on reads, writes and provider failures", c do
+    title = "Comma agent secret title 7f3a"
+    location = "Secret location 7f3a"
+    description = "Secret description 7f3a"
+
+    respond(c, fn
+      "GOOGLECALENDAR_EVENTS_LIST", _ ->
+        %{
+          "items" => [
+            %{
+              "id" => "secret1",
+              "summary" => title,
+              "location" => location,
+              "description" => description,
+              "status" => "confirmed",
+              "start" => %{"dateTime" => "2026-10-20T15:00:00-03:00"},
+              "end" => %{"dateTime" => "2026-10-20T16:00:00-03:00"}
+            }
+          ]
+        }
+
+      "GOOGLECALENDAR_CREATE_EVENT", _ ->
+        {:error, "500 #{title} #{location} #{description}"}
+
+      slug, args ->
+        google(slug, args)
+    end)
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :debug], fn ->
+        assert {:ok, %{"events" => [_ | _]}} = Sources.google(c.owner, "cal", :events, week())
+
+        assert {:error, _} =
+                 Sources.google(c.owner, "cal", :create, %{
+                   "calendar_id" => "primary",
+                   "event" => %{
+                     "title" => title,
+                     "location" => location,
+                     "description" => description,
+                     "start" => "2026-10-22T15:00:00-03:00",
+                     "end" => "2026-10-22T16:00:00-03:00",
+                     "all_day" => false,
+                     "time_zone" => "America/Sao_Paulo",
+                     "recurrence" => "none"
+                   }
+                 })
+      end)
+
+    for secret <- [title, location, description], do: refute(log =~ secret)
+  end
 end

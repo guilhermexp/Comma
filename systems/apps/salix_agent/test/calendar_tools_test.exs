@@ -54,6 +54,8 @@ defmodule SalixAgent.CalendarToolsTest do
     Application.put_env(:salix_agent, :oauth_store_mod, Scope)
     Application.put_env(:salix_agent, :calendar_mod, Internal)
     Application.put_env(:salix_agent, :calendar_source_deadline_ms, 300)
+    # The umbrella boots the product port; each test starts from the None default.
+    Application.delete_env(:salix_agent, :calendar_sources_mod)
     Internal.put(%{})
 
     on_exit(fn ->
@@ -114,7 +116,7 @@ defmodule SalixAgent.CalendarToolsTest do
 
   defp google_connected(events_fun) do
     Fake.put(%{
-      google_accounts: fn _owner -> {:ok, [%{account_id: "acc_1", name: "Work"}]} end,
+      google_accounts: fn _owner -> {:ok, [%{"account_id" => "acc_1", "name" => "Work"}]} end,
       google: fn
         _owner, "acc_1", :calendars, _args ->
           {:ok, %{"calendars" => [calendar("google", "acc_1", "primary", "Work")]}}
@@ -237,9 +239,9 @@ defmodule SalixAgent.CalendarToolsTest do
         google_accounts: fn _owner ->
           {:ok,
            [
-             %{account_id: "acc_1", name: "Work"},
-             %{account_id: "acc_2", name: "Home"},
-             %{account_id: "acc_3", name: "Old"}
+             %{"account_id" => "acc_1", "name" => "Work"},
+             %{"account_id" => "acc_2", "name" => "Home"},
+             %{"account_id" => "acc_3", "name" => "Old"}
            ]}
         end,
         google: fn
@@ -342,7 +344,7 @@ defmodule SalixAgent.CalendarToolsTest do
       shared = "uid-123@google.com"
 
       Fake.put(%{
-        google_accounts: fn _owner -> {:ok, [%{account_id: "acc_1", name: "Work"}]} end,
+        google_accounts: fn _owner -> {:ok, [%{"account_id" => "acc_1", "name" => "Work"}]} end,
         google: fn
           _owner, "acc_1", :calendars, _args ->
             {:ok, %{"calendars" => [calendar("google", "acc_1", "primary", "Work")]}}
@@ -653,6 +655,65 @@ defmodule SalixAgent.CalendarToolsTest do
           agent_id: "agent_1"
         })
       end
+    end
+  end
+
+  describe "logs" do
+    @secret_title "Comma agent secret title 7f3a"
+    @secret_location "Secret location 7f3a"
+    @secret_description "Secret description 7f3a"
+
+    test "carry no event text from reads, writes or refusals" do
+      secret_event =
+        event("google", "acc_1", "primary", "s1", "2026-10-20T15:00:00-03:00",
+          title: @secret_title,
+          description: @secret_description
+        )
+        |> Map.put("location", @secret_location)
+
+      Fake.put(%{
+        google_accounts: fn _owner -> {:ok, [%{"account_id" => "acc_1", "name" => "Work"}]} end,
+        google: fn
+          _owner, "acc_1", :calendars, _args ->
+            {:ok, %{"calendars" => [calendar("google", "acc_1", "primary", "Work")]}}
+
+          _owner, "acc_1", :events, _args ->
+            {:ok, %{"events" => [secret_event], "truncated" => false}}
+
+          _owner, "acc_1", :create, _args ->
+            {:error, "provider_unavailable"}
+        end,
+        mac: fn _owner, _op, _input -> {:error, "mac_access_not_granted"} end
+      })
+
+      secret = %{
+        "title" => @secret_title,
+        "location" => @secret_location,
+        "description" => @secret_description,
+        "start" => "2026-10-22T15:00:00-03:00",
+        "end" => "2026-10-22T16:00:00-03:00"
+      }
+
+      cal = %{"source" => "google", "account_id" => "acc_1", "calendar_id" => "primary"}
+
+      log =
+        ExUnit.CaptureLog.capture_log([level: :debug], fn ->
+          assert decode(Calendar.events(@week, %{agent_id: "agent_1"}))["events"] != []
+
+          assert_raise RuntimeError, fn ->
+            Calendar.create(%{"calendar_ref" => cal, "event" => secret}, owner_ctx())
+          end
+
+          assert_raise RuntimeError, fn ->
+            Calendar.create(
+              %{"calendar_ref" => cal, "event" => secret},
+              %{agent_id: "agent_1", trusted_origin: nil}
+            )
+          end
+        end)
+
+      for text <- [@secret_title, @secret_location, @secret_description],
+          do: refute(log =~ text)
     end
   end
 end

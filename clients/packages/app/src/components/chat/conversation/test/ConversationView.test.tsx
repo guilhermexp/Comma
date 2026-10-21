@@ -1578,7 +1578,7 @@ describe("ConversationView", () => {
           activity: {
             phase: "execution",
             status: "running",
-            toolName: "calendar.list_items",
+            toolName: "calendar.events",
             summaryClass: "public",
             summary: "Working",
           },
