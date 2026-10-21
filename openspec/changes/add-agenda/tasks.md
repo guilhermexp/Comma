@@ -37,7 +37,7 @@
 
 ## 2. Mac: `CalendarKit` e folhas `calendar.*` (worktree `feat/agenda-mac-calendar`)
 
-- [ ] 2.1 Addon `native/macos/CalendarKit`:
+- [x] 2.1 Addon `native/macos/CalendarKit`:
   - `binding.gyp` com `EventKit.framework`, `index.ts` com loader e fallback `unavailable`, e `src/*.mm`;
   - status e pedido de acesso, com `requestFullAccessToEvents` no macOS 14+;
   - `calendars`, `events` e `event`;
@@ -45,20 +45,20 @@
   - observador de mudança com janela de 500 ms.
 
   Verificar: `node-gyp rebuild` compila, e um script descartável no Electron de desenvolvimento lista calendários e eventos reais.
-- [ ] 2.2 Build e empacotamento:
+- [x] 2.2 Build e empacotamento:
   - `build-native.ts` (`buildCalendarKitAddon`, `--calendar-kit-only`, `verifyNativeOutputs`);
   - `native-paths.ts` e `dev-native-addons.ts`;
   - `forge.config.ts`, se precisar.
 
   Verificar: `build-native.ts --calendar-kit-only` gera o `.node` em `dist/native/macos` e o build completo continua passando.
-- [ ] 2.3 Permissões:
+- [x] 2.3 Permissões:
   - `com.apple.security.personal-information.calendars` nos dois arquivos de entitlements;
   - `NSCalendarsFullAccessUsageDescription` e `NSCalendarsUsageDescription` em `macos-info-plist-strings.ts`, com textos em `en`, `pt-BR` e `zh-CN`;
   - o bundle de desenvolvimento recebe as chaves.
 
   Verificar: `plutil -p` do `Info.plist` gerado mostra as chaves e `codesign -d --entitlements -` mostra o entitlement.
-- [ ] 2.4 Folhas C2 em `capability-leaves.ts`: zod `.strict()`, `local_only` com justificativa, `webFallback` e `mock` indisponíveis, `defineNativeState` para `calendar.state` e um evento de mudança. Depois, `pnpm generate:native-bridge`. Verificar: geração sem diff pendente e `pnpm typecheck` dos pacotes afetados.
-- [ ] 2.5 Provedor `calendar` em `src/main/modules/calendar/`, registrado em `electron-main.module.ts`, com provedor "unavailable" fora do macOS ou sem addon, começando por testes que falham:
+- [x] 2.4 Folhas C2 em `capability-leaves.ts`: zod `.strict()`, `local_only` com justificativa, `webFallback` e `mock` indisponíveis, `defineNativeState` para `calendar.state` e um evento de mudança. Depois, `pnpm generate:native-bridge`. Verificar: geração sem diff pendente e `pnpm typecheck` dos pacotes afetados.
+- [x] 2.5 Provedor `calendar` em `src/main/modules/calendar/`, registrado em `electron-main.module.ts`, com provedor "unavailable" fora do macOS ou sem addon, começando por testes que falham:
   - validação dos limites de C2 (500 calendários, 62 dias, 2.500 eventos);
   - mapeamento de erros;
   - agrupamento dos avisos;

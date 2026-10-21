@@ -115,6 +115,7 @@ import {
   type FontFamiliesAddon,
 } from "../../native/macos/FontFamilies";
 import { loadNotificationAuthorizationAddon } from "../../native/macos/NotificationAuthorization";
+import { loadCalendarKitAddon } from "../../native/macos/CalendarKit";
 import {
   runningMacAppBundleId,
   systemNotificationsStatusFromAuthorization,
@@ -1844,6 +1845,8 @@ async function createElectronMainContext() {
           observabilityFileLocation,
         }
       : {}),
+    // In Main's own process: macOS grants Calendar access to the calling app.
+    calendarKit: loadCalendarKitAddon({ isPackaged: app.isPackaged, logger: log }),
     microphoneHostPath: app.isPackaged
       ? join(process.resourcesPath, "native", "macos", "MicCaptureHost")
       : join(app.getAppPath(), "dist", "native", "macos", "MicCaptureHost"),

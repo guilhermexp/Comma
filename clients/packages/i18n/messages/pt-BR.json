@@ -2969,6 +2969,8 @@
   "electron_macos_microphone_usage": "O Comma usa seu microfone para gravações e para os sites que você permitir, incluindo chamadas de reunião.",
   "electron_macos_audio_capture_usage": "O Comma grava o áudio da reunião que está tocando neste Mac para transcrevê-lo e resumi-lo.",
   "electron_macos_screen_capture_usage": "O Comma lista os apps que estão tocando áudio para que a gravação possa se limitar a um deles.",
+  "electron_macos_calendars_full_access_usage": "O Comma lê e edita os eventos do Calendário do Mac para você vê-los e alterá-los na Agenda. Eles ficam neste Mac.",
+  "electron_macos_calendars_usage": "O Comma lê e edita os eventos do Calendário do Mac para você vê-los e alterá-los na Agenda. Eles ficam neste Mac.",
   "ui_media_pause": "Pausar",
   "ui_media_play_kind": "Reproduzir {kind}",
   "ui_media_pause_kind": "Pausar {kind}",

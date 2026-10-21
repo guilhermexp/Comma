@@ -56,6 +56,7 @@ import {
   localTranscriptionNoticeEvent,
   type AudioCaptureRecording,
   meetingPresenceStateChangedEvent,
+  calendarStateChangedEvent,
   meetingRecorderStateChangedEvent,
   audioCaptureStartCapability,
   audioCaptureStopCapability,
@@ -195,6 +196,11 @@ import {
   type LocalTranscriptionProvider,
 } from "../local-transcription/provider";
 import { MeetingPresenceService } from "./meeting-presence";
+import { CalendarService } from "./calendar";
+import {
+  unavailableCalendarKitAddon,
+  type CalendarKitAddon,
+} from "../../../native/macos/CalendarKit";
 import { MeetingRecorderService } from "./meeting-recorder";
 import { createMeetingAppIconReader } from "./meeting-presence/app-icon";
 import {
@@ -293,6 +299,8 @@ export interface ElectronMainRuntimeDeps {
         pickFolder?: (() => Promise<string | undefined>) | undefined;
       }
     | undefined;
+  /** The Mac Calendar through EventKit; absent, the calendar is unavailable. */
+  calendarKit?: CalendarKitAddon | undefined;
   /** Stands in for the node behind the `synchronicity` bridge (the E2E's node in memory). */
   synchronicityProvider?: SynchronicityProvider | undefined;
   openLocalDataRepository?:
@@ -404,6 +412,7 @@ export interface ElectronMainContext {
   appPreferences: AppPreferencesRuntime;
   audioCapture: AudioCaptureRuntime;
   meetingPresence: MeetingPresenceService;
+  calendar: CalendarService;
   meetingRecorder: MeetingRecorderService;
   browserSidebar: BrowserSidebarProvider;
   chat: ChatCoordinator;
@@ -1228,6 +1237,16 @@ export async function createElectronMainContext(
       meetingRecorder?.acceptPresence(state);
     },
   });
+  const calendar = new CalendarService({
+    addon: deps.calendarKit ?? unavailableCalendarKitAddon(),
+    logger: {
+      warn: (message, context) =>
+        deps.logger?.warn(message, { ...context, source: "calendar" }),
+    },
+    onStateChanged: (state) => nativeEventBus.emit(calendarStateChangedEvent, state),
+    openExternal: deps.openExternalUrl,
+  });
+  calendar.start();
   void meetingTasks.retryPending();
   void audioCapture
     .state()
@@ -1499,6 +1518,7 @@ export async function createElectronMainContext(
     audioCapture,
     browserSidebar,
     meetingPresence,
+    calendar,
     meetingRecorder,
     chat,
     clipboard,
@@ -1544,6 +1564,7 @@ export async function createElectronMainContext(
       await airdropSender?.close();
       // A live tap must not outlive Main; drop it before the snapshot store goes.
       await meetingPresence.close();
+      calendar.close();
       meetingRecorder?.close();
       await meetingTasks.close();
       await audioCapture.close();
@@ -1598,6 +1619,7 @@ export function registerNativeBridgeHandlersFromContext(context: ElectronMainCon
     audioCapture: context.audioCapture,
     browserSidebar: context.browserSidebar,
     meetingPresence: context.meetingPresence,
+    calendar: context.calendar,
     meetingRecorder: context.meetingRecorder,
     ...(context.runtimeDeps.browserSitePermissionPlatform?.menu
       ? { sitePermissionMenu: context.runtimeDeps.browserSitePermissionPlatform.menu }

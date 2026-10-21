@@ -10,6 +10,7 @@
     "build:native": "tsx ./scripts/build-native.ts",
     "build:native:airdrop": "tsx ./scripts/build-native.ts --airdrop-only",
     "pin:opendropkit": "tsx ./scripts/pin-opendropkit-release.ts",
+    "build:native:calendar-kit": "tsx ./scripts/build-native.ts --calendar-kit-only",
     "build:native:notification-authorization": "tsx ./scripts/build-native.ts --notification-authorization-only",
     "build:native:side-chat": "tsx ./scripts/build-native.ts --side-chat-only",
     "build:native:synch": "tsx ./scripts/build-native.ts --synch-only",
