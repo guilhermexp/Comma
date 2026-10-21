@@ -60,7 +60,10 @@ if Application.compile_env(:salix_web, :local_recommendation_mock_compiled, fals
     def get(_tenant_id), do: {:ok, settings()}
     def settings(_tenant_id), do: {:ok, settings()}
 
-    def reset!, do: :persistent_term.put(@state_key, %{})
+    def reset! do
+      reset_calendar!()
+      :persistent_term.put(@state_key, %{})
+    end
 
     def list_connected_accounts(_settings, group_id), do: accounts(group_id)
     def list_connected_accounts_all(_settings, group_id, _opts \\ []), do: accounts(group_id)
@@ -308,6 +311,384 @@ if Application.compile_env(:salix_web, :local_recommendation_mock_compiled, fals
     end
 
     defp calendar_event(event_id), do: Fixtures.calendar_event(event_id)
+
+    # Agenda: the closed `google_calendar` action dispatches its fixed slugs
+    # here while the local provider is enabled. Each group holds two calendars
+    # (a writable primary and a read-only holiday calendar) and events of the
+    # current week, with writes kept in memory like the provider's own store.
+    @calendar_key {__MODULE__, :calendar}
+    @calendar_offset "-03:00"
+    @calendar_zone "America/Sao_Paulo"
+    @primary_calendar "local-member@comma.test"
+    @holiday_calendar "pt.brazilian#holiday@group.v.calendar.google.com"
+
+    def execute_calendar(group_id, account_id, %{"tool_slug" => slug, "arguments" => args}) do
+      group_id = to_string(group_id)
+
+      with {:ok, accounts} <- accounts(group_id),
+           %{} <- matching_account(accounts, "googlecalendar", account_id) do
+        result =
+          :global.trans({__MODULE__, :calendar}, fn ->
+            store = calendar_store(group_id)
+
+            case calendar_tool(slug, args, store) do
+              {:ok, data, store} ->
+                put_calendar_store(group_id, store)
+                {:ok, data}
+
+              {:ok, data} ->
+                {:ok, data}
+
+              {:error, _} = error ->
+                error
+            end
+          end)
+
+        case result do
+          {:ok, data} -> {:ok, %{"successful" => true, "data" => data}}
+          {:error, text} -> {:ok, %{"successful" => false, "error" => text}}
+        end
+      else
+        _ -> {:error, :composio_access_denied}
+      end
+    end
+
+    def reset_calendar!, do: :persistent_term.put(@calendar_key, %{})
+
+    defp calendar_store(group_id),
+      do: Map.get(:persistent_term.get(@calendar_key, %{}), group_id) || seed_calendar()
+
+    defp put_calendar_store(group_id, store),
+      do:
+        :persistent_term.put(
+          @calendar_key,
+          Map.put(:persistent_term.get(@calendar_key, %{}), group_id, store)
+        )
+
+    defp seed_calendar do
+      today = DateTime.utc_now() |> DateTime.add(-3 * 3600) |> DateTime.to_date()
+      monday = Date.add(today, 1 - Date.day_of_week(today))
+      at = fn days, time -> "#{Date.add(monday, days)}T#{time}#{@calendar_offset}" end
+      day = fn days -> Date.to_iso8601(Date.add(monday, days)) end
+
+      primary = [
+        %{
+          "id" => "localweekly",
+          "summary" => "Planejamento semanal",
+          "recurrence" => ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+          "start" => timed(at.(0, "09:00:00")),
+          "end" => timed(at.(0, "09:30:00"))
+        },
+        %{
+          "id" => "localreview",
+          "summary" => "Revisão de design",
+          "description" => "Rever a Agenda.",
+          "start" => timed(at.(2, "14:00:00")),
+          "end" => timed(at.(2, "15:30:00"))
+        },
+        %{
+          "id" => "locallunch",
+          "summary" => "Almoço com a equipe",
+          "location" => "Cantina",
+          "colorId" => "2",
+          "start" => timed(at.(3, "12:00:00")),
+          "end" => timed(at.(3, "13:00:00"))
+        },
+        %{
+          "id" => "localtrip",
+          "summary" => "Viagem",
+          "start" => %{"date" => day.(4)},
+          "end" => %{"date" => day.(6)}
+        }
+      ]
+
+      holidays = [
+        %{
+          "id" => "localholiday",
+          "summary" => "Feriado (exemplo)",
+          "start" => %{"date" => day.(3)},
+          "end" => %{"date" => day.(4)}
+        }
+      ]
+
+      %{
+        seq: 1,
+        exceptions: %{},
+        events: %{
+          @primary_calendar => Map.new(primary, &{&1["id"], stamp(&1, @primary_calendar, 1)}),
+          @holiday_calendar => Map.new(holidays, &{&1["id"], stamp(&1, @holiday_calendar, 1)})
+        }
+      }
+    end
+
+    defp calendars,
+      do: [
+        %{
+          "id" => @primary_calendar,
+          "summary" => "Pessoal",
+          "primary" => true,
+          "selected" => true,
+          "accessRole" => "owner",
+          "backgroundColor" => "#9fe1e7",
+          "timeZone" => @calendar_zone
+        },
+        %{
+          "id" => @holiday_calendar,
+          "summary" => "Feriados no Brasil",
+          "selected" => true,
+          "accessRole" => "reader",
+          "backgroundColor" => "#16a765",
+          "timeZone" => @calendar_zone
+        }
+      ]
+
+    defp timed(value), do: %{"dateTime" => value, "timeZone" => @calendar_zone}
+
+    defp stamp(event, calendar_id, seq) do
+      Map.merge(event, %{
+        "etag" => "\"local-#{seq}\"",
+        "status" => "confirmed",
+        "htmlLink" => "https://www.google.com/calendar/event?eid=#{event["id"]}",
+        "organizer" => %{"email" => calendar_id, "self" => calendar_id == @primary_calendar}
+      })
+    end
+
+    defp calendar_tool("GOOGLECALENDAR_LIST_CALENDARS", _args, _store),
+      do: {:ok, %{"calendars" => calendars(), "next_page_token" => nil}}
+
+    defp calendar_tool("GOOGLECALENDAR_EVENTS_LIST", %{"calendarId" => id} = args, store) do
+      with {:ok, events} <- calendar_events(store, id),
+           {:ok, min, _} <- DateTime.from_iso8601(to_string(args["timeMin"])),
+           {:ok, max, _} <- DateTime.from_iso8601(to_string(args["timeMax"])) do
+        items =
+          events
+          |> Map.values()
+          |> Enum.flat_map(&occurrences(&1, store, min, max))
+          |> Enum.sort_by(&instant(&1["start"]), DateTime)
+
+        {:ok, %{"kind" => "calendar#events", "items" => items}}
+      else
+        _ -> {:error, "404 Not Found: calendar #{id}"}
+      end
+    end
+
+    defp calendar_tool("GOOGLECALENDAR_EVENTS_GET", %{"event_id" => id} = args, store) do
+      case find_event(store, args["calendar_id"] || @primary_calendar, id) do
+        {:ok, event} -> {:ok, event}
+        :error -> {:error, "404 Not Found: event"}
+      end
+    end
+
+    defp calendar_tool("GOOGLECALENDAR_CREATE_EVENT", args, store) do
+      calendar = args["calendar_id"] || @primary_calendar
+
+      with :ok <- writable(calendar) do
+        id = "localevent#{store.seq + 1}"
+
+        event =
+          %{
+            "id" => id,
+            "summary" => args["summary"] || "",
+            "start" =>
+              if(args["start_date"],
+                do: %{"date" => args["start_date"]},
+                else: %{"dateTime" => args["start_datetime"], "timeZone" => args["timezone"]}
+              ),
+            "end" =>
+              if(args["end_date"],
+                do: %{"date" => args["end_date"]},
+                else: %{"dateTime" => args["end_datetime"], "timeZone" => args["timezone"]}
+              )
+          }
+          |> put_present("location", args["location"])
+          |> put_present("description", args["description"])
+          |> put_present("recurrence", args["recurrence"])
+          |> stamp(calendar, store.seq + 1)
+
+        {:ok, %{"response_data" => event}, put_event(store, calendar, event)}
+      end
+    end
+
+    defp calendar_tool("GOOGLECALENDAR_PATCH_EVENT", %{"event_id" => id} = args, store) do
+      calendar = args["calendar_id"]
+
+      with :ok <- writable(calendar),
+           {:ok, event} <- found(find_event(store, calendar, id)) do
+        seq = store.seq + 1
+
+        event =
+          event
+          |> put_present("summary", args["summary"])
+          |> patch_time("start", args["start_time"], args["timezone"])
+          |> patch_time("end", args["end_time"], args["timezone"])
+          |> patch_text("location", args["location"])
+          |> patch_text("description", args["description"])
+          |> patch_rule(args["recurrence"])
+          |> stamp(calendar, seq)
+
+        store =
+          if event["recurringEventId"],
+            do: %{store | seq: seq, exceptions: Map.put(store.exceptions, id, event)},
+            else: put_event(%{store | seq: seq}, calendar, event)
+
+        {:ok, event, store}
+      end
+    end
+
+    defp calendar_tool("GOOGLECALENDAR_DELETE_EVENT", %{"event_id" => id} = args, store) do
+      calendar = args["calendar_id"] || @primary_calendar
+
+      with :ok <- writable(calendar),
+           {:ok, event} <- found(find_event(store, calendar, id)) do
+        store =
+          if event["recurringEventId"],
+            do: %{store | exceptions: Map.put(store.exceptions, id, :cancelled)},
+            else: update_in(store, [:events, calendar], &Map.delete(&1, id))
+
+        {:ok, %{}, store}
+      end
+    end
+
+    defp calendar_tool("GOOGLECALENDAR_EVENTS_MOVE", %{"event_id" => id} = args, store) do
+      {from, to} = {args["calendar_id"], args["destination"]}
+
+      with :ok <- writable(from),
+           :ok <- writable(to),
+           %{^id => event} <- get_in(store, [:events, from]) do
+        event = stamp(event, to, store.seq + 1)
+        store = update_in(store, [:events, from], &Map.delete(&1, id))
+        {:ok, event, put_event(store, to, event)}
+      else
+        {:error, _} = error -> error
+        _ -> {:error, "404 Not Found: event"}
+      end
+    end
+
+    defp calendar_tool(slug, _args, _store),
+      do: {:error, "the local provider mock does not implement #{slug}"}
+
+    defp writable(@primary_calendar), do: :ok
+    defp writable(@holiday_calendar), do: {:error, "403 Forbidden: insufficientPermissions"}
+    defp writable(_), do: {:error, "404 Not Found: calendar"}
+
+    defp found({:ok, event}), do: {:ok, event}
+    defp found(:error), do: {:error, "404 Not Found: event"}
+
+    defp calendar_events(store, id) do
+      case Map.fetch(store.events, id) do
+        {:ok, events} -> {:ok, events}
+        :error -> :error
+      end
+    end
+
+    defp put_event(store, calendar, event),
+      do: %{
+        store
+        | seq: store.seq + 1,
+          events: Map.update(store.events, calendar, %{}, &Map.put(&1, event["id"], event))
+      }
+
+    # A master event or one occurrence of a weekly series.
+    defp find_event(store, calendar, id) do
+      events = Map.get(store.events, calendar, %{})
+
+      case {Map.fetch(events, id), String.split(id, "_", parts: 2)} do
+        {{:ok, event}, _} ->
+          {:ok, event}
+
+        {:error, [series, stamp]} ->
+          with %{^series => master} <- events,
+               occurrence when is_map(occurrence) <-
+                 Map.get(store.exceptions, id, occurrence(master, stamp)) do
+            {:ok, occurrence}
+          else
+            _ -> :error
+          end
+
+        _ ->
+          :error
+      end
+    end
+
+    defp occurrences(%{"recurrence" => [_ | _]} = master, store, min, max) do
+      first = instant(master["start"])
+      length = DateTime.diff(instant(master["end"]), first)
+
+      0..60
+      |> Enum.map(&DateTime.add(first, &1 * 7 * 86_400))
+      |> Enum.filter(&overlaps?(&1, DateTime.add(&1, length), min, max))
+      |> Enum.map(&(master["id"] <> "_" <> Calendar.strftime(&1, "%Y%m%dT%H%M%SZ")))
+      |> Enum.flat_map(fn id ->
+        case Map.get(store.exceptions, id) do
+          :cancelled -> []
+          nil -> [occurrence(master, String.replace_prefix(id, master["id"] <> "_", ""))]
+          event -> [event]
+        end
+      end)
+      |> Enum.filter(&overlaps?(instant(&1["start"]), instant(&1["end"]), min, max))
+    end
+
+    defp occurrences(event, _store, min, max) do
+      if overlaps?(instant(event["start"]), instant(event["end"]), min, max),
+        do: [event],
+        else: []
+    end
+
+    defp occurrence(master, stamp) do
+      with <<y::binary-4, mo::binary-2, d::binary-2, "T", h::binary-2, mi::binary-2, s::binary-2,
+             "Z">> <- stamp,
+           {:ok, naive} <-
+             NaiveDateTime.from_iso8601("#{y}-#{mo}-#{d}T#{h}:#{mi}:#{s}") do
+        start = DateTime.from_naive!(naive, "Etc/UTC")
+        length = DateTime.diff(instant(master["end"]), instant(master["start"]))
+
+        master
+        |> Map.drop(["recurrence"])
+        |> Map.merge(%{
+          "id" => master["id"] <> "_" <> stamp,
+          "recurringEventId" => master["id"],
+          "start" => timed(local(start)),
+          "end" => timed(local(DateTime.add(start, length)))
+        })
+      else
+        _ -> nil
+      end
+    end
+
+    defp overlaps?(start, finish, min, max),
+      do: DateTime.compare(finish, min) == :gt and DateTime.compare(start, max) == :lt
+
+    defp instant(%{"dateTime" => value}), do: elem(DateTime.from_iso8601(value), 1)
+
+    defp instant(%{"date" => value}),
+      do: elem(DateTime.from_iso8601(value <> "T00:00:00" <> @calendar_offset), 1)
+
+    defp local(utc) do
+      utc
+      |> DateTime.add(-3 * 3600)
+      |> DateTime.to_naive()
+      |> NaiveDateTime.to_iso8601()
+      |> Kernel.<>(@calendar_offset)
+    end
+
+    defp put_present(event, _key, value) when value in [nil, ""], do: event
+    defp put_present(event, key, value), do: Map.put(event, key, value)
+
+    defp patch_time(event, _key, nil, _zone), do: event
+
+    defp patch_time(event, key, value, _zone) when byte_size(value) == 10,
+      do: Map.put(event, key, %{"date" => value})
+
+    defp patch_time(event, key, value, zone),
+      do: Map.put(event, key, %{"dateTime" => value, "timeZone" => zone || @calendar_zone})
+
+    defp patch_text(event, _key, nil), do: event
+    defp patch_text(event, key, ""), do: Map.delete(event, key)
+    defp patch_text(event, key, value), do: Map.put(event, key, value)
+
+    defp patch_rule(event, nil), do: event
+    defp patch_rule(event, []), do: Map.delete(event, "recurrence")
+    defp patch_rule(event, rules), do: Map.put(event, "recurrence", rules)
 
     defp settings, do: %{"api_key" => "local-composio", "base_url" => "local://composio"}
 

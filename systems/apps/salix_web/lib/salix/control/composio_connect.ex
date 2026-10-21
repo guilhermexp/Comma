@@ -431,6 +431,149 @@ defmodule Salix.Control.ComposioConnect do
     end
   end
 
+  # Product-owned Agenda recipes. Callers name an operation; this module owns
+  # the slug, so no slug, code, URL or session crosses from the client.
+  @calendar_reads %{
+    "calendars" => "GOOGLECALENDAR_LIST_CALENDARS",
+    "events" => "GOOGLECALENDAR_EVENTS_LIST",
+    "event" => "GOOGLECALENDAR_EVENTS_GET"
+  }
+  @calendar_writes %{
+    "create" => "GOOGLECALENDAR_CREATE_EVENT",
+    "update" => "GOOGLECALENDAR_PATCH_EVENT",
+    "move" => "GOOGLECALENDAR_EVENTS_MOVE",
+    "delete" => "GOOGLECALENDAR_DELETE_EVENT"
+  }
+  # Build-gated local provider; resolved at runtime so releases without it compile.
+  @local_mock SalixWeb.LocalComposioMock
+  @calendar_read_bytes 1_048_576
+  @calendar_write_bytes 256_000
+
+  def execute_calendar_read(tenant, group, user, account, operation, arguments, authorize_effect) do
+    execute_calendar(
+      tenant,
+      group,
+      user,
+      account,
+      @calendar_reads[operation],
+      arguments,
+      authorize_effect,
+      @calendar_read_bytes
+    )
+  end
+
+  def execute_calendar_write(tenant, group, user, account, operation, arguments, authorize_effect) do
+    execute_calendar(
+      tenant,
+      group,
+      user,
+      account,
+      @calendar_writes[operation],
+      arguments,
+      authorize_effect,
+      @calendar_write_bytes
+    )
+  end
+
+  defp execute_calendar(_, _, _, _, slug, arguments, _, _)
+       when is_nil(slug) or not is_map(arguments),
+       do: {:error, :invalid_composio_request}
+
+  defp execute_calendar(tenant, group, user, account, slug, arguments, authorize, max_bytes) do
+    tool = %{"tool_slug" => slug, "arguments" => arguments}
+
+    result =
+      cond do
+        account["toolkit"] != "googlecalendar" or account["mode"] not in ~w(connect project) ->
+          {:error, :composio_access_denied}
+
+        local_mock?() ->
+          with :ok <- authorize.(),
+               do: apply(@local_mock, :execute_calendar, [group, account["id"], tool])
+
+        account["mode"] == "connect" ->
+          execute_connect(
+            tenant,
+            group,
+            user,
+            account,
+            [tool],
+            authorize,
+            &complete_routine(tenant, group, user, tool, authorize, max_bytes, &1, &2),
+            &calendar_failure/1
+          )
+
+        true ->
+          execute_project(tenant, group, user, account, [tool], authorize,
+            max_response_bytes: max_bytes
+          )
+      end
+
+    calendar_result(result, slug)
+  end
+
+  defp local_mock?,
+    do:
+      function_exported?(SalixWeb.LocalOAuthMock, :enabled?, 0) and
+        SalixWeb.LocalOAuthMock.enabled?()
+
+  # Connect wraps the action in a one-tool batch; project returns it directly.
+  defp calendar_result(
+         {:ok, %{"data" => %{"results" => [%{"tool_slug" => slug, "response" => response}]}}},
+         slug
+       ),
+       do: calendar_result({:ok, response}, slug)
+
+  defp calendar_result({:ok, %{"successful" => true, "data" => %{"data" => data} = inner}}, _)
+       when is_map(data),
+       do:
+         if(inner["successful"] in [nil, true], do: {:ok, data}, else: {:error, :provider_failed})
+
+  defp calendar_result({:ok, %{"successful" => true, "data" => data}}, _) when is_map(data),
+    do: {:ok, data}
+
+  defp calendar_result({:ok, %{"successful" => false} = failed}, _),
+    do: {:error, calendar_failure(failed)}
+
+  defp calendar_result({:error, {:http, status}}, _) when status in [401, 403],
+    do: {:error, :provider_forbidden}
+
+  defp calendar_result({:error, {:http, status}}, _) when status in [404, 410],
+    do: {:error, :provider_not_found}
+
+  defp calendar_result({:error, reason}, _)
+       when reason in [
+              :composio_access_denied,
+              :provider_forbidden,
+              :provider_not_found,
+              :provider_failed,
+              :member_read_deadline
+            ],
+       do: {:error, reason}
+
+  defp calendar_result({:error, _}, _), do: {:error, :provider_failed}
+  defp calendar_result(_, _), do: {:error, :invalid_provider_response}
+
+  # Composio reports Google refusals only as provider text. The text is
+  # classified here and then dropped: it can quote request details.
+  defp calendar_failure(failure) do
+    text = inspect(failure, limit: 200, printable_limit: 8192)
+
+    cond do
+      Regex.match?(
+        ~r/\b(401|403)\b|insufficient ?permissions?|insufficient authentication scopes|forbidden|permission_denied|unauthori[sz]ed|requiredAccessLevel/i,
+        text
+      ) ->
+        :provider_forbidden
+
+      Regex.match?(~r/\b(404|410)\b|not ?found|resource has been deleted/i, text) ->
+        :provider_not_found
+
+      true ->
+        :provider_failed
+    end
+  end
+
   # A complete-result read for incumbent member recipes. Unlike the
   # agent broker this entry accepts no workbench code, file or session input.
   def execute_routine_read(
@@ -442,33 +585,52 @@ defmodule Salix.Control.ComposioConnect do
         authorize_effect,
         max_bytes
       ) do
-    execute_connect(tenant, group, user, local, [tool], authorize_effect, fn result, session ->
-      alias Salix.Control.ComposioRoutineResult
-
-      case ComposioRoutineResult.prepare(result, session, tool["tool_slug"], max_bytes) do
-        {:ok, :inline} ->
-          {:ok, result}
-
-        {:ok, arguments} ->
-          with {:ok, complete} <-
-                 call(
-                   tenant,
-                   group,
-                   user,
-                   "COMPOSIO_REMOTE_WORKBENCH",
-                   arguments,
-                   authorize_effect
-                 ) do
-            ComposioRoutineResult.complete(complete, session, tool["tool_slug"], max_bytes)
-          end
-
-        {:error, _} = error ->
-          error
-      end
-    end)
+    execute_connect(
+      tenant,
+      group,
+      user,
+      local,
+      [tool],
+      authorize_effect,
+      &complete_routine(tenant, group, user, tool, authorize_effect, max_bytes, &1, &2)
+    )
   end
 
-  defp execute_connect(tenant, group, user, local, tools, authorize_effect, complete) do
+  defp complete_routine(tenant, group, user, tool, authorize_effect, max_bytes, result, session) do
+    alias Salix.Control.ComposioRoutineResult
+
+    case ComposioRoutineResult.prepare(result, session, tool["tool_slug"], max_bytes) do
+      {:ok, :inline} ->
+        {:ok, result}
+
+      {:ok, arguments} ->
+        with {:ok, complete} <-
+               call(
+                 tenant,
+                 group,
+                 user,
+                 "COMPOSIO_REMOTE_WORKBENCH",
+                 arguments,
+                 authorize_effect
+               ) do
+          ComposioRoutineResult.complete(complete, session, tool["tool_slug"], max_bytes)
+        end
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp execute_connect(
+         tenant,
+         group,
+         user,
+         local,
+         tools,
+         authorize_effect,
+         complete,
+         failure \\ nil
+       ) do
     with {:ok, %{"mode" => "connect", "status" => "connected"}} <-
            Access.profile(tenant, group, user),
          {:ok, %{"status" => "ACTIVE"}} <-
@@ -488,7 +650,8 @@ defmodule Salix.Control.ComposioConnect do
                "session_id" => session,
                "current_step" => "EXECUTING_AUTHORIZED_ACTION"
              },
-             authorize_effect
+             authorize_effect,
+             failure || (&operation_failed/1)
            ) do
       complete.(result, session)
     else
@@ -516,7 +679,17 @@ defmodule Salix.Control.ComposioConnect do
 
   def call(_, _, _, _, _), do: {:error, :composio_tool_not_allowed}
 
-  defp call(tenant, group, user, name, arguments, authorize_effect)
+  defp call(
+         tenant,
+         group,
+         user,
+         name,
+         arguments,
+         authorize_effect,
+         failure \\ &operation_failed/1
+       )
+
+  defp call(tenant, group, user, name, arguments, authorize_effect, failure)
        when name in ~w(COMPOSIO_SEARCH_TOOLS COMPOSIO_GET_TOOL_SCHEMAS COMPOSIO_MANAGE_CONNECTIONS COMPOSIO_WAIT_FOR_CONNECTIONS COMPOSIO_MULTI_EXECUTE_TOOL COMPOSIO_REMOTE_WORKBENCH) do
     with {:ok, result} <-
            request(
@@ -527,22 +700,23 @@ defmodule Salix.Control.ComposioConnect do
              %{"name" => name, "arguments" => arguments},
              authorize_effect
            ),
-         false <- result["isError"] == true do
+         {false, _} <- {result["isError"] == true, result} do
       with {:ok, decoded} <- decode_result(result),
            false <-
              decoded["successful"] == false or match?(%{"data" => %{"success" => false}}, decoded) do
         {:ok, decoded}
       else
-        true -> {:error, :composio_operation_failed}
+        true -> {:error, failure.(result)}
         error -> error
       end
     else
-      true -> {:error, :composio_operation_failed}
+      {true, result} -> {:error, failure.(result)}
       error -> error
     end
   end
 
-  defp call(_, _, _, _, _, _), do: {:error, :composio_tool_not_allowed}
+  defp call(_, _, _, _, _, _, _), do: {:error, :composio_tool_not_allowed}
+  defp operation_failed(_result), do: :composio_operation_failed
 
   defp request(tenant, group, user, method, params, authorize_effect \\ fn -> :ok end) do
     with {:ok, headers} <- RemoteMCPOAuth.composio_headers(tenant, group, user),
