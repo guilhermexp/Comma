@@ -146,6 +146,12 @@ async function fixture(
       headers: { authorization: `Bearer ${token}` },
       body: JSON.stringify(failure),
     });
+  const helperAck = async (mode: "ok" | "refuse" | "lost") =>
+    fetch(`${url}/fake/provider-ack`, {
+      method: "PUT",
+      headers: { authorization: `Bearer ${token}` },
+      body: JSON.stringify({ mode }),
+    });
   const processes = () =>
     readFileSync(argvLog, "utf8")
       .trim()
@@ -162,6 +168,7 @@ async function fixture(
     states,
     delivered,
     failCloud,
+    helperAck,
     processes,
     startHelper,
     stopHelper,
@@ -355,6 +362,55 @@ describe("meeting transcription provider (openspec add-cloud-meeting-asr)", () =
     expect((await delivered()).provider).toMatchObject({ kind: "groq" });
     // Nothing is sent again while the helper still holds it.
     expect(await service.ensureDelivered()).toBe(false);
+  });
+
+  it("refuses a change the helper does not acknowledge and keeps the previous provider", async () => {
+    const { service, store, delivered, helperAck } = await fixture({
+      fetch: groqFetch({ [groqKey]: 200 }),
+    });
+    expect(await service.setProvider(groq)).toEqual({ accepted: true });
+
+    // The helper applies the new model but its answer is lost.
+    await helperAck("lost");
+    const turbo = { ...groq, model: "whisper-large-v3-turbo" } as const;
+    expect(await service.setProvider(turbo)).toEqual({
+      accepted: false,
+      reason: "helper_unavailable",
+    });
+    expect((await delivered()).provider).toMatchObject({
+      model: "whisper-large-v3-turbo",
+    });
+    expect(store.read().cloud).toMatchObject({ model: "whisper-large-v3" });
+    expect((await service.state()).cloud).toMatchObject({ model: "whisper-large-v3" });
+
+    // Same kind, still configured: the saved revision goes again until acknowledged.
+    await helperAck("ok");
+    expect(await service.ensureDelivered()).toBe(true);
+    expect((await delivered()).provider).toMatchObject({
+      kind: "groq",
+      model: "whisper-large-v3",
+    });
+    expect(await service.ensureDelivered()).toBe(false);
+  });
+
+  it("retries an unacknowledged provider in the background until the helper takes it", async () => {
+    const { service, delivered, helperAck } = await fixture({
+      fetch: groqFetch({ [groqKey]: 200 }),
+    });
+    expect(await service.setProvider(groq)).toEqual({ accepted: true });
+    await helperAck("lost");
+    expect(
+      (await service.setProvider({ ...groq, model: "whisper-large-v3-turbo" })).accepted
+    ).toBe(false);
+    await helperAck("ok");
+
+    await vi.waitFor(
+      async () =>
+        expect((await delivered()).provider).toMatchObject({
+          model: "whisper-large-v3",
+        }),
+      { timeout: 5_000, interval: 100 }
+    );
   });
 
   it("keeps the key out of the helper's argv, environment and every log", async () => {

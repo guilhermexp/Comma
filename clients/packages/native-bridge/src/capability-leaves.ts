@@ -8757,6 +8757,8 @@ export const meetingTranscriptionActionResultSchema = z
         "secure_storage_unavailable",
         "in_progress",
         "unsupported",
+        // The helper did not acknowledge the new provider; the saved one stays.
+        "helper_unavailable",
       ])
       .optional(),
   })

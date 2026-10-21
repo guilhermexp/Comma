@@ -132,12 +132,16 @@ const cloudBody = (body) =>
 // `configured: false` until Main sends it again. GET /fake/provider is this
 // fake's own probe, so tests can see what Main delivered. PUT
 // /fake/last-failure sets the 502 failure /health reports, as the real
-// helper does after a job that no local model took over.
+// helper does after a job that no local model took over. PUT
+// /fake/provider-ack {"mode":"ok"|"refuse"|"lost"} makes /v1/provider answer
+// 503 without applying ("refuse") or after applying ("lost": an
+// acknowledgment that never reaches Main).
 if (command === "serve") {
   const token = readFileSync(option("--token-file"), "utf8").trim();
   let provider = { kind: "local" };
   let configured = false;
   let lastFailure;
+  let ackMode = "ok";
   const server = createServer(async (request, response) => {
     let text = "";
     for await (const chunk of request) text += chunk;
@@ -164,9 +168,16 @@ if (command === "serve") {
     if (request.method === "PUT" && request.url === "/v1/provider") {
       if (body?.kind !== "local" && !cloudBody(body ?? {}))
         return json(response, 400, { error: { code: "bad_request" } });
+      if (ackMode === "refuse") return json(response, 503, { error: { code: "busy" } });
       provider = body;
       configured = true;
       lastFailure = undefined;
+      if (ackMode === "lost") return json(response, 503, { error: { code: "busy" } });
+      response.writeHead(204);
+      return response.end();
+    }
+    if (request.method === "PUT" && request.url === "/fake/provider-ack") {
+      ackMode = body.mode;
       response.writeHead(204);
       return response.end();
     }

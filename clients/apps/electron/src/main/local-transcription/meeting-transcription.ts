@@ -25,6 +25,14 @@ type Verification = NonNullable<MeetingTranscriptionState["cloud"]>["verificatio
 /** How long a just-restarted helper gets to answer /health before delivery gives up. */
 const deliveryAttempts = 40;
 const deliveryIntervalMs = 250;
+/** Tries before a change is refused, so Settings answers within about a second. */
+const changeAttempts = 3;
+/**
+ * The background retry of a provider the helper has not acknowledged: one
+ * PUT per interval, doubling up to 30 s, until that revision is acknowledged.
+ */
+const retryFirstMs = 1_000;
+const retryMaxMs = 30_000;
 
 /**
  * Main's owner of the meeting transcription provider (openspec
@@ -47,6 +55,11 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
   #changing = false;
   #delivery: Promise<unknown> = Promise.resolve();
   #published: string | undefined;
+  /** Counts saved records; the helper acknowledged `#acknowledged` of them. */
+  #revision = 0;
+  #acknowledged = -1;
+  #retry: ReturnType<typeof setTimeout> | undefined;
+  #retryDelay = retryFirstMs;
 
   constructor(options: {
     store: MeetingProviderStore;
@@ -225,38 +238,66 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
     });
   }
 
-  /** Delivers the provider again when /health says the helper lost it; true when sent. */
+  /**
+   * Delivers the saved provider again when the helper has not acknowledged
+   * this revision or /health says it lost it; true when sent.
+   */
   ensureDelivered(): Promise<boolean> {
     return this.#queueDelivery(async () => {
       const health = await this.#helper.health();
       // A helper from before C6 reports no provider and runs Local only.
       if (!health?.provider) return false;
-      if (health.provider.configured && health.provider.kind === this.#record.selected)
+      if (
+        this.#acknowledged === this.#revision &&
+        health.provider.configured &&
+        health.provider.kind === this.#record.selected
+      )
         return false;
       return this.#deliverNow();
     });
   }
 
+  /**
+   * The helper takes the new provider before it is saved: a change it does
+   * not acknowledge is refused and the saved one stays. The helper may still
+   * have applied it, so the saved one becomes unacknowledged and goes again.
+   */
   async #select(
     record: StoredMeetingRecord,
     verification: Verification
   ): Promise<MeetingTranscriptionActionResult> {
+    const provider = selectedProvider(record);
+    const acknowledged = await this.#queueDelivery(async () => {
+      for (let attempt = 0; attempt < changeAttempts; attempt++) {
+        if (attempt > 0)
+          await new Promise((resolve) => setTimeout(resolve, deliveryIntervalMs));
+        if (await this.#helper.setProvider(provider)) return true;
+      }
+      return false;
+    });
+    if (!acknowledged) {
+      this.#log("The transcription helper did not acknowledge the new provider.");
+      this.#unacknowledged();
+      return { accepted: false, reason: "helper_unavailable" };
+    }
     try {
       this.#store.write(record);
     } catch (error) {
+      this.#unacknowledged();
       if (error instanceof Error && error.message === "secure_storage_unavailable")
         return { accepted: false, reason: "secure_storage_unavailable" };
       throw error;
     }
     this.#record = record;
+    this.#revision++;
+    this.#acknowledged = this.#revision;
+    this.#cancelRetry();
     this.#verification = verification;
-    const provider = selectedProvider(record);
     this.#log(
       provider.kind === "local"
         ? "Meeting transcription uses this Mac."
         : `Meeting transcription uses ${provider.kind} at ${new URL(provider.baseUrl).host} (${provider.model}).`
     );
-    await this.#queueDelivery(() => this.#deliverNow());
     this.localChanged();
     return { accepted: true };
   }
@@ -274,10 +315,44 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
     return next;
   }
 
+  /** Sends the saved provider; an acknowledgment counts only for the revision sent. */
   async #deliverNow() {
+    const revision = this.#revision;
     const delivered = await this.#helper.setProvider(selectedProvider(this.#record));
-    if (!delivered) this.#log("The transcription helper did not accept the provider.");
-    return delivered;
+    if (!delivered) {
+      this.#log("The transcription helper did not accept the provider.");
+      this.#scheduleRetry();
+      return false;
+    }
+    if (revision === this.#revision) {
+      this.#acknowledged = revision;
+      this.#cancelRetry();
+    }
+    return true;
+  }
+
+  /** The helper may hold something other than the saved provider. */
+  #unacknowledged() {
+    this.#revision++;
+    this.#scheduleRetry();
+  }
+
+  #scheduleRetry() {
+    if (this.#retry || this.#acknowledged === this.#revision) return;
+    const delay = this.#retryDelay;
+    this.#retryDelay = Math.min(delay * 2, retryMaxMs);
+    this.#retry = setTimeout(() => {
+      this.#retry = undefined;
+      if (this.#acknowledged !== this.#revision)
+        void this.#queueDelivery(() => this.#deliverNow());
+    }, delay);
+    this.#retry.unref?.();
+  }
+
+  #cancelRetry() {
+    clearTimeout(this.#retry);
+    this.#retry = undefined;
+    this.#retryDelay = retryFirstMs;
   }
 
   #snapshot(): MeetingTranscriptionState {
