@@ -287,10 +287,28 @@ NSString *WithoutOccurrenceSuffix(NSString *identifier, EKEvent *event) {
              : identifier;
 }
 
-// The series identity. `eventIdentifier` is not used: it changes on edit and
-// differs between stores.
+// The series identity: the series' `calendarItemIdentifier`. `eventIdentifier`
+// is not used: it changes on edit and differs between stores. A detached
+// occurrence gets an item identifier of its own and keeps only the series'
+// external identifier, so its series is found through that.
 NSString *SeriesId(EKEvent *event) {
-  return WithoutOccurrenceSuffix(event.calendarItemIdentifier, event);
+  NSString *own = WithoutOccurrenceSuffix(event.calendarItemIdentifier, event);
+  if (!event.isDetached) return own;
+  NSString *external = WithoutOccurrenceSuffix(event.calendarItemExternalIdentifier, event);
+  if (external.length == 0) return own;
+  NSString *calendarId = event.calendar.calendarIdentifier;
+  NSArray *items = WithRetry(^id {
+    return [Store() calendarItemsWithExternalIdentifier:external];
+  });
+  for (id item in items) {
+    if (![item isKindOfClass:[EKEvent class]]) continue;
+    EKEvent *candidate = item;
+    if (!candidate.isDetached && candidate.hasRecurrenceRules &&
+        [candidate.calendar.calendarIdentifier isEqualToString:calendarId]) {
+      return candidate.calendarItemIdentifier;
+    }
+  }
+  return own;
 }
 
 NSString *OccurrenceKey(EKEvent *event) {
