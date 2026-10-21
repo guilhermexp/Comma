@@ -53,7 +53,7 @@ As ferramentas `calendar.calendars`, `calendar.events`, `calendar.event`, `calen
   - para o interno, `occurrence` carrega o `OccurrenceRef` atual, para `update_context` continuar funcionando.
 - **Evento normalizado:** `title`, `start`, `end`, `all_day`, `time_zone`, `location`, `description` (cortada em 2.000 caracteres), `calendar_ref`, `event_ref`, `recurring`, `writable`.
 - **Limites:** período de até 62 dias e 2.500 eventos por fonte. A resposta diz quando foi cortada.
-- **Situação por fonte:** cada resposta traz `sources: [{source, account_id?, status: "ok"|"not_connected"|"unavailable"|"error", reason?}]`.
+- **Situação por fonte:** cada resposta traz `sources: [{source, account_id?, status: "ok"|"partial"|"not_connected"|"unavailable"|"error", reason?, failed_calendar_ids?}]`. `partial` significa que alguns calendários da fonte falharam, listados em `failed_calendar_ids`. Quando todos falham, o status é `error` com o motivo `calendars_unavailable`.
 - **Escrita:** recebe `scope: "instance"|"series"` para eventos recorrentes, como a Agenda.
 
 Alternativa descartada: um namespace novo `agenda.*` ao lado de `calendar.*`. Deixaria duas famílias para o mesmo assunto.

@@ -49,8 +49,8 @@
   - com o app fechado, a fonte Mac aparece como indisponível.
 
   Registrar a conversa e capturas.
-- [ ] 4.2 Busca nos logs do backend, do conector e do app durante 4.1 pelos títulos usados: nada encontrado.
-- [ ] 4.3 Documentação: `DOMAIN_CONCEPTS.md` (Agenda/agente), a ajuda das ferramentas e o RELEASE.md, se mudar algo para o usuário do app. Verificar com `pnpm docs:check`.
+- [x] 4.2 Busca nos logs do backend, do conector e do app durante 4.1 pelos títulos usados: nada encontrado.
+- [x] 4.3 Documentação: `DOMAIN_CONCEPTS.md` (Agenda/agente), a ajuda das ferramentas e o RELEASE.md, se mudar algo para o usuário do app. Verificar com `pnpm docs:check`.
 
 ## Acompanhamento do fluxo
 
