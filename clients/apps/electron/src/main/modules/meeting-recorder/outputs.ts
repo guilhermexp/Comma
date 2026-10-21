@@ -31,6 +31,31 @@ interface Dependencies {
   }): Promise<SynchronicityMutationResult>;
   checkpoint(job: MeetingOutputJob): Promise<void>;
   publish(job: MeetingOutputJob, outcome: "done" | "error", error?: unknown): void;
+  /** The saved transcript says the cloud failed and this Mac's model took over. */
+  fallback?(job: MeetingOutputJob, fallback: MeetingTranscriptFallback): void;
+}
+export interface MeetingTranscriptFallback {
+  from: string;
+  reason: string;
+}
+
+/** The `fallback` of an audio.transcribe metadata file (contract C7), if any. */
+export function transcriptFallback(bytes: ArrayBuffer) {
+  try {
+    const fallback = (
+      JSON.parse(Buffer.from(bytes).toString("utf8")) as {
+        fallback?: unknown;
+      }
+    ).fallback as Partial<MeetingTranscriptFallback> | undefined;
+    if (typeof fallback?.from === "string" && typeof fallback.reason === "string")
+      return {
+        from: fallback.from.slice(0, 100),
+        reason: fallback.reason.slice(0, 100),
+      };
+  } catch {
+    // A transcript that is not JSON records no fallback.
+  }
+  return undefined;
 }
 
 /** Two active Task SSE streams per install; at most 32 durable jobs in MeetingTaskService.
@@ -132,6 +157,9 @@ export class MeetingOutputArchive {
               assertCurrent();
               job.completed.push(extension);
               await this.deps.checkpoint(job);
+              const fallback =
+                extension === "transcript.json" ? transcriptFallback(bytes) : undefined;
+              if (fallback) this.deps.fallback?.(job, fallback);
             },
             signal
           );

@@ -78,6 +78,46 @@ function harness() {
   };
 }
 describe("meeting output archive", () => {
+  it("reports the local fallback a saved meeting transcript records", async () => {
+    const transcriptJson = (body: string) => {
+      const h = harness();
+      const fallback = vi.fn();
+      const archive = new MeetingOutputArchive({ ...h.deps, fallback });
+      h.api.getConversation.mockResolvedValue({
+        status: "active",
+        messages: [message()],
+      });
+      h.api.fetchConversationAttachment.mockImplementation(
+        async (_group, _task, _message, index) =>
+          new Blob([index === 1 ? body : "artifact"])
+      );
+      archive.watch(job());
+      return { archive, fallback, publish: h.deps.publish };
+    };
+    const fell = transcriptJson(
+      JSON.stringify({
+        provider: "local",
+        model: "parakeet-tdt-0.6b-v3",
+        fallback: { from: "groq", reason: "cloud_unreachable" },
+      })
+    );
+    const plain = transcriptJson(JSON.stringify({ provider: "groq" }));
+    const broken = transcriptJson("{not json");
+    try {
+      for (const run of [fell, plain, broken])
+        await vi.waitFor(() =>
+          expect(run.publish).toHaveBeenCalledWith(expect.anything(), "done")
+        );
+      expect(fell.fallback).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ id: "meeting" }),
+        { from: "groq", reason: "cloud_unreachable" }
+      );
+      expect(plain.fallback).not.toHaveBeenCalled();
+      expect(broken.fallback).not.toHaveBeenCalled();
+    } finally {
+      for (const run of [fell, plain, broken]) run.archive.close();
+    }
+  });
   it("does not report archive failure when a closing stream races completed writes", async () => {
     const h = harness();
     h.api.getConversation.mockResolvedValue({

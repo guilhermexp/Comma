@@ -344,6 +344,49 @@ defmodule SalixAgent.ToolsMediaTest do
       refute_receive {:audio_transcribe, _, _}
     end
 
+    test "records the provider, model, and local fallback in the meeting metadata", %{
+      agent: agent,
+      ctx: ctx
+    } do
+      on_exit(fn -> Application.delete_env(:salix_agent, :tools_media_audio_result) end)
+
+      Application.put_env(
+        :salix_agent,
+        :tools_media_audio_result,
+        {:ok,
+         %{
+           transcript: "[00:00:01] Speaker 1: complete",
+           duration_seconds: 7,
+           chunks: [
+             %{index: 0, offset_seconds: 0, transcript: "[00:00:01] Speaker 1: complete"}
+           ],
+           provider: "local",
+           model: "parakeet-tdt-0.6b-v3",
+           fallback: %{from: "groq", reason: "cloud_unreachable"}
+         }}
+      )
+
+      args = %{
+        "path" => "/uploads/meeting.m4a",
+        "output_path" => "/artifacts/meetings/two/transcript.txt"
+      }
+
+      assert {content, events} = Media.transcribe_audio(args, ctx)
+      commit_workspace!(agent, "meeting-asr-provider", events)
+
+      expected = %{
+        "provider" => "local",
+        "model" => "parakeet-tdt-0.6b-v3",
+        "fallback" => %{"from" => "groq", "reason" => "cloud_unreachable"}
+      }
+
+      assert {:ok, metadata} =
+               AgentWorkspace.read(agent, "/artifacts/meetings/two/transcript.json")
+
+      assert Map.take(Jason.decode!(metadata), Map.keys(expected)) == expected
+      assert Map.take(Jason.decode!(content), Map.keys(expected)) == expected
+    end
+
     test "rejects missing, relative, and runtime paths before dispatch", %{ctx: ctx} do
       assert_raise RuntimeError, "path is required", fn ->
         Media.transcribe_audio(%{}, ctx)

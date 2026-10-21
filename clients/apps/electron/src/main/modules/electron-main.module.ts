@@ -1150,6 +1150,11 @@ export async function createElectronMainContext(
       if (state.archive === "error" && state.recording)
         void noticeMeetingCloudFailure(key, state.recording);
     },
+    // Same as the Drive path: the cloud failed and this Mac's model took over.
+    onFallback: (recording, fallback) => {
+      deps.meetingTranscription?.cloudFailed(fallback.reason);
+      noticeRecording("fallback", recording, { reason: fallback.reason });
+    },
     resolveRecovery: async (name) => {
       if (!deps.resolveMeetingRecovery)
         throw new Error(
