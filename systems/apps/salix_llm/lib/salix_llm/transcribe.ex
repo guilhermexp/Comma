@@ -15,9 +15,12 @@ defmodule SalixLlm.Transcribe do
           transcript: String.t()
         }
   @type audio_metadata :: %{
-          transcript: String.t(),
-          duration_seconds: pos_integer(),
-          chunks: [chunk_manifest_entry()]
+          required(:transcript) => String.t(),
+          required(:duration_seconds) => pos_integer(),
+          required(:chunks) => [chunk_manifest_entry()],
+          optional(:provider) => String.t(),
+          optional(:model) => String.t(),
+          optional(:fallback) => %{from: String.t(), reason: String.t()}
         }
 
   @spec transcribe(cfg(), String.t(), String.t(), String.t()) ::
@@ -266,10 +269,8 @@ defmodule SalixLlm.Transcribe do
       {:ok, %{status: 200, body: resp}} ->
         verbose_json_result(resp)
 
-      {:ok, %{status: 409, body: resp}} ->
-        if provider_error_code(resp) == "local_asr_model_not_installed",
-          do: {:error, :local_asr_model_not_installed},
-          else: {:error, {:asr_http, 409, preview(resp)}}
+      {:ok, %{status: status, body: resp}} when status in [409, 502] ->
+        helper_error(status, decode_error_body(resp), resp)
 
       {:ok, %{status: status, body: resp}} ->
         {:error, {:asr_http, status, preview(resp)}}
@@ -295,7 +296,7 @@ defmodule SalixLlm.Transcribe do
     end
   end
 
-  defp verbose_json_result(%{"segments" => segments, "duration" => duration})
+  defp verbose_json_result(%{"segments" => segments, "duration" => duration} = resp)
        when is_list(segments) and is_number(duration) and duration >= 0 do
     with {:ok, lines} <- segment_lines(segments) do
       transcript = Enum.join(lines, "\n")
@@ -305,11 +306,44 @@ defmodule SalixLlm.Transcribe do
          transcript: transcript,
          duration_seconds: max(ceil(duration), 1),
          chunks: [%{index: 0, offset_seconds: 0, transcript: transcript}]
-       }}
+       }
+       |> put_present(:provider, resp["provider"])
+       |> put_present(:model, resp["model"])
+       |> put_fallback(resp["fallback"])}
     end
   end
 
   defp verbose_json_result(_resp), do: {:error, :asr_malformed_response}
+
+  # The meeting helper names the engine that produced the transcript and, after a
+  # cloud failure, the local fallback. Other compatible servers omit these fields.
+  defp put_present(result, key, value) when is_binary(value) and value != "",
+    do: Map.put(result, key, value)
+
+  defp put_present(result, _key, _value), do: result
+
+  defp put_fallback(result, %{"from" => from, "reason" => reason})
+       when is_binary(from) and from != "" and is_binary(reason) and reason != "",
+       do: Map.put(result, :fallback, %{from: from, reason: reason})
+
+  defp put_fallback(result, _fallback), do: result
+
+  # These reasons reach the recording SSE result and the audio.transcribe error.
+  defp helper_error(409, %{"code" => "local_asr_model_not_installed"}, _resp),
+    do: {:error, :local_asr_model_not_installed}
+
+  defp helper_error(409, %{"code" => "cloud_asr_not_ready", "reason" => reason}, _resp)
+       when reason in ["diarization_missing", "provider_unconfigured"],
+       do: {:error, {:cloud_asr_not_ready, reason}}
+
+  defp helper_error(502, %{"code" => "cloud_asr_failed", "reason" => reason}, resp)
+       when is_binary(reason) do
+    if Regex.match?(~r/\Acloud_[a-z_]{1,40}\z/, reason),
+      do: {:error, {:cloud_asr_failed, reason}},
+      else: {:error, {:asr_http, 502, preview(resp)}}
+  end
+
+  defp helper_error(status, _error, resp), do: {:error, {:asr_http, status, preview(resp)}}
 
   # Speaker labels are opaque per response; number them by first appearance.
   defp segment_lines(segments) do
@@ -343,16 +377,16 @@ defmodule SalixLlm.Transcribe do
 
   defp speaker_label(_speaker, speakers), do: {"", speakers}
 
-  defp provider_error_code(%{"error" => %{"code" => code}}) when is_binary(code), do: code
+  defp decode_error_body(%{"error" => %{} = error}), do: error
 
-  defp provider_error_code(resp) when is_binary(resp) do
+  defp decode_error_body(resp) when is_binary(resp) do
     case Jason.decode(resp) do
-      {:ok, %{} = decoded} -> provider_error_code(decoded)
+      {:ok, %{} = decoded} -> decode_error_body(decoded)
       _ -> nil
     end
   end
 
-  defp provider_error_code(_resp), do: nil
+  defp decode_error_body(_resp), do: nil
 
   defp complete_ordered_chunks([]), do: {:error, :asr_chunks_empty}
 
