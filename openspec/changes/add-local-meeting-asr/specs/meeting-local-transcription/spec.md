@@ -64,7 +64,7 @@ Com o modelo instalado, o app MUST oferecer Remover. Remover MUST apagar os arqu
 
 ### Requirement: Transcrição local da gravação com quem fala
 
-Com o modelo pronto, ao parar uma gravação de reunião, o app MUST transcrevê-la no próprio Mac, sem enviar o áudio a serviços externos, e gravar ao lado da gravação o `.transcript.txt` e o `.transcript.json`. O texto MUST ter uma linha por trecho de fala, no formato `[HH:MM:SS] Speaker N: texto`, com tempo relativo ao início da gravação e o mesmo número de speaker para a mesma voz ao longo de toda a gravação. Gravações de até 2 horas (até 64 MiB) MUST ser aceitas.
+Com o provedor Local selecionado (o padrão) e o modelo pronto, ao parar uma gravação de reunião, o app MUST transcrevê-la no próprio Mac, sem enviar o áudio para fora, e gravar ao lado dela o `.transcript.txt` e o `.transcript.json`, com linhas `[HH:MM:SS] Speaker N: texto`, tempo relativo ao início e o mesmo número para a mesma voz em toda a gravação. Gravações de até 2 horas (64 MiB) MUST ser aceitas.
 
 #### Scenario: Chamada com duas pessoas
 
@@ -88,7 +88,7 @@ Com o modelo pronto, ao parar uma gravação de reunião, o app MUST transcrevê
 
 ### Requirement: Comportamento sem modelo instalado
 
-Sem o modelo pronto, a gravação MUST ser salva normalmente, e o app MUST avisar que a transcrição local não está instalada, com uma ação que leva à instalação. Depois de instalar, o usuário MUST conseguir pedir a transcrição de uma gravação já salva que não tem transcrição ou cuja transcrição falhou.
+Com o provedor Local selecionado e sem o modelo pronto, a gravação MUST ser salva normalmente, e o app MUST avisar que a transcrição local não está instalada, com uma ação que leva à instalação. Depois de instalar, o usuário MUST conseguir pedir a transcrição de uma gravação já salva que não tem transcrição ou cuja transcrição falhou.
 
 #### Scenario: Gravação sem modelo
 
