@@ -72,3 +72,15 @@ private let second = AudioChunk(url: URL(fileURLWithPath: "/b.m4a"), start: 10, 
     #expect(joined.duration == 4.25)
     #expect(joined.segments == [word("hi", 0.1, 0.3)])
 }
+
+@Test func wordsAProviderTimesOutOfOrderAreSortedForTheSpeakerMerge() {
+    // Whisper looping on repetitive speech timed "50" before the words it follows.
+    let joined = joinChunks([
+        (first, ChunkTranscript(
+            duration: 12, words: [word("number", 5, 5.4), word("51", 5.5, 5.8), word("50", 4.4, 4.8)],
+            segments: [word("number 51", 5, 5.8), word("50", 4.4, 4.8)]))
+    ])
+
+    #expect(joined.words?.map(\.text) == ["50", "number", "51"])
+    #expect(joined.segments.map(\.text) == ["50", "number 51"])
+}

@@ -26,7 +26,7 @@ public struct JoinedTranscript: Sendable, Equatable {
     public var units: [TimedWord] { words ?? segments }
 }
 
-/// Rebases each piece by its start and resolves each overlap (D4): a unit
+/// Orders and rebases each piece's units and resolves each overlap (D4): a unit
 /// that starts before the middle of the overlap comes from the earlier
 /// piece, the others from the later one. The two pieces time the same word
 /// a little differently, so the later piece skips a unit whose middle lies
@@ -41,7 +41,11 @@ public func joinChunks(_ pieces: [(chunk: AudioChunk, transcript: ChunkTranscrip
                 middle = (pieces[index + 1].chunk.start + start + duration) / 2
             }
             let coveredUntil = index == 0 ? -Double.infinity : (joined.last?.end ?? -.infinity)
-            for unit in units(piece.transcript) {
+            // Providers looping on repetitive speech can time a word before
+            // the one it follows; the speaker merge needs time order.
+            let ordered = units(piece.transcript).enumerated()
+                .sorted { ($0.element.start, $0.offset) < ($1.element.start, $1.offset) }.map(\.element)
+            for unit in ordered {
                 let rebased = TimedWord(text: unit.text, start: start + unit.start, end: start + unit.end)
                 guard rebased.start < middle, (rebased.start + rebased.end) / 2 >= coveredUntil else { continue }
                 joined.append(rebased)
