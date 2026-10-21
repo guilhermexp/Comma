@@ -52,6 +52,36 @@ describe("useAgendaData", () => {
     );
   });
 
+  it("reads only the changed source again when it reports a change", async () => {
+    const google = testSource([testCalendar("google", "acct", "ana")], []);
+    const home = testCalendar("mac", null, "Casa");
+    const mac = testSource([home], []);
+    let notify!: () => void;
+    const macSource = {
+      ...mac.source,
+      subscribe: (onChange: () => void) => {
+        notify = onChange;
+        return () => {};
+      },
+    };
+    render([
+      testEntry("acct", "google", google.source),
+      testEntry("mac", "mac", macSource),
+    ]);
+    await waitFor(() => expect(mac.source.events).toHaveBeenCalled());
+    const googleReads = google.source.calendars.mock.calls.length;
+    const macReads = mac.source.calendars.mock.calls.length;
+    mac.state.calendars = [home, testCalendar("mac", null, "Comma Teste")];
+
+    act(() => notify());
+
+    await waitFor(() =>
+      expect(mac.source.events.mock.calls.at(-1)?.[0]).toEqual(["Casa", "Comma Teste"])
+    );
+    expect(mac.source.calendars.mock.calls.length).toBe(macReads + 1);
+    expect(google.source.calendars.mock.calls.length).toBe(googleReads);
+  });
+
   it("starts the Mac calendars of a connected Google account hidden", async () => {
     const google = testSource(
       [

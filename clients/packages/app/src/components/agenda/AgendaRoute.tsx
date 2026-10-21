@@ -37,6 +37,7 @@ import {
   googleCalendarSource,
   listGoogleCalendarAccounts,
 } from "./googleCalendarSource";
+import { useMacCalendar, type MacCalendarPrompt } from "./macCalendarSource";
 import { eventCalendarKey, useAgendaData } from "./useAgendaData";
 import { useAgendaNow } from "./useAgendaNow";
 
@@ -59,6 +60,11 @@ export function AgendaRoute() {
   const search = useSearch({ strict: false }) as AgendaSearch;
   const workspace = useAgendaWorkspace(api);
   const google = useGoogleCalendarEntries(api, workspace.id);
+  const mac = useMacCalendar(m.agenda_mac_calendar());
+  const entries = useMemo(
+    () => (mac.entry ? [...google.entries, mac.entry] : google.entries),
+    [google.entries, mac.entry]
+  );
 
   if (workspace.status !== "ready") {
     return (
@@ -69,9 +75,10 @@ export function AgendaRoute() {
   }
   return (
     <AgendaScreen
-      entries={google.entries}
+      entries={entries}
       google={google.state}
       key={workspace.id}
+      mac={mac.prompt}
       onConnect={() => void navigate({ to: "/plugins" })}
       onNavigate={(next) => void navigate({ to: "/agenda", search: next })}
       onRetryAccounts={google.retry}
@@ -185,6 +192,7 @@ export function AgendaScreen({
   workspaceId,
   entries,
   google,
+  mac = null,
   search,
   onNavigate,
   onConnect,
@@ -194,6 +202,7 @@ export function AgendaScreen({
   workspaceId: string;
   entries: readonly AgendaSourceEntry[];
   google: GoogleAccountsState;
+  mac?: MacCalendarPrompt | null;
   search: AgendaSearch;
   onNavigate: (search: Required<AgendaSearch>) => void;
   onConnect: () => void;
@@ -397,6 +406,7 @@ export function AgendaScreen({
           <AgendaCalendarPanel
             google={google}
             groups={data.groups}
+            mac={mac}
             isVisible={data.isVisible}
             onConnect={onConnect}
             onRetry={data.retry}

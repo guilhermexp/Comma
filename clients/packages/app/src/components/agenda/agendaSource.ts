@@ -15,6 +15,8 @@ export type AgendaCalendar = {
   writable: boolean;
   primary: boolean;
   ownerEmail: string | null;
+  /** The Mac account a calendar belongs to; null for subscriptions. */
+  sourceLabel?: string | null;
 };
 
 /**

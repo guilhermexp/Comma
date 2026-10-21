@@ -3,6 +3,7 @@ import { Button, ScrollArea } from "@comma/ui";
 import type { ComposioAccount } from "../../api";
 import { composioAccountPresentation } from "../plugins/composioAccountPresentation";
 import type { AgendaCalendar } from "./agendaSource";
+import type { MacCalendarPrompt } from "./macCalendarSource";
 import type { AgendaGroup } from "./useAgendaData";
 
 export type GoogleAccountsState =
@@ -17,7 +18,7 @@ type Section = { id: string; title: string; calendars: AgendaCalendar[] };
 function macSections(calendars: AgendaCalendar[], subscribed: string): Section[] {
   const byOwner = new Map<string, AgendaCalendar[]>();
   for (const calendar of calendars) {
-    const owner = calendar.ownerEmail ?? "";
+    const owner = calendar.sourceLabel ?? calendar.ownerEmail ?? "";
     byOwner.set(owner, [...(byOwner.get(owner) ?? []), calendar]);
   }
   return [...byOwner.entries()]
@@ -32,6 +33,7 @@ function macSections(calendars: AgendaCalendar[], subscribed: string): Section[]
 export function AgendaCalendarPanel({
   groups,
   google,
+  mac,
   isVisible,
   onVisible,
   onRetry,
@@ -41,6 +43,8 @@ export function AgendaCalendarPanel({
 }: {
   groups: readonly AgendaGroup[];
   google: GoogleAccountsState;
+  /** The Mac Calendar waiting for the reader: off, or access not granted. */
+  mac?: MacCalendarPrompt | null;
   isVisible: (calendar: AgendaCalendar) => boolean;
   onVisible: (calendar: AgendaCalendar, visible: boolean) => void;
   onRetry: (entryKey: string) => void;
@@ -136,8 +140,40 @@ export function AgendaCalendarPanel({
               sections={macSections(group.calendars, m.agenda_subscribed_calendars())}
             />
           ))}
+        {mac && <MacCalendarAccess prompt={mac} />}
       </ScrollArea>
     </aside>
+  );
+}
+
+function MacCalendarAccess({ prompt }: { prompt: MacCalendarPrompt }) {
+  const m = useCommaMessages();
+  const reason = {
+    notDetermined: m.agenda_mac_enable_hint(),
+    denied: m.agenda_mac_denied(),
+    restricted: m.agenda_mac_restricted(),
+    writeOnly: m.agenda_mac_write_only(),
+  }[prompt.access];
+  return (
+    <section
+      aria-label={m.agenda_mac_calendar()}
+      className="flex flex-col items-start gap-xs text-sm"
+      data-testid="agenda-source"
+    >
+      <h3 className="m-0 text-xs font-semibold tracking-wide text-tertiary uppercase">
+        {m.agenda_mac_calendar()}
+      </h3>
+      <p className="m-0 text-tertiary">{reason}</p>
+      {prompt.access === "notDetermined" ? (
+        <Button hierarchy="secondary-gray" onPress={prompt.enable} size="xs">
+          {m.agenda_mac_enable()}
+        </Button>
+      ) : (
+        <Button hierarchy="secondary-gray" onPress={prompt.openSettings} size="xs">
+          {m.agenda_mac_open_settings()}
+        </Button>
+      )}
+    </section>
   );
 }
 

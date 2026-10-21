@@ -172,11 +172,24 @@ export function useAgendaData({
   );
 
   // Calendars, per source.
+  // A retry or a change reads again only the source it names.
   const calendarGeneration = useRef<Record<string, number>>({});
-  const calendarRetryKey = JSON.stringify(calendarRetry);
+  const calendarControllers = useRef<Record<string, AbortController>>({});
+  const calendarReads = useRef<{ entriesKey: string; retry: Record<string, number> }>(
+    null
+  );
   useEffect(() => {
-    const controllers = entriesRef.current.map((entry) => {
+    const previous = calendarReads.current;
+    calendarReads.current = { entriesKey, retry: calendarRetry };
+    const changed = entriesRef.current.filter(
+      (entry) =>
+        previous?.entriesKey !== entriesKey ||
+        (previous.retry[entry.key] ?? 0) !== (calendarRetry[entry.key] ?? 0)
+    );
+    for (const entry of changed) {
+      calendarControllers.current[entry.key]?.abort();
       const controller = new AbortController();
+      calendarControllers.current[entry.key] = controller;
       const generation = (calendarGeneration.current[entry.key] ?? 0) + 1;
       calendarGeneration.current[entry.key] = generation;
       const current = () =>
@@ -210,10 +223,15 @@ export function useAgendaData({
           }));
         }
       );
-      return controller;
-    });
-    return () => controllers.forEach((controller) => controller.abort());
-  }, [entriesKey, calendarRetryKey]);
+    }
+  }, [entriesKey, calendarRetry]);
+  useEffect(
+    () => () => {
+      Object.values(calendarControllers.current).forEach((c) => c.abort());
+      calendarReads.current = null;
+    },
+    []
+  );
 
   const visibleIds = useMemo(() => {
     const ids: Record<string, string[]> = {};
@@ -313,8 +331,16 @@ export function useAgendaData({
     }, agendaRefreshInterval);
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
+    // A source change may add or remove calendars as well as events.
     const unsubscribe = entriesRef.current.map(
-      (entry) => entry.source.subscribe?.(() => void loadEvents(entry)) ?? (() => {})
+      (entry) =>
+        entry.source.subscribe?.(() => {
+          setCalendarRetry((retry) => ({
+            ...retry,
+            [entry.key]: (retry[entry.key] ?? 0) + 1,
+          }));
+          void loadEvents(entry);
+        }) ?? (() => {})
     );
     return () => {
       window.clearInterval(interval);
