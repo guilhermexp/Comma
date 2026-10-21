@@ -1183,8 +1183,8 @@ defmodule BridgeForTeamsWeb.Dashboard.ConversationLiveShowTest do
       "type" => "tool_call_failed",
       "source_tool_call_id" => "calendar-read",
       "diagnostic_visibility" => "model_only",
-      "summary" => "async tool calendar.list_items failed for calendar-read",
-      "source_refs" => %{"tool_name" => "calendar.list_items", "status" => "failed"},
+      "summary" => "async tool calendar.events failed for calendar-read",
+      "source_refs" => %{"tool_name" => "calendar.events", "status" => "failed"},
       "content" =>
         Jason.encode!(%{
           "error" => true,
@@ -1203,7 +1203,7 @@ defmodule BridgeForTeamsWeb.Dashboard.ConversationLiveShowTest do
         "tool_calls" => [
           %{
             "id" => "calendar-read",
-            "name" => "calendar.list_items",
+            "name" => "calendar.events",
             "args" => %{"calendar_id" => "unverified-id"}
           }
         ]
@@ -1245,7 +1245,7 @@ defmodule BridgeForTeamsWeb.Dashboard.ConversationLiveShowTest do
 
     view |> element("#session-activity-scroll") |> render_hook("load_older")
     render_async(view)
-    assert has_element?(view, "#record-tool-calendar-read h3", "calendar.list_items")
+    assert has_element?(view, "#record-tool-calendar-read h3", "calendar.events")
     assert has_element?(view, "#record-tool-calendar-read summary", "error")
     refute has_element?(view, "#record-tool-calendar-read summary", "async_running")
 

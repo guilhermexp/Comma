@@ -170,8 +170,9 @@ defmodule SalixAgent.Tools do
     agent.list
     agent.get
     env.runtime_targets
-    calendar.list_items
-    calendar.get_item
+    calendar.calendars
+    calendar.events
+    calendar.event
     meeting.get
     im.connects_list
     im.provider_apis_list

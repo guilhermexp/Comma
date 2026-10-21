@@ -48,17 +48,7 @@ defmodule Salix.Bindings.CalendarFeedIssuanceTest do
       "subject_id" => "U_alice"
     }
 
-    assert {:ok, _item} =
-             AgentAPI.create_event(
-               group_id,
-               %{
-                 "title" => "与 XX 开会",
-                 "start" => "2026-09-15T19:00:00",
-                 "time_zone" => "Asia/Tokyo"
-               },
-               principal,
-               "msg1_1"
-             )
+    assert {:ok, _event} = create_local(group_id, "与 XX 开会", principal, "msg1_1")
 
     {:ok,
      group_id: group_id,
@@ -79,17 +69,8 @@ defmodule Salix.Bindings.CalendarFeedIssuanceTest do
     for namespace <- ["slack_user", "feishu_user", "telegram_user", "comma_user"] do
       principal = Map.put(ctx.principal, "namespace", namespace)
 
-      assert {:ok, _item} =
-               AgentAPI.create_event(
-                 ctx.group_id,
-                 %{
-                   "title" => namespace <> " 的会议",
-                   "start" => "2026-09-15T19:00:00",
-                   "time_zone" => "Asia/Tokyo"
-                 },
-                 principal,
-                 "msg_" <> namespace
-               )
+      assert {:ok, _event} =
+               create_local(ctx.group_id, namespace <> " 的会议", principal, "msg_" <> namespace)
 
       assert {:ok, %{"feed_url" => url}} =
                AgentCalendar.issue_feed_link(ctx.group_id, principal)
@@ -177,5 +158,24 @@ defmodule Salix.Bindings.CalendarFeedIssuanceTest do
     [_, tail] = String.split(url, "/v1/calendar/feeds/")
     [feed_id, secret_ics] = String.split(tail, "/")
     {feed_id, String.trim_trailing(secret_ics, ".ics")}
+  end
+
+  defp create_local(group_id, title, principal, request_id) do
+    {:ok, %{"calendars" => [comma | _]}} = AgentAPI.calendars(group_id, principal)
+
+    AgentAPI.create(
+      group_id,
+      %{
+        "calendar_id" => comma["calendar_ref"]["calendar_id"],
+        "event" => %{
+          "title" => title,
+          "start" => "2026-09-15T19:00:00",
+          "end" => "2026-09-15T19:30:00",
+          "time_zone" => "Asia/Tokyo"
+        }
+      },
+      principal,
+      request_id
+    )
   end
 end

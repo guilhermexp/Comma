@@ -229,8 +229,8 @@ defmodule Salix.Bindings.MeetingCalendarTest do
     assert {:ok, calendar} =
              Calendar.ensure_calendar(
                group_id,
-               %{"kind" => "meeting_test"},
-               %{"name" => "Meetings", "default_time_zone" => "UTC"}
+               %{"kind" => "meeting_enrollment", "version" => 1},
+               %{"name" => "Meeting calendar", "default_time_zone" => "UTC"}
              )
 
     assert {:ok, source} =
@@ -1281,33 +1281,21 @@ defmodule Salix.Bindings.MeetingCalendarTest do
     assert {:ok, [event]} = MeetingCalendar.list(group, range_start(), range_end())
     assert {:ok, initial_plan} = MeetingPlan.get(group["group_id"], event["meeting_plan_id"])
 
-    calendar_params = %{
-      "calendar_id" => group["calendar_id"],
-      "range_start_ms" => range_start(),
-      "range_end_ms" => range_end(),
-      "limit" => 10
-    }
+    calendar_params = %{"range_start_ms" => range_start(), "range_end_ms" => range_end()}
 
     item_params = %{
       "calendar_id" => group["calendar_id"],
-      "calendar_item_id" => event["calendar_item_id"],
-      "occurrence_ref" => event["occurrence_ref"]
+      "event_id" => event["calendar_item_id"],
+      "occurrence" => event["occurrence_ref"]
     }
 
-    assert {:ok,
-            %{
-              "data" => [
-                %{
-                  "calendar_context" => %{"revision" => 0},
-                  "occurrence" => %{"occurrence_ref" => occurrence_ref}
-                }
-              ]
-            }} = SalixAgent.Calendar.list_items(router_id, calendar_params)
+    assert {:ok, %{"events" => [%{"event_ref" => %{"occurrence" => occurrence_ref}}]}} =
+             SalixAgent.Calendar.events(router_id, calendar_params, nil)
 
     assert occurrence_ref == event["occurrence_ref"]
 
-    assert {:ok, %{"calendar_context" => %{"revision" => 0}}} =
-             SalixAgent.Calendar.get_item(worker_id, item_params)
+    assert {:ok, %{"event" => %{"context" => %{"revision" => 0}}}} =
+             SalixAgent.Calendar.event(worker_id, item_params, nil)
 
     assert {:ok, %{"revision" => 1}} =
              SalixAgent.Calendar.update_context(worker_id, %{
@@ -1371,8 +1359,8 @@ defmodule Salix.Bindings.MeetingCalendarTest do
                "background" => "Stale Worker write"
              })
 
-    assert {:ok, %{"calendar_context" => current_context}} =
-             SalixAgent.Calendar.get_item(worker_id, item_params)
+    assert {:ok, %{"event" => %{"context" => current_context}}} =
+             SalixAgent.Calendar.event(worker_id, item_params, nil)
 
     assert current_context["revision"] == 2
     assert current_context["background"] == "Router revision two"
@@ -1443,11 +1431,11 @@ defmodule Salix.Bindings.MeetingCalendarTest do
     assert {:ok, final_plan} = MeetingPlan.get(group["group_id"], event["meeting_plan_id"])
     refute Map.has_key?(final_plan["preparation"], "publication_message_id")
 
-    assert {:ok, %{"data" => [%{"calendar_context" => router_context}]}} =
-             SalixAgent.Calendar.list_items(router_id, calendar_params)
+    assert {:ok, %{"event" => %{"context" => router_context}}} =
+             SalixAgent.Calendar.event(router_id, item_params, nil)
 
-    assert {:ok, %{"calendar_context" => worker_context}} =
-             SalixAgent.Calendar.get_item(worker_id, item_params)
+    assert {:ok, %{"event" => %{"context" => worker_context}}} =
+             SalixAgent.Calendar.event(worker_id, item_params, nil)
 
     assert router_context == worker_context
     assert worker_context["revision"] == 4
@@ -1642,8 +1630,8 @@ defmodule Salix.Bindings.MeetingCalendarTest do
       assert {:ok, calendar} =
                Calendar.ensure_calendar(
                  group["group_id"],
-                 %{"kind" => "meeting_privacy_test", "access_profile" => access_profile},
-                 %{"name" => "Restricted meetings", "default_time_zone" => "UTC"}
+                 %{"kind" => "meeting_enrollment", "version" => 1},
+                 %{"name" => "Meeting calendar", "default_time_zone" => "UTC"}
                )
 
       assert {:ok, source} =
@@ -1689,17 +1677,19 @@ defmodule Salix.Bindings.MeetingCalendarTest do
       assert {:ok, meeting_results} =
                MeetingCalendar.list(restricted_group, range_start(), range_end())
 
-      assert {:ok, %{"data" => calendar_items}} =
-               AgentAPI.list_items(group["group_id"], %{
-                 "calendar_id" => calendar["calendar_id"],
-                 "range_start_ms" => range_start(),
-                 "range_end_ms" => range_end(),
-                 "limit" => 50
-               })
+      assert {:ok, %{"events" => calendar_items}} =
+               AgentAPI.events(
+                 group["group_id"],
+                 %{"range_start_ms" => range_start(), "range_end_ms" => range_end()},
+                 nil
+               )
 
       assert calendar_items != []
 
-      assert Enum.all?(calendar_items, &(get_in(&1, ["item", "copy_role"]) == "unknown"))
+      assert Enum.all?(
+               calendar_items,
+               &(is_nil(&1["title"]) and is_nil(&1["description"]) and is_nil(&1["location"]))
+             )
 
       query_payload =
         Jason.encode!(%{
@@ -1715,17 +1705,6 @@ defmodule Salix.Bindings.MeetingCalendarTest do
 
       assert exposed_provider_details == []
       assert meeting_results == []
-
-      assert Enum.all?(
-               calendar_items,
-               &(get_in(&1, ["item", "meeting_qualification", "item_eligible"]) == false)
-             )
-
-      assert Enum.all?(
-               calendar_items,
-               &(get_in(&1, ["item", "meeting_qualification", "item_reason"]) ==
-                   "access_profile_restricted")
-             )
     end
   end
 

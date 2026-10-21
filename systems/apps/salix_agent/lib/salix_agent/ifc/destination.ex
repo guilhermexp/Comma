@@ -529,6 +529,12 @@ defmodule SalixAgent.IFC.Destination do
       String.starts_with?(name, "peers.") or String.starts_with?(name, "meeting.") ->
         {:none, %{}}
 
+      # The owner's events from Comma, Google and the Mac are the owner's
+      # private data. As an unlabelled read, the result reads as agent-private,
+      # so carrying it to a group audience needs a person (`Check.stamp_results`).
+      name in ~w(calendar.calendars calendar.events calendar.event) ->
+        {:read, %{}}
+
       String.starts_with?(name, "calendar.") ->
         {:none, %{}}
 

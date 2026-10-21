@@ -9,7 +9,7 @@ defmodule SalixAgent.DriveMount do
   whose orphans would be harmless, and a deferred publish could neither be
   retried idempotently nor read back within the same round. So the
   `prepare_*` functions return no journal event (`{:ok, nil}`) once the
-  Drive has acknowledged the change, the way `calendar.create_event` leaves
+  Drive has acknowledged the change, the way `calendar.create` leaves
   no VFS event either.
 
   Paths are validated here and handed to the port relative to the Drive

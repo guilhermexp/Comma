@@ -1088,6 +1088,41 @@ defmodule SalixAgent.IFCCheckTest do
     end
   end
 
+  describe "the owner's calendars" do
+    test "event content read by an honest empty round cannot be posted to a group channel" do
+      for tool <- ~w(calendar.calendars calendar.events calendar.event) do
+        read = call(tool, %{}, %{"sources" => []})
+
+        [result] =
+          Check.stamp_results([%{id: read.id, name: tool, content: "Dentist 15h"}], [read], ctx())
+
+        context =
+          ctx(
+            items: [
+              %{
+                "ref" => "src:cal-1",
+                "label" => result[:ifc]["label"],
+                "integrity" => "data",
+                "principal" => nil
+              }
+            ]
+          )
+
+        assert {:blocked, _} =
+                 authorize(
+                   call(
+                     "im_api.slack.post_message",
+                     %{"channel" => "C_FIN", "text" => "Dentist 15h"},
+                     %{"request" => "src:q-1", "sources" => ["src:cal-1"]}
+                   ),
+                   context,
+                   facts(destination([@finance]))
+                 ),
+               "#{tool} content reached a group channel"
+      end
+    end
+  end
+
   describe "T3 — an external guest" do
     test "cannot write outside their own conversation" do
       decision =

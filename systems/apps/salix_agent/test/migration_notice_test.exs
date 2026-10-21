@@ -82,7 +82,7 @@ defmodule SalixAgent.MigrationNoticeTest do
             "callable" => true,
             "prompt_visibility" => "hidden"
           },
-          %{"name" => "calendar.list_items", "callable" => true, "prompt_visibility" => "hidden"}
+          %{"name" => "calendar.events", "callable" => true, "prompt_visibility" => "hidden"}
         ]
       }
     }
@@ -95,13 +95,13 @@ defmodule SalixAgent.MigrationNoticeTest do
     assert message.content =~ "im_api.internal.task.list"
     refute message.content =~ "external.only"
     refute message.content =~ "mcp.private_server.hidden_op"
-    refute message.content =~ "calendar.list_items"
+    refute message.content =~ "calendar.events"
 
     assert {:delta, baseline} = ContextProviders.prepare_activation_delta(session, config)
 
     for message <- ContextProviders.model_messages(baseline) do
       refute message.content =~ "mcp.private_server.hidden_op"
-      refute message.content =~ "calendar.list_items"
+      refute message.content =~ "calendar.events"
     end
   end
 
