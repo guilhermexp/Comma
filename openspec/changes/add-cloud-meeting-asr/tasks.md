@@ -76,7 +76,7 @@
 
 ## 6. Integração
 
-- [ ] 6.1 E2E no app empacotado em modo local:
+- [x] 6.1 E2E no app empacotado em modo local:
   - escolher Groq com a chave do dono e ver o separador instalado sozinho;
   - transcrever uma gravação de duas vozes e conferir `Speaker 1/2` e `provider: groq` no `.transcript.json`;
   - cortar a rede e ver o fallback local com aviso (com modelo local instalado);
@@ -85,8 +85,8 @@
 
   Registrar capturas e logs.
 - [ ] 6.2 Gravação de ~2 h pela Groq: pedaços, tempos contínuos até o fim, emendas sem repetição, tempo total dentro do prazo; e 429 real ou simulado com `retry-after`.
-- [ ] 6.3 Busca da chave em texto nos arquivos de dados, logs e `ps` durante uma transcrição: nada encontrado.
-- [ ] 6.4 Atualizar `clients/apps/electron/RELEASE.md` e as notas da release: provedores, cota gratuita da Groq, privacidade, fallback e onde a chave fica. Verificar com `pnpm docs:check`.
+- [x] 6.3 Busca da chave em texto nos arquivos de dados, logs e `ps` durante uma transcrição: nada encontrado.
+- [x] 6.4 Atualizar `clients/apps/electron/RELEASE.md` e as notas da release: provedores, cota gratuita da Groq, privacidade, fallback e onde a chave fica. Verificar com `pnpm docs:check`.
 
 ## Acompanhamento do fluxo
 
