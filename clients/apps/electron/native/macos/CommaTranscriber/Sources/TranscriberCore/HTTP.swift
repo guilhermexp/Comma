@@ -48,6 +48,9 @@ struct HTTPResponse: Sendable {
     }
 
     var serialized: Data {
+        guard status != 204 else {
+            return Data("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n".utf8)
+        }
         let reason = HTTPURLResponse.localizedString(forStatusCode: status).capitalized
         let head =
             "HTTP/1.1 \(status) \(reason)\r\nContent-Type: application/json\r\n"
@@ -111,4 +114,27 @@ struct ChunkedDecoder {
         }
         return output
     }
+}
+
+/// One second of 16 kHz mono 16-bit silence as a WAV file, for verifying a
+/// provider (C6).
+func silentWAV(seconds: Int) -> Data {
+    let rate: UInt32 = 16000
+    let dataBytes = rate * 2 * UInt32(seconds)
+    var data = Data()
+    func append<T: FixedWidthInteger>(_ value: T) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
+    data.append(Data("RIFF".utf8))
+    append(UInt32(36) + dataBytes)
+    data.append(Data("WAVEfmt ".utf8))
+    append(UInt32(16))
+    append(UInt16(1))  // PCM
+    append(UInt16(1))  // mono
+    append(rate)
+    append(rate * 2)  // bytes per second
+    append(UInt16(2))  // block align
+    append(UInt16(16))  // bits per sample
+    data.append(Data("data".utf8))
+    append(dataBytes)
+    data.append(Data(count: Int(dataBytes)))
+    return data
 }

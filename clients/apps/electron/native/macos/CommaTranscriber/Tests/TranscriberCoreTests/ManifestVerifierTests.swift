@@ -30,7 +30,10 @@ let sampleContents = [
 /// Two components: `asr` in folder `asr`, `diarization` in folder `diar`.
 let sampleManifest = ModelManifest(
     id: "sample@1",
-    repos: [],
+    repos: [
+        .init(repo: "Org/parakeet-tdt-0.6b-v3-coreml", revision: "1", folder: "asr", variant: "v2"),
+        .init(repo: "Org/speaker-diarization-coreml", revision: "1", folder: "diar", variant: "offline"),
+    ],
     components: [.asr: ["asr"], .diarization: ["diar"]],
     files: sampleContents.keys.sorted().map {
         .init(path: $0, size: Int64(sampleContents[$0]!.utf8.count), sha256: sha256Hex(sampleContents[$0]!))

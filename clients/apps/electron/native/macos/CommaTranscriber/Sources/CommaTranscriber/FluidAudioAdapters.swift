@@ -75,14 +75,20 @@ struct FluidModelPreparer: ModelPreparing {
 }
 
 /// Recognition, then diarization of the same file, each with models loaded
-/// for this job only (design D5).
+/// for this job only (design D5). The separator also runs alone beside a
+/// cloud provider (add-cloud-meeting-asr, D5).
 struct FluidTranscriptionEngine: TranscriptionEngine {
-    func transcribe(audio: URL, installed: URL) async throws -> EngineResult {
+    func transcribe(audio: URL, installed: URL, speakers: Bool) async throws -> EngineResult {
         // Hand the pages freed with the models back to the system.
         defer { malloc_zone_pressure_relief(nil, 0) }
         let (duration, words) = try await recognize(audio, installed: installed)
-        let turns = words.isEmpty ? [] : try await diarize(audio, installed: installed)
+        let turns = words.isEmpty || !speakers ? [] : try await diarizeTurns(audio, installed: installed)
         return EngineResult(duration: duration, words: words, turns: turns)
+    }
+
+    func diarize(audio: URL, installed: URL) async throws -> [SpeakerTurn] {
+        defer { malloc_zone_pressure_relief(nil, 0) }
+        return try await diarizeTurns(audio, installed: installed)
     }
 
     private func recognize(_ audio: URL, installed: URL) async throws -> (Double, [TimedWord]) {
@@ -110,7 +116,7 @@ struct FluidTranscriptionEngine: TranscriptionEngine {
         }
     }
 
-    private func diarize(_ audio: URL, installed: URL) async throws -> [SpeakerTurn] {
+    private func diarizeTurns(_ audio: URL, installed: URL) async throws -> [SpeakerTurn] {
         let models = try await OfflineDiarizerModels.load(from: installed, configuration: neuralEngineConfiguration())
         let diarizer = OfflineDiarizerManager()
         diarizer.initialize(models: models)
