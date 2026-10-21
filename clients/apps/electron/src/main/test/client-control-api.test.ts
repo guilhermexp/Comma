@@ -9,12 +9,15 @@ import {
   defaultCommaClientSettings,
   type AppPreferences,
   type AppPreferencesPatch,
+  type CalendarEvent,
 } from "@comma/native-bridge";
+import type { CalendarKitAddon } from "../../../native/macos/CalendarKit";
 import {
   ClientControlApiServer,
   createCommaClientControlRegistry,
 } from "../modules/client-control";
 import { AirDropService } from "../modules/airdrop";
+import { CalendarService } from "../modules/calendar";
 
 const roots: string[] = [];
 
@@ -409,6 +412,244 @@ describe("Comma Main client-control API", () => {
       expect(harness.appPreferences.update).not.toHaveBeenCalled();
     } finally {
       await server.close();
+    }
+  });
+});
+
+const secretTitle = "Dentist with Ana";
+const secretLocation = "Rua Secreta 42";
+const secretNotes = "bring the exam results";
+
+function macEvent(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
+  return {
+    allDay: false,
+    calendarId: "cal-1",
+    detached: false,
+    editable: true,
+    end: "2026-10-21T11:00:00-03:00",
+    eventId: "item-1",
+    externalId: null,
+    location: secretLocation,
+    notes: secretNotes,
+    occurrenceDate: null,
+    occurrenceId: "item-1",
+    recurrence: "none",
+    start: "2026-10-21T10:00:00-03:00",
+    title: secretTitle,
+    url: null,
+    ...overrides,
+  };
+}
+
+async function openCalendarControl(addon: Partial<CalendarKitAddon> = {}) {
+  const harness = await createHarness();
+  const fake: CalendarKitAddon = {
+    loaded: true,
+    accessStatus: () => "fullAccess",
+    requestAccess: vi.fn(async () => "fullAccess" as const),
+    calendars: async () => ({
+      calendars: [
+        {
+          color: "#ff0000",
+          id: "cal-1",
+          isDefault: true,
+          sourceTitle: "iCloud",
+          sourceType: "calDAV",
+          title: "Home",
+          writable: true,
+        },
+      ],
+    }),
+    events: vi.fn(async () => ({ events: [macEvent()], truncated: false })),
+    event: vi.fn(async () => macEvent()),
+    createEvent: vi.fn(async () => macEvent()),
+    updateEvent: vi.fn(async () => macEvent({ title: "Moved" })),
+    deleteEvent: vi.fn(async () => undefined),
+    observeChanges: () => () => undefined,
+    ...addon,
+  };
+  const logger = { warn: vi.fn() };
+  const calendar = new CalendarService({
+    addon: fake,
+    logger,
+    onStateChanged: () => undefined,
+    openExternal: async () => undefined,
+  });
+  const server = await ClientControlApiServer.open({
+    registry: createCommaClientControlRegistry({ ...harness, calendar }),
+    token: "calendar-control-token",
+  });
+  const call = async (api: string, input: unknown) => {
+    const response = await fetch(`${server.endpoint}/v1/invoke`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer calendar-control-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ module: "calendar", api, input }),
+    });
+    return { status: response.status, body: await response.json() };
+  };
+  return { addon: fake, call, logger, server };
+}
+
+const week = { start: "2026-10-19T00:00:00-03:00", end: "2026-10-26T00:00:00-03:00" };
+
+describe("Comma Main client-control calendar module", () => {
+  it("reads and writes the Mac Calendar through each API", async () => {
+    const { addon, call, server } = await openCalendarControl();
+    try {
+      expect(await call("state", {})).toEqual({
+        status: 200,
+        body: { access: "fullAccess", available: true, revision: 1 },
+      });
+      expect((await call("calendars", {})).body).toMatchObject({
+        calendars: [{ id: "cal-1", title: "Home", writable: true }],
+      });
+      expect(await call("events", { calendarIds: ["cal-1"], ...week })).toEqual({
+        status: 200,
+        body: { events: [macEvent()], truncated: false },
+      });
+      expect(addon.events).toHaveBeenCalledWith({
+        calendarIds: ["cal-1"],
+        ...week,
+        limit: 2_500,
+      });
+      const reference = { eventId: "item-1", occurrenceDate: null };
+      expect(await call("event", reference)).toEqual({ status: 200, body: macEvent() });
+      const created = {
+        calendarId: "cal-1",
+        event: {
+          allDay: false,
+          end: "2026-10-22T16:00:00-03:00",
+          recurrence: "none",
+          start: "2026-10-22T15:00:00-03:00",
+          timeZone: "America/Sao_Paulo",
+          title: "Meeting",
+        },
+      };
+      expect((await call("create-event", created)).status).toBe(200);
+      expect(addon.createEvent).toHaveBeenCalledWith(created);
+      const update = { ...reference, patch: { title: "Moved" }, scope: "instance" };
+      expect((await call("update-event", update)).body).toMatchObject({
+        title: "Moved",
+      });
+      expect(addon.updateEvent).toHaveBeenCalledWith(update);
+      expect(await call("delete-event", { ...reference, scope: "series" })).toEqual({
+        status: 200,
+        body: {},
+      });
+      expect(addon.deleteEvent).toHaveBeenCalledWith({ ...reference, scope: "series" });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses invalid input before EventKit and never exposes the access prompt", async () => {
+    const { addon, call, server } = await openCalendarControl();
+    try {
+      // 90 days exceeds the 62-day window.
+      expect(
+        await call("events", {
+          calendarIds: [],
+          start: "2026-10-01T00:00:00Z",
+          end: "2026-12-30T00:00:00Z",
+        })
+      ).toEqual({ status: 400, body: { error: "Invalid API input." } });
+      expect((await call("event", { eventId: "item-1" })).status).toBe(400);
+      expect(
+        (
+          await call("create-event", {
+            calendarId: "cal-1",
+            event: {
+              allDay: false,
+              end: "2026-10-22T15:00:00-03:00",
+              recurrence: "none",
+              start: "2026-10-22T16:00:00-03:00",
+              timeZone: "America/Sao_Paulo",
+              title: "Inverted",
+            },
+          })
+        ).status
+      ).toBe(400);
+      expect(addon.events).not.toHaveBeenCalled();
+      expect(addon.createEvent).not.toHaveBeenCalled();
+      expect((await call("request-access", {})).status).toBe(404);
+      expect(addon.requestAccess).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("returns calendar_access_denied without full access", async () => {
+    const { addon, call, server } = await openCalendarControl({
+      accessStatus: () => "notDetermined",
+    });
+    try {
+      expect(await call("events", { calendarIds: [], ...week })).toEqual({
+        status: 200,
+        body: { error: "calendar_access_denied" },
+      });
+      expect(await call("calendars", {})).toEqual({
+        status: 200,
+        body: { error: "calendar_access_denied" },
+      });
+      expect(addon.events).not.toHaveBeenCalled();
+      expect(addon.requestAccess).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("logs failures without event text", async () => {
+    const consoleSpies = (["log", "info", "warn", "error", "debug"] as const).map(
+      (level) => vi.spyOn(console, level).mockImplementation(() => undefined)
+    );
+    const { call, logger, server } = await openCalendarControl({
+      updateEvent: async () => {
+        throw new Error(`EventKit could not save ${secretTitle} at ${secretLocation}`);
+      },
+      createEvent: async () => ({ error: "calendar_read_only" }),
+    });
+    try {
+      expect(
+        await call("update-event", {
+          eventId: "item-1",
+          occurrenceDate: null,
+          patch: {
+            title: secretTitle,
+            location: secretLocation,
+            description: secretNotes,
+          },
+          scope: "instance",
+        })
+      ).toEqual({ status: 200, body: { error: "calendar_unavailable" } });
+      expect(
+        await call("create-event", {
+          calendarId: "cal-1",
+          event: {
+            allDay: false,
+            description: secretNotes,
+            end: "2026-10-22T16:00:00-03:00",
+            location: secretLocation,
+            recurrence: "none",
+            start: "2026-10-22T15:00:00-03:00",
+            timeZone: "America/Sao_Paulo",
+            title: secretTitle,
+          },
+        })
+      ).toEqual({ status: 200, body: { error: "calendar_read_only" } });
+      expect(logger.warn).toHaveBeenCalledTimes(2);
+      const logged = JSON.stringify([
+        logger.warn.mock.calls,
+        ...consoleSpies.map((spy) => spy.mock.calls),
+      ]);
+      for (const secret of [secretTitle, secretLocation, secretNotes]) {
+        expect(logged).not.toContain(secret);
+      }
+    } finally {
+      await server.close();
+      for (const spy of consoleSpies) spy.mockRestore();
     }
   });
 });
