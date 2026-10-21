@@ -32,6 +32,19 @@ defmodule SalixEnv.ControlRuntimeAvailabilityTest do
     assert Control.environment_json(missing)["name"] == "Default workspace Connector"
   end
 
+  test "the Mac Calendar capability survives the public device projection" do
+    project = fn value ->
+      environment("connected", runtime(%{}))
+      |> put_in(["meta", "capabilities"], %{"calendar" => value, "device_access" => true})
+      |> Control.environment_json()
+      |> Map.fetch!("capabilities")
+    end
+
+    assert project.(true) == %{"calendar" => true}
+    assert project.(false) == %{"calendar" => false}
+    assert project.("yes") == %{}
+  end
+
   test "Android profile metadata keeps bounded public fields" do
     projected =
       environment("connected", runtime(%{}))
