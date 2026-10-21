@@ -51,6 +51,11 @@ change notices into one `revision` step per 500 ms.
 
 ## Identity
 
+- `sourceTitle` is the account title. macOS titles a Google account "Google"
+  by default. When a CalDAV account title is not an e-mail and one of its
+  calendars is titled with an e-mail (Google's primary calendar), that e-mail
+  is the `sourceTitle` of all calendars in the account. The Agenda hides those
+  calendars at first when the same Google account is connected through Composio.
 - `eventId` is the series' `calendarItemIdentifier`. `eventIdentifier` is not
   used, because it changes on edit and differs between stores.
 - A detached occurrence gets a `calendarItemIdentifier` of its own (seen on

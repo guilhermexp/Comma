@@ -466,13 +466,41 @@ EKEvent *Resolve(NSDictionary *request) {
 
 // --- Mapping --------------------------------------------------------------
 
-NSDictionary *CalendarJson(EKCalendar *calendar, EKCalendar *defaultCalendar) {
+BOOL IsEmail(NSString *text) {
+  NSRange at = [text rangeOfString:@"@"];
+  return at.location != NSNotFound && at.location > 0 && at.location + 1 < text.length &&
+         [text rangeOfCharacterFromSet:NSCharacterSet.whitespaceCharacterSet].location == NSNotFound &&
+         [[text substringFromIndex:at.location + 1] containsString:@"."];
+}
+
+// The account a calendar belongs to. macOS titles a Google account "Google"
+// by default, but its primary calendar is titled with the account's e-mail,
+// which the Agenda needs to hide calendars it also reads through Composio.
+NSDictionary<NSString *, NSString *> *SourceTitles(NSArray<EKCalendar *> *calendars) {
+  NSMutableDictionary<NSString *, NSString *> *titles = [NSMutableDictionary dictionary];
+  for (EKCalendar *calendar in calendars) {
+    EKSource *source = calendar.source;
+    if (source.sourceIdentifier == nil) continue;
+    if (titles[source.sourceIdentifier] == nil) titles[source.sourceIdentifier] = source.title ?: @"";
+    if (source.sourceType == EKSourceTypeCalDAV && !IsEmail(source.title ?: @"") &&
+        IsEmail(calendar.title ?: @"") && !IsEmail(titles[source.sourceIdentifier])) {
+      titles[source.sourceIdentifier] = calendar.title;
+    }
+  }
+  return titles;
+}
+
+NSDictionary *CalendarJson(EKCalendar *calendar, EKCalendar *defaultCalendar,
+                           NSDictionary<NSString *, NSString *> *sourceTitles) {
+  NSString *sourceTitle =
+      (calendar.source.sourceIdentifier ? sourceTitles[calendar.source.sourceIdentifier] : nil)
+          ?: calendar.source.title;
   return @{
     @"color" : ColorHex(calendar.color),
     @"id" : calendar.calendarIdentifier,
     @"isDefault" : @([calendar.calendarIdentifier
         isEqualToString:defaultCalendar.calendarIdentifier ?: @""]),
-    @"sourceTitle" : Clip(calendar.source.title ?: @"", 1024),
+    @"sourceTitle" : Clip(sourceTitle ?: @"", 1024),
     @"sourceType" : SourceType(calendar.source.sourceType),
     @"title" : Clip(calendar.title ?: @"", 1024),
     @"writable" : @(Writable(calendar)),
@@ -668,9 +696,10 @@ napi_value Calendars(napi_env env, napi_callback_info) {
     NSArray<EKCalendar *> *calendars = FetchCalendars();
     if (calendars == nil) return done(ErrorJson(kUnavailable));
     EKCalendar *defaultCalendar = Store().defaultCalendarForNewEvents;
+    NSDictionary<NSString *, NSString *> *sourceTitles = SourceTitles(calendars);
     NSMutableArray *result = [NSMutableArray arrayWithCapacity:calendars.count];
     for (EKCalendar *calendar in calendars) {
-      [result addObject:CalendarJson(calendar, defaultCalendar)];
+      [result addObject:CalendarJson(calendar, defaultCalendar, sourceTitles)];
     }
     done(Json(@{@"calendars" : result}));
   });
