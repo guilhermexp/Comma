@@ -559,9 +559,33 @@ NSString *SaveErrorCode(NSError *error) {
 
 // --- Writing --------------------------------------------------------------
 
+// Moving "all" from a later occurrence: the series' first date moves by the
+// days that occurrence moved and takes its new time of day and duration, as
+// the Google source does. The first date never becomes the dragged one.
+NSDate *SeriesStart(NSDate *seriesStart, NSDate *from, NSDate *to, NSTimeZone *zone) {
+  NSCalendar *calendar = CalendarIn(zone);
+  NSInteger days = [calendar components:NSCalendarUnitDay
+                               fromDate:[calendar startOfDayForDate:from]
+                                 toDate:[calendar startOfDayForDate:to]
+                                options:0]
+                       .day;
+  NSDate *day = [calendar dateByAddingUnit:NSCalendarUnitDay
+                                     value:days
+                                    toDate:[calendar startOfDayForDate:seriesStart]
+                                   options:0];
+  NSDateComponents *time = [calendar components:NSCalendarUnitHour | NSCalendarUnitMinute |
+                                                NSCalendarUnitSecond
+                                       fromDate:to];
+  return [calendar dateBySettingHour:time.hour
+                              minute:time.minute
+                              second:time.second
+                              ofDate:day
+                             options:0];
+}
+
 // Applies the fields an input or patch names. With `shiftFrom`, new bounds
-// move the target by how far they move that occurrence, so editing "all"
-// from a later occurrence keeps the series anchored on its first one.
+// move the target as SeriesStart describes, so editing "all" from a later
+// occurrence keeps the series anchored on its first one.
 BOOL ApplyFields(EKEvent *event, NSDictionary *fields, EKEvent *shiftFrom, BOOL applyRecurrence) {
   if (HasField(fields, @"title")) event.title = StringField(fields, @"title") ?: @"";
   if (HasField(fields, @"location")) event.location = StringField(fields, @"location");
@@ -579,13 +603,16 @@ BOOL ApplyFields(EKEvent *event, NSDictionary *fields, EKEvent *shiftFrom, BOOL 
   // An exclusive all-day end becomes the last day EventKit stores.
   if (allDay && end != nil) end = [end dateByAddingTimeInterval:-1];
 
-  if (shiftFrom != nil) {
-    NSDate *newStart = start;
-    NSDate *newEnd = end;
-    if (start != nil) newStart = [event.startDate dateByAddingTimeInterval:[start timeIntervalSinceDate:shiftFrom.startDate]];
-    if (end != nil) newEnd = [event.endDate dateByAddingTimeInterval:[end timeIntervalSinceDate:shiftFrom.endDate]];
-    start = newStart;
-    end = newEnd;
+  if (shiftFrom != nil && start != nil) {
+    NSTimeZone *zone = allDay ? nil
+                              : [NSTimeZone timeZoneWithName:StringField(fields, @"timeZone") ?: @""]
+                                    ?: event.timeZone;
+    NSTimeInterval duration = end != nil ? [end timeIntervalSinceDate:start]
+                                         : [event.endDate timeIntervalSinceDate:event.startDate];
+    start = SeriesStart(event.startDate, shiftFrom.startDate, start, zone);
+    end = [start dateByAddingTimeInterval:duration];
+  } else if (shiftFrom != nil && end != nil) {
+    end = [event.endDate dateByAddingTimeInterval:[end timeIntervalSinceDate:shiftFrom.endDate]];
   }
   if (start != nil) event.startDate = start;
   if (end != nil) event.endDate = end;
