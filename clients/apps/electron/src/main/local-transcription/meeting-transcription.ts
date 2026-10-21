@@ -185,6 +185,23 @@ export class MeetingTranscriptionService implements MeetingTranscriptionProvider
     return selected;
   }
 
+  /**
+   * The helper's last cloud failure that no local model took over, if it
+   * came at or after `since` while a cloud provider is selected. A meeting
+   * Task's audio.transcribe reaches the helper through the backend, so Main
+   * learns the reason only here.
+   */
+  async cloudFailureSince(
+    since: Date
+  ): Promise<{ reason: string; provider: StoredCloudProvider["kind"] } | undefined> {
+    const failure = (await this.#helper.health())?.provider?.lastFailure;
+    // The helper reports whole seconds.
+    if (!failure || Date.parse(failure.at) < Math.floor(since.getTime() / 1000) * 1000)
+      return undefined;
+    const provider = this.cloudFailed(failure.reason);
+    return provider ? { reason: failure.reason, provider } : undefined;
+  }
+
   /** The notice a just-saved recording needs, if any (D8). */
   async recordingNotice(): Promise<MeetingTranscriptionNotice["kind"] | undefined> {
     const state = await this.state();

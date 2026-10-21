@@ -5,16 +5,16 @@ import Testing
 
 /// A cloud provider that returns the fake engine's words, or fails.
 final class FakeCloud: CloudTranscribing {
-    let failure: CloudFailure?
+    let failure: OSAllocatedUnfairLock<CloudFailure?>
     let calls = OSAllocatedUnfairLock<[CloudProvider]>(initialState: [])
 
-    init(failing failure: CloudFailure? = nil) { self.failure = failure }
+    init(failing failure: CloudFailure? = nil) { self.failure = OSAllocatedUnfairLock(initialState: failure) }
 
     func transcribe(audio: URL, provider: CloudProvider, workDirectory: URL, deadline: ContinuousClock.Instant)
         async throws -> JoinedTranscript
     {
         calls.withLock { $0.append(provider) }
-        if let failure { throw failure }
+        if let failure = failure.withLock({ $0 }) { throw failure }
         return JoinedTranscript(
             duration: 3.1,
             words: [
@@ -247,6 +247,35 @@ private final class LogCapture: Sendable {
     #expect(error["provider"] as? String == "groq")
     #expect(error["message"] is String)
     #expect(harness.engine.state.withLock { $0.calls } == 0)
+    await harness.stop()
+}
+
+@Test func healthKeepsTheLastCloudFailureNoLocalModelTookOver() async throws {
+    let cloud = FakeCloud(failing: .quota)
+    let harness = try await Harness(installed: [.diarization], cloud: cloud)
+    try await useGroq(harness)
+    let before = Date()
+
+    #expect(try await transcribe(harness.port).status == 502)
+
+    let provider = try #require(try await get(harness.port, "/health").json?["provider"] as? NSDictionary)
+    let failure = try #require(provider["lastFailure"] as? NSDictionary)
+    #expect(failure["reason"] as? String == "cloud_quota")
+    #expect(failure["provider"] as? String == "groq")
+    let at = try #require((failure["at"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) })
+    #expect(at.timeIntervalSince(before) > -1)
+    #expect(!String(describing: provider).contains(testKey))
+
+    // The next cloud job that succeeds clears it.
+    cloud.failure.withLock { $0 = nil }
+    #expect(try await transcribe(harness.port).status == 200)
+    #expect((try await get(harness.port, "/health").json?["provider"] as? NSDictionary)?["lastFailure"] == nil)
+
+    // So does a new provider configuration.
+    cloud.failure.withLock { $0 = .unreachable }
+    #expect(try await transcribe(harness.port).status == 502)
+    try await useGroq(harness)
+    #expect((try await get(harness.port, "/health").json?["provider"] as? NSDictionary)?["lastFailure"] == nil)
     await harness.stop()
 }
 

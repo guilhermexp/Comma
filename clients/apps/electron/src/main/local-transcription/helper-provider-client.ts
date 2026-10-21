@@ -6,12 +6,20 @@ import type { HelperVerifyAnswer } from "./provider-verification";
 export const cloudMaxUploadBytes = 24_000_000;
 
 // Contract C6: GET /health extends C2 with the provider and the components.
+// `lastFailure` is the last cloud failure no local model took over (a 502).
 const healthSchema = z.object({
   busy: z.boolean().optional(),
   provider: z
     .object({
       kind: z.enum(["local", "groq", "openai_compatible"]),
       configured: z.boolean(),
+      lastFailure: z
+        .object({
+          reason: z.string().regex(/^cloud_[a-z_]{1,40}$/),
+          provider: z.enum(["groq", "openai_compatible"]),
+          at: z.string().datetime(),
+        })
+        .optional(),
     })
     .optional(),
 });

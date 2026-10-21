@@ -120,9 +120,22 @@ public enum ProviderSetting: Sendable, Equatable {
 
 actor ProviderStore {
     private(set) var setting: ProviderSetting?
+    /// The last cloud failure no local model took over (a 502), until a
+    /// cloud job succeeds or the app sends a provider again. The app reads
+    /// it from /health for jobs it did not send, such as a meeting Task's.
+    private(set) var lastFailure: (provider: ProviderKind, failure: CloudFailure, at: Date)?
 
     func set(_ setting: ProviderSetting) {
         self.setting = setting
+        lastFailure = nil
+    }
+
+    func failed(_ provider: ProviderKind, _ failure: CloudFailure) {
+        lastFailure = (provider, failure, Date())
+    }
+
+    func cloudSucceeded() {
+        lastFailure = nil
     }
 }
 
@@ -269,10 +282,17 @@ private struct Exchange {
         case ("GET", "/health"):
             let installed = configuration.store.installedComponents
             let setting = await providers.setting
+            var provider: [String: Any] = ["kind": (setting?.kind ?? .local).rawValue, "configured": setting != nil]
+            if let last = await providers.lastFailure {
+                provider["lastFailure"] = [
+                    "reason": last.failure.rawValue, "provider": last.provider.rawValue,
+                    "at": ISO8601DateFormatter().string(from: last.at),
+                ]
+            }
             return .json(200, [
                 "status": "ok", "busy": await queue.isBusy,
                 "model": installed.contains(.asr) ? "ready" : "not_installed",
-                "provider": ["kind": (setting?.kind ?? .local).rawValue, "configured": setting != nil],
+                "provider": provider,
                 "components": ["asr": installed.contains(.asr), "diarization": installed.contains(.diarization)],
             ])
         case ("POST", "/v1/audio/transcriptions"):
@@ -402,6 +422,7 @@ private struct Exchange {
                 if let refusal = Self.refusal(setting, store: configuration.store) { throw refusal }
                 return try await Self.run(setting, audio: audioURL, directory: directory, configuration: configuration)
             }
+            if case .cloud = outcome { await providers.cloudSucceeded() }
             return Self.render(outcome, verbose: format == "verbose_json", localModel: localModel)
         } catch is TooLarge {
             return .error(413, "file_too_large")
@@ -412,6 +433,7 @@ private struct Exchange {
         } catch is NotReady {
             return notReady
         } catch let error as CloudFailed {
+            await providers.failed(error.provider, error.failure)
             return .json(502, [
                 "error": [
                     "code": "cloud_asr_failed", "reason": error.failure.rawValue, "provider": error.provider.rawValue,

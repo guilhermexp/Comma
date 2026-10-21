@@ -364,6 +364,11 @@ export interface ElectronMainRuntimeDeps {
     | (MeetingTranscriptionProvider & {
         recordingNotice(): Promise<MeetingTranscriptionNotice["kind"] | undefined>;
         cloudFailed(reason: string): "groq" | "openai_compatible" | undefined;
+        cloudFailureSince(
+          since: Date
+        ): Promise<
+          { reason: string; provider: "groq" | "openai_compatible" } | undefined
+        >;
         ensureDelivered(): Promise<boolean>;
       })
     | undefined;
@@ -1078,6 +1083,24 @@ export async function createElectronMainContext(
     const kind = await deps.meetingTranscription?.recordingNotice();
     if (kind) noticeRecording(kind, recording);
   };
+  // A meeting Task's audio.transcribe reaches the helper through the backend;
+  // when the Task ends without outputs, ask the helper whether the cloud
+  // failed with no local model to take over, and say so with Try again.
+  const noticeMeetingCloudFailure = async (
+    key: string,
+    recording: AudioCaptureRecording
+  ) => {
+    let since: number;
+    try {
+      since = meetingTasks.archiveTime(key);
+    } catch {
+      return;
+    }
+    const failure = await deps.meetingTranscription
+      ?.cloudFailureSince(new Date(since))
+      .catch(() => undefined);
+    if (failure) noticeRecording("cloud_failed", recording, failure);
+  };
   const recordingTranscription = new RecordingTranscriptionService(
     recordingDrive,
     () => {
@@ -1122,7 +1145,11 @@ export async function createElectronMainContext(
         : undefined;
     },
     runOwned: async (handler) => sessionAdmissionGuard.runOwned(handler),
-    publish: (key, state) => meetingRecorder?.acceptTask(key, state),
+    publish: (key, state) => {
+      meetingRecorder?.acceptTask(key, state);
+      if (state.archive === "error" && state.recording)
+        void noticeMeetingCloudFailure(key, state.recording);
+    },
     resolveRecovery: async (name) => {
       if (!deps.resolveMeetingRecovery)
         throw new Error(

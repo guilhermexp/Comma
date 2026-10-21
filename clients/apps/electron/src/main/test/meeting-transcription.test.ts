@@ -140,6 +140,12 @@ async function fixture(
         headers: { authorization: `Bearer ${token}` },
       })
     ).json()) as { provider: Record<string, unknown>; configured: boolean };
+  const failCloud = async (failure: Record<string, string>) =>
+    fetch(`${url}/fake/last-failure`, {
+      method: "PUT",
+      headers: { authorization: `Bearer ${token}` },
+      body: JSON.stringify(failure),
+    });
   const processes = () =>
     readFileSync(argvLog, "utf8")
       .trim()
@@ -155,11 +161,15 @@ async function fixture(
     helperLog,
     states,
     delivered,
+    failCloud,
     processes,
     startHelper,
     stopHelper,
   };
 }
+
+/** The helper's whole-second ISO-8601 time. */
+const at = (date: Date) => date.toISOString().replace(/\.\d{3}Z$/, "Z");
 
 const groq = { kind: "groq", model: "whisper-large-v3", apiKey: groqKey } as const;
 
@@ -415,6 +425,41 @@ describe("meeting transcription provider (openspec add-cloud-meeting-asr)", () =
     expect(service.cloudFailed("cloud_quota")).toBeUndefined();
     await service.setProvider(groq);
     expect(service.cloudFailed("cloud_quota")).toBe("groq");
+  });
+
+  it("reports the helper's last cloud failure since a time, for a meeting Task's job", async () => {
+    const { service, failCloud } = await fixture({
+      fetch: groqFetch({ [groqKey]: 200 }),
+    });
+    await service.setProvider(groq);
+    const since = new Date(Date.now() - 1_000);
+    expect(await service.cloudFailureSince(since)).toBeUndefined();
+
+    await failCloud({ reason: "cloud_quota", provider: "groq", at: at(new Date()) });
+    expect(await service.cloudFailureSince(since)).toEqual({
+      reason: "cloud_quota",
+      provider: "groq",
+    });
+    // A failure from before the recording is not this recording's.
+    expect(
+      await service.cloudFailureSince(new Date(Date.now() + 60_000))
+    ).toBeUndefined();
+
+    // A revoked key also marks the provider in Settings.
+    await failCloud({
+      reason: "cloud_auth_rejected",
+      provider: "groq",
+      at: at(new Date()),
+    });
+    expect(await service.cloudFailureSince(since)).toMatchObject({
+      reason: "cloud_auth_rejected",
+    });
+    expect((await service.state()).reason).toBe("key_rejected");
+
+    // With Local selected, the cloud is not the cause.
+    await service.setProvider({ kind: "local" });
+    await failCloud({ reason: "cloud_quota", provider: "groq", at: at(new Date()) });
+    expect(await service.cloudFailureSince(since)).toBeUndefined();
   });
 
   it("returns to Local and forgets the key when it is deleted", async () => {

@@ -130,11 +130,14 @@ const cloudBody = (body) =>
 
 // C6: the provider lives in memory only, so a restarted helper reports
 // `configured: false` until Main sends it again. GET /fake/provider is this
-// fake's own probe, so tests can see what Main delivered.
+// fake's own probe, so tests can see what Main delivered. PUT
+// /fake/last-failure sets the 502 failure /health reports, as the real
+// helper does after a job that no local model took over.
 if (command === "serve") {
   const token = readFileSync(option("--token-file"), "utf8").trim();
   let provider = { kind: "local" };
   let configured = false;
+  let lastFailure;
   const server = createServer(async (request, response) => {
     let text = "";
     for await (const chunk of request) text += chunk;
@@ -143,7 +146,11 @@ if (command === "serve") {
         status: "ok",
         busy: Boolean(process.env.FAKE_TRANSCRIBER_BUSY),
         model: installed("asr") ? "ready" : "not_installed",
-        provider: { kind: provider.kind, configured },
+        provider: {
+          kind: provider.kind,
+          configured,
+          ...(lastFailure ? { lastFailure } : {}),
+        },
         components: { asr: installed("asr"), diarization: installed("diarization") },
       });
     if (request.headers.authorization !== `Bearer ${token}`)
@@ -159,6 +166,7 @@ if (command === "serve") {
         return json(response, 400, { error: { code: "bad_request" } });
       provider = body;
       configured = true;
+      lastFailure = undefined;
       response.writeHead(204);
       return response.end();
     }
@@ -172,6 +180,11 @@ if (command === "serve") {
           ? { ok: true }
           : { ok: false, reason: "cloud_auth_rejected" }
       );
+    }
+    if (request.method === "PUT" && request.url === "/fake/last-failure") {
+      lastFailure = body;
+      response.writeHead(204);
+      return response.end();
     }
     if (request.method === "GET" && request.url === "/fake/provider")
       return json(response, 200, { provider, configured });
