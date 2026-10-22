@@ -389,6 +389,11 @@ After a branch is merged, switch its checkout back to the main branch and reuse
 that directory for a new PR. If no additional parallel PR needs a worktree,
 remove the clean worktree. Preserve uncommitted changes and work owned by others.
 
+## Contexto por área
+
+- [`clients/apps/electron/native/macos/CommaTranscriber/AGENTS.md`](clients/apps/electron/native/macos/CommaTranscriber/AGENTS.md):
+  meeting transcription helper (local Parakeet and cloud providers).
+
 ## Commands
 
 ```sh

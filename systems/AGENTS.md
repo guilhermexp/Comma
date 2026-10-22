@@ -29,6 +29,15 @@ Check `ConnectorAccess` before managed credential provisioning and connector use
 not only tool disclosure. Keep personal Composio grants in `ComposioAccess`.
 See [the account access contract](../docs/architecture/DOMAIN_CONCEPTS.md#router-administration-of-workers).
 
+## Agent calendar tools
+
+The agent `calendar.*` tools reach the owner's Google accounts and Mac only
+through the `SalixAgent.CalendarSources` port (`CommaWeb.AgentCalendarSources`),
+without per-agent Composio grants. Writes need the owner's sealed principal from
+the current run. Keep event titles, locations and descriptions out of logs and
+telemetry, including diagnostic tool logs. See
+[the Agenda concept](../docs/architecture/DOMAIN_CONCEPTS.md#agenda-event-projection).
+
 ## Agent event archive
 
 Everything the agent loop receives or sends must attempt encrypted archival at
