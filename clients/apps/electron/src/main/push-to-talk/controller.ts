@@ -26,6 +26,7 @@ import type {
   PushToTalkPillState,
   PushToTalkRect,
   PushToTalkSettings,
+  PushToTalkStroke,
 } from "./types";
 
 /** Shorter recordings are taps: discarded without transcribing. */
@@ -302,7 +303,7 @@ export class PushToTalkController {
     let context: PushToTalkScreenContext | undefined;
     if (turn.screen?.status === "captured") {
       try {
-        context = turn.screen.finalize(turn.region);
+        context = turn.screen.finalize(turn.region && rectStroke(turn.region));
       } catch (error) {
         this.#log(`Push-to-talk screenshot encoding failed: ${message(error)}`);
       }
@@ -411,13 +412,26 @@ function errorState(
   return { kind: "error", code, ...(transcript ? { transcript } : {}) };
 }
 
+/** The marked rectangle as the closed stroke the capture takes. */
+function rectStroke(rect: PushToTalkRect): PushToTalkStroke {
+  const right = rect.x + rect.width;
+  const bottom = rect.y + rect.height;
+  return [
+    { x: rect.x, y: rect.y },
+    { x: right, y: rect.y },
+    { x: right, y: bottom },
+    { x: rect.x, y: bottom },
+    { x: rect.x, y: rect.y },
+  ];
+}
+
 function screenshotContext(context: PushToTalkScreenContext): PushToTalkMessageScreen {
   return {
     kind: "screenshot",
     width: context.width,
     height: context.height,
     cursor: context.cursor,
-    ...(context.region ? { region: context.region } : {}),
+    ...(context.strokeBounds ? { strokeBounds: context.strokeBounds } : {}),
   };
 }
 

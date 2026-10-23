@@ -8,7 +8,7 @@ export type PushToTalkMessageScreen =
       width: number;
       height: number;
       cursor: PushToTalkPoint;
-      region?: PushToTalkRect;
+      strokeBounds?: PushToTalkRect;
     }
   // No screenshot: display-relative points of the cursor's display.
   | {
@@ -35,15 +35,17 @@ export function composePushToTalkMessage(input: {
   if (screen?.kind === "screenshot") {
     lines.push(`- Screenshot: ${screen.width} × ${screen.height} px`);
     lines.push(`- Cursor: (${screen.cursor.x}, ${screen.cursor.y}) px`);
-    if (screen.region) {
-      const { x, y, width, height } = screen.region;
-      lines.push(`- Marked area: ${x}, ${y}, ${width} × ${height} px`);
+    if (screen.strokeBounds) {
+      const { x, y, width, height } = screen.strokeBounds;
+      lines.push(`- Stroke area: ${x}, ${y}, ${width} × ${height} px`);
+      lines.push(
+        "- The screenshot has my stroke drawn over it; the detail image is the stroke area at full resolution."
+      );
+    } else {
+      lines.push(
+        "- The detail image is the region around the cursor at full resolution."
+      );
     }
-    lines.push(
-      `- The detail image is ${
-        screen.region ? "the marked area" : "the region around the cursor"
-      } at full resolution.`
-    );
   } else if (screen?.kind === "pointer") {
     lines.push("- No screenshot was included.");
     lines.push(

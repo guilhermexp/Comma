@@ -4,7 +4,7 @@ import { composePushToTalkMessage, speakableText } from "../push-to-talk/message
 const header = "Screen context (captured when I pressed the shortcut):";
 
 describe("composePushToTalkMessage", () => {
-  it("describes the screenshot, the cursor and the marked area in screenshot pixels", () => {
+  it("describes the screenshot, the cursor and the stroke area in screenshot pixels", () => {
     expect(
       composePushToTalkMessage({
         transcript: "What does this chart show?",
@@ -14,7 +14,7 @@ describe("composePushToTalkMessage", () => {
           width: 2560,
           height: 1655,
           cursor: { x: 830, y: 741 },
-          region: { x: 100, y: 200, width: 300, height: 400 },
+          strokeBounds: { x: 100, y: 200, width: 300, height: 400 },
         },
       })
     ).toBe(
@@ -25,20 +25,20 @@ describe("composePushToTalkMessage", () => {
         "- Frontmost app: Safari",
         "- Screenshot: 2560 × 1655 px",
         "- Cursor: (830, 741) px",
-        "- Marked area: 100, 200, 300 × 400 px",
-        "- The detail image is the marked area at full resolution.",
+        "- Stroke area: 100, 200, 300 × 400 px",
+        "- The screenshot has my stroke drawn over it; the detail image is the stroke area at full resolution.",
       ].join("\n")
     );
   });
 
-  it("says the detail is around the cursor when no area was marked", () => {
+  it("says the detail is around the cursor when nothing was drawn", () => {
     const text = composePushToTalkMessage({
       transcript: "What does this button do?",
       frontmostApp: null,
       screen: { kind: "screenshot", width: 1440, height: 900, cursor: { x: 5, y: 6 } },
     });
     expect(text).not.toContain("Frontmost app");
-    expect(text).not.toContain("Marked area");
+    expect(text).not.toContain("Stroke area");
     expect(text).toContain(
       "- The detail image is the region around the cursor at full resolution."
     );

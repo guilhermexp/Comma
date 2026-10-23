@@ -20,6 +20,7 @@ import type {
   PushToTalkPillState,
   PushToTalkRect,
   PushToTalkSettings,
+  PushToTalkStroke,
 } from "../push-to-talk/types";
 import { FakeClock } from "./support/fake-clock";
 
@@ -145,6 +146,15 @@ const screenshot: PushToTalkScreenContext = {
   ],
 };
 
+/** The stroke's box as the capture reports it, at 1 px per point. */
+function strokeBox(stroke: PushToTalkStroke) {
+  const xs = stroke.map((point) => point.x);
+  const ys = stroke.map((point) => point.y);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+}
+
 function setup(
   options: {
     settings?: Partial<PushToTalkSettings>;
@@ -160,9 +170,9 @@ function setup(
   const hotkey = new FakeHotkey();
   const overlay = new FakeOverlay(log);
   const powerMonitor = new FakePowerMonitor();
-  const finalize = vi.fn((region: PushToTalkRect | null) => ({
+  const finalize = vi.fn((stroke: PushToTalkStroke | null) => ({
     ...screenshot,
-    ...(region ? { region } : {}),
+    ...(stroke?.length ? { strokeBounds: strokeBox(stroke) } : {}),
   }));
   const recordings: { stop: ReturnType<typeof vi.fn> }[] = [];
   let wavCount = 0;
@@ -350,9 +360,16 @@ describe("PushToTalkController", () => {
     clock.advance(2_000);
     hotkey.release();
     await flush();
-    expect(finalize).toHaveBeenCalledWith({ x: 10, y: 20, width: 300, height: 400 });
+    // The marked rectangle goes to the capture as a closed stroke.
+    expect(finalize).toHaveBeenCalledWith([
+      { x: 10, y: 20 },
+      { x: 310, y: 20 },
+      { x: 310, y: 420 },
+      { x: 10, y: 420 },
+      { x: 10, y: 20 },
+    ]);
     const [input] = deps.delivery.send.mock.calls[0] as unknown as [{ text: string }];
-    expect(input.text).toContain("- Marked area: 10, 20, 300 × 400 px");
+    expect(input.text).toContain("- Stroke area: 10, 20, 300 × 400 px");
   });
 
   // Toque acidental

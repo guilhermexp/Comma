@@ -1535,6 +1535,7 @@ function createPushToTalkDeps() {
       getDisplayNearestPoint: (point) => screen.getDisplayNearestPoint(point),
       getSources: (options) => desktopCapturer.getSources(options),
       mediaAccessStatus: () => systemPreferences.getMediaAccessStatus("screen"),
+      createFromBitmap: (bitmap, size) => nativeImage.createFromBitmap(bitmap, size),
     }),
     speaker: {
       speak: (text: string) => {
