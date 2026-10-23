@@ -1472,6 +1472,13 @@ function registerNativeEventSources(eventBus: NativeEventBus) {
   });
 }
 
+// Comma's Screen Recording for the Talk to agent screenshot. macOS 15+ says
+// `denied` before Comma ever asked; the helper's request lists Comma (D11).
+const pushToTalkScreenRecording = {
+  status: () => systemPreferences.getMediaAccessStatus("screen"),
+  request: () => sideChat.requestPushToTalkScreenRecording(),
+};
+
 // Talk to agent cursor companion (macOS). Nothing is created until a turn shows it.
 const pushToTalkOverlay = new PushToTalkOverlayWindow({
   createWindow: (bounds) => {
@@ -1502,6 +1509,7 @@ const pushToTalkOverlay = new PushToTalkOverlayWindow({
   openMeetingSettings: () => requestOpenMainAppRoute("/settings?category=meeting"),
   publish: (state) =>
     appContext?.nativeEventBus.emit(pushToTalkOverlayStateChangedEvent, state),
+  requestScreenRecording: () => pushToTalkScreenRecording.request(),
   writeClipboard: (text) => electronClipboard.writeText(text),
 });
 
@@ -1547,6 +1555,7 @@ function createPushToTalkDeps() {
       mediaAccessStatus: () => systemPreferences.getMediaAccessStatus("screen"),
       createFromBitmap: (bitmap, size) => nativeImage.createFromBitmap(bitmap, size),
     }),
+    screenRecording: pushToTalkScreenRecording,
     speaker,
     powerMonitor,
     openSideChat: () => safelyControlSideChat(() => sideChat.open()),

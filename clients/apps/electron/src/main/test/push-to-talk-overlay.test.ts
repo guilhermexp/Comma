@@ -16,7 +16,11 @@ const secondary = { bounds: { height: 1080, width: 1920, x: 1728, y: -200 }, id:
 function createOverlay() {
   const windows: FakeWindow[] = [];
   const published: PushToTalkOverlayState[] = [];
-  const openExternal = vi.fn();
+  const calls: string[] = [];
+  const openExternal = vi.fn((url: string) => void calls.push(`open ${url}`));
+  const requestScreenRecording = vi.fn(
+    async () => void calls.push("request screen recording")
+  );
   const openMeetingSettings = vi.fn();
   const writeClipboard = vi.fn();
   let cursor = { x: 0, y: 0 };
@@ -34,9 +38,11 @@ function createOverlay() {
     openExternal,
     openMeetingSettings,
     publish: (state) => published.push(state),
+    requestScreenRecording,
     writeClipboard,
   });
   return {
+    calls,
     cursorPoint,
     latest: () => published.at(-1)!,
     moveCursor: (point: { x: number; y: number }) => {
@@ -47,6 +53,7 @@ function createOverlay() {
     openMeetingSettings,
     overlay,
     published,
+    requestScreenRecording,
     window: () => windows[0]!,
     windows,
     writeClipboard,
@@ -364,6 +371,24 @@ describe("PushToTalkOverlayWindow", () => {
     );
     await overlay.runAction("copy-transcript", "from the notch");
     expect(writeClipboard).toHaveBeenCalledWith("from the notch");
+  });
+
+  // Gravação de Tela: the request puts Comma in the list the pane shows.
+  it("asks for Screen Recording before opening its pane, and opens it if the request fails", async () => {
+    const { calls, overlay, requestScreenRecording } = createOverlay();
+    await overlay.runAction("open-screen-recording-settings", undefined);
+    expect(calls).toEqual([
+      "request screen recording",
+      "open x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+    ]);
+
+    requestScreenRecording.mockRejectedValueOnce(new Error("helper lost"));
+    await overlay.runAction("open-screen-recording-settings", undefined);
+    expect(calls.at(-1)).toBe(
+      "open x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+    );
+    await overlay.runAction("open-microphone-settings", undefined);
+    expect(requestScreenRecording).toHaveBeenCalledTimes(2);
   });
 
   // Interromper a leitura: the next press's screenshot never shows this turn.

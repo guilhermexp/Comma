@@ -129,6 +129,18 @@ export interface PushToTalkHotkey {
   onHelperRestarted(listener: () => void): () => void;
 }
 
+/**
+ * Comma's Screen Recording permission (D11). On macOS 15+ `status` says
+ * `denied` also before Comma ever asked, and the capture alone never prompts
+ * then; only `request` puts Comma in the Screen Recording list.
+ */
+export interface PushToTalkScreenRecording {
+  /** `systemPreferences.getMediaAccessStatus("screen")`. */
+  status(): string;
+  /** `CGRequestScreenCaptureAccess` in the side chat helper, on Comma's behalf. */
+  request(): Promise<void>;
+}
+
 /** Desktop client settings of the feature (fields of commaClientSettings). */
 export type PushToTalkSettings = {
   enabled: boolean;

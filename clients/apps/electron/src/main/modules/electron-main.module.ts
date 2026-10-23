@@ -43,6 +43,7 @@ import type { PushToTalkTranscriber } from "../push-to-talk/transcriber";
 import type {
   PushToTalkCompanion,
   PushToTalkHotkey,
+  PushToTalkScreenRecording,
   PushToTalkStatus,
 } from "../push-to-talk/types";
 import { defaultLocalRoots } from "./synchronicity/default-root";
@@ -386,6 +387,8 @@ export interface ElectronMainRuntimeDeps {
         /** The turn's scene in the Comma Notch. */
         status: PushToTalkStatus;
         screen: PushToTalkScreenSource;
+        /** Comma's Screen Recording status and its request through the helper. */
+        screenRecording: PushToTalkScreenRecording;
         speaker: PushToTalkSpeaker;
         powerMonitor: PushToTalkPowerMonitor;
         /** Opens Side Chat normally (a click on the caption balloon). */
@@ -802,6 +805,14 @@ export async function createElectronMainContext(
         );
       });
   };
+  // The Talk to agent screenshot's permission, read back like the two above.
+  const refreshPushToTalkScreenRecordingStatus = () => {
+    const screenRecording = deps.pushToTalk?.screenRecording;
+    if (!screenRecording) return;
+    appPreferencesService.setPushToTalkScreenRecordingStatus(
+      screenRecording.status() === "granted" ? "granted" : "denied"
+    );
+  };
   const appPreferencesRuntime: AppPreferencesRuntime = {
     close: () => appPreferencesService.close(),
     initializeClientSettings: (settings) =>
@@ -830,11 +841,28 @@ export async function createElectronMainContext(
       await deps.openExternalUrl(INPUT_MONITORING_SETTINGS_URL);
       return { opened: true };
     },
+    openScreenRecordingSettings: async () => {
+      const screenRecording = deps.pushToTalk?.screenRecording;
+      if (!screenRecording) return { opened: false };
+      // macOS 15+ lists Comma only after this request (D11); the pane is
+      // where the user turns it on.
+      await screenRecording.request().catch((error: unknown) => {
+        deps.logger?.warn(
+          `Screen Recording request failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          { source: "push-to-talk" }
+        );
+      });
+      await deps.openExternalUrl(SCREEN_RECORDING_SETTINGS_URL);
+      return { opened: true };
+    },
     requestNotificationAuthorization: () =>
       appPreferencesService.requestSystemNotificationsAuthorization(),
     state: () => {
       refreshSystemNotificationsStatus();
       refreshKeepAwakeWhenLidClosedStatus();
+      refreshPushToTalkScreenRecordingStatus();
       return appPreferencesService.state();
     },
     update: (patch) => appPreferencesService.update(patch),
@@ -1306,6 +1334,7 @@ export async function createElectronMainContext(
           status: pushToTalkDeps.status,
           openSideChat: pushToTalkDeps.openSideChat,
           screen: pushToTalkDeps.screen,
+          screenRecording: pushToTalkDeps.screenRecording,
           speaker: pushToTalkDeps.speaker,
           powerMonitor: pushToTalkDeps.powerMonitor,
           microphone: new HelperPushToTalkMicrophone({
@@ -1871,6 +1900,8 @@ export function registerNativeBridgeHandlersFromContext(context: ElectronMainCon
 
 const INPUT_MONITORING_SETTINGS_URL =
   "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent";
+const SCREEN_RECORDING_SETTINGS_URL =
+  "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
 
 const unavailablePushToTalkOverlay: PushToTalkOverlayProvider = {
   overlayAction: async () => undefined,

@@ -17,6 +17,7 @@ import {
   appPreferencesOpenInputMonitoringSettingsCapability,
   appPreferencesOpenLoginItemsSettingsCapability,
   appPreferencesOpenNotificationSettingsCapability,
+  appPreferencesOpenScreenRecordingSettingsCapability,
   appPreferencesRequestNotificationAuthorizationCapability,
   appPreferencesStateLeaf,
   appPreferencesUpdateCapability,
@@ -299,6 +300,8 @@ export const generatedNativeCapabilityContracts = {
     appPreferencesOpenLoginItemsSettingsCapability.contract,
   appPreferencesOpenInputMonitoringSettings:
     appPreferencesOpenInputMonitoringSettingsCapability.contract,
+  appPreferencesOpenScreenRecordingSettings:
+    appPreferencesOpenScreenRecordingSettingsCapability.contract,
   appPreferencesOpenNotificationSettings:
     appPreferencesOpenNotificationSettingsCapability.contract,
   appPreferencesRequestNotificationAuthorization:
@@ -521,6 +524,8 @@ export const generatedNativeWebFallbacks = {
     appPreferencesOpenLoginItemsSettingsCapability.webFallback,
   appPreferencesOpenInputMonitoringSettings:
     appPreferencesOpenInputMonitoringSettingsCapability.webFallback,
+  appPreferencesOpenScreenRecordingSettings:
+    appPreferencesOpenScreenRecordingSettingsCapability.webFallback,
   appPreferencesOpenNotificationSettings:
     appPreferencesOpenNotificationSettingsCapability.webFallback,
   appPreferencesRequestNotificationAuthorization:
@@ -756,6 +761,8 @@ export const generatedNativePreloadBindings = {
     openLoginItemsSettings: appPreferencesOpenLoginItemsSettingsCapability.contract,
     openInputMonitoringSettings:
       appPreferencesOpenInputMonitoringSettingsCapability.contract,
+    openScreenRecordingSettings:
+      appPreferencesOpenScreenRecordingSettingsCapability.contract,
     openNotificationSettings: appPreferencesOpenNotificationSettingsCapability.contract,
     requestNotificationAuthorization:
       appPreferencesRequestNotificationAuthorizationCapability.contract,
@@ -1407,6 +1414,16 @@ export const generatedNativeMainBindingsById = {
       appPreferencesOpenInputMonitoringSettingsCapability.sessionAdmission,
     sessionAdmissionRationale:
       appPreferencesOpenInputMonitoringSettingsCapability.sessionAdmissionRationale,
+  },
+  "appPreferences.openScreenRecordingSettings": {
+    contract: appPreferencesOpenScreenRecordingSettingsCapability.contract,
+    id: appPreferencesOpenScreenRecordingSettingsCapability.id,
+    method: "openScreenRecordingSettings",
+    provider: "appPreferences",
+    sessionAdmission:
+      appPreferencesOpenScreenRecordingSettingsCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      appPreferencesOpenScreenRecordingSettingsCapability.sessionAdmissionRationale,
   },
   "appPreferences.openNotificationSettings": {
     contract: appPreferencesOpenNotificationSettingsCapability.contract,
@@ -3146,6 +3163,18 @@ export const generatedNativeCapabilityManifest = [
     sessionAdmissionRationale:
       appPreferencesOpenInputMonitoringSettingsCapability.sessionAdmissionRationale,
     transport: appPreferencesOpenInputMonitoringSettingsCapability.transport,
+  },
+  {
+    bridge: appPreferencesOpenScreenRecordingSettingsCapability.bridge,
+    channel: appPreferencesOpenScreenRecordingSettingsCapability.channel,
+    id: appPreferencesOpenScreenRecordingSettingsCapability.id,
+    payloadClass: appPreferencesOpenScreenRecordingSettingsCapability.payloadClass,
+    permission: appPreferencesOpenScreenRecordingSettingsCapability.permission,
+    sessionAdmission:
+      appPreferencesOpenScreenRecordingSettingsCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      appPreferencesOpenScreenRecordingSettingsCapability.sessionAdmissionRationale,
+    transport: appPreferencesOpenScreenRecordingSettingsCapability.transport,
   },
   {
     bridge: appPreferencesOpenNotificationSettingsCapability.bridge,
@@ -6078,6 +6107,32 @@ export const generatedNativeCapabilityIndex = {
     sessionAdmissionRationale:
       appPreferencesOpenInputMonitoringSettingsCapability.sessionAdmissionRationale,
     transport: appPreferencesOpenInputMonitoringSettingsCapability.transport,
+  },
+  "appPreferences.openScreenRecordingSettings": {
+    artifacts: {
+      contract: "appPreferencesOpenScreenRecordingSettingsContract",
+      handlerType:
+        'NativeCapabilityHandlerTypeMap["appPreferences.openScreenRecordingSettings"]',
+      leaf: "appPreferencesOpenScreenRecordingSettingsCapability",
+      mainBinding:
+        'generatedNativeMainBindingsById["appPreferences.openScreenRecordingSettings"]',
+      mock: "appPreferencesOpenScreenRecordingSettingsCapability.mock",
+      preloadBinding:
+        "generatedNativePreloadBindings.appPreferences.openScreenRecordingSettings",
+      webFallback:
+        "generatedNativeWebFallbacks.appPreferencesOpenScreenRecordingSettings",
+    },
+    bridge: appPreferencesOpenScreenRecordingSettingsCapability.bridge,
+    channel: appPreferencesOpenScreenRecordingSettingsCapability.channel,
+    handler: appPreferencesOpenScreenRecordingSettingsCapability.handler,
+    id: appPreferencesOpenScreenRecordingSettingsCapability.id,
+    payloadClass: appPreferencesOpenScreenRecordingSettingsCapability.payloadClass,
+    permission: appPreferencesOpenScreenRecordingSettingsCapability.permission,
+    sessionAdmission:
+      appPreferencesOpenScreenRecordingSettingsCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      appPreferencesOpenScreenRecordingSettingsCapability.sessionAdmissionRationale,
+    transport: appPreferencesOpenScreenRecordingSettingsCapability.transport,
   },
   "appPreferences.openNotificationSettings": {
     artifacts: {
@@ -10859,6 +10914,8 @@ export const appPreferencesOpenLoginItemsSettingsContract =
   generatedNativeCapabilityContracts.appPreferencesOpenLoginItemsSettings;
 export const appPreferencesOpenInputMonitoringSettingsContract =
   generatedNativeCapabilityContracts.appPreferencesOpenInputMonitoringSettings;
+export const appPreferencesOpenScreenRecordingSettingsContract =
+  generatedNativeCapabilityContracts.appPreferencesOpenScreenRecordingSettings;
 export const appPreferencesOpenNotificationSettingsContract =
   generatedNativeCapabilityContracts.appPreferencesOpenNotificationSettings;
 export const appPreferencesRequestNotificationAuthorizationContract =
@@ -11222,6 +11279,7 @@ export type NativeCapabilityTypeMap = {
   "appPreferences.initializeClientSettings": typeof appPreferencesInitializeClientSettingsCapability;
   "appPreferences.openLoginItemsSettings": typeof appPreferencesOpenLoginItemsSettingsCapability;
   "appPreferences.openInputMonitoringSettings": typeof appPreferencesOpenInputMonitoringSettingsCapability;
+  "appPreferences.openScreenRecordingSettings": typeof appPreferencesOpenScreenRecordingSettingsCapability;
   "appPreferences.openNotificationSettings": typeof appPreferencesOpenNotificationSettingsCapability;
   "appPreferences.requestNotificationAuthorization": typeof appPreferencesRequestNotificationAuthorizationCapability;
   "appPreferences.update": typeof appPreferencesUpdateCapability;
@@ -11581,6 +11639,9 @@ export type GeneratedNativeBridge = {
     >;
     openInputMonitoringSettings: GeneratedNativeCommandBridgeMethod<
       typeof appPreferencesOpenInputMonitoringSettingsCapability
+    >;
+    openScreenRecordingSettings: GeneratedNativeCommandBridgeMethod<
+      typeof appPreferencesOpenScreenRecordingSettingsCapability
     >;
     openNotificationSettings: GeneratedNativeCommandBridgeMethod<
       typeof appPreferencesOpenNotificationSettingsCapability
@@ -12157,6 +12218,11 @@ export function createGeneratedNativePreloadBridge(
       openInputMonitoringSettings: () =>
         helpers.invoke(
           appPreferencesOpenInputMonitoringSettingsCapability.contract,
+          undefined
+        ),
+      openScreenRecordingSettings: () =>
+        helpers.invoke(
+          appPreferencesOpenScreenRecordingSettingsCapability.contract,
           undefined
         ),
       openNotificationSettings: () =>
@@ -12838,6 +12904,8 @@ export function createGeneratedNativeWebBridge(): GeneratedNativeBridge {
         appPreferencesOpenLoginItemsSettingsCapability.webFallback,
       openInputMonitoringSettings: async () =>
         appPreferencesOpenInputMonitoringSettingsCapability.webFallback,
+      openScreenRecordingSettings: async () =>
+        appPreferencesOpenScreenRecordingSettingsCapability.webFallback,
       openNotificationSettings: async () =>
         appPreferencesOpenNotificationSettingsCapability.webFallback,
       requestNotificationAuthorization: async () =>
@@ -13545,6 +13613,9 @@ export function createGeneratedNativeBridgeMock(
       ),
       openInputMonitoringSettings: helpers.command(
         async () => appPreferencesOpenInputMonitoringSettingsCapability.mock
+      ),
+      openScreenRecordingSettings: helpers.command(
+        async () => appPreferencesOpenScreenRecordingSettingsCapability.mock
       ),
       openNotificationSettings: helpers.command(
         async () => appPreferencesOpenNotificationSettingsCapability.mock

@@ -162,12 +162,17 @@ const installTalkToAgentMac = (
   options: {
     inputMonitoring?: "granted" | "denied" | "not-needed";
     openInputMonitoringSettings?: () => Promise<{ opened: boolean }>;
+    screenRecording?: "granted" | "denied";
+    openScreenRecordingSettings?: () => Promise<{ opened: boolean }>;
   } = {}
 ) => {
   const preferences = appPreferencesSchema.parse({
     launchAtLogin: false,
     ...(options.inputMonitoring
       ? { pushToTalkInputMonitoringStatus: options.inputMonitoring }
+      : {}),
+    ...(options.screenRecording
+      ? { pushToTalkScreenRecordingStatus: options.screenRecording }
       : {}),
     showInDock: true,
     showInMenuBar: true,
@@ -179,6 +184,9 @@ const installTalkToAgentMac = (
       update: vi.fn(async () => preferences),
       ...(options.openInputMonitoringSettings
         ? { openInputMonitoringSettings: options.openInputMonitoringSettings }
+        : {}),
+      ...(options.openScreenRecordingSettings
+        ? { openScreenRecordingSettings: options.openScreenRecordingSettings }
         : {}),
     },
     os: "macos",
@@ -1740,6 +1748,50 @@ describe("AppSettingsRoute", () => {
         section.getByRole("button", { name: "Open System Settings" })
       );
       expect(openInputMonitoringSettings).toHaveBeenCalledOnce();
+    });
+
+    // Gravação de Tela: macOS lists Comma only after it asked.
+    it("says screenshots are off without Screen Recording and opens System Settings", async () => {
+      const openScreenRecordingSettings = vi.fn(async () => ({ opened: true }));
+      installTalkToAgentMac(true, {
+        screenRecording: "denied",
+        openScreenRecordingSettings,
+      });
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+      const enabled = section.getByRole("switch", { name: "Talk to agent" });
+      await waitFor(() => expect(enabled).toBeEnabled());
+      // Off: no permission row.
+      expect(section.queryByText("Screen Recording")).not.toBeInTheDocument();
+      await userEvent.click(enabled);
+
+      expect(await section.findByText("Screen Recording")).toBeVisible();
+      expect(section.getByText("Screenshots off")).toBeVisible();
+      await userEvent.click(
+        section.getByRole("button", { name: "Open System Settings" })
+      );
+      expect(openScreenRecordingSettings).toHaveBeenCalledOnce();
+
+      // The screenshot turned off needs no permission.
+      await userEvent.click(section.getByRole("switch", { name: "Send a screenshot" }));
+      await waitFor(() =>
+        expect(section.queryByText("Screen Recording")).not.toBeInTheDocument()
+      );
+    });
+
+    it("shows Screen Recording as allowed without a button once granted", async () => {
+      installTalkToAgentMac(true, { screenRecording: "granted" });
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+      const enabled = section.getByRole("switch", { name: "Talk to agent" });
+      await waitFor(() => expect(enabled).toBeEnabled());
+      await userEvent.click(enabled);
+
+      expect(await section.findByText("Screen Recording")).toBeVisible();
+      expect(section.getByText("Allowed")).toBeVisible();
+      expect(
+        section.queryByRole("button", { name: "Open System Settings" })
+      ).not.toBeInTheDocument();
     });
 
     // Tecla comum

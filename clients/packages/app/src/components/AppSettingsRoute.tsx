@@ -561,6 +561,7 @@ export function AppSettingsRoute({
     openInputMonitoringSettings,
     openLoginItemsSettings,
     openNotificationSettings,
+    openScreenRecordingSettings,
   } = useCommaAppPreferences();
   const airDropName = useAirDropNameSetting({
     pending: appPreferencesPending,
@@ -571,8 +572,12 @@ export function AppSettingsRoute({
     ...(appPreferences?.pushToTalkInputMonitoringStatus
       ? { inputMonitoring: appPreferences.pushToTalkInputMonitoringStatus }
       : {}),
+    ...(appPreferences?.pushToTalkScreenRecordingStatus
+      ? { screenRecording: appPreferences.pushToTalkScreenRecordingStatus }
+      : {}),
     m,
     onOpenInputMonitoringSettings: () => void openInputMonitoringSettings(),
+    onOpenScreenRecordingSettings: () => void openScreenRecordingSettings(),
     onShortcutChange: setPushToTalkShortcut,
     onUpdate: (patch) => void clientSettings.update(patch),
     pending: clientSettingsPending,

@@ -270,6 +270,21 @@ export class AppPreferencesService {
     return snapshot;
   }
 
+  /**
+   * Publishes the Screen Recording readback of the Talk to agent screenshot.
+   * Never persisted; a repeat is no change.
+   */
+  setPushToTalkScreenRecordingStatus(
+    status: NonNullable<AppPreferences["pushToTalkScreenRecordingStatus"]>
+  ) {
+    const refreshed = { ...this.#preferences, pushToTalkScreenRecordingStatus: status };
+    if (samePreferenceValues(refreshed, this.#preferences)) return this.state();
+    this.#preferences = withNextRevision(refreshed, this.#preferences);
+    const snapshot = this.state();
+    this.#onStateChanged(snapshot);
+    return snapshot;
+  }
+
   #applySystemNotificationsStatus(status: SystemNotificationsStatus) {
     const refreshed = withSystemNotificationsStatusReadback(this.#preferences, status);
     if (samePreferenceValues(refreshed, this.#preferences)) return this.state();
@@ -548,6 +563,7 @@ function samePreferenceValues(left: AppPreferences, right: AppPreferences) {
     sameClientSettings(left.clientSettings, right.clientSettings) &&
     left.openCommaShortcutStatus === right.openCommaShortcutStatus &&
     left.pushToTalkInputMonitoringStatus === right.pushToTalkInputMonitoringStatus &&
+    left.pushToTalkScreenRecordingStatus === right.pushToTalkScreenRecordingStatus &&
     left.airDropName === right.airDropName &&
     left.keepAwakeWhenLidClosed === right.keepAwakeWhenLidClosed &&
     left.keepAwakeWhenLidClosedStatus === right.keepAwakeWhenLidClosedStatus &&

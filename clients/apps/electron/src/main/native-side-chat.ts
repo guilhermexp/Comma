@@ -514,6 +514,26 @@ export class NativeSideChatService {
     });
   }
 
+  /**
+   * Asks macOS for Screen Recording through the helper, so TCC attributes it
+   * to Comma and lists Comma in System Settings even where
+   * `getMediaAccessStatus("screen")` already says `denied` (macOS 15+).
+   */
+  requestPushToTalkScreenRecording(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.#sendPushToTalkCommand(
+        (host) =>
+          this.#writePushToTalkCommand(
+            host,
+            { kind: "push-to-talk.request-screen-recording" },
+            "Timed out while requesting Screen Recording.",
+            { reject, resolve }
+          ),
+        reject
+      );
+    });
+  }
+
   onPushToTalkPressed(listener: (event: PushToTalkPressedEvent) => void) {
     this.#pushToTalkPressedListeners.add(listener);
     return () => void this.#pushToTalkPressedListeners.delete(listener);
@@ -1565,7 +1585,8 @@ export class NativeSideChatService {
     host: ChildProcessWithoutNullStreams,
     frame:
       | { binding?: SideChatShortcutRegistrationInput; kind: "push-to-talk.shortcut" }
-      | { kind: "push-to-talk.request-input-monitoring" },
+      | { kind: "push-to-talk.request-input-monitoring" }
+      | { kind: "push-to-talk.request-screen-recording" },
     timeoutMessage: string,
     settlement: { reject: (error: Error) => void; resolve: () => void }
   ) {

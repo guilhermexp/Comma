@@ -883,6 +883,13 @@ const sideChatSurfaceControlVariants = [
     kind: z.literal("push-to-talk.request-input-monitoring"),
     ...sideChatCommandEnvelopeShape,
   }),
+  // Asks macOS for Screen Recording. TCC attributes the request to Comma (the
+  // responsible process), so Comma joins the Screen Recording list; the
+  // helper answers with command.result only.
+  z.object({
+    kind: z.literal("push-to-talk.request-screen-recording"),
+    ...sideChatCommandEnvelopeShape,
+  }),
   // Off: the helper drops the edge gesture and the global shortcut, closes the
   // surface, and ignores open requests until turned on again.
   z.object({

@@ -157,6 +157,14 @@ describe("push-to-talk hotkey over the Side Chat helper", () => {
     ]);
   });
 
+  it("asks the helper for Screen Recording and resolves once it confirmed", async () => {
+    const { registrations, service } = await startFixture("chord");
+    service.start();
+
+    await service.requestPushToTalkScreenRecording();
+    expect(await registrations()).toEqual([{ request: "screen-recording" }]);
+  });
+
   it("stops delivering events to a listener after it unsubscribes", async () => {
     const { service } = await startFixture("crash-while-held");
     const hotkey = createNativePushToTalkHotkey(service);

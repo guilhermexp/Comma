@@ -12,6 +12,7 @@ import { talkToAgentSettingsSection } from "./talkToAgentSettings";
 interface Args {
   enabled: boolean;
   inputMonitoring?: "denied" | "granted";
+  screenRecording?: "denied" | "granted";
   shortcutConflict: boolean;
   sideChatOff: boolean;
 }
@@ -19,6 +20,7 @@ interface Args {
 function TalkToAgentSettings({
   enabled,
   inputMonitoring,
+  screenRecording,
   shortcutConflict,
   sideChatOff,
 }: Args) {
@@ -31,6 +33,7 @@ function TalkToAgentSettings({
     ...(inputMonitoring ? { inputMonitoring } : {}),
     m,
     onOpenInputMonitoringSettings: () => undefined,
+    onOpenScreenRecordingSettings: () => undefined,
     onShortcutChange: (pushToTalkShortcut) =>
       setSettings((current) => ({ ...current, pushToTalkShortcut })),
     onUpdate: (patch) =>
@@ -39,6 +42,7 @@ function TalkToAgentSettings({
       ),
     pending: false,
     preferencesLoaded: true,
+    ...(screenRecording ? { screenRecording } : {}),
     settings,
     ...(shortcutConflict
       ? {
@@ -79,4 +83,10 @@ export const InputMonitoringMissing: Story = {
 };
 export const InputMonitoringAllowed: Story = {
   args: { enabled: true, inputMonitoring: "granted" },
+};
+export const ScreenRecordingMissing: Story = {
+  args: { enabled: true, screenRecording: "denied" },
+};
+export const ScreenRecordingAllowed: Story = {
+  args: { enabled: true, screenRecording: "granted" },
 };

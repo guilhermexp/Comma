@@ -131,6 +131,28 @@ describe("AppPreferencesService", () => {
     await service.close();
     expect(await readFile(filePath, "utf8")).not.toContain("InputMonitoring");
   });
+  it("publishes the Screen Recording readback of Talk to agent without persisting it", async () => {
+    const filePath = await temporaryPreferencesPath();
+    const onStateChanged = vi.fn();
+    const service = await AppPreferencesService.open({
+      filePath,
+      onStateChanged,
+      platform: createPlatform(),
+    });
+
+    expect(service.setPushToTalkScreenRecordingStatus("denied")).toMatchObject({
+      pushToTalkScreenRecordingStatus: "denied",
+    });
+    expect(onStateChanged).toHaveBeenCalledOnce();
+    service.setPushToTalkScreenRecordingStatus("denied");
+    expect(onStateChanged).toHaveBeenCalledOnce();
+    service.setPushToTalkScreenRecordingStatus("granted");
+    expect(service.state().pushToTalkScreenRecordingStatus).toBe("granted");
+    await service.update({ showInDock: false });
+    await service.close();
+    expect(await readFile(filePath, "utf8")).not.toContain("ScreenRecording");
+  });
+
   it("moves an Open Comma shortcut still at the old Option-Space default to Option-Comma, once", async () => {
     const optionSpace = {
       key: "space",

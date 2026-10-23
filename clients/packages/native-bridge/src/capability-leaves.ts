@@ -1366,6 +1366,12 @@ export const appPreferencesSchema = mutableAppPreferencesSchema.extend({
   pushToTalkInputMonitoringStatus: z
     .enum(["granted", "denied", "not-needed"])
     .optional(),
+  /**
+   * macOS readback of the Screen Recording permission the Talk to agent
+   * screenshot depends on. `denied` also covers never asked: macOS 15+ reports
+   * both the same way.
+   */
+  pushToTalkScreenRecordingStatus: z.enum(["granted", "denied"]).optional(),
   launchAtLoginStatus: appLaunchAtLoginStatusSchema.optional(),
   // Defaults keep preference files written before notifications, AirDrop,
   // the Notch and the Side Chat settings shipped parseable; patches derive from the default-free
@@ -2092,6 +2098,31 @@ export const appPreferencesOpenInputMonitoringSettingsCapability =
     sessionAdmission: "local_only",
     sessionAdmissionRationale:
       "Opens the operating-system Input Monitoring pane. No Session state is involved.",
+    webFallback: { opened: false },
+  });
+
+// macOS: asks for Screen Recording through the side chat helper, so macOS
+// lists Comma (the prompt shows only the first time), and opens its Privacy
+// pane, which the Talk to agent screenshot needs. Main publishes the readback
+// through the preferences state.
+export const appPreferencesOpenScreenRecordingSettingsCapability =
+  defineNativeCapability({
+    bridge: { method: "openScreenRecordingSettings", namespace: "appPreferences" },
+    channel: "comma:app-preferences:open-screen-recording-settings",
+    handler: {
+      exportName: "AppPreferencesProvider",
+      member: "openScreenRecordingSettings",
+      module: "../../../apps/electron/src/main/modules/native/index",
+      provider: "appPreferences",
+    },
+    id: "appPreferences.openScreenRecordingSettings",
+    input: z.void(),
+    mock: { opened: false },
+    output: appPreferencesOpenSettingsResultSchema,
+    permission: "app-preferences.settings",
+    sessionAdmission: "local_only",
+    sessionAdmissionRationale:
+      "Opens the operating-system Screen Recording pane. No Session state is involved.",
     webFallback: { opened: false },
   });
 
@@ -9608,6 +9639,7 @@ export const nativeCapabilityRegistry = [
   appPreferencesInitializeClientSettingsCapability,
   appPreferencesOpenLoginItemsSettingsCapability,
   appPreferencesOpenInputMonitoringSettingsCapability,
+  appPreferencesOpenScreenRecordingSettingsCapability,
   appPreferencesOpenNotificationSettingsCapability,
   appPreferencesRequestNotificationAuthorizationCapability,
   appPreferencesUpdateCapability,

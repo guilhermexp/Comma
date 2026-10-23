@@ -74,6 +74,7 @@ function setup(initial: Partial<PushToTalkRuntimeInputs> = {}) {
         openSideChat: unused,
         microphone: { start: unused },
         screen: { locate: unused, capture: unused },
+        screenRecording: { status: () => "granted", request: unused },
         transcriber: { ready: unused, transcribe: unused },
         delivery: { send: unused },
         speaker: { speak: unused, stop: () => undefined },
