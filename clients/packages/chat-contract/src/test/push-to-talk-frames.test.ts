@@ -8,23 +8,33 @@ import {
 const envelope = { protocolVersion: chatProtocolVersion, requestId: "req_1" };
 
 describe("push-to-talk side chat frames", () => {
-  it("lets Main register and clear the hold-to-talk shortcut", () => {
+  it("lets Main register a chord with a key, a modifier-only chord, or none", () => {
+    const controlOption = (1 << 12) | (1 << 11);
     expect(
       sideChatHostFrameSchema.parse({
         ...envelope,
-        keyCode: 49,
+        binding: { keyCode: 49, modifiers: controlOption },
         kind: "push-to-talk.shortcut",
-        modifiers: (1 << 12) | (1 << 11),
       })
-    ).toMatchObject({ keyCode: 49, kind: "push-to-talk.shortcut" });
-
-    // A null binding travels without a keyCode, like the Side Chat shortcut.
-    const cleared = sideChatHostFrameSchema.parse({
+    ).toMatchObject({ binding: { keyCode: 49 }, kind: "push-to-talk.shortcut" });
+    // ⌃⌥ alone: a binding without keyCode.
+    const chord = sideChatHostFrameSchema.parse({
       ...envelope,
+      binding: { modifiers: controlOption },
       kind: "push-to-talk.shortcut",
-      modifiers: 0,
     });
-    expect(cleared).not.toHaveProperty("keyCode");
+    expect(chord).toMatchObject({ binding: { modifiers: controlOption } });
+    expect(chord).not.toHaveProperty("binding.keyCode");
+    // Cleared: no binding at all.
+    expect(
+      sideChatHostFrameSchema.parse({ ...envelope, kind: "push-to-talk.shortcut" })
+    ).not.toHaveProperty("binding");
+    expect(
+      sideChatHostFrameSchema.safeParse({
+        ...envelope,
+        kind: "push-to-talk.request-input-monitoring",
+      }).success
+    ).toBe(true);
   });
 
   it("reports press with the frontmost app and release from the helper", () => {
@@ -49,12 +59,22 @@ describe("push-to-talk side chat frames", () => {
         kind: "push-to-talk.pressed",
       }).success
     ).toBe(true);
+    for (const cancelled of [false, true]) {
+      expect(
+        sideChatClientFrameSchema.safeParse({
+          ...envelope,
+          cancelled,
+          kind: "push-to-talk.released",
+        }).success
+      ).toBe(true);
+    }
     expect(
-      sideChatClientFrameSchema.safeParse({
+      sideChatClientFrameSchema.parse({
         ...envelope,
-        kind: "push-to-talk.released",
-      }).success
-    ).toBe(true);
+        inputMonitoring: "denied",
+        kind: "push-to-talk.permission",
+      })
+    ).toMatchObject({ inputMonitoring: "denied" });
   });
 
   it("keeps the press and release events helper-to-Main only", () => {
@@ -65,9 +85,8 @@ describe("push-to-talk side chat frames", () => {
     expect(
       sideChatClientFrameSchema.safeParse({
         ...envelope,
-        keyCode: 49,
+        binding: { keyCode: 49, modifiers: 0 },
         kind: "push-to-talk.shortcut",
-        modifiers: 0,
       }).success
     ).toBe(false);
   });

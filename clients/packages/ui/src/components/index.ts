@@ -345,6 +345,7 @@ export type {
   AppKeyCode,
   AppKeyModifiers,
   AppKeyStroke,
+  SettingsShortcutChordValue,
   SettingsShortcutKey,
   SettingsShortcutKeycapsProps,
   SettingsShortcutProps,

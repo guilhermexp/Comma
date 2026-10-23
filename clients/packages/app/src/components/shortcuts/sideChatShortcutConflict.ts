@@ -1,4 +1,4 @@
-import type { SideChatShortcut, SideChatShortcutBinding } from "@comma/native-bridge";
+import type { PushToTalkShortcutBinding, SideChatShortcut } from "@comma/native-bridge";
 import { sameAppKeyModifiers, type AppKeybinding, type AppKeyCode } from "@comma/ui";
 import {
   appShortcutIds,
@@ -15,26 +15,36 @@ const sideChatKeyCode = (shortcut: SideChatShortcut): AppKeyCode | "Space" =>
         ? (`Digit${shortcut.key}` as AppKeyCode)
         : (`Key${shortcut.key.toLocaleUpperCase()}` as AppKeyCode);
 
+/**
+ * Global chords: a key with modifiers, or (Talk to agent only) `key: null`
+ * for modifiers held alone. A modifier-only chord never equals one with a
+ * key: the key cancels the held chord and still reaches its owner.
+ */
+type GlobalShortcutBinding = PushToTalkShortcutBinding;
+
+const hasKey = (shortcut: GlobalShortcutBinding): shortcut is SideChatShortcut =>
+  shortcut !== null && shortcut.key !== null;
+
 export const appBindingConflictsWithSideChatShortcut = (
   binding: AppKeybinding | null,
-  shortcut: SideChatShortcutBinding
+  shortcut: GlobalShortcutBinding
 ) =>
-  shortcut !== null &&
+  hasKey(shortcut) &&
   binding?.kind === "chord" &&
   binding.stroke.code === sideChatKeyCode(shortcut) &&
   sameAppKeyModifiers(binding.stroke.modifiers, shortcut.modifiers);
 
 export const findAppShortcutConflictForSideChat = (
   bindings: AppShortcutBindings,
-  shortcut: SideChatShortcutBinding
+  shortcut: GlobalShortcutBinding
 ): AppShortcutId | undefined =>
   appShortcutIds.find((id) =>
     appBindingConflictsWithSideChatShortcut(bindings[id], shortcut)
   );
 
 export const sameGlobalShortcut = (
-  left: SideChatShortcutBinding,
-  right: SideChatShortcutBinding
+  left: GlobalShortcutBinding,
+  right: GlobalShortcutBinding
 ) =>
   left !== null &&
   right !== null &&
@@ -46,8 +56,8 @@ export type GlobalShortcutId = "open-comma" | "push-to-talk" | "side-chat";
 
 /** The other global shortcut that already holds this chord, if any. */
 export const findGlobalShortcutConflict = (
-  shortcut: SideChatShortcutBinding,
-  globals: Partial<Record<GlobalShortcutId, SideChatShortcutBinding>>
+  shortcut: GlobalShortcutBinding,
+  globals: Partial<Record<GlobalShortcutId, GlobalShortcutBinding>>
 ): GlobalShortcutId | undefined =>
   (Object.keys(globals) as GlobalShortcutId[]).find((id) =>
     sameGlobalShortcut(shortcut, globals[id] ?? null)

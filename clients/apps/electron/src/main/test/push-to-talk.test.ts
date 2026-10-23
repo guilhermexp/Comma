@@ -59,16 +59,20 @@ const flush = async () => {
 
 class FakeHotkey implements PushToTalkHotkey {
   pressed = new Set<(event: { frontmostApp: PushToTalkFrontmostApp | null }) => void>();
-  released = new Set<() => void>();
+  released = new Set<(event: { cancelled: boolean }) => void>();
   restarted = new Set<() => void>();
-  register = vi.fn(async () => undefined);
+  register = vi.fn(async () => ({ inputMonitoring: "not-needed" as const }));
+  requestInputMonitoring = vi.fn(async () => undefined);
+  onInputMonitoring() {
+    return () => undefined;
+  }
   onPressed(
     listener: (event: { frontmostApp: PushToTalkFrontmostApp | null }) => void
   ) {
     this.pressed.add(listener);
     return () => this.pressed.delete(listener);
   }
-  onReleased(listener: () => void) {
+  onReleased(listener: (event: { cancelled: boolean }) => void) {
     this.released.add(listener);
     return () => this.released.delete(listener);
   }
@@ -79,8 +83,8 @@ class FakeHotkey implements PushToTalkHotkey {
   press(frontmostApp: PushToTalkFrontmostApp | null = safari) {
     for (const listener of this.pressed) listener({ frontmostApp });
   }
-  release() {
-    for (const listener of this.released) listener();
+  release(cancelled = false) {
+    for (const listener of this.released) listener({ cancelled });
   }
   restart() {
     for (const listener of this.restarted) listener();
@@ -379,6 +383,45 @@ describe("PushToTalkController", () => {
     expect(deps.transcriber.transcribe).not.toHaveBeenCalled();
     expect(deps.delivery.send).not.toHaveBeenCalled();
     expect(log).toContain("rm /tmp/ptt-1.wav");
+    expect(overlay.visible).toBe(false);
+  });
+
+  // Outro atalho com os mesmos modificadores
+  it("drops a turn whose modifier-only chord was joined by another key, silently", async () => {
+    const { deps, hotkey, overlay, clock, log } = setup();
+    hotkey.press();
+    await flush();
+    expect(overlay.shown).toHaveLength(1);
+    clock.advance(1_500);
+    hotkey.release(true);
+    await flush();
+    expect(deps.transcriber.transcribe).not.toHaveBeenCalled();
+    expect(deps.delivery.send).not.toHaveBeenCalled();
+    expect(log).toContain("rm /tmp/ptt-1.wav");
+    expect(overlay.visible).toBe(false);
+    expect(overlay.states.filter((state) => state.kind === "error")).toEqual([]);
+    // The next hold is a normal turn.
+    hotkey.press();
+    await flush();
+    clock.advance(1_000);
+    hotkey.release();
+    await flush();
+    expect(deps.delivery.send).toHaveBeenCalledOnce();
+  });
+
+  it("drops a turn cancelled before the microphone is ready", async () => {
+    const mic = deferred<PushToTalkRecording>();
+    const stop = vi.fn(async () => "/tmp/early.wav");
+    const { deps, hotkey, overlay, clock } = setup({ microphone: () => mic.promise });
+    hotkey.press();
+    await flush();
+    clock.advance(1_000);
+    hotkey.release(true);
+    mic.resolve({ stop });
+    await flush();
+    expect(stop).toHaveBeenCalledOnce();
+    expect(deps.removeFile).toHaveBeenCalledWith("/tmp/early.wav");
+    expect(deps.transcriber.transcribe).not.toHaveBeenCalled();
     expect(overlay.visible).toBe(false);
   });
 

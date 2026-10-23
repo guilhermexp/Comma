@@ -2337,8 +2337,10 @@ public enum CommaSideChatSurfaceControl: Codable, Equatable, Sendable {
     )
     case pushToTalkShortcut(
         requestId: String,
-        keyCode: Int?,
-        modifiers: Int
+        binding: CommaPushToTalkShortcutBinding?
+    )
+    case pushToTalkRequestInputMonitoring(
+        requestId: String
     )
     case enabled(
         requestId: String,
@@ -2467,8 +2469,18 @@ public enum CommaSideChatSurfaceControl: Codable, Equatable, Sendable {
             }
             self = .pushToTalkShortcut(
                 requestId: try CommaNativeContractValidation.decodeString(String.self, from: container, forKey: .requestId, minimumLength: 1, maximumLength: nil),
-                keyCode: try CommaNativeContractValidation.decodeOptionalInteger(Int.self, from: container, forKey: .keyCode, minimum: 0, maximum: 127),
-                modifiers: try CommaNativeContractValidation.decodeInteger(Int.self, from: container, forKey: .modifiers, minimum: 0, maximum: 65535)
+                binding: try CommaNativeContractValidation.decodeOptional(CommaPushToTalkShortcutBinding.self, from: container, forKey: .binding)
+            )
+        case "push-to-talk.request-input-monitoring":
+            guard protocolVersion == .v3 else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .protocolVersion,
+                    in: container,
+                    debugDescription: "Unexpected protocolVersion \(protocolVersion.rawValue) for push-to-talk.request-input-monitoring; expected 3."
+                )
+            }
+            self = .pushToTalkRequestInputMonitoring(
+                requestId: try CommaNativeContractValidation.decodeString(String.self, from: container, forKey: .requestId, minimumLength: 1, maximumLength: nil)
             )
         case "side-chat.enabled":
             guard protocolVersion == .v3 else {
@@ -2581,19 +2593,20 @@ public enum CommaSideChatSurfaceControl: Codable, Equatable, Sendable {
             try container.encode(requestId, forKey: .requestId)
         case let .pushToTalkShortcut(
             requestId,
-            keyCode,
-            modifiers
+            binding
         ):
             try container.encode(CommaChatProtocolVersion.v3, forKey: .protocolVersion)
             try container.encode("push-to-talk.shortcut", forKey: .kind)
             try CommaNativeContractValidation.validateStringForEncoding(requestId, minimumLength: 1, maximumLength: nil, codingPath: container.codingPath + [CodingKeys.requestId])
             try container.encode(requestId, forKey: .requestId)
-            if let value = keyCode {
-                try CommaNativeContractValidation.validateIntegerForEncoding(value, minimum: 0, maximum: 127, codingPath: container.codingPath + [CodingKeys.keyCode])
-            }
-            try container.encodeIfPresent(keyCode, forKey: .keyCode)
-            try CommaNativeContractValidation.validateIntegerForEncoding(modifiers, minimum: 0, maximum: 65535, codingPath: container.codingPath + [CodingKeys.modifiers])
-            try container.encode(modifiers, forKey: .modifiers)
+            try container.encodeIfPresent(binding, forKey: .binding)
+        case let .pushToTalkRequestInputMonitoring(
+            requestId
+        ):
+            try container.encode(CommaChatProtocolVersion.v3, forKey: .protocolVersion)
+            try container.encode("push-to-talk.request-input-monitoring", forKey: .kind)
+            try CommaNativeContractValidation.validateStringForEncoding(requestId, minimumLength: 1, maximumLength: nil, codingPath: container.codingPath + [CodingKeys.requestId])
+            try container.encode(requestId, forKey: .requestId)
         case let .enabled(
             requestId,
             enabled
@@ -2609,6 +2622,7 @@ public enum CommaSideChatSurfaceControl: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case kind = "kind"
         case protocolVersion = "protocolVersion"
+        case binding = "binding"
         case debugSettings = "debugSettings"
         case enabled = "enabled"
         case height = "height"
@@ -2737,6 +2751,40 @@ public struct CommaSideChatLayoutDebugSettings: Codable, Equatable, Sendable {
     }
 }
 
+public struct CommaPushToTalkShortcutBinding: Codable, Equatable, Sendable {
+    public let keyCode: Int?
+    public let modifiers: Int
+
+    public init(
+        keyCode: Int? = nil,
+        modifiers: Int
+    ) {
+        self.keyCode = keyCode
+        self.modifiers = modifiers
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.keyCode = try CommaNativeContractValidation.decodeOptionalInteger(Int.self, from: container, forKey: .keyCode, minimum: 0, maximum: 127)
+        self.modifiers = try CommaNativeContractValidation.decodeInteger(Int.self, from: container, forKey: .modifiers, minimum: 0, maximum: 65535)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let value = keyCode {
+            try CommaNativeContractValidation.validateIntegerForEncoding(value, minimum: 0, maximum: 127, codingPath: container.codingPath + [CodingKeys.keyCode])
+        }
+        try container.encodeIfPresent(self.keyCode, forKey: .keyCode)
+        try CommaNativeContractValidation.validateIntegerForEncoding(modifiers, minimum: 0, maximum: 65535, codingPath: container.codingPath + [CodingKeys.modifiers])
+        try container.encode(self.modifiers, forKey: .modifiers)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case keyCode = "keyCode"
+        case modifiers = "modifiers"
+    }
+}
+
 public enum CommaSideChatHostFrame: Codable, Equatable, Sendable {
     case snapshot(
         snapshot: CommaSideChatSnapshot
@@ -2777,8 +2825,10 @@ public enum CommaSideChatHostFrame: Codable, Equatable, Sendable {
     )
     case pushToTalkShortcut(
         requestId: String,
-        keyCode: Int?,
-        modifiers: Int
+        binding: CommaPushToTalkShortcutBinding?
+    )
+    case pushToTalkRequestInputMonitoring(
+        requestId: String
     )
     case enabled(
         requestId: String,
@@ -2933,8 +2983,18 @@ public enum CommaSideChatHostFrame: Codable, Equatable, Sendable {
             }
             self = .pushToTalkShortcut(
                 requestId: try CommaNativeContractValidation.decodeString(String.self, from: container, forKey: .requestId, minimumLength: 1, maximumLength: nil),
-                keyCode: try CommaNativeContractValidation.decodeOptionalInteger(Int.self, from: container, forKey: .keyCode, minimum: 0, maximum: 127),
-                modifiers: try CommaNativeContractValidation.decodeInteger(Int.self, from: container, forKey: .modifiers, minimum: 0, maximum: 65535)
+                binding: try CommaNativeContractValidation.decodeOptional(CommaPushToTalkShortcutBinding.self, from: container, forKey: .binding)
+            )
+        case "push-to-talk.request-input-monitoring":
+            guard protocolVersion == .v3 else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .protocolVersion,
+                    in: container,
+                    debugDescription: "Unexpected protocolVersion \(protocolVersion.rawValue) for push-to-talk.request-input-monitoring; expected 3."
+                )
+            }
+            self = .pushToTalkRequestInputMonitoring(
+                requestId: try CommaNativeContractValidation.decodeString(String.self, from: container, forKey: .requestId, minimumLength: 1, maximumLength: nil)
             )
         case "side-chat.enabled":
             guard protocolVersion == .v3 else {
@@ -3092,19 +3152,20 @@ public enum CommaSideChatHostFrame: Codable, Equatable, Sendable {
             try container.encode(requestId, forKey: .requestId)
         case let .pushToTalkShortcut(
             requestId,
-            keyCode,
-            modifiers
+            binding
         ):
             try container.encode(CommaChatProtocolVersion.v3, forKey: .protocolVersion)
             try container.encode("push-to-talk.shortcut", forKey: .kind)
             try CommaNativeContractValidation.validateStringForEncoding(requestId, minimumLength: 1, maximumLength: nil, codingPath: container.codingPath + [CodingKeys.requestId])
             try container.encode(requestId, forKey: .requestId)
-            if let value = keyCode {
-                try CommaNativeContractValidation.validateIntegerForEncoding(value, minimum: 0, maximum: 127, codingPath: container.codingPath + [CodingKeys.keyCode])
-            }
-            try container.encodeIfPresent(keyCode, forKey: .keyCode)
-            try CommaNativeContractValidation.validateIntegerForEncoding(modifiers, minimum: 0, maximum: 65535, codingPath: container.codingPath + [CodingKeys.modifiers])
-            try container.encode(modifiers, forKey: .modifiers)
+            try container.encodeIfPresent(binding, forKey: .binding)
+        case let .pushToTalkRequestInputMonitoring(
+            requestId
+        ):
+            try container.encode(CommaChatProtocolVersion.v3, forKey: .protocolVersion)
+            try container.encode("push-to-talk.request-input-monitoring", forKey: .kind)
+            try CommaNativeContractValidation.validateStringForEncoding(requestId, minimumLength: 1, maximumLength: nil, codingPath: container.codingPath + [CodingKeys.requestId])
+            try container.encode(requestId, forKey: .requestId)
         case let .enabled(
             requestId,
             enabled
@@ -3156,6 +3217,7 @@ public enum CommaSideChatHostFrame: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case kind = "kind"
         case protocolVersion = "protocolVersion"
+        case binding = "binding"
         case debugSettings = "debugSettings"
         case enabled = "enabled"
         case error = "error"
@@ -3316,7 +3378,12 @@ public enum CommaSideChatClientFrame: Codable, Equatable, Sendable {
         frontmostApp: CommaPushToTalkPressedFrontmostApp?
     )
     case pushToTalkReleased(
-        requestId: String
+        requestId: String,
+        cancelled: Bool
+    )
+    case pushToTalkPermission(
+        requestId: String,
+        inputMonitoring: CommaPushToTalkPermissionInputMonitoring
     )
     case result(
         requestId: String,
@@ -3515,7 +3582,20 @@ public enum CommaSideChatClientFrame: Codable, Equatable, Sendable {
                 )
             }
             self = .pushToTalkReleased(
-                requestId: try CommaNativeContractValidation.decodeString(String.self, from: container, forKey: .requestId, minimumLength: 1, maximumLength: nil)
+                requestId: try CommaNativeContractValidation.decodeString(String.self, from: container, forKey: .requestId, minimumLength: 1, maximumLength: nil),
+                cancelled: try container.decode(Bool.self, forKey: .cancelled)
+            )
+        case "push-to-talk.permission":
+            guard protocolVersion == .v3 else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .protocolVersion,
+                    in: container,
+                    debugDescription: "Unexpected protocolVersion \(protocolVersion.rawValue) for push-to-talk.permission; expected 3."
+                )
+            }
+            self = .pushToTalkPermission(
+                requestId: try CommaNativeContractValidation.decodeString(String.self, from: container, forKey: .requestId, minimumLength: 1, maximumLength: nil),
+                inputMonitoring: try container.decode(CommaPushToTalkPermissionInputMonitoring.self, forKey: .inputMonitoring)
             )
         case "command.result":
             guard protocolVersion == .v3 else {
@@ -3781,12 +3861,23 @@ public enum CommaSideChatClientFrame: Codable, Equatable, Sendable {
             try container.encode(requestId, forKey: .requestId)
             try container.encodeIfPresent(frontmostApp, forKey: .frontmostApp)
         case let .pushToTalkReleased(
-            requestId
+            requestId,
+            cancelled
         ):
             try container.encode(CommaChatProtocolVersion.v3, forKey: .protocolVersion)
             try container.encode("push-to-talk.released", forKey: .kind)
             try CommaNativeContractValidation.validateStringForEncoding(requestId, minimumLength: 1, maximumLength: nil, codingPath: container.codingPath + [CodingKeys.requestId])
             try container.encode(requestId, forKey: .requestId)
+            try container.encode(cancelled, forKey: .cancelled)
+        case let .pushToTalkPermission(
+            requestId,
+            inputMonitoring
+        ):
+            try container.encode(CommaChatProtocolVersion.v3, forKey: .protocolVersion)
+            try container.encode("push-to-talk.permission", forKey: .kind)
+            try CommaNativeContractValidation.validateStringForEncoding(requestId, minimumLength: 1, maximumLength: nil, codingPath: container.codingPath + [CodingKeys.requestId])
+            try container.encode(requestId, forKey: .requestId)
+            try container.encode(inputMonitoring, forKey: .inputMonitoring)
         case let .result(
             requestId,
             error,
@@ -3818,6 +3909,7 @@ public enum CommaSideChatClientFrame: Codable, Equatable, Sendable {
         case kind = "kind"
         case protocolVersion = "protocolVersion"
         case availableContentHeight = "availableContentHeight"
+        case cancelled = "cancelled"
         case clientRequestId = "clientRequestId"
         case consumeDraft = "consumeDraft"
         case contentFrame = "contentFrame"
@@ -3830,6 +3922,7 @@ public enum CommaSideChatClientFrame: Codable, Equatable, Sendable {
         case frontmostApp = "frontmostApp"
         case groupId = "groupId"
         case id = "id"
+        case inputMonitoring = "inputMonitoring"
         case offsetX = "offsetX"
         case ok = "ok"
         case phase = "phase"
@@ -4022,4 +4115,9 @@ public struct CommaPushToTalkPressedFrontmostApp: Codable, Equatable, Sendable {
         case bundleId = "bundleId"
         case name = "name"
     }
+}
+
+public enum CommaPushToTalkPermissionInputMonitoring: String, Codable, Equatable, Sendable {
+    case granted = "granted"
+    case denied = "denied"
 }

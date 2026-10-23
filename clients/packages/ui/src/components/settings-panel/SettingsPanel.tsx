@@ -34,6 +34,7 @@ import {
   SettingsShortcut,
   SettingsShortcutKeycaps,
   type AppKeybinding,
+  type SettingsShortcutChordValue,
   type SettingsShortcutValue,
 } from "../settings-shortcut";
 import { Toggle } from "../toggle";
@@ -135,15 +136,25 @@ export type SettingsControl =
       onPress?: () => void;
       tone?: "default" | "danger";
     }
-  | {
+  | ({
       type: "shortcut";
-      value: SettingsShortcutValue | null;
       onClear?: () => Promise<void> | void;
       disabled?: boolean;
       errorMessage?: string;
-      onChange?: (shortcut: SettingsShortcutValue) => Promise<void> | void;
       recordingLabel?: string;
-    }
+    } & (
+      | {
+          allowModifierOnly?: false;
+          value: SettingsShortcutValue | null;
+          onChange?: (shortcut: SettingsShortcutValue) => Promise<void> | void;
+        }
+      | {
+          /** Also records modifiers held alone, such as a hold-to-talk ⌃⌥. */
+          allowModifierOnly: true;
+          value: SettingsShortcutChordValue | null;
+          onChange?: (shortcut: SettingsShortcutChordValue) => Promise<void> | void;
+        }
+    ))
   | {
       type: "keybinding";
       value: AppKeybinding | null;
@@ -548,17 +559,26 @@ const Control = ({
   }
 
   if (control.type === "shortcut") {
-    return (
+    const common = definedProps({
+      disabled: control.disabled,
+      errorMessage: control.errorMessage,
+      onClear: control.onClear,
+      recordingLabel: control.recordingLabel,
+    });
+    return control.allowModifierOnly ? (
+      <SettingsShortcut
+        allowModifierOnly
+        ariaLabel={label}
+        value={control.value}
+        {...common}
+        {...definedProps({ onChange: control.onChange })}
+      />
+    ) : (
       <SettingsShortcut
         ariaLabel={label}
         value={control.value}
-        {...definedProps({
-          disabled: control.disabled,
-          errorMessage: control.errorMessage,
-          onChange: control.onChange,
-          onClear: control.onClear,
-          recordingLabel: control.recordingLabel,
-        })}
+        {...common}
+        {...definedProps({ onChange: control.onChange })}
       />
     );
   }

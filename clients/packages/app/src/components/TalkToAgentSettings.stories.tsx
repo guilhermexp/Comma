@@ -11,18 +11,26 @@ import { talkToAgentSettingsSection } from "./talkToAgentSettings";
 
 interface Args {
   enabled: boolean;
+  inputMonitoring?: "denied" | "granted";
   shortcutConflict: boolean;
   sideChatOff: boolean;
 }
 
-function TalkToAgentSettings({ enabled, shortcutConflict, sideChatOff }: Args) {
+function TalkToAgentSettings({
+  enabled,
+  inputMonitoring,
+  shortcutConflict,
+  sideChatOff,
+}: Args) {
   const m = useCommaMessages();
   const [settings, setSettings] = useState({
     ...defaultCommaClientSettings,
     pushToTalkEnabled: enabled,
   });
   const section = talkToAgentSettingsSection({
+    ...(inputMonitoring ? { inputMonitoring } : {}),
     m,
+    onOpenInputMonitoringSettings: () => undefined,
     onShortcutChange: (pushToTalkShortcut) =>
       setSettings((current) => ({ ...current, pushToTalkShortcut })),
     onUpdate: (patch) =>
@@ -65,4 +73,10 @@ export const On: Story = { args: { enabled: true } };
 export const SideChatOff: Story = { args: { sideChatOff: true } };
 export const ShortcutConflict: Story = {
   args: { enabled: true, shortcutConflict: true },
+};
+export const InputMonitoringMissing: Story = {
+  args: { enabled: true, inputMonitoring: "denied" },
+};
+export const InputMonitoringAllowed: Story = {
+  args: { enabled: true, inputMonitoring: "granted" },
 };

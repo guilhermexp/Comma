@@ -1,5 +1,6 @@
 export { SettingsShortcut, formatSettingsShortcut } from "./SettingsShortcut";
 export type {
+  SettingsShortcutChordValue,
   SettingsShortcutKey,
   SettingsShortcutProps,
   SettingsShortcutValue,

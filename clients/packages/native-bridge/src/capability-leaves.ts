@@ -1155,60 +1155,68 @@ export type CommaClientSideChatAppearance = z.output<
   typeof commaClientSideChatAppearanceSchema
 >;
 
+const shortcutKeySchema = z.enum([
+  "space",
+  "comma",
+  "a",
+  "b",
+  "c",
+  "d",
+  "e",
+  "f",
+  "g",
+  "h",
+  "i",
+  "j",
+  "k",
+  "l",
+  "m",
+  "n",
+  "o",
+  "p",
+  "q",
+  "r",
+  "s",
+  "t",
+  "u",
+  "v",
+  "w",
+  "x",
+  "y",
+  "z",
+  "0",
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+]);
+const shortcutModifiersSchema = z.object({
+  alt: z.boolean(),
+  control: z.boolean(),
+  meta: z.boolean(),
+  shift: z.boolean(),
+});
+const modifierCount = ({
+  alt,
+  control,
+  meta,
+  shift,
+}: z.infer<typeof shortcutModifiersSchema>) =>
+  [alt, control, meta, shift].filter(Boolean).length;
+
 export const sideChatShortcutSchema = z.object({
   // Keys identify KeyboardEvent.code positions (KeyA/Digit1/Space/Comma),
   // not layout-dependent KeyboardEvent.key characters.
-  key: z.enum([
-    "space",
-    "comma",
-    "a",
-    "b",
-    "c",
-    "d",
-    "e",
-    "f",
-    "g",
-    "h",
-    "i",
-    "j",
-    "k",
-    "l",
-    "m",
-    "n",
-    "o",
-    "p",
-    "q",
-    "r",
-    "s",
-    "t",
-    "u",
-    "v",
-    "w",
-    "x",
-    "y",
-    "z",
-    "0",
-    "1",
-    "2",
-    "3",
-    "4",
-    "5",
-    "6",
-    "7",
-    "8",
-    "9",
-  ]),
-  modifiers: z
-    .object({
-      alt: z.boolean(),
-      control: z.boolean(),
-      meta: z.boolean(),
-      shift: z.boolean(),
-    })
-    .refine(
-      ({ alt, control, meta, shift }) => alt || control || meta || shift,
-      "A global shortcut requires at least one modifier."
-    ),
+  key: shortcutKeySchema,
+  modifiers: shortcutModifiersSchema.refine(
+    (modifiers) => modifierCount(modifiers) > 0,
+    "A global shortcut requires at least one modifier."
+  ),
 });
 
 export type SideChatShortcut = z.infer<typeof sideChatShortcutSchema>;
@@ -1230,9 +1238,26 @@ export const defaultOpenCommaShortcut: SideChatShortcut = {
   modifiers: { alt: true, control: false, meta: false, shift: false },
 };
 
-/** Hold-to-talk default: Control-Option-Space. */
-export const defaultPushToTalkShortcut: SideChatShortcut = {
-  key: "space",
+/**
+ * Hold-to-talk chord: a regular key with at least one modifier, or `key: null`
+ * for a modifier-only chord of at least two modifiers (held alone, like ⌃⌥).
+ */
+export const pushToTalkShortcutSchema = z
+  .object({
+    key: shortcutKeySchema.nullable(),
+    modifiers: shortcutModifiersSchema,
+  })
+  .refine(
+    ({ key, modifiers }) => modifierCount(modifiers) >= (key === null ? 2 : 1),
+    "A modifier-only chord needs at least two modifiers; a key needs at least one."
+  );
+export type PushToTalkShortcut = z.infer<typeof pushToTalkShortcutSchema>;
+export const pushToTalkShortcutBindingSchema = pushToTalkShortcutSchema.nullable();
+export type PushToTalkShortcutBinding = z.infer<typeof pushToTalkShortcutBindingSchema>;
+
+/** Hold-to-talk default: Control-Option held alone. */
+export const defaultPushToTalkShortcut: PushToTalkShortcut = {
+  key: null,
   modifiers: { alt: true, control: true, meta: false, shift: false },
 };
 
@@ -1251,7 +1276,7 @@ export const commaClientSettingsSchema = z
     // Talk to agent (macOS): hold a global shortcut to ask the workspace agent
     // about the screen. Off by default; it also requires Side Chat.
     pushToTalkEnabled: z.boolean().default(false),
-    pushToTalkShortcut: sideChatShortcutBindingSchema.default(
+    pushToTalkShortcut: pushToTalkShortcutBindingSchema.default(
       defaultPushToTalkShortcut
     ),
     pushToTalkSpeakReplies: z.boolean().default(true),
@@ -1285,7 +1310,7 @@ export const commaClientSettingsPatchSchema = z
     sideChatShortcut: sideChatShortcutBindingSchema.optional(),
     openCommaShortcut: sideChatShortcutBindingSchema.optional(),
     pushToTalkEnabled: z.boolean().optional(),
-    pushToTalkShortcut: sideChatShortcutBindingSchema.optional(),
+    pushToTalkShortcut: pushToTalkShortcutBindingSchema.optional(),
     pushToTalkSpeakReplies: z.boolean().optional(),
     pushToTalkSendScreen: z.boolean().optional(),
     sidebarNavOrder: z.array(z.string()).optional(),
@@ -1334,6 +1359,13 @@ const mutableAppPreferencesSchema = z
   .strict();
 export const appPreferencesSchema = mutableAppPreferencesSchema.extend({
   openCommaShortcutStatus: z.enum(["registered", "unset", "unavailable"]).optional(),
+  /**
+   * macOS readback of the Input Monitoring permission a modifier-only Talk to
+   * agent chord depends on; `not-needed` for a chord with a key or none.
+   */
+  pushToTalkInputMonitoringStatus: z
+    .enum(["granted", "denied", "not-needed"])
+    .optional(),
   launchAtLoginStatus: appLaunchAtLoginStatusSchema.optional(),
   // Defaults keep preference files written before notifications, AirDrop,
   // the Notch and the Side Chat settings shipped parseable; patches derive from the default-free
@@ -2037,6 +2069,31 @@ export const appPreferencesOpenLoginItemsSettingsCapability = defineNativeCapabi
     "Opens the operating-system Login Items pane. No Session state is involved.",
   webFallback: { opened: false },
 });
+
+// macOS: asks for Input Monitoring (the system prompt shows only the first time)
+// and opens its Privacy pane, which a modifier-only Talk to agent chord needs.
+// The side chat helper rechecks every 2 s; Main publishes the readback through
+// the preferences state.
+export const appPreferencesOpenInputMonitoringSettingsCapability =
+  defineNativeCapability({
+    bridge: { method: "openInputMonitoringSettings", namespace: "appPreferences" },
+    channel: "comma:app-preferences:open-input-monitoring-settings",
+    handler: {
+      exportName: "AppPreferencesProvider",
+      member: "openInputMonitoringSettings",
+      module: "../../../apps/electron/src/main/modules/native/index",
+      provider: "appPreferences",
+    },
+    id: "appPreferences.openInputMonitoringSettings",
+    input: z.void(),
+    mock: { opened: false },
+    output: appPreferencesOpenSettingsResultSchema,
+    permission: "app-preferences.settings",
+    sessionAdmission: "local_only",
+    sessionAdmissionRationale:
+      "Opens the operating-system Input Monitoring pane. No Session state is involved.",
+    webFallback: { opened: false },
+  });
 
 // Asks the OS to let Comma notify: macOS shows its prompt while it has not asked
 // the user about Comma yet, and answers a decided status from its record. Main
@@ -9528,6 +9585,7 @@ export const nativeCapabilityRegistry = [
   appPreferencesCapability,
   appPreferencesInitializeClientSettingsCapability,
   appPreferencesOpenLoginItemsSettingsCapability,
+  appPreferencesOpenInputMonitoringSettingsCapability,
   appPreferencesOpenNotificationSettingsCapability,
   appPreferencesRequestNotificationAuthorizationCapability,
   appPreferencesUpdateCapability,

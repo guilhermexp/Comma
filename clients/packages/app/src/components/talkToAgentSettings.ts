@@ -1,18 +1,22 @@
 import type { messages } from "@comma/i18n";
 import type {
+  AppPreferences,
   CommaClientSettings,
   CommaClientSettingsPatch,
-  SideChatShortcut,
+  PushToTalkShortcut,
 } from "@comma/native-bridge";
 import type { SettingsPanelItem, SettingsPanelSection } from "@comma/ui";
 
 /**
  * Settings → Keyboard shortcuts → Talk to agent. It rides on the Side Chat
  * helper, so it is unavailable, with the reason, while Side Chat is off; its
- * options wait until it is on. The last row says where audio and screenshots go.
+ * options wait until it is on. A modifier-only chord adds the Input Monitoring
+ * row it depends on. The last row says where audio and screenshots go.
  */
 export function talkToAgentSettingsSection({
+  inputMonitoring,
   m,
+  onOpenInputMonitoringSettings,
   onShortcutChange,
   onUpdate,
   pending,
@@ -21,8 +25,11 @@ export function talkToAgentSettingsSection({
   shortcutError,
   sideChatOff,
 }: {
+  /** Main's readback for the registered chord; undefined before it reports. */
+  inputMonitoring?: AppPreferences["pushToTalkInputMonitoringStatus"];
   m: typeof messages;
-  onShortcutChange: (shortcut: SideChatShortcut | null) => void;
+  onOpenInputMonitoringSettings: () => void;
+  onShortcutChange: (shortcut: PushToTalkShortcut | null) => void;
   onUpdate: (patch: CommaClientSettingsPatch) => void;
   pending: boolean;
   preferencesLoaded: boolean;
@@ -54,6 +61,7 @@ export function talkToAgentSettingsSection({
       keywords: ["hotkey", "shortcut", "快捷键", "atalho", "teclado"],
       control: {
         type: "shortcut",
+        allowModifierOnly: true,
         value: settings.pushToTalkShortcut,
         disabled: optionsDisabled,
         recordingLabel: m.settings_press_shortcut(),
@@ -62,6 +70,11 @@ export function talkToAgentSettingsSection({
         ...(shortcutError ? { errorMessage: shortcutError } : {}),
       },
     },
+    ...(on &&
+    settings.pushToTalkShortcut?.key === null &&
+    (inputMonitoring === "denied" || inputMonitoring === "granted")
+      ? [inputMonitoringItem({ m, inputMonitoring, onOpenInputMonitoringSettings })]
+      : []),
     {
       id: "keyboard.talk-to-agent.speak-replies",
       title: m.settings_talk_to_agent_speak_replies(),
@@ -93,4 +106,42 @@ export function talkToAgentSettingsSection({
     },
   ];
   return { id: "keyboard.talk-to-agent", title: m.settings_talk_to_agent(), items };
+}
+
+function inputMonitoringItem({
+  inputMonitoring,
+  m,
+  onOpenInputMonitoringSettings,
+}: {
+  inputMonitoring: "denied" | "granted";
+  m: typeof messages;
+  onOpenInputMonitoringSettings: () => void;
+}): SettingsPanelItem {
+  const item = {
+    id: "keyboard.talk-to-agent.input-monitoring",
+    title: m.settings_talk_to_agent_input_monitoring(),
+    keywords: ["permission", "permissão", "权限", "privacy", "input monitoring"],
+  };
+  return inputMonitoring === "granted"
+    ? {
+        ...item,
+        description: m.settings_talk_to_agent_input_monitoring_granted_description(),
+        status: {
+          label: m.settings_talk_to_agent_input_monitoring_allowed(),
+          color: "success",
+        },
+      }
+    : {
+        ...item,
+        description: m.settings_talk_to_agent_input_monitoring_denied_description(),
+        status: {
+          label: m.settings_talk_to_agent_input_monitoring_inactive(),
+          color: "warning",
+        },
+        control: {
+          type: "button",
+          label: m.settings_system_notifications_open_system_settings(),
+          onPress: onOpenInputMonitoringSettings,
+        },
+      };
 }

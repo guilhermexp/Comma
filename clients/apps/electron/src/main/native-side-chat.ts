@@ -26,8 +26,10 @@ import {
   deriveSideChatDebugGeometry,
   sideChatDebugSettingsPatchSchema,
   sideChatDebugSettingsSchema,
+  pushToTalkShortcutBindingSchema,
   sideChatShortcutBindingSchema,
   unavailableSideChatPresentation,
+  type PushToTalkShortcutBinding,
   type SideChatDebugSettings,
   type SideChatDebugSettingsPatch,
   type SideChatOpenTestWindowInput,
@@ -166,17 +168,19 @@ type PendingSideChatShortcutRegistration = PendingSideChatShortcutRegistrationBa
       }
   );
 
-interface PendingPushToTalkRegistration {
+/** A push-to-talk command waiting for its `command.result`. */
+interface PendingPushToTalkCommand {
   readonly helperGeneration: number;
   readonly reject: (error: Error) => void;
   readonly resolve: () => void;
-  readonly shortcut: SideChatShortcutBinding;
   readonly timeout: ReturnType<typeof setTimeout>;
 }
 
 export type PushToTalkPressedEvent = {
   frontmostApp: { bundleId?: string | undefined; name: string } | undefined;
 };
+
+export type PushToTalkInputMonitoringState = "granted" | "denied" | "not-needed";
 
 interface QueuedSideChatShortcutUpdate {
   readonly reject: (error: Error) => void;
@@ -293,12 +297,19 @@ export class NativeSideChatService {
   #restartTimer: ReturnType<typeof setTimeout> | undefined;
   // Hold-to-talk chord: off (null) until Main registers it; the last
   // confirmed binding is replayed to every restarted helper.
-  #pushToTalkShortcut: SideChatShortcutBinding = null;
-  readonly #pushToTalkRegistrations = new Map<string, PendingPushToTalkRegistration>();
+  #pushToTalkShortcut: PushToTalkShortcutBinding = null;
+  // Last Input Monitoring state the helper reported for a modifier-only chord.
+  #pushToTalkInputMonitoring: "granted" | "denied" = "denied";
+  readonly #pushToTalkCommands = new Map<string, PendingPushToTalkCommand>();
   readonly #pushToTalkPressedListeners = new Set<
     (event: PushToTalkPressedEvent) => void
   >();
-  readonly #pushToTalkReleasedListeners = new Set<() => void>();
+  readonly #pushToTalkReleasedListeners = new Set<
+    (event: { cancelled: boolean }) => void
+  >();
+  readonly #pushToTalkInputMonitoringListeners = new Set<
+    (state: "granted" | "denied") => void
+  >();
   readonly #pushToTalkHelperRestartedListeners = new Set<() => void>();
   #shortcut: SideChatShortcutBinding = structuredClone(defaultSideChatShortcut);
   #started = false;
@@ -462,19 +473,46 @@ export class NativeSideChatService {
 
   /**
    * Registers (or with `null` clears) the hold-to-talk chord in the helper.
-   * Resolves once the helper confirmed it; the confirmed binding is replayed
-   * after a helper restart.
+   * Resolves once the helper confirmed it, with the Input Monitoring state a
+   * modifier-only chord depends on; the confirmed binding is replayed after a
+   * helper restart.
    */
-  updatePushToTalkShortcut(input: SideChatShortcutBinding): Promise<void> {
-    const shortcut = sideChatShortcutBindingSchema.parse(input);
-    let host: ChildProcessWithoutNullStreams;
-    try {
-      host = this.#host && !this.#host.killed ? this.#host : this.#ensureHost();
-    } catch (error) {
-      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
-    }
+  updatePushToTalkShortcut(
+    input: PushToTalkShortcutBinding
+  ): Promise<{ inputMonitoring: PushToTalkInputMonitoringState }> {
+    const shortcut = pushToTalkShortcutBindingSchema.parse(input);
     return new Promise((resolve, reject) => {
-      this.#sendPushToTalkShortcut(host, shortcut, { reject, resolve });
+      this.#sendPushToTalkCommand(
+        (host) =>
+          this.#sendPushToTalkShortcut(host, shortcut, {
+            reject,
+            // The helper reports the permission before the result.
+            resolve: () =>
+              resolve({
+                inputMonitoring:
+                  shortcut?.key === null
+                    ? this.#pushToTalkInputMonitoring
+                    : "not-needed",
+              }),
+          }),
+        reject
+      );
+    });
+  }
+
+  /** Asks macOS for Input Monitoring (the system prompt shows only once). */
+  requestPushToTalkInputMonitoring(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.#sendPushToTalkCommand(
+        (host) =>
+          this.#writePushToTalkCommand(
+            host,
+            { kind: "push-to-talk.request-input-monitoring" },
+            "Timed out while requesting Input Monitoring.",
+            { reject, resolve }
+          ),
+        reject
+      );
     });
   }
 
@@ -483,9 +521,15 @@ export class NativeSideChatService {
     return () => void this.#pushToTalkPressedListeners.delete(listener);
   }
 
-  onPushToTalkReleased(listener: () => void) {
+  onPushToTalkReleased(listener: (event: { cancelled: boolean }) => void) {
     this.#pushToTalkReleasedListeners.add(listener);
     return () => void this.#pushToTalkReleasedListeners.delete(listener);
+  }
+
+  /** Every Input Monitoring report of the helper (modifier-only chord). */
+  onPushToTalkInputMonitoring(listener: (state: "granted" | "denied") => void) {
+    this.#pushToTalkInputMonitoringListeners.add(listener);
+    return () => void this.#pushToTalkInputMonitoringListeners.delete(listener);
   }
 
   /** The helper that delivered a press was lost; its release will not come. */
@@ -704,9 +748,7 @@ export class NativeSideChatService {
       new Error("The Side Chat service was disposed.")
     );
     this.#rejectQueuedShortcutUpdate(new Error("The Side Chat service was disposed."));
-    this.#rejectPushToTalkRegistrations(
-      new Error("The Side Chat service was disposed.")
-    );
+    this.#rejectPushToTalkCommands(new Error("The Side Chat service was disposed."));
     this.#confirmedShortcutGeneration = undefined;
     this.#stopHost();
     this.#stopBackdropHealthMonitor();
@@ -1049,22 +1091,30 @@ export class NativeSideChatService {
     }
 
     if (frame.kind === "push-to-talk.released") {
-      for (const listener of this.#pushToTalkReleasedListeners) listener();
+      const event = { cancelled: frame.cancelled };
+      for (const listener of this.#pushToTalkReleasedListeners) listener(event);
+      return;
+    }
+
+    if (frame.kind === "push-to-talk.permission") {
+      this.#pushToTalkInputMonitoring = frame.inputMonitoring;
+      for (const listener of this.#pushToTalkInputMonitoringListeners) {
+        listener(frame.inputMonitoring);
+      }
       return;
     }
 
     if (frame.kind === "command.result") {
-      const pushToTalk = this.#pushToTalkRegistrations.get(frame.requestId);
+      const pushToTalk = this.#pushToTalkCommands.get(frame.requestId);
       if (pushToTalk?.helperGeneration === helperGeneration) {
-        this.#pushToTalkRegistrations.delete(frame.requestId);
+        this.#pushToTalkCommands.delete(frame.requestId);
         clearTimeout(pushToTalk.timeout);
         if (frame.ok) {
-          this.#pushToTalkShortcut = pushToTalk.shortcut;
           pushToTalk.resolve();
         } else {
           pushToTalk.reject(
             new Error(
-              `CommaSideChatHost rejected the push-to-talk shortcut: ${frame.error ?? "unknown"}`
+              `CommaSideChatHost rejected the push-to-talk command: ${frame.error ?? "unknown"}`
             )
           );
         }
@@ -1498,28 +1548,62 @@ export class NativeSideChatService {
     return this.#host === host && this.#hostGeneration === generation;
   }
 
+  /** Runs `send` on the live helper, starting it when needed. */
+  #sendPushToTalkCommand(
+    send: (host: ChildProcessWithoutNullStreams) => void,
+    reject: (error: Error) => void
+  ) {
+    let host: ChildProcessWithoutNullStreams;
+    try {
+      host = this.#host && !this.#host.killed ? this.#host : this.#ensureHost();
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    send(host);
+  }
+
   #sendPushToTalkShortcut(
     host: ChildProcessWithoutNullStreams,
-    shortcut: SideChatShortcutBinding,
+    shortcut: PushToTalkShortcutBinding,
+    settlement: { reject: (error: Error) => void; resolve: () => void }
+  ) {
+    const binding = pushToTalkRegistration(shortcut);
+    this.#writePushToTalkCommand(
+      host,
+      { ...(binding ? { binding } : {}), kind: "push-to-talk.shortcut" },
+      "Timed out while registering the push-to-talk shortcut.",
+      {
+        reject: settlement.reject,
+        resolve: () => {
+          this.#pushToTalkShortcut = shortcut;
+          settlement.resolve();
+        },
+      }
+    );
+  }
+
+  #writePushToTalkCommand(
+    host: ChildProcessWithoutNullStreams,
+    frame:
+      | { binding?: SideChatShortcutRegistrationInput; kind: "push-to-talk.shortcut" }
+      | { kind: "push-to-talk.request-input-monitoring" },
+    timeoutMessage: string,
     settlement: { reject: (error: Error) => void; resolve: () => void }
   ) {
     const requestId = randomUUID();
     const timeout = setTimeout(() => {
-      if (!this.#pushToTalkRegistrations.delete(requestId)) return;
-      settlement.reject(
-        new Error("Timed out while registering the push-to-talk shortcut.")
-      );
+      if (!this.#pushToTalkCommands.delete(requestId)) return;
+      settlement.reject(new Error(timeoutMessage));
     }, SHORTCUT_REGISTRATION_TIMEOUT_MS);
     timeout.unref?.();
-    this.#pushToTalkRegistrations.set(requestId, {
+    this.#pushToTalkCommands.set(requestId, {
       helperGeneration: this.#hostGeneration,
-      shortcut,
       timeout,
       ...settlement,
     });
     this.#writeHostFrame(host, {
-      ...shortcutRegistration(shortcut),
-      kind: "push-to-talk.shortcut",
+      ...frame,
       protocolVersion: chatProtocolVersion,
       requestId,
     });
@@ -1527,9 +1611,9 @@ export class NativeSideChatService {
 
   /** A lost helper settles its pending registrations and any held chord. */
   #losePushToTalk(helperGeneration: number) {
-    this.#rejectPushToTalkRegistrations(
+    this.#rejectPushToTalkCommands(
       new Error(
-        "The Side Chat helper was lost before registering the push-to-talk shortcut."
+        "The Side Chat helper was lost before confirming the push-to-talk command."
       ),
       helperGeneration
     );
@@ -1537,15 +1621,15 @@ export class NativeSideChatService {
     for (const listener of this.#pushToTalkHelperRestartedListeners) listener();
   }
 
-  #rejectPushToTalkRegistrations(error: Error, helperGeneration?: number) {
-    for (const [requestId, pending] of this.#pushToTalkRegistrations) {
+  #rejectPushToTalkCommands(error: Error, helperGeneration?: number) {
+    for (const [requestId, pending] of this.#pushToTalkCommands) {
       if (
         helperGeneration !== undefined &&
         pending.helperGeneration !== helperGeneration
       ) {
         continue;
       }
-      this.#pushToTalkRegistrations.delete(requestId);
+      this.#pushToTalkCommands.delete(requestId);
       clearTimeout(pending.timeout);
       pending.reject(error);
     }
@@ -1771,6 +1855,20 @@ function shortcutRegistration(
       (meta ? CARBON_COMMAND_KEY : 0) |
       (shift ? CARBON_SHIFT_KEY : 0),
   };
+}
+
+/** Wire binding of the hold-to-talk chord; without keyCode it is modifier-only. */
+function pushToTalkRegistration(
+  shortcut: PushToTalkShortcutBinding
+): SideChatShortcutRegistrationInput | undefined {
+  if (shortcut === null) return undefined;
+  const { modifiers } = shortcutRegistration({
+    key: "space",
+    modifiers: shortcut.modifiers,
+  });
+  return shortcut.key === null
+    ? { modifiers }
+    : { keyCode: MAC_KEY_CODES[shortcut.key], modifiers };
 }
 
 function sameSideChatShortcut(

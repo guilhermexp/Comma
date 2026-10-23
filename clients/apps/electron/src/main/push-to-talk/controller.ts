@@ -128,8 +128,11 @@ export class PushToTalkController {
     const interrupt = () => this.#cancelRecording();
     this.#unsubscribe = [
       hotkey.onPressed(({ frontmostApp }) => void this.#press(frontmostApp)),
-      hotkey.onReleased(() => {
-        if (this.#turn) void this.#release(this.#turn);
+      hotkey.onReleased(({ cancelled }) => {
+        // Another key joined a modifier-only chord: a different shortcut, so
+        // the turn goes without a trace (no error, capture and WAV dropped).
+        if (cancelled) this.#cancelRecording();
+        else if (this.#turn) void this.#release(this.#turn);
       }),
       hotkey.onHelperRestarted(interrupt),
     ];

@@ -141,6 +141,8 @@ export interface AppPreferencesProvider {
   openNotificationSettings(input: void): Promise<{ opened: boolean }>;
   /** macOS: opens Login Items, where the user allows the sleep guard daemon. */
   openLoginItemsSettings(input: void): Promise<{ opened: boolean }>;
+  /** macOS: asks for Input Monitoring and opens its Privacy pane. */
+  openInputMonitoringSettings(input: void): Promise<{ opened: boolean }>;
   /**
    * Asks the OS to let Comma notify (macOS prompts while it has not asked the
    * user yet) and resolves with the status the answer leaves behind.

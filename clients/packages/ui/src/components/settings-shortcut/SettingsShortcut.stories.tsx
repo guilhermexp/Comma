@@ -1,27 +1,36 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useEffect, useState, type ReactNode } from "react";
 import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
-import { SettingsShortcut, type SettingsShortcutProps } from "./SettingsShortcut";
+import {
+  SettingsShortcut,
+  type SettingsShortcutChordValue,
+  type SettingsShortcutProps,
+} from "./SettingsShortcut";
 
 const StorySurface = ({ children }: { children: ReactNode }) => (
   <div className="flex justify-end">{children}</div>
 );
 
-const StatefulShortcut = ({
-  onChange,
-  onClear,
-  value: initialValue,
-  ...props
-}: SettingsShortcutProps) => {
+// Stories render both variants; a modifier-only value only arrives with
+// `allowModifierOnly`, so the wider chord variant types the shared wrapper.
+type ChordShortcutProps = Extract<SettingsShortcutProps, { allowModifierOnly: true }>;
+
+const StatefulShortcut = (props: SettingsShortcutProps) => {
+  const {
+    onChange,
+    onClear,
+    value: initialValue,
+    ...rest
+  } = props as ChordShortcutProps;
   const [value, setValue] = useState(initialValue);
 
   useEffect(() => setValue(initialValue), [initialValue]);
 
   return (
     <SettingsShortcut
-      {...props}
+      {...rest}
       value={value}
-      onChange={(shortcut) => {
+      onChange={(shortcut: SettingsShortcutChordValue) => {
         const result = onChange?.(shortcut);
         setValue(shortcut);
         return result;

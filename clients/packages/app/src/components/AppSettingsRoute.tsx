@@ -18,6 +18,7 @@ import { supportedLocales, type CommaLocale } from "@comma/i18n";
 import {
   getNativeBridge,
   notchSideWidthRange,
+  type PushToTalkShortcut,
   type SideChatShortcut,
 } from "@comma/native-bridge";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -428,7 +429,7 @@ export function AppSettingsRoute({
   const [pushToTalkShortcutConflict, setPushToTalkShortcutConflict] = useState<
     GlobalShortcutId | "app"
   >();
-  const setPushToTalkShortcut = (shortcut: SideChatShortcut | null) => {
+  const setPushToTalkShortcut = (shortcut: PushToTalkShortcut | null) => {
     const conflict =
       findGlobalShortcutConflict(shortcut, {
         "open-comma": clientSettings.settings.openCommaShortcut,
@@ -557,6 +558,7 @@ export function AppSettingsRoute({
     preferences: appPreferences,
     showInSystemTray,
     update: updateAppPreferences,
+    openInputMonitoringSettings,
     openLoginItemsSettings,
     openNotificationSettings,
   } = useCommaAppPreferences();
@@ -566,7 +568,11 @@ export function AppSettingsRoute({
     update: updateAppPreferences,
   });
   const talkToAgentSection = talkToAgentSettingsSection({
+    ...(appPreferences?.pushToTalkInputMonitoringStatus
+      ? { inputMonitoring: appPreferences.pushToTalkInputMonitoringStatus }
+      : {}),
     m,
+    onOpenInputMonitoringSettings: () => void openInputMonitoringSettings(),
     onShortcutChange: setPushToTalkShortcut,
     onUpdate: (patch) => void clientSettings.update(patch),
     pending: clientSettingsPending,

@@ -3,7 +3,7 @@
 // companion, freehand stroke). The controller in this folder drives these
 // interfaces; the native hotkey adapter, the overlay window and the notch
 // status implement them.
-import type { SideChatShortcut, SideChatShortcutBinding } from "@comma/native-bridge";
+import type { SideChatShortcut } from "@comma/native-bridge";
 
 /** App that was frontmost when the shortcut went down. */
 export type PushToTalkFrontmostApp = { name: string; bundleId: string | null };
@@ -96,19 +96,28 @@ export interface PushToTalkStatus {
 
 export type PushToTalkInputMonitoring = "granted" | "denied" | "not-needed";
 
-/**
- * Hold-to-talk shortcut registered in the native side chat helper. Wave 1 of
- * the UX revision (tasks 7.1–7.3) changes it to the modifier-only contract:
- * register(PushToTalkShortcutBinding) resolving the Input Monitoring state,
- * requestInputMonitoring, onReleased({ cancelled }), onInputMonitoring.
- */
+/** Hold-to-talk shortcut registered in the native side chat helper. */
 export interface PushToTalkHotkey {
-  /** `null` unregisters. Resolves after the helper confirmed the registration. */
-  register(shortcut: SideChatShortcutBinding): Promise<void>;
+  /**
+   * `null` unregisters. Resolves after the helper confirmed the registration
+   * with the Input Monitoring state the chord depends on (`not-needed` for a
+   * chord with a regular key, or when cleared).
+   */
+  register(
+    shortcut: PushToTalkShortcutBinding
+  ): Promise<{ inputMonitoring: PushToTalkInputMonitoring }>;
+  /** Asks macOS for Input Monitoring (shows the system prompt the first time). */
+  requestInputMonitoring(): Promise<void>;
   onPressed(
     listener: (event: { frontmostApp: PushToTalkFrontmostApp | null }) => void
   ): () => void;
-  onReleased(listener: () => void): () => void;
+  /**
+   * `cancelled`: another key (or an extra modifier) joined a modifier-only
+   * chord, so it was a different shortcut; the turn is dropped silently.
+   */
+  onReleased(listener: (event: { cancelled: boolean }) => void): () => void;
+  /** The Input Monitoring state changed (e.g. granted in System Settings). */
+  onInputMonitoring(listener: (state: PushToTalkInputMonitoring) => void): () => void;
   /** The helper process restarted; a held shortcut can no longer be released. */
   onHelperRestarted(listener: () => void): () => void;
 }
@@ -116,7 +125,7 @@ export interface PushToTalkHotkey {
 /** Desktop client settings of the feature (fields of commaClientSettings). */
 export type PushToTalkSettings = {
   enabled: boolean;
-  shortcut: SideChatShortcutBinding;
+  shortcut: PushToTalkShortcutBinding;
   speakReplies: boolean;
   sendScreen: boolean;
 };

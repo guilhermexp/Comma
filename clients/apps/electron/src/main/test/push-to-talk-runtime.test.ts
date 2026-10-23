@@ -2,16 +2,20 @@ import { describe, expect, it, vi } from "vitest";
 import {
   defaultCommaClientSettings,
   type CommaClientSettings,
-  type SideChatShortcutBinding,
+  type PushToTalkShortcutBinding,
 } from "@comma/native-bridge";
 import { PushToTalkController } from "../push-to-talk/controller";
 import {
   choosePushToTalkTranscriber,
   PushToTalkRuntime,
+  reportPushToTalkInputMonitoring,
   type PushToTalkRuntimeInputs,
 } from "../push-to-talk/runtime";
 import type { PushToTalkTranscriber } from "../push-to-talk/transcriber";
-import type { PushToTalkHotkey } from "../push-to-talk/types";
+import type {
+  PushToTalkHotkey,
+  PushToTalkInputMonitoring,
+} from "../push-to-talk/types";
 import { FakeClock } from "./support/fake-clock";
 
 const shortcut = {
@@ -43,9 +47,13 @@ function setup(initial: Partial<PushToTalkRuntimeInputs> = {}) {
     ...initial,
   };
   const hotkey = {
-    register: vi.fn(async (_shortcut: SideChatShortcutBinding) => undefined),
+    register: vi.fn(async (_shortcut: PushToTalkShortcutBinding) => ({
+      inputMonitoring: "not-needed" as const,
+    })),
+    requestInputMonitoring: async () => undefined,
     onPressed: () => () => undefined,
     onReleased: () => () => undefined,
+    onInputMonitoring: () => () => undefined,
     onHelperRestarted: () => () => undefined,
   } satisfies PushToTalkHotkey;
   const runtime = new PushToTalkRuntime({
@@ -155,6 +163,42 @@ describe("PushToTalkRuntime", () => {
     await change(withSettings({ pushToTalkEnabled: true, meetingHideRecorder: true }));
     expect(registered()).toHaveLength(1);
     runtime.dispose();
+  });
+});
+
+describe("reportPushToTalkInputMonitoring", () => {
+  it("reports the state of every registration and every later helper change", async () => {
+    const listeners = new Set<(state: PushToTalkInputMonitoring) => void>();
+    const register = vi.fn(async (binding: PushToTalkShortcutBinding) => ({
+      inputMonitoring: (binding?.key === null ? "denied" : "not-needed") as
+        | "denied"
+        | "not-needed",
+    }));
+    const report = vi.fn();
+    const hotkey = reportPushToTalkInputMonitoring(
+      {
+        register,
+        requestInputMonitoring: async () => undefined,
+        onPressed: () => () => undefined,
+        onReleased: () => () => undefined,
+        onInputMonitoring: (listener) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        onHelperRestarted: () => () => undefined,
+      },
+      report
+    );
+
+    await expect(
+      hotkey.register(defaultCommaClientSettings.pushToTalkShortcut)
+    ).resolves.toEqual({
+      inputMonitoring: "denied",
+    });
+    // Granted later in System Settings, without re-registering.
+    for (const listener of listeners) listener("granted");
+    await hotkey.register(shortcut);
+    expect(report.mock.calls).toEqual([["denied"], ["granted"], ["not-needed"]]);
   });
 });
 
