@@ -360,7 +360,7 @@ private extension AnyTransition {
     }
 }
 
-private struct CommaNotchThinkingHighlightText: View {
+struct CommaNotchThinkingHighlightText: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let text: String
     let font: Font

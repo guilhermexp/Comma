@@ -543,6 +543,52 @@
         },
         "title": {
           "type": "string"
+        },
+        "voice": {
+          "properties": {
+            "turn": {
+              "properties": {
+                "action": {
+                  "properties": {
+                    "id": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "label": {
+                      "maxLength": 64,
+                      "type": "string"
+                    }
+                  },
+                  "required": ["id", "label"],
+                  "type": "object"
+                },
+                "level": {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "message": {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                "state": {
+                  "enum": [
+                    "listening",
+                    "transcribing",
+                    "thinking",
+                    "speaking",
+                    "busy",
+                    "error"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": ["message", "state"],
+              "type": "object"
+            }
+          },
+          "type": "object"
         }
       },
       "type": "object"

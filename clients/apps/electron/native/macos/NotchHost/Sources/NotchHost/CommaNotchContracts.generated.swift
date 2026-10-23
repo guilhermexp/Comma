@@ -366,6 +366,7 @@ public struct CommaNotchScenePayload: Codable, Equatable, Sendable {
     public let subtitle: String?
     public let tasks: [CommaNotchScenePayloadTask]?
     public let title: String?
+    public let voice: CommaNotchScenePayloadVoice?
 
     public init(
         airDrop: CommaNotchScenePayloadAirDrop? = nil,
@@ -378,7 +379,8 @@ public struct CommaNotchScenePayload: Codable, Equatable, Sendable {
         openChatLabel: String? = nil,
         subtitle: String? = nil,
         tasks: [CommaNotchScenePayloadTask]? = nil,
-        title: String? = nil
+        title: String? = nil,
+        voice: CommaNotchScenePayloadVoice? = nil
     ) {
         self.airDrop = airDrop
         self.compactSideWidth = compactSideWidth
@@ -391,6 +393,7 @@ public struct CommaNotchScenePayload: Codable, Equatable, Sendable {
         self.subtitle = subtitle
         self.tasks = tasks
         self.title = title
+        self.voice = voice
     }
 
     public init(from decoder: Decoder) throws {
@@ -406,6 +409,7 @@ public struct CommaNotchScenePayload: Codable, Equatable, Sendable {
         self.subtitle = try CommaNativeContractValidation.decodeOptional(String.self, from: container, forKey: .subtitle)
         self.tasks = try CommaNativeContractValidation.decodeOptionalArray([CommaNotchScenePayloadTask].self, from: container, forKey: .tasks, minimumItems: nil, maximumItems: 100)
         self.title = try CommaNativeContractValidation.decodeOptional(String.self, from: container, forKey: .title)
+        self.voice = try CommaNativeContractValidation.decodeOptional(CommaNotchScenePayloadVoice.self, from: container, forKey: .voice)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -436,6 +440,7 @@ public struct CommaNotchScenePayload: Codable, Equatable, Sendable {
         }
         try container.encodeIfPresent(self.tasks, forKey: .tasks)
         try container.encodeIfPresent(self.title, forKey: .title)
+        try container.encodeIfPresent(self.voice, forKey: .voice)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -450,6 +455,7 @@ public struct CommaNotchScenePayload: Codable, Equatable, Sendable {
         case subtitle = "subtitle"
         case tasks = "tasks"
         case title = "title"
+        case voice = "voice"
     }
 }
 
@@ -657,4 +663,115 @@ public struct CommaNotchScenePayloadTask: Codable, Equatable, Sendable {
 
 public enum CommaNotchScenePayloadTaskStatus: String, Codable, Equatable, Sendable {
     case inProgress = "in_progress"
+}
+
+public struct CommaNotchScenePayloadVoice: Codable, Equatable, Sendable {
+    public let turn: CommaNotchScenePayloadVoiceTurn?
+
+    public init(
+        turn: CommaNotchScenePayloadVoiceTurn? = nil
+    ) {
+        self.turn = turn
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.turn = try CommaNativeContractValidation.decodeOptional(CommaNotchScenePayloadVoiceTurn.self, from: container, forKey: .turn)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(self.turn, forKey: .turn)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case turn = "turn"
+    }
+}
+
+public struct CommaNotchScenePayloadVoiceTurn: Codable, Equatable, Sendable {
+    public let action: CommaNotchScenePayloadVoiceTurnAction?
+    public let level: Double?
+    public let message: String
+    public let state: CommaNotchScenePayloadVoiceTurnState
+
+    public init(
+        action: CommaNotchScenePayloadVoiceTurnAction? = nil,
+        level: Double? = nil,
+        message: String,
+        state: CommaNotchScenePayloadVoiceTurnState
+    ) {
+        self.action = action
+        self.level = level
+        self.message = message
+        self.state = state
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.action = try CommaNativeContractValidation.decodeOptional(CommaNotchScenePayloadVoiceTurnAction.self, from: container, forKey: .action)
+        self.level = try CommaNativeContractValidation.decodeOptionalNumber(Double.self, from: container, forKey: .level, minimum: 0, maximum: 1)
+        self.message = try CommaNativeContractValidation.decodeString(String.self, from: container, forKey: .message, minimumLength: nil, maximumLength: 256)
+        self.state = try container.decode(CommaNotchScenePayloadVoiceTurnState.self, forKey: .state)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(self.action, forKey: .action)
+        if let value = level {
+            try CommaNativeContractValidation.validateNumberForEncoding(value, minimum: 0, maximum: 1, codingPath: container.codingPath + [CodingKeys.level])
+        }
+        try container.encodeIfPresent(self.level, forKey: .level)
+        try CommaNativeContractValidation.validateStringForEncoding(message, minimumLength: nil, maximumLength: 256, codingPath: container.codingPath + [CodingKeys.message])
+        try container.encode(self.message, forKey: .message)
+        try container.encode(self.state, forKey: .state)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case action = "action"
+        case level = "level"
+        case message = "message"
+        case state = "state"
+    }
+}
+
+public struct CommaNotchScenePayloadVoiceTurnAction: Codable, Equatable, Sendable {
+    public let id: String
+    public let label: String
+
+    public init(
+        id: String,
+        label: String
+    ) {
+        self.id = id
+        self.label = label
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try CommaNativeContractValidation.decodeString(String.self, from: container, forKey: .id, minimumLength: 1, maximumLength: 64)
+        self.label = try CommaNativeContractValidation.decodeString(String.self, from: container, forKey: .label, minimumLength: nil, maximumLength: 64)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try CommaNativeContractValidation.validateStringForEncoding(id, minimumLength: 1, maximumLength: 64, codingPath: container.codingPath + [CodingKeys.id])
+        try container.encode(self.id, forKey: .id)
+        try CommaNativeContractValidation.validateStringForEncoding(label, minimumLength: nil, maximumLength: 64, codingPath: container.codingPath + [CodingKeys.label])
+        try container.encode(self.label, forKey: .label)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case label = "label"
+    }
+}
+
+public enum CommaNotchScenePayloadVoiceTurnState: String, Codable, Equatable, Sendable {
+    case listening = "listening"
+    case transcribing = "transcribing"
+    case thinking = "thinking"
+    case speaking = "speaking"
+    case busy = "busy"
+    case error = "error"
 }

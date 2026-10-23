@@ -1328,6 +1328,8 @@
   "push_to_talk_listening": "Ouvindo",
   "push_to_talk_listening_hint": "Arraste para marcar uma área",
   "push_to_talk_transcribing": "Transcrevendo",
+  "push_to_talk_thinking": "Pensando",
+  "push_to_talk_speaking": "Falando",
   "push_to_talk_busy": "Aguarde a pergunta atual",
   "push_to_talk_microphone_denied": "O Comma precisa de acesso ao Microfone",
   "push_to_talk_screen_denied": "Enviado sem print. Permita a Gravação de Tela.",

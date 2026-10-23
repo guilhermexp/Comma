@@ -320,6 +320,81 @@ describe("NotchService presentation settings", () => {
   });
 });
 
+describe("NotchService voice scene", () => {
+  function createService(supported = true) {
+    const hosts: FakeNotchHost[] = [];
+    const service = new NotchService({
+      isSupportedPlatform: () => supported,
+      pathExists: () => true,
+      resolveHostPath: () => "/comma/NotchHost",
+      spawnHost: () => {
+        const host = new FakeNotchHost();
+        hosts.push(host);
+        return host as unknown as ChildProcessWithoutNullStreams;
+      },
+    });
+    return { hosts, service };
+  }
+
+  it("writes the voice turn alone and gives the Notch back with an empty projection", async () => {
+    const { hosts, service } = createService();
+    try {
+      const listening = service.setVoice({
+        level: 0.3,
+        message: "Listening",
+        state: "listening",
+      });
+      const host = hosts[0]!;
+      await expect(host.nextRequest()).resolves.toMatchObject({ method: "configure" });
+      const request = await host.nextRequest();
+      // Level updates arrive ~20 times a second, so each write is the turn alone.
+      expect(request).toEqual({
+        id: request.id,
+        method: "update",
+        payload: {
+          voice: { turn: { level: 0.3, message: "Listening", state: "listening" } },
+        },
+      });
+      host.respond({ id: request.id, payload: { running: true }, type: "ack" });
+      await listening;
+
+      const cleared = service.setVoice(null);
+      const clear = await host.nextRequest();
+      expect(clear).toMatchObject({ method: "update", payload: { voice: {} } });
+      host.respond({ id: clear.id, payload: { running: true }, type: "ack" });
+      await cleared;
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("does not bring an ended turn back when the Notch is turned on again", async () => {
+    const { hosts, service } = createService();
+    try {
+      service.setPresentation({ sideWidth: 156, visible: false });
+      expect(service.visible()).toBe(false);
+      await service.setVoice({ message: "Thinking", state: "thinking" });
+      await service.setVoice(null);
+      expect(hosts).toHaveLength(0);
+
+      service.setPresentation({ sideWidth: 156, visible: true });
+      expect(service.visible()).toBe(true);
+      const host = hosts[0]!;
+      await expect(host.nextRequest()).resolves.toMatchObject({ method: "configure" });
+      const restore = await host.nextRequest();
+      expect(restore).toMatchObject({ method: "update", payload: { voice: {} } });
+      host.respond({ id: restore.id, payload: { running: true }, type: "ack" });
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("is not visible where NotchKit cannot run", () => {
+    const { service } = createService(false);
+    expect(service.visible()).toBe(false);
+  });
+});
+
 function waitForHostValue(service: NotchService, expectedValue: string) {
   return new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
