@@ -7,6 +7,7 @@ import {
   splitSentences,
   type PushToTalkMessageScreen,
 } from "./message";
+import type { PushToTalkLiveVoice } from "./live-voice";
 import type { PushToTalkReplies } from "./reply-watcher";
 import type {
   PushToTalkCursorLocation,
@@ -86,7 +87,10 @@ export type PushToTalkControllerDeps = {
   screen: PushToTalkScreenSource;
   transcriber: PushToTalkTranscriber;
   delivery: PushToTalkDelivery;
+  /** The system voice: the fallback of `voice`, or the only voice without it. */
   speaker: PushToTalkSpeaker;
+  /** The GPT Live voice of Comma calls (D12), pre-warmed while the agent thinks. */
+  voice?: PushToTalkLiveVoice;
   replies: PushToTalkReplies;
   clock: PushToTalkClock;
   powerMonitor: PushToTalkPowerMonitor;
@@ -124,6 +128,7 @@ type Turn = {
 /** The sent turn while it waits for, shows and reads the agent's reply. */
 type Reply = {
   phase: "thinking" | "speaking";
+  target: ChatTarget;
   cancelled: boolean;
   stopTimer?: () => void;
 };
@@ -181,6 +186,8 @@ export class PushToTalkController {
   update(settings: PushToTalkSettings) {
     const previous = this.#settings;
     this.#settings = settings;
+    // A voice refused as disabled or without an account is tried again.
+    this.#deps.voice?.reset();
     if (!settings.enabled) {
       this.#cancelRecording("Talk to agent was turned off");
       if (this.#reply) {
@@ -388,16 +395,19 @@ export class PushToTalkController {
     this.#endTurn(turn);
     this.#trace(`push-to-talk sent with ${attachments.length} images`);
 
-    const reply: Reply = { phase: "thinking", cancelled: false };
+    const reply: Reply = { phase: "thinking", target, cancelled: false };
     this.#reply = reply;
     replies.arm(target, {
       onReply: (markdown) => void this.#answer(reply, markdown),
       onTimeout: () => {
         if (this.#reply !== reply) return;
         this.#reply = undefined;
+        this.#deps.voice?.stop();
         this.#hideAll("no reply within the wait");
       },
     });
+    // The voice starts close to the reply's arrival when its call is already open.
+    if (this.#settings.speakReplies) this.#deps.voice?.prepare(target.workspaceId);
     if (screenMissing) this.#showError("screen_denied", { turn, keepsTurn: true });
     else this.#showState({ kind: "thinking" });
   }
@@ -405,7 +415,7 @@ export class PushToTalkController {
   /** Shows the reply: sentence by sentence while spoken, or whole for its reading time. */
   async #answer(reply: Reply, markdown: string) {
     if (this.#reply !== reply || reply.cancelled) return;
-    const { clock, companion, speaker } = this.#deps;
+    const { clock, companion, speaker, voice } = this.#deps;
     this.#clearErrorTimer();
     reply.phase = "speaking";
     const codeBlock = this.#deps.codeBlockLabel?.() ?? "code snippet";
@@ -420,6 +430,7 @@ export class PushToTalkController {
     };
 
     if (!this.#settings.speakReplies) {
+      voice?.stop();
       companion.setCaption(text || null);
       const ms = captionReadingMs(text);
       this.#trace(`push-to-talk caption shown for ${ms} ms`);
@@ -427,7 +438,27 @@ export class PushToTalkController {
       return;
     }
     const sentences = splitSentences(text);
+    let spoken = 0;
+    if (voice && text) {
+      const result = await voice.speak({
+        workspaceId: reply.target.workspaceId,
+        text,
+        onCaption: (sentence) => {
+          if (!reply.cancelled) companion.setCaption(sentence);
+        },
+      });
+      if (reply.cancelled || result.status === "stopped") return;
+      if (result.status === "done") {
+        finish(captionLingerMs, "the reply was read");
+        return;
+      }
+      spoken = result.spokenSentences;
+      this.#trace(
+        `push-to-talk GPT Live voice unavailable (${result.reason}); system voice reads from sentence ${spoken + 1}`
+      );
+    }
     for (const [index, sentence] of sentences.entries()) {
+      if (index < spoken) continue;
       if (reply.cancelled) return;
       companion.setCaption(sentence);
       this.#trace(`push-to-talk speaking sentence ${index + 1}/${sentences.length}`);
@@ -439,8 +470,9 @@ export class PushToTalkController {
 
   /** A new press, or the feature turned off: the voice stops at once. */
   #interruptReply() {
-    const { companion, replies, speaker } = this.#deps;
+    const { companion, replies, speaker, voice } = this.#deps;
     speaker.stop();
+    voice?.stop();
     replies.cancel();
     const reply = this.#reply;
     this.#reply = undefined;

@@ -43,6 +43,7 @@ defmodule CommaWeb.VoiceCallsTest do
     for {method, path} <- [
           {:post, base},
           {:get, base <> "/vc_other/events"},
+          {:post, base <> "/vc_other/say"},
           {:delete, base <> "/vc_other"}
         ] do
       assert request(method, path, nil).status == 401
@@ -55,6 +56,25 @@ defmodule CommaWeb.VoiceCallsTest do
     assert get_resp_header(admitted, "cache-control") == ["no-store"]
     assert request(:get, base <> "/vc_missing/events", c.token).status == 404
     assert request(:delete, base <> "/vc_missing", c.token).status == 404
+  end
+
+  test "read-aloud calls validate their mode and text before reaching a call", c do
+    base = "/v1/comma/workspaces/#{c.workspace["id"]}/voice/calls"
+
+    unknown_mode = request(:post, base, c.token, %{"sdp" => "v=0", "mode" => "karaoke"})
+    assert unknown_mode.status == 400
+    assert Jason.decode!(unknown_mode.resp_body)["error"] == "invalid_input"
+
+    for body <- [%{}, %{"text" => "  "}, %{"text" => 42}] do
+      response = request(:post, base <> "/vc_missing/say", c.token, body)
+      assert response.status == 400
+      assert Jason.decode!(response.resp_body)["error"] == "invalid_input"
+    end
+
+    missing = request(:post, base <> "/vc_missing/say", c.token, %{"text" => "Olá."})
+    assert missing.status == 404
+    assert Jason.decode!(missing.resp_body)["error"] == "call_not_found"
+    assert get_resp_header(missing, "cache-control") == ["no-store"]
   end
 
   test "restricted workspace sessions cannot start, read or end calls", c do
@@ -71,6 +91,7 @@ defmodule CommaWeb.VoiceCallsTest do
     base = "/v1/comma/workspaces/#{c.workspace["id"]}/voice/calls"
     assert request(:post, base, token).status == 403
     assert request(:get, base <> "/vc_other/events", token).status == 403
+    assert request(:post, base <> "/vc_other/say", token, %{"text" => "x"}).status == 403
     assert request(:delete, base <> "/vc_other", token).status == 403
   end
 

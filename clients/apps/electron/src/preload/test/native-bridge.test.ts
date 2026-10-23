@@ -810,6 +810,10 @@ function sampleCommandInput(id: string) {
       return { interactive: true };
     case "pushToTalk.overlayAction":
       return { action: "copy-transcript" };
+    case "pushToTalkVoice.offer":
+      return { generation: 1, sdp: "v=0" };
+    case "pushToTalkVoice.report":
+      return { event: "audible", generation: 1 };
     case "meetingPresence.icon":
       return { bundleIdentifier: "us.zoom.xos" };
     case "calendar.events":

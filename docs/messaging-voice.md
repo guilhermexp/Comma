@@ -50,7 +50,7 @@ CDN connections time out after 5s, without credentials/redirects. One transient 
 CDN URLs/keys stay private; path hashes confer no authority.
 Peer authorization precedes staging and Session admission. Raw voice/video need tools; receipts prove neither transcription nor understanding. Outbound quote bubbles remain unverified.
 
-Inline image syntax is removed; use `reply_image` for visible images. Native media uses `reply_image`/`reply_file`/`reply_video`.
+Inline image syntax is removed. Native media uses `reply_image`/`reply_file`/`reply_video`.
 Video uses VFS/AES/CDN with mp4/mov/webm/mkv/avi paths, without transcoding or playback guarantees.
 Captions are separate; media failure can follow a successful caption.
 
@@ -80,33 +80,34 @@ User-sent locations, answers to earlier requests and internal host location are 
 ## Voice calls
 
 `salix_voice` serves Twilio, WebSocket and Electron. GPT-Live speaks; the Group Router acts.
-`CallActor` owns profile, model, transport, transcript, delegations, deadline and metering. Call state is not durable.
+`CallActor` owns profile, model, transport, transcript, delegations, deadline and metering, not durably.
 When ready, it greets and sends `voice.call_started`. Ending sends `voice.call_ended`, reason and open delegations.
 
 After 300 ms, delegations send caller text/last agent sentence through `ConversationServer -> ConversationActor`.
 Codex supplies the request; API calls use transcript offsets. Metadata: `provider=voice`, `chat_id=call`, `message_id=delegation`, source `im_provider:voice:<connect>:<call>:<delegation>`.
 `im_api.voice.say` speaks and answers; `voice.note` adds quiet context; `voice.hang_up` ends within 10 s, with optional farewell.
 Text: at most 16,000 bytes; API chunks: 1,800 characters. IDs default to source. Group/connect must match. `voice_call_ended` is terminal; do not retry.
-Call timers give pending delegations quiet progress at 20 s and spoken apology at 90 s, not Lean reply obligations.
+Pending delegations get quiet progress at 20 s and spoken apology at 90 s, not Lean reply obligations.
 Replies reach only the caller: provider identity for phone, key creator for WebSocket, authenticated Comma user for Electron.
 
 ### Electron subscription calls
 
-Mac Electron Home has Call, mute, live captions, hang up and transcript. Web has no control.
-Renderer owns WebRTC audio. Main grants microphone to its main renderer with macOS permission. Deny other windows, frames and camera.
+Mac Electron Home has Call, mute, live captions, hang up and transcript; Web has none.
+Renderers own WebRTC audio. Only the main renderer gets the microphone (macOS permission); deny other windows, frames and camera.
 
-Full app sessions use the Workspace's default Group at `/v1/comma/workspaces/:workspace_id/voice/calls`:
-`POST {sdp}` returns only `{sdp, call_id}`; `GET /:call_id/events?after=N` returns normalized events/cursor; `DELETE /:call_id` hangs up.
-Check Workspace authority on each request, original user on reads/hang up. Use `no-store`.
+Full app sessions use the default Group at `/v1/comma/workspaces/:workspace_id/voice/calls`:
+`POST {sdp, mode?}` returns only `{sdp, call_id}`; `GET /:call_id/events?after=N` returns normalized events/cursor; `DELETE /:call_id` hangs up.
+Check Workspace authority per request and the original user on reads/say/hang up; use `no-store`.
+`mode: "read_aloud"` reads only text from `POST /:call_id/say {text}`: no profile, greeting, Router input, delegation or notice; 120 s maximum.
 
-Admission needs enabled voice and a tenant Codex AccountPool account, without an API key.
+Admission needs enabled voice and a tenant Codex AccountPool account, not an API key.
 Salix signals ChatGPT `codex/realtime/calls?intent=quicksilver&architecture=avas`, model `gpt-live-1-codex`, then controls `wss://api.openai.com/v1/live/<rtc_id>`.
-Owner-approved headers identify Codex Desktop. Application `:codex` sets `version`, default `0.161.0`. AccountPool owns renewal. One 401 forces renewal and one retry. Limits return a plan refusal. Never read native Codex login files or expose credentials.
+Owner-approved headers identify Codex Desktop; `:codex` `version` defaults to `0.161.0`. AccountPool owns renewal; one 401 forces renewal and one retry. Limits return a plan refusal. Never read native Codex login files or expose credentials.
 Context chunks: 500 UTF-8 bytes maximum. Final replies omit `channel`; other context uses commentary. Notes request no speech. Captions merge by turn without final repeats.
 
 Poll serially every 500 ms per caller: 200 events maximum, 512 KiB queue. Gaps are explicit.
 No reads for 60 s hangs up. Ended events expire in 60 s even with reads.
-The view keeps at most 200 turns after hang up. Leaving releases media and hangs up. No durable transcript.
+The view keeps at most 200 turns after hang up; leaving releases media and hangs up. No durable transcript.
 
 ### Limits, drain and billing
 
@@ -129,7 +130,7 @@ Public Twilio paths allow 600 requests a minute per peer address, 6,000 in total
 4. `SalixVoice.admit/1` checks drain, enablement, the OpenAI key, capacity and the Group's call.
 5. Salix answers `<Connect><Stream>` to `/v1/voice/twilio/stream/<token>`.
 
-After the signature check, Salix speaks each refusal, then hangs up.
+After the signature check, Salix speaks each refusal and hangs up.
 A PIN has 4 to 8 digits, stored as a salted PBKDF2-SHA256 hash. `pin_max_failures` failures lock the number for `pin_lockout_seconds`. Success, or a new PIN, clears the count.
 
 The stream token is an HMAC-SHA256 over call, connect, Group, `CallSid` and a 60 s expiry, keyed from the deployment credential root. An invalid token gets 404 before the upgrade.
@@ -152,7 +153,7 @@ Comma mirrors them at `/v1/comma/workspaces/:workspace_id/integrations/voice` fo
 
 `GET /v1/agent-groups/{group_id}/voice` returns readiness, `busy`, formats, limits and `sessions_url`. `GET .../voice/sessions` upgrades to one session with subprotocol `comma.voice.v1`.
 Both need `Authorization: Bearer salix_vk_...` of the path Group, never a URL key. Before the upgrade: 401 for a bad key, 400 without the subprotocol, 503 while draining.
-Text frames are JSON objects of at most 16 KB that name the message in `type`. Both sides ignore unknown fields and types. Breaking changes ship as `comma.voice.v2`.
+Text frames are JSON objects, at most 16 KB, named by `type`. Both sides ignore unknown fields and types. Breaking changes ship as `comma.voice.v2`.
 
 The first client frame is `session.start {audio_format, client, display_name?}`, within 10 s.
 Formats are `pcmu_8k` or `pcm16_24k` (little-endian mono); `client` is `name/version`.
@@ -179,9 +180,9 @@ Salix writes agent audio at most 500 ms ahead of playback. Clients send paced si
 A voice agent key is the `voice` kind of the Agent Group API Key record (`Salix.Control.GroupApiKeys`). It keeps hash-only storage, one-time plaintext, status, expiry, creator and principal rules.
 
 Inbound `salix_gk_` keys open Router post-message/Loop events; voice `salix_vk_` keys open readiness/sessions only.
-Comma, Salix dashboard and tenant APIs mint both kinds. Router tools mint inbound only. Each kind allows 20 keys per Group.
+Comma, Salix dashboard and tenant APIs mint both kinds. Each kind allows 20 keys per Group.
 
-The prefix selects the kind before hash lookup; stored kind must match. Routers cannot mint voice keys, preventing prompt-injected billable credentials.
+The prefix selects the kind before hash lookup; stored kind must match. Router tools mint only inbound keys, preventing prompt-injected billable credentials.
 Rows default to `inbound`. Routes: Salix `/v1/runtime/agent-groups/:group_id/voice/api-keys`, Comma `/v1/comma/workspaces/:workspace_id/voice-api-keys`.
 Disable, delete and Group deletion reach live calls via `:pg`: a spoken notice, then close 4401. A timer (reset on change) ends calls at key expiry. Sessions recheck it at start; no polling. Session start updates `last_used_at`.
 
@@ -194,7 +195,7 @@ Defaults: `enabled` false, `gpt_live_model` `gpt-live-1`, `max_call_seconds` 180
 ## Voice profile
 
 Before GPT-Live starts, `SalixVoice.Profile` asks Jev (`decide`) one `choice` question per template field: `language`, `reply_length`, `formality`, `small_talk`, `expertise`, `units` and `clock`. Each has `unknown`.
-An answer counts at its field threshold, a 70% to 80% winning probability. The thresholds are not calibrated. Fixed sentences for counted answers extend the instructions and set the greeting language. No user or Jev text reaches GPT-Live. Nothing is stored.
+An answer counts at its field threshold, a 70% to 80% winning probability, not calibrated. Fixed sentences for counted answers extend the instructions and set the greeting language. No user or Jev text reaches GPT-Live. Nothing is stored.
 
 `SalixAgent.RouterDecision` sends the newest 12 user and assistant texts of the Router session, 1,500 bytes each, within 12 KiB. `decide` is public egress. By owner decision, message IFC labels and the Group IFC policy do not filter this text. Without text, it sends nothing.
 The profile runs when `decide` is configured and meters as `voice_profile`. After 2.5 s or a failure, the model starts with the base instructions.
@@ -202,7 +203,7 @@ The profile runs when `decide` is configured and meters as `voice_profile`. Afte
 ## Voice verification
 
 Local model/carrier fakes cover admission, delegation, chunks, captions, timers, revocation, drain and media. Client fixtures cover call states and microphone authority, not provider delivery.
-Earlier live API runs proved PCM16, mu-law, delegation, seconds and barge-in. Subscription, Twilio, multi-node behavior and pricing need runtime evidence. Capacity, one-call, drain and Twilio rate limits need independent availability-gate review. Calls have no TLA+ model.
+Earlier live API runs proved PCM16, mu-law, delegation, seconds and barge-in. Subscription, read-aloud, Twilio, multi-node behavior and pricing need runtime evidence. Capacity, one-call, drain and Twilio rate limits need independent availability-gate review. Calls have no TLA+ model.
 
 ## Signal
 
@@ -215,4 +216,4 @@ Accounts accept ACI/PNI invitations. Joining initializes missing profiles and pr
 `signal.*` tools reach only bound chats; replies and failure notices use `signal.send_message`. Bound peers' calls are Voice Calls. Unbinding ends them.
 Routes: `/v1/runtime/agent-groups/:group_id/im-connects/signal`, `/v1/runtime/signal/number`, Comma `/v1/comma/workspaces/:workspace_id/integrations/signal`.
 
-Calls require one TURN-over-TLS relay, with no UDP or direct ICE paths. TLS failure stops startup.
+Calls require one TURN-over-TLS relay, no UDP or direct ICE paths. TLS failure stops startup.

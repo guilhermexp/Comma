@@ -442,6 +442,123 @@ defmodule SalixVoice.Model.CodexTest do
     assert {:error, :not_configured} = SalixVoice.admit(%{attrs | carrier: :websocket})
   end
 
+  test "a read-aloud Electron call speaks only the text it is given and never reaches the Router" do
+    alias SalixStore.{S3, Ids}
+    alias SalixVoice.{CallActor, Settings, TestStubs}
+    alias SalixVoice.Carrier.Electron
+    start_supervised!(S3.Fake)
+
+    overrides = [
+      ingress_mod: TestStubs.Ingress,
+      profile_decider_mod: TestStubs.ProfileDecider,
+      test_pid: self(),
+      metering_mod: TestStubs.Metering,
+      group_directory_mod: TestStubs.GroupDirectory
+    ]
+
+    previous =
+      for {key, value} <- overrides do
+        old = Application.fetch_env(:salix_voice, key)
+        Application.put_env(:salix_voice, key, value)
+        {key, old}
+      end
+
+    on_exit(fn ->
+      for {key, old} <- previous do
+        case old do
+          {:ok, value} -> Application.put_env(:salix_voice, key, value)
+          :error -> Application.delete_env(:salix_voice, key)
+        end
+      end
+    end)
+
+    {:ok, _} = Settings.update(%{"enabled" => true, "clear_secrets" => ["openai_api_key"]})
+    tenant = Ids.new_tenant_id()
+    group = Ids.new_group_id(tenant)
+
+    attrs = %{
+      carrier: :electron,
+      mode: :read_aloud,
+      tenant_id: tenant,
+      group_id: group,
+      connect_id: "connect_read_aloud",
+      caller: %{"kind" => "comma_user", "value" => "owner"},
+      audio_format: :pcm16_24k,
+      sdp: "offer-sdp"
+    }
+
+    scope = {tenant, group, "owner"}
+    assert {:ok, answer} = Electron.start(attrs)
+    assert_receive {:offer, %{"session" => session}}, 2_000
+    assert session["instructions"] == CallActor.read_aloud_instructions()
+    assert {:ok, %{max_duration_s: 120}} = SalixVoice.info(answer.call_id)
+    assert_receive {:socket, server}, 2_000
+
+    # Text that arrives before the session starts waits for it.
+    first = "A reunião foi movida para as 15h. Avise o time."
+    assert {:ok, %{queued: true, chunks: 1}} = Electron.say(answer.call_id, scope, first)
+    refute_receive {:sent, _}, 100
+
+    send(server, {:push, %{"type" => "session.started", "session" => %{"id" => "rtc_fixture"}}})
+
+    assert_receive {:sent,
+                    %{
+                      "type" => "session.context.append",
+                      "channel" => "commentary",
+                      "content" => [%{"type" => "input_text", "text" => ^first}]
+                    }},
+                   2_000
+
+    # No greeting follows the queued text.
+    refute_receive {:sent, _}, 200
+
+    sentence = String.duplicate("Frase com acentuação é longa", 6) <> "."
+    long = Enum.join(List.duplicate(sentence, 6), " ")
+    assert {:ok, %{queued: true, chunks: chunk_count}} = Electron.say(answer.call_id, scope, long)
+
+    chunks =
+      for _ <- 1..chunk_count do
+        assert_receive {:sent,
+                        %{"type" => "session.context.append", "content" => [%{"text" => chunk}]}},
+                       2_000
+
+        assert byte_size(chunk) <= 500
+        assert String.ends_with?(chunk, ".")
+        chunk
+      end
+
+    assert chunk_count > 1
+    assert Enum.join(chunks, " ") == long
+    refute_receive {:sent, _}, 100
+
+    # A delegation the model opens is ignored: nothing reaches the Router.
+    send(
+      server,
+      {:push,
+       %{
+         "type" => "delegation.created",
+         "item" => %{
+           "target" => "client",
+           "id" => "del_read",
+           "content" => [%{"type" => "input_text", "text" => "look it up"}]
+         }
+       }}
+    )
+
+    assert {:error, :invalid_input} = Electron.say(answer.call_id, scope, "  ")
+    assert {:error, :call_not_found} = Electron.say(answer.call_id, {tenant, group, "other"}, "x")
+    assert {:ok, %{events: events}} = Electron.events(answer.call_id, scope, 0)
+    refute Enum.any?(events, &(Map.get(&1, :type) == "delegation"))
+
+    assert {:ok, _} = Electron.hang_up(answer.call_id, scope)
+    assert_receive {:sent, %{"type" => "session.close"}}, 2_000
+    send(server, {:push, %{"type" => "session.closed"}})
+    assert_receive {:metered, %{carrier: "electron"}}, 2_000
+    assert {:error, :call_not_found} = Electron.say(answer.call_id, scope, "late")
+    refute_received {:profile_decide, _, _, _}
+    refute_received {:ingress, _, _, _, _, _}
+  end
+
   defp wait_messages(group, conversation, remaining) do
     {:ok, messages} = SalixIM.Conversations.list_group_conversation_messages(group, conversation)
 

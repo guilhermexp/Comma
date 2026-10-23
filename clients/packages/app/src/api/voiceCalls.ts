@@ -4,6 +4,12 @@ export const voiceCallAnswerSchema = z.object({
   call_id: z.string(),
   sdp: z.string(),
 });
+/** `read_aloud`: the voice reads only the text it is sent, then stays silent. */
+export type VoiceCallMode = "read_aloud";
+export const voiceCallSaySchema = z.object({
+  queued: z.literal(true),
+  chunks: z.number().int(),
+});
 const callEventSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("started") }),
   z.object({
@@ -32,3 +38,4 @@ export const voiceCallEventsSchema = z.object({
 export type VoiceCallAnswer = z.infer<typeof voiceCallAnswerSchema>;
 export type VoiceCallEvents = z.infer<typeof voiceCallEventsSchema>;
 export type VoiceCallEvent = z.infer<typeof voiceCallEventSchema>;
+export type VoiceCallSay = z.infer<typeof voiceCallSaySchema>;

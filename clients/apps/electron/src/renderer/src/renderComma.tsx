@@ -6,6 +6,7 @@ import {
   MeetingRecorderWindowApp,
   OnboardingWindowApp,
   PushToTalkOverlayApp,
+  PushToTalkVoiceApp,
   SitePermissionMenuApp,
   BrowserInspectionComposer,
   CommaClientSettingsI18nProvider,
@@ -57,6 +58,8 @@ if (isPushToTalkOverlay) {
   document.documentElement.dataset.commaWindowRole = "push-to-talk-overlay";
   document.body.dataset.commaWindowRole = "push-to-talk-overlay";
 }
+// The hidden voice window draws nothing; it only holds the reply's WebRTC peer.
+const isPushToTalkVoice = rendererRole === "push-to-talk-voice";
 const isSideChatWindow = rendererRole === "side-chat-window";
 const isSideChatTestWindow = rendererRole === "side-chat-test-window";
 if (isSideChatWindow || isSideChatTestWindow) {
@@ -92,6 +95,7 @@ setToastsEnabled(
   !isSitePermissionMenu &&
     !isMeetingRecorderWindow &&
     !isPushToTalkOverlay &&
+    !isPushToTalkVoice &&
     !isBrowserInspectionComposer &&
     !isSideChatWindow &&
     !isSideChatTestWindow
@@ -112,6 +116,12 @@ async function renderComma() {
     defaultCommaClientSettings;
   const locale = resolveLocalePreference(initialClientSettings.localePreference);
   initializeCommaI18n([locale]);
+  if (isPushToTalkVoice) {
+    // No StrictMode: its dev-only remount would open a second peer for the
+    // same generation, and Main answers only one offer per generation.
+    createRoot(root!).render(<PushToTalkVoiceApp />);
+    return;
+  }
   if (isMeetingRecorderWindow || isSitePermissionMenu || isPushToTalkOverlay) {
     createRoot(root!).render(
       <StrictMode>

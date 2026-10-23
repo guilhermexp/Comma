@@ -92,6 +92,7 @@ import {
   createElectronPushToTalkOverlayWindowFactory,
   PushToTalkOverlayWindow,
 } from "./push-to-talk/overlay-window";
+import { PushToTalkVoiceWindow } from "./push-to-talk/voice-window";
 import { createNativePushToTalkHotkey } from "./push-to-talk/native-hotkey";
 import { NotchPushToTalkStatus } from "./push-to-talk/notch-status";
 import { PushToTalkScreen } from "./push-to-talk/screen-capture";
@@ -1505,6 +1506,27 @@ const pushToTalkOverlay = new PushToTalkOverlayWindow({
   writeClipboard: (text) => electronClipboard.writeText(text),
 });
 
+// The GPT Live voice's hidden WebRTC window; created on the first spoken reply.
+let pushToTalkVoiceWindow: PushToTalkVoiceWindow | undefined;
+function ensurePushToTalkVoiceWindow() {
+  if (closingMainServices || !appContext)
+    throw new Error("Talk to agent voice is unavailable.");
+  pushToTalkVoiceWindow ??= new PushToTalkVoiceWindow({
+    logger: log,
+    preloadPath: join(__dirname, "preload.js"),
+    registry: appContext.webContentsRegistry,
+    secure: (window) =>
+      installWindowSecurity({
+        allowedNavigationOrigins: allowedRendererOrigins(forgeRendererURL()),
+        logger: log,
+        webContents: window.webContents,
+      }),
+    surfaces: appContext.surfaces,
+    url: withHashRoute(e2eHooks.rendererUrl ?? appRendererUrl(), "/push-to-talk-voice"),
+  });
+  return pushToTalkVoiceWindow;
+}
+
 // The turn's scene in the Comma Notch. Its error actions run through the
 // companion's handler, so both places open the same panes.
 const pushToTalkStatus = new NotchPushToTalkStatus({
@@ -1548,6 +1570,9 @@ function createPushToTalkDeps() {
       createFromBitmap: (bitmap, size) => nativeImage.createFromBitmap(bitmap, size),
     }),
     speaker,
+    voiceWindow: {
+      open: async () => ensurePushToTalkVoiceWindow().open(),
+    },
     powerMonitor,
     openSideChat: () => safelyControlSideChat(() => sideChat.open()),
     trace: (message: string) => log.info(message),
@@ -2253,6 +2278,7 @@ async function closeMainServices() {
   }
   resetStatusTrayInteractions();
   meetingRecorderWindow?.close();
+  pushToTalkVoiceWindow?.close();
   meetingRecorderWindow = undefined;
   sideChatBrowserWindowGeneration += 1;
   sideChatTestBrowserWindowGeneration += 1;

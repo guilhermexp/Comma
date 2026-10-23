@@ -2,8 +2,11 @@ import type { CommaLocale } from "@comma/i18n";
 import {
   voiceCallAnswerSchema,
   voiceCallEventsSchema,
+  voiceCallSaySchema,
   type VoiceCallAnswer,
   type VoiceCallEvents,
+  type VoiceCallMode,
+  type VoiceCallSay,
 } from "./voiceCalls";
 import {
   browserBindingSchema,
@@ -259,7 +262,17 @@ export type ComposioStatus = z.infer<typeof composioStatusSchema>;
 export type ComposioAccount = z.infer<typeof composioAccountSchema>;
 
 export interface CommaApiClient {
-  startVoiceCall(workspaceId: string, sdp: string): Promise<VoiceCallAnswer>;
+  /** `read_aloud` opens a call that only reads the text sent with `sayVoiceCall`. */
+  startVoiceCall(
+    workspaceId: string,
+    sdp: string,
+    options?: { mode?: VoiceCallMode }
+  ): Promise<VoiceCallAnswer>;
+  sayVoiceCall(
+    workspaceId: string,
+    callId: string,
+    text: string
+  ): Promise<VoiceCallSay>;
   voiceCallEvents(
     workspaceId: string,
     callId: string,
@@ -975,12 +988,20 @@ export function createCommaApi(config: CommaApiConfig): CommaApiClient {
   }
 
   return {
-    startVoiceCall(workspaceId, sdp) {
+    startVoiceCall(workspaceId, sdp, options = {}) {
       return request(
         "POST",
         `/v1/comma/workspaces/${encodeURIComponent(workspaceId)}/voice/calls`,
         voiceCallAnswerSchema,
-        { sdp }
+        options.mode ? { sdp, mode: options.mode } : { sdp }
+      );
+    },
+    sayVoiceCall(workspaceId, callId, text) {
+      return request(
+        "POST",
+        `/v1/comma/workspaces/${encodeURIComponent(workspaceId)}/voice/calls/${encodeURIComponent(callId)}/say`,
+        voiceCallSaySchema,
+        { text }
       );
     },
     voiceCallEvents(workspaceId, callId, after, options = {}) {

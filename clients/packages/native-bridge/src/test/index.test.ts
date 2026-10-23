@@ -775,6 +775,7 @@ describe("native bridge contracts", () => {
       "calendar.state.changed",
       "meetingRecorder.state.changed",
       "pushToTalk.overlayState.changed",
+      "pushToTalkVoice.session.changed",
       "surfaces.windowResizeSettled",
       "airDrop.state.changed",
       "driveCatalog.state.changed",
@@ -955,6 +956,12 @@ describe("native bridge contracts", () => {
         target: { type: "all" },
       },
       {
+        channel: "comma:push-to-talk-voice:session-changed",
+        id: "pushToTalkVoice.session.changed",
+        permission: "push-to-talk.voice",
+        target: { type: "all" },
+      },
+      {
         channel: "comma:surfaces:window-resize-settled",
         id: "surfaces.windowResizeSettled",
         permission: "surfaces.state.read",
@@ -1087,6 +1094,7 @@ describe("native bridge contracts", () => {
       "calendar.state",
       "meetingRecorder.state",
       "pushToTalk.overlayState",
+      "pushToTalkVoice.session",
       "airDrop.state",
       "driveCatalog.state",
     ]);
@@ -1478,6 +1486,24 @@ describe("native bridge contracts", () => {
           channel: "comma:push-to-talk:overlay-state-changed",
           id: "pushToTalk.overlayState.changed",
           permission: "push-to-talk.overlay",
+          target: { type: "all" },
+        },
+      },
+      {
+        bridge: { method: "session", namespace: "pushToTalkVoice" },
+        get: {
+          channel: "comma:push-to-talk-voice:session",
+          id: "pushToTalkVoice.session",
+          permission: "push-to-talk.voice",
+          sessionAdmission: "local_only",
+          sessionAdmissionRationale:
+            "The window relays only WebRTC media signals; Main starts and ends the read-aloud call itself inside its current Session admission.",
+        },
+        id: "pushToTalkVoice.session",
+        subscribe: {
+          channel: "comma:push-to-talk-voice:session-changed",
+          id: "pushToTalkVoice.session.changed",
+          permission: "push-to-talk.voice",
           target: { type: "all" },
         },
       },

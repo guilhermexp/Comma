@@ -4,12 +4,17 @@ import type { ChatMessage, ChatTarget } from "@comma/chat-contract";
 import { MicrophoneDeniedError } from "../modules/audio-capture/microphone";
 import {
   busyVisibleMs,
+  captionLingerMs,
   errorVisibleMs,
   maxRecordingMs,
   PushToTalkController,
   type PushToTalkControllerDeps,
   type PushToTalkRecording,
 } from "../push-to-talk/controller";
+import type {
+  PushToTalkLiveVoice,
+  PushToTalkVoiceResult,
+} from "../push-to-talk/live-voice";
 import { PushToTalkReplyWatcher, replyWaitMs } from "../push-to-talk/reply-watcher";
 import type {
   PushToTalkCursorLocation,
@@ -205,6 +210,39 @@ class FakeSpeaker {
   }
 }
 
+class FakeLiveVoice implements PushToTalkLiveVoice {
+  reading: { text: string; onCaption: (sentence: string) => void } | undefined;
+  #result: ((result: PushToTalkVoiceResult) => void) | undefined;
+  constructor(private readonly log: string[]) {}
+  prepare = vi.fn(
+    (workspaceId: string) => void this.log.push(`voice.prepare ${workspaceId}`)
+  );
+  speak = vi.fn(
+    (input: {
+      workspaceId: string;
+      text: string;
+      onCaption: (sentence: string) => void;
+    }) => {
+      this.log.push(`voice.speak ${input.text}`);
+      this.reading = input;
+      const { promise, resolve } = deferred<PushToTalkVoiceResult>();
+      this.#result = resolve;
+      return promise;
+    }
+  );
+  stop = vi.fn(() => {
+    this.log.push("voice.stop");
+    this.end({ status: "stopped" });
+  });
+  reset = vi.fn(() => void this.log.push("voice.reset"));
+  end(result: PushToTalkVoiceResult) {
+    const resolve = this.#result;
+    this.#result = undefined;
+    this.reading = undefined;
+    resolve?.(result);
+  }
+}
+
 class FakePowerMonitor {
   listeners = new Map<string, Set<() => void>>();
   on(event: "lock-screen" | "suspend", listener: () => void) {
@@ -270,6 +308,7 @@ function setup(
     transcript?: () => Promise<{ text: string }>;
     ready?: boolean;
     send?: () => Promise<typeof target>;
+    liveVoice?: boolean;
   } = {}
 ) {
   const log: string[] = [];
@@ -278,6 +317,7 @@ function setup(
   const companion = new FakeCompanion(log);
   const status = new FakeStatus(log, options.notchVisible ?? true);
   const speaker = new FakeSpeaker(log);
+  const voice = new FakeLiveVoice(log);
   const powerMonitor = new FakePowerMonitor();
   const replies = new PushToTalkReplyWatcher({ clock });
   const finalize = vi.fn((stroke: PushToTalkStroke | null) => ({
@@ -334,6 +374,7 @@ function setup(
       }),
     },
     speaker,
+    ...(options.liveVoice ? { voice } : {}),
     replies,
     openSideChat: vi.fn(() => void log.push("sideChat.open")),
     removeFile: vi.fn(async (path: string) => void log.push(`rm ${path}`)),
@@ -371,6 +412,7 @@ function setup(
     companion,
     status,
     speaker,
+    voice,
     clock,
     powerMonitor,
     log,
@@ -843,6 +885,90 @@ describe("PushToTalkController", () => {
     expect(status.last()).toEqual({ kind: "listening" });
     expect(companion.last()).toEqual({ kind: "listening" });
     expect(deps.microphone.start).toHaveBeenCalledTimes(2);
+  });
+
+  // Mesma voz das chamadas
+  it("pre-warms the GPT Live voice when the question is sent and reads the reply with it", async () => {
+    const { voice, speaker, companion, status, hold, reply, clock, log } = setup({
+      liveVoice: true,
+    });
+    await hold(1_000);
+    expect(status.last()).toEqual({ kind: "thinking" });
+    expect(log.slice(-3)).toEqual([
+      "voice.prepare wsp_1",
+      "notch thinking",
+      "companion.state thinking",
+    ]);
+
+    await reply("**Done.** See [the doc](https://x.test).");
+    expect(status.last()).toEqual({ kind: "speaking" });
+    expect(voice.reading?.text).toBe("Done. See the doc.");
+    voice.reading?.onCaption("Done.");
+    voice.reading?.onCaption("See the doc.");
+    expect(companion.captions).toEqual(["Done.", "See the doc."]);
+    voice.end({ status: "done" });
+    await flush();
+    expect(speaker.speak).not.toHaveBeenCalled();
+    clock.advance(captionLingerMs);
+    expect(companion.visible).toBe(false);
+    expect(status.last()).toBeNull();
+  });
+
+  // Voz GPT Live indisponível
+  it("reads with the system voice only the sentences the GPT Live voice did not speak", async () => {
+    const { voice, speaker, companion, hold, reply, finishSentence } = setup({
+      liveVoice: true,
+    });
+    await hold(1_000);
+    await reply("First sentence. Second sentence. Third sentence.");
+    voice.reading?.onCaption("First sentence.");
+    voice.end({ status: "unavailable", reason: "closed", spokenSentences: 1 });
+    await flush();
+    expect(speaker.speaking()).toBe("Second sentence.");
+    expect(companion.caption).toBe("Second sentence.");
+    await finishSentence();
+    await finishSentence();
+    expect(speaker.spoken).toEqual(["Second sentence.", "Third sentence."]);
+  });
+
+  // Interromper a leitura
+  it("stops the GPT Live voice at once on the next press", async () => {
+    const { voice, speaker, companion, status, hotkey, hold, reply } = setup({
+      liveVoice: true,
+    });
+    await hold(1_000);
+    await reply("First sentence. Second sentence.");
+    voice.reading?.onCaption("First sentence.");
+
+    hotkey.press();
+    expect(voice.stop).toHaveBeenCalled();
+    expect(companion.caption).toBeNull();
+    await flush();
+    expect(speaker.speak).not.toHaveBeenCalled();
+    expect(status.last()).toEqual({ kind: "listening" });
+  });
+
+  // Agente demora
+  it("hangs up the pre-warmed voice when no reply comes in 180 s", async () => {
+    const { voice, hold, clock } = setup({ liveVoice: true });
+    await hold(1_000);
+    voice.stop.mockClear();
+    clock.advance(replyWaitMs);
+    expect(voice.stop).toHaveBeenCalled();
+  });
+
+  it("does not open the GPT Live voice while spoken replies are off, and retries it after a settings change", async () => {
+    const { controller, voice, speaker, hold, reply } = setup({
+      liveVoice: true,
+      settings: { speakReplies: false },
+    });
+    await hold(1_000);
+    await reply("All set.");
+    expect(voice.prepare).not.toHaveBeenCalled();
+    expect(voice.speak).not.toHaveBeenCalled();
+    expect(speaker.speak).not.toHaveBeenCalled();
+    controller.update({ ...settings, speakReplies: true });
+    expect(voice.reset).toHaveBeenCalled();
   });
 
   // Voz desligada

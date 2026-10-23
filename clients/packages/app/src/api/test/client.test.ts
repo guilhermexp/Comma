@@ -134,6 +134,55 @@ describe("createCommaApi", () => {
     ]);
   });
 
+  it("starts a read-aloud voice call and sends it the text to speak", async () => {
+    const responses = [
+      { call_id: "vc_1", sdp: "answer-sdp" },
+      { call_id: "vc_2", sdp: "answer-sdp" },
+      { queued: true, chunks: 2 },
+    ];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse(responses.shift(), 201)
+    );
+    const api = createCommaApi({
+      baseUrl: "https://api.example",
+      token: "comma_sess_test",
+      fetch: fetchMock,
+    });
+
+    await expect(api.startVoiceCall("workspace-1", "offer-sdp")).resolves.toEqual({
+      call_id: "vc_1",
+      sdp: "answer-sdp",
+    });
+    await api.startVoiceCall("workspace-1", "offer-sdp", { mode: "read_aloud" });
+    await expect(
+      api.sayVoiceCall("workspace-1", "vc/2", "Olá. Tudo bem?")
+    ).resolves.toEqual({ queued: true, chunks: 2 });
+
+    expect(
+      fetchMock.mock.calls.map(([url, init]) => ({
+        method: (init as RequestInit).method,
+        path: new URL(String(url)).pathname,
+        body: JSON.parse(String((init as RequestInit).body)),
+      }))
+    ).toEqual([
+      {
+        method: "POST",
+        path: "/v1/comma/workspaces/workspace-1/voice/calls",
+        body: { sdp: "offer-sdp" },
+      },
+      {
+        method: "POST",
+        path: "/v1/comma/workspaces/workspace-1/voice/calls",
+        body: { sdp: "offer-sdp", mode: "read_aloud" },
+      },
+      {
+        method: "POST",
+        path: "/v1/comma/workspaces/workspace-1/voice/calls/vc%2F2/say",
+        body: { text: "Olá. Tudo bem?" },
+      },
+    ]);
+  });
+
   it("sends Stripe checkout to the environment-aware server return page", async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse({

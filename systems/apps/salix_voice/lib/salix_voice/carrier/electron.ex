@@ -22,6 +22,8 @@ defmodule SalixVoice.Carrier.Electron do
 
   def events(id, scope, after_cursor), do: request(id, {:events, scope, after_cursor})
   def hang_up(id, scope), do: request(id, {:hang_up, scope})
+  @doc "Queues `text` for a `:read_aloud` call to read; it waits for the session start."
+  def say(id, scope, text), do: request(id, {:say, scope, text})
 
   defp request(id, message) do
     case :pg.get_members(@pg, {:electron_voice, id}) do
@@ -84,6 +86,18 @@ defmodule SalixVoice.Carrier.Electron do
   def handle_call({:hang_up, scope}, _from, %{scope: scope} = state) do
     if state.call, do: send(state.call, {:voice_carrier, :hangup, :caller_hangup})
     {:reply, {:ok, %{ending: true}}, state}
+  end
+
+  def handle_call({:say, scope, text}, _from, %{scope: scope, closed: false, call: call} = state)
+      when is_pid(call) do
+    reply =
+      try do
+        GenServer.call(call, {:read_aloud, text})
+      catch
+        :exit, _ -> {:error, :call_not_found}
+      end
+
+    {:reply, reply, state}
   end
 
   def handle_call(_, _from, state), do: {:reply, {:error, :call_not_found}, state}

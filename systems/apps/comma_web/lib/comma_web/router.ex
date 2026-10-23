@@ -2214,6 +2214,12 @@ defmodule CommaWeb.Router do
     end)
   end
 
+  post "/v1/comma/workspaces/:workspace_id/voice/calls/:call_id/say" do
+    with_voice_call(conn, workspace_id, 200, fn workspace, user ->
+      CommaWeb.VoiceCalls.say(workspace, user, call_id, conn.body_params)
+    end)
+  end
+
   delete "/v1/comma/workspaces/:workspace_id/voice/calls/:call_id" do
     with_voice_call(conn, workspace_id, 200, fn workspace, user ->
       CommaWeb.VoiceCalls.hang_up(workspace, user, call_id)

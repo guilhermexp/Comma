@@ -8,6 +8,7 @@ export interface RendererWindowIdentityOptions {
     | "site-permission-menu"
     | "meeting-recorder-window"
     | "push-to-talk-overlay"
+    | "push-to-talk-voice"
     | "dev-workbench"
     | "main-window"
     | "onboarding-window"
@@ -356,6 +357,39 @@ export function createPushToTalkOverlayWindowOptions({
       additionalArguments: createRendererWindowIdentityArguments({
         windowId: "push-to-talk-overlay",
         windowRole: "push-to-talk-overlay",
+      }),
+    },
+  };
+}
+
+/**
+ * Talk to agent's GPT Live voice: a hidden renderer that only holds the
+ * WebRTC peer of a read-aloud call. It never shows or takes focus, and plays
+ * the reply without a user gesture.
+ */
+export function createPushToTalkVoiceWindowOptions({
+  preloadPath,
+}: {
+  preloadPath: string;
+}): BrowserWindowConstructorOptions {
+  return {
+    width: 1,
+    height: 1,
+    focusable: false,
+    frame: false,
+    show: false,
+    skipTaskbar: true,
+    webPreferences: {
+      autoplayPolicy: "no-user-gesture-required",
+      backgroundThrottling: false,
+      preload: preloadPath,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+      additionalArguments: createRendererWindowIdentityArguments({
+        windowId: "push-to-talk-voice",
+        windowRole: "push-to-talk-voice",
       }),
     },
   };

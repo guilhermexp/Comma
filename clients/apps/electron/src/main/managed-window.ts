@@ -3,6 +3,7 @@ type ManagedWindowRole =
   | "site-permission-menu"
   | "meeting-recorder-window"
   | "push-to-talk-overlay"
+  | "push-to-talk-voice"
   | "dev-workbench"
   | "main-window"
   | "onboarding-window"

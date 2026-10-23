@@ -41,6 +41,7 @@ import type { MeetingPresenceProvider } from "../modules/meeting-presence/index"
 import type { CalendarProvider } from "../modules/calendar/index";
 import type { MeetingRecorderProvider } from "../modules/meeting-recorder/index";
 import type { PushToTalkOverlayProvider } from "../push-to-talk/overlay-window";
+import type { PushToTalkVoiceProvider } from "../push-to-talk/live-voice";
 import type { AirDropReceptionProvider } from "../modules/airdrop/reception";
 import type { DriveCatalogService } from "../modules/synchronicity/catalog";
 import type { SynchronicityProvider } from "../modules/synchronicity/index";
@@ -97,6 +98,7 @@ export type NativeCapabilityProviderMap = {
   calendar: CalendarProvider;
   meetingRecorder: MeetingRecorderProvider;
   pushToTalk: PushToTalkOverlayProvider;
+  pushToTalkVoice: PushToTalkVoiceProvider;
   airDrop: AirDropReceptionProvider;
   driveCatalog: DriveCatalogService;
   synchronicity: SynchronicityProvider;
@@ -286,6 +288,9 @@ export type NativeCapabilityHandlerTypeMap = {
   "pushToTalk.setStroke": PushToTalkOverlayProvider["setStroke"];
   "pushToTalk.setInteractive": PushToTalkOverlayProvider["setInteractive"];
   "pushToTalk.overlayAction": PushToTalkOverlayProvider["overlayAction"];
+  "pushToTalkVoice.session": PushToTalkVoiceProvider["voiceSession"];
+  "pushToTalkVoice.offer": PushToTalkVoiceProvider["voiceOffer"];
+  "pushToTalkVoice.report": PushToTalkVoiceProvider["voiceReport"];
   "airDrop.state": AirDropReceptionProvider["state"];
   "airDrop.act": AirDropReceptionProvider["act"];
   "airDrop.preview": AirDropReceptionProvider["preview"];
@@ -585,6 +590,12 @@ export function registerGeneratedNativeMainBindings({
       providers.pushToTalk.setInteractive(input),
     "pushToTalk.overlayAction": async (input) =>
       providers.pushToTalk.overlayAction(input),
+    "pushToTalkVoice.session": async (input) =>
+      providers.pushToTalkVoice.voiceSession(input),
+    "pushToTalkVoice.offer": async (input) =>
+      providers.pushToTalkVoice.voiceOffer(input),
+    "pushToTalkVoice.report": async (input) =>
+      providers.pushToTalkVoice.voiceReport(input),
     "airDrop.state": async (input) => providers.airDrop.state(input),
     "airDrop.act": async (input) => providers.airDrop.act(input),
     "airDrop.preview": async (input) => providers.airDrop.preview(input),

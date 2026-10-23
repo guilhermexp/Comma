@@ -902,6 +902,7 @@ export type NativeRendererWindowRole =
   | "site-permission-menu"
   | "meeting-recorder-window"
   | "push-to-talk-overlay"
+  | "push-to-talk-voice"
   | "dev-workbench"
   | "main-window"
   | "onboarding-window"
@@ -1819,6 +1820,7 @@ export const nativeRendererIdentitySchema = z.object({
     "site-permission-menu",
     "meeting-recorder-window",
     "push-to-talk-overlay",
+    "push-to-talk-voice",
     "dev-workbench",
     "main-window",
     "onboarding-window",
@@ -7828,6 +7830,114 @@ export const pushToTalkOverlayActionCapability = defineNativeCapability({
   sessionAdmissionRationale:
     "Controls only Main's local Talk to agent overlay; Main admits the turn itself against its current Session.",
 });
+// Talk to agent's GPT Live voice (D12): Main owns the read-aloud call, its
+// Session and the reply text. The hidden voice window only holds the WebRTC
+// peer, with a silent synthetic input track, plays what it receives and
+// reports whether it is audible.
+export const pushToTalkVoiceSessionSchema = z
+  .object({
+    /** Increments on every change; a new active generation is a new peer. */
+    generation: z.number().int().nonnegative(),
+    /** False: the window holds no peer. */
+    active: z.boolean(),
+  })
+  .strict();
+export type PushToTalkVoiceSession = z.infer<typeof pushToTalkVoiceSessionSchema>;
+export const idlePushToTalkVoiceSession: PushToTalkVoiceSession = {
+  active: false,
+  generation: 0,
+};
+export const pushToTalkVoiceReportSchema = z.enum([
+  /** The received audio became audible. */
+  "audible",
+  /** The received audio went quiet. */
+  "silent",
+  /** The peer could not connect or play. */
+  "failed",
+]);
+export type PushToTalkVoiceReport = z.infer<typeof pushToTalkVoiceReportSchema>;
+export const pushToTalkVoiceSessionCapability = defineNativeCapability({
+  bridge: { method: "session", namespace: "pushToTalkVoice" },
+  channel: "comma:push-to-talk-voice:session",
+  handler: {
+    exportName: "PushToTalkVoiceProvider",
+    member: "voiceSession",
+    module: "../../../apps/electron/src/main/push-to-talk/live-voice",
+    provider: "pushToTalkVoice",
+  },
+  id: "pushToTalkVoice.session",
+  input: z.void(),
+  output: pushToTalkVoiceSessionSchema,
+  mock: idlePushToTalkVoiceSession,
+  webFallback: idlePushToTalkVoiceSession,
+  permission: "push-to-talk.voice",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "The window relays only WebRTC media signals; Main starts and ends the read-aloud call itself inside its current Session admission.",
+});
+export const pushToTalkVoiceSessionChangedEvent = defineNativeEvent({
+  channel: "comma:push-to-talk-voice:session-changed",
+  id: "pushToTalkVoice.session.changed",
+  mock: idlePushToTalkVoiceSession,
+  payload: pushToTalkVoiceSessionSchema,
+  permission: pushToTalkVoiceSessionCapability.permission,
+  target: { type: "all" },
+});
+export const pushToTalkVoiceSessionLeaf = defineNativeState({
+  bridge: { method: "session", namespace: "pushToTalkVoice" },
+  get: pushToTalkVoiceSessionCapability,
+  id: "pushToTalkVoice.session",
+  subscribe: pushToTalkVoiceSessionChangedEvent,
+});
+export const pushToTalkVoiceOfferCapability = defineNativeCapability({
+  bridge: { method: "offer", namespace: "pushToTalkVoice" },
+  channel: "comma:push-to-talk-voice:offer",
+  handler: {
+    exportName: "PushToTalkVoiceProvider",
+    member: "voiceOffer",
+    module: "../../../apps/electron/src/main/push-to-talk/live-voice",
+    provider: "pushToTalkVoice",
+  },
+  id: "pushToTalkVoice.offer",
+  input: z
+    .object({
+      generation: z.number().int().nonnegative(),
+      sdp: z.string().min(1).max(131_072),
+    })
+    .strict(),
+  /** `null`: Main no longer wants this peer, or the call could not start. */
+  output: z.object({ sdp: z.string() }).strict().nullable(),
+  mock: null,
+  webFallback: null,
+  permission: "push-to-talk.voice",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "The window relays only WebRTC media signals; Main starts and ends the read-aloud call itself inside its current Session admission.",
+});
+export const pushToTalkVoiceReportCapability = defineNativeCapability({
+  bridge: { method: "report", namespace: "pushToTalkVoice" },
+  channel: "comma:push-to-talk-voice:report",
+  handler: {
+    exportName: "PushToTalkVoiceProvider",
+    member: "voiceReport",
+    module: "../../../apps/electron/src/main/push-to-talk/live-voice",
+    provider: "pushToTalkVoice",
+  },
+  id: "pushToTalkVoice.report",
+  input: z
+    .object({
+      event: pushToTalkVoiceReportSchema,
+      generation: z.number().int().nonnegative(),
+    })
+    .strict(),
+  output: z.void(),
+  mock: undefined,
+  webFallback: undefined,
+  permission: "push-to-talk.voice",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "The window relays only WebRTC media signals; Main starts and ends the read-aloud call itself inside its current Session admission.",
+});
 // -- airDrop ----------------------------------------------------------------
 //
 // Main owns AirDrop consent and reception. The toast of the window that owns
@@ -9772,6 +9882,9 @@ export const nativeCapabilityRegistry = [
   pushToTalkSetStrokeCapability,
   pushToTalkSetInteractiveCapability,
   pushToTalkOverlayActionCapability,
+  pushToTalkVoiceSessionCapability,
+  pushToTalkVoiceOfferCapability,
+  pushToTalkVoiceReportCapability,
   airDropStateCapability,
   airDropActCapability,
   airDropPreviewCapability,
@@ -9830,6 +9943,7 @@ export const nativeEventRegistry = [
   calendarStateChangedEvent,
   meetingRecorderStateChangedEvent,
   pushToTalkOverlayStateChangedEvent,
+  pushToTalkVoiceSessionChangedEvent,
   surfacesWindowResizeSettledEvent,
   airDropStateChangedEvent,
   driveCatalogChangedEvent,
@@ -9858,6 +9972,7 @@ export const nativeStateRegistry = [
   calendarStateLeaf,
   meetingRecorderStateLeaf,
   pushToTalkOverlayStateLeaf,
+  pushToTalkVoiceSessionLeaf,
   airDropStateLeaf,
   driveCatalogStateLeaf,
 ] as const;

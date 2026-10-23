@@ -20,6 +20,7 @@ export interface NativeCallerContext {
     | "site-permission-menu"
     | "meeting-recorder-window"
     | "push-to-talk-overlay"
+    | "push-to-talk-voice"
     | "main-window"
     | "dev-workbench"
     | "onboarding-window"

@@ -32,6 +32,11 @@ import { systemClock } from "../push-to-talk/clock";
 import { createPushToTalkDelivery } from "../push-to-talk/delivery";
 import { HelperPushToTalkMicrophone } from "../push-to-talk/microphone";
 import { RemotePushToTalkTranscriber } from "../push-to-talk/remote-transcriber";
+import {
+  GptLiveVoice,
+  idlePushToTalkVoiceProvider,
+  type PushToTalkVoiceProvider,
+} from "../push-to-talk/live-voice";
 import { PushToTalkReplyWatcher } from "../push-to-talk/reply-watcher";
 import {
   choosePushToTalkTranscriber,
@@ -83,6 +88,7 @@ import {
   calendarStateChangedEvent,
   meetingRecorderStateChangedEvent,
   hiddenPushToTalkOverlayState,
+  pushToTalkVoiceSessionChangedEvent,
   audioCaptureStartCapability,
   audioCaptureStopCapability,
   audioCaptureSelectMicrophoneCapability,
@@ -387,6 +393,11 @@ export interface ElectronMainRuntimeDeps {
         status: PushToTalkStatus;
         screen: PushToTalkScreenSource;
         speaker: PushToTalkSpeaker;
+        /**
+         * The hidden window that holds the GPT Live voice's WebRTC peer.
+         * Absent, replies are read with `speaker` only.
+         */
+        voiceWindow?: { open(): Promise<void> } | undefined;
         powerMonitor: PushToTalkPowerMonitor;
         /** Opens Side Chat normally (a click on the caption balloon). */
         openSideChat: () => void;
@@ -516,6 +527,8 @@ export interface ElectronMainContext {
   sideChat: SideChatProvider;
   /** Started by the composition root after the Side Chat helper starts. */
   pushToTalk: PushToTalkRuntime | undefined;
+  /** The GPT Live voice's renderer-facing half, when the voice window exists. */
+  pushToTalkVoice: PushToTalkVoiceProvider | undefined;
   surfaces: NativeSurfaceService;
   transport: TransportDiagnosticsService;
   computeNode: ComputeNodeProvider;
@@ -727,6 +740,7 @@ export async function createElectronMainContext(
   let mainLocalePreference: CommaLocalePreference | undefined;
   const currentMainLocale = () => mainLocale;
   let pushToTalk: PushToTalkRuntime | undefined;
+  let pushToTalkVoice: GptLiveVoice | undefined;
   const appPreferencesService = await AppPreferencesService.open({
     filePath: deps.appPreferencesFilePath,
     onStateChanged: (preferences) => {
@@ -1287,6 +1301,22 @@ export async function createElectronMainContext(
           runOwned: async (handler) => sessionAdmissionGuard.runOwned(handler),
         }),
     });
+    const voiceWindow = pushToTalkDeps.voiceWindow;
+    const voice = voiceWindow
+      ? new GptLiveVoice({
+          api: () => createCurrentMainSessionApiBinding({ session }).api,
+          runOwned: async (handler) => sessionAdmissionGuard.runOwned(handler),
+          host: {
+            open: () => voiceWindow.open(),
+            publish: (state) =>
+              nativeEventBus.emit(pushToTalkVoiceSessionChangedEvent, state),
+          },
+          clock: systemClock,
+          log: logPushToTalk,
+          ...(pushToTalkDeps.trace ? { trace: pushToTalkDeps.trace } : {}),
+        })
+      : undefined;
+    pushToTalkVoice = voice;
     const hotkey = reportPushToTalkInputMonitoring(pushToTalkDeps.hotkey, (state) =>
       appPreferencesService.setPushToTalkInputMonitoringStatus(state)
     );
@@ -1307,6 +1337,7 @@ export async function createElectronMainContext(
           openSideChat: pushToTalkDeps.openSideChat,
           screen: pushToTalkDeps.screen,
           speaker: pushToTalkDeps.speaker,
+          ...(voice ? { voice } : {}),
           powerMonitor: pushToTalkDeps.powerMonitor,
           microphone: new HelperPushToTalkMicrophone({
             capture: new HelperMicrophoneCapture({
@@ -1756,6 +1787,7 @@ export async function createElectronMainContext(
     shell,
     sideChat: deps.sideChat,
     pushToTalk,
+    pushToTalkVoice,
     surfaces,
     transport,
     computeNode,
@@ -1834,6 +1866,7 @@ export function registerNativeBridgeHandlersFromContext(context: ElectronMainCon
     calendar: context.calendar,
     meetingRecorder: context.meetingRecorder,
     pushToTalk: context.runtimeDeps.pushToTalkOverlay ?? unavailablePushToTalkOverlay,
+    pushToTalkVoice: context.pushToTalkVoice ?? idlePushToTalkVoiceProvider,
     ...(context.runtimeDeps.browserSitePermissionPlatform?.menu
       ? { sitePermissionMenu: context.runtimeDeps.browserSitePermissionPlatform.menu }
       : {}),
@@ -1996,6 +2029,7 @@ function grantsByRole({ isDevelopment }: { isDevelopment: boolean }) {
     ],
     "onboarding-window": onboardingWindowNativePermissions,
     "push-to-talk-overlay": ["push-to-talk.overlay", "app-preferences.read"],
+    "push-to-talk-voice": ["push-to-talk.voice", "app-preferences.read"],
     "side-chat-test-window": sideChatTestWindowNativePermissions,
     "side-chat-window": sideChatWindowNativePermissions,
     ...(isDevelopment ? { "dev-workbench": devWorkbenchNativePermissions } : {}),

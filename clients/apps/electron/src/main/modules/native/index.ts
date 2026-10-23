@@ -110,6 +110,7 @@ import type { MeetingPresenceProvider } from "../meeting-presence";
 import type { CalendarProvider } from "../calendar";
 import type { MeetingRecorderProvider } from "../meeting-recorder";
 import type { PushToTalkOverlayProvider } from "../../push-to-talk/overlay-window";
+import type { PushToTalkVoiceProvider } from "../../push-to-talk/live-voice";
 import type { AirDropReceptionProvider } from "../airdrop/reception";
 import { getCurrentNativeCallerContext, NativeCallerBindingError } from "../ipc";
 import { FileStore, LOCAL_DATA_SCHEMA_VERSION } from "../local-data";
@@ -809,6 +810,7 @@ export function registerNativeBridgeHandlers({
   onboardingWindow = unavailableOnboardingWindow,
   meetingRecorder,
   pushToTalk,
+  pushToTalkVoice,
   chat,
   clipboard,
   files,
@@ -850,6 +852,7 @@ export function registerNativeBridgeHandlers({
   onboardingWindow?: OnboardingWindowProvider;
   meetingRecorder: MeetingRecorderProvider;
   pushToTalk: PushToTalkOverlayProvider;
+  pushToTalkVoice: PushToTalkVoiceProvider;
   chat: NativeChatProvider;
   clipboard: ClipboardProvider;
   files: FilesProvider;
@@ -898,6 +901,7 @@ export function registerNativeBridgeHandlers({
       onboardingWindow,
       meetingRecorder,
       pushToTalk,
+      pushToTalkVoice,
       chat,
       clipboard,
       files,

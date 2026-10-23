@@ -362,6 +362,7 @@ export { SessionHistoryBridgeProvider } from "./runtime-chat/sessionHistoryBridg
 
 export { MeetingRecorderWindowApp } from "./components/MeetingRecorderWindowApp";
 export { PushToTalkOverlayApp } from "./components/push-to-talk/PushToTalkOverlayApp";
+export { PushToTalkVoiceApp } from "./components/push-to-talk/PushToTalkVoiceApp";
 
 export { SitePermissionMenuApp } from "./components/SitePermissionMenuApp";
 export { TaskPanelApp } from "./components/tasks/TaskPanelApp";

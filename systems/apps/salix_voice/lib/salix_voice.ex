@@ -33,7 +33,8 @@ defmodule SalixVoice do
   (`:pcmu_8k | :pcm16_24k`). Optional: `key_id`, `key_name`, `principal`
   (the voice key's principal string: the caller acts with the key creator's
   authority), `key_expires_at` (`DateTime` or unix ms: the call ends as
-  revoked then), `display_name`.
+  revoked then), `display_name`, `mode` (`:read_aloud`, Electron only: see
+  `SalixVoice.CallActor`).
 
   A Twilio admission also returns the stream token for `<Stream url>`.
   """
@@ -65,7 +66,8 @@ defmodule SalixVoice do
             :key_name,
             :principal,
             :display_name,
-            :model_input
+            :model_input,
+            :mode
           ])
           |> Map.merge(%{
             call_id: call_id,

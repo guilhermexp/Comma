@@ -7,6 +7,7 @@ export interface FeatureSurfaceManifestEntry {
     | "createSitePermissionMenuWindowOptions"
     | "createMeetingRecorderWindowOptions"
     | "createPushToTalkOverlayWindowOptions"
+    | "createPushToTalkVoiceWindowOptions"
     | "createMainWindowOptions"
     | "createOnboardingWindowOptions"
     | "createRuntimeWorkbenchWindowOptions"
@@ -29,6 +30,11 @@ export const FEATURE_SURFACES = [
     id: "push-to-talk-overlay",
     kind: "window",
     optionFactory: "createPushToTalkOverlayWindowOptions",
+  },
+  {
+    id: "push-to-talk-voice",
+    kind: "window",
+    optionFactory: "createPushToTalkVoiceWindowOptions",
   },
   {
     id: "main-window",

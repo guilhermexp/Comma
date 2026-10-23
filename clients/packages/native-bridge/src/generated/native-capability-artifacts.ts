@@ -189,6 +189,11 @@ import {
   pushToTalkOverlayStateLeaf,
   pushToTalkSetInteractiveCapability,
   pushToTalkSetStrokeCapability,
+  pushToTalkVoiceOfferCapability,
+  pushToTalkVoiceReportCapability,
+  pushToTalkVoiceSessionCapability,
+  pushToTalkVoiceSessionChangedEvent,
+  pushToTalkVoiceSessionLeaf,
   recommendationMediaLoadCapability,
   resumeHostMaintenanceCapability,
   sessionCancelAuthAttemptCapability,
@@ -468,6 +473,9 @@ export const generatedNativeCapabilityContracts = {
   pushToTalkSetStroke: pushToTalkSetStrokeCapability.contract,
   pushToTalkSetInteractive: pushToTalkSetInteractiveCapability.contract,
   pushToTalkOverlayAction: pushToTalkOverlayActionCapability.contract,
+  pushToTalkVoiceSession: pushToTalkVoiceSessionCapability.contract,
+  pushToTalkVoiceOffer: pushToTalkVoiceOfferCapability.contract,
+  pushToTalkVoiceReport: pushToTalkVoiceReportCapability.contract,
   airDropState: airDropStateCapability.contract,
   airDropAct: airDropActCapability.contract,
   airDropPreview: airDropPreviewCapability.contract,
@@ -694,6 +702,9 @@ export const generatedNativeWebFallbacks = {
   pushToTalkSetStroke: pushToTalkSetStrokeCapability.webFallback,
   pushToTalkSetInteractive: pushToTalkSetInteractiveCapability.webFallback,
   pushToTalkOverlayAction: pushToTalkOverlayActionCapability.webFallback,
+  pushToTalkVoiceSession: pushToTalkVoiceSessionCapability.webFallback,
+  pushToTalkVoiceOffer: pushToTalkVoiceOfferCapability.webFallback,
+  pushToTalkVoiceReport: pushToTalkVoiceReportCapability.webFallback,
   airDropState: airDropStateCapability.webFallback,
   airDropAct: airDropActCapability.webFallback,
   airDropPreview: airDropPreviewCapability.webFallback,
@@ -980,6 +991,11 @@ export const generatedNativePreloadBindings = {
     setInteractive: pushToTalkSetInteractiveCapability.contract,
     overlayAction: pushToTalkOverlayActionCapability.contract,
   },
+  pushToTalkVoice: {
+    session: pushToTalkVoiceSessionCapability.contract,
+    offer: pushToTalkVoiceOfferCapability.contract,
+    report: pushToTalkVoiceReportCapability.contract,
+  },
   airDrop: {
     state: airDropStateCapability.contract,
     act: airDropActCapability.contract,
@@ -1090,6 +1106,9 @@ export const generatedNativePreloadEventBindings = {
   },
   pushToTalk: {
     overlayState: pushToTalkOverlayStateChangedEvent,
+  },
+  pushToTalkVoice: {
+    session: pushToTalkVoiceSessionChangedEvent,
   },
   airDrop: {
     state: airDropStateChangedEvent,
@@ -1224,6 +1243,12 @@ export const generatedNativeStateBindings = {
     overlayState: {
       get: pushToTalkOverlayStateCapability.contract,
       subscribe: pushToTalkOverlayStateChangedEvent,
+    },
+  },
+  pushToTalkVoice: {
+    session: {
+      get: pushToTalkVoiceSessionCapability.contract,
+      subscribe: pushToTalkVoiceSessionChangedEvent,
     },
   },
   airDrop: {
@@ -2714,6 +2739,32 @@ export const generatedNativeMainBindingsById = {
     sessionAdmission: pushToTalkOverlayActionCapability.sessionAdmission,
     sessionAdmissionRationale:
       pushToTalkOverlayActionCapability.sessionAdmissionRationale,
+  },
+  "pushToTalkVoice.session": {
+    contract: pushToTalkVoiceSessionCapability.contract,
+    id: pushToTalkVoiceSessionCapability.id,
+    method: "voiceSession",
+    provider: "pushToTalkVoice",
+    sessionAdmission: pushToTalkVoiceSessionCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      pushToTalkVoiceSessionCapability.sessionAdmissionRationale,
+  },
+  "pushToTalkVoice.offer": {
+    contract: pushToTalkVoiceOfferCapability.contract,
+    id: pushToTalkVoiceOfferCapability.id,
+    method: "voiceOffer",
+    provider: "pushToTalkVoice",
+    sessionAdmission: pushToTalkVoiceOfferCapability.sessionAdmission,
+    sessionAdmissionRationale: pushToTalkVoiceOfferCapability.sessionAdmissionRationale,
+  },
+  "pushToTalkVoice.report": {
+    contract: pushToTalkVoiceReportCapability.contract,
+    id: pushToTalkVoiceReportCapability.id,
+    method: "voiceReport",
+    provider: "pushToTalkVoice",
+    sessionAdmission: pushToTalkVoiceReportCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      pushToTalkVoiceReportCapability.sessionAdmissionRationale,
   },
   "airDrop.state": {
     contract: airDropStateCapability.contract,
@@ -4783,6 +4834,38 @@ export const generatedNativeCapabilityManifest = [
     transport: pushToTalkOverlayActionCapability.transport,
   },
   {
+    bridge: pushToTalkVoiceSessionCapability.bridge,
+    channel: pushToTalkVoiceSessionCapability.channel,
+    id: pushToTalkVoiceSessionCapability.id,
+    payloadClass: pushToTalkVoiceSessionCapability.payloadClass,
+    permission: pushToTalkVoiceSessionCapability.permission,
+    sessionAdmission: pushToTalkVoiceSessionCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      pushToTalkVoiceSessionCapability.sessionAdmissionRationale,
+    transport: pushToTalkVoiceSessionCapability.transport,
+  },
+  {
+    bridge: pushToTalkVoiceOfferCapability.bridge,
+    channel: pushToTalkVoiceOfferCapability.channel,
+    id: pushToTalkVoiceOfferCapability.id,
+    payloadClass: pushToTalkVoiceOfferCapability.payloadClass,
+    permission: pushToTalkVoiceOfferCapability.permission,
+    sessionAdmission: pushToTalkVoiceOfferCapability.sessionAdmission,
+    sessionAdmissionRationale: pushToTalkVoiceOfferCapability.sessionAdmissionRationale,
+    transport: pushToTalkVoiceOfferCapability.transport,
+  },
+  {
+    bridge: pushToTalkVoiceReportCapability.bridge,
+    channel: pushToTalkVoiceReportCapability.channel,
+    id: pushToTalkVoiceReportCapability.id,
+    payloadClass: pushToTalkVoiceReportCapability.payloadClass,
+    permission: pushToTalkVoiceReportCapability.permission,
+    sessionAdmission: pushToTalkVoiceReportCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      pushToTalkVoiceReportCapability.sessionAdmissionRationale,
+    transport: pushToTalkVoiceReportCapability.transport,
+  },
+  {
     bridge: airDropStateCapability.bridge,
     channel: airDropStateCapability.channel,
     id: airDropStateCapability.id,
@@ -5232,6 +5315,12 @@ export const generatedNativeEventManifest = [
     target: pushToTalkOverlayStateChangedEvent.target,
   },
   {
+    channel: pushToTalkVoiceSessionChangedEvent.channel,
+    id: pushToTalkVoiceSessionChangedEvent.id,
+    permission: pushToTalkVoiceSessionChangedEvent.permission,
+    target: pushToTalkVoiceSessionChangedEvent.target,
+  },
+  {
     channel: surfacesWindowResizeSettledEvent.channel,
     id: surfacesWindowResizeSettledEvent.id,
     permission: surfacesWindowResizeSettledEvent.permission,
@@ -5633,6 +5722,24 @@ export const generatedNativeStateManifest = [
       id: pushToTalkOverlayStateLeaf.subscribe.id,
       permission: pushToTalkOverlayStateLeaf.subscribe.permission,
       target: pushToTalkOverlayStateLeaf.subscribe.target,
+    },
+  },
+  {
+    bridge: pushToTalkVoiceSessionLeaf.bridge,
+    get: {
+      channel: pushToTalkVoiceSessionLeaf.get.channel,
+      id: pushToTalkVoiceSessionLeaf.get.id,
+      permission: pushToTalkVoiceSessionLeaf.get.permission,
+      sessionAdmission: pushToTalkVoiceSessionLeaf.get.sessionAdmission,
+      sessionAdmissionRationale:
+        pushToTalkVoiceSessionLeaf.get.sessionAdmissionRationale,
+    },
+    id: pushToTalkVoiceSessionLeaf.id,
+    subscribe: {
+      channel: pushToTalkVoiceSessionLeaf.subscribe.channel,
+      id: pushToTalkVoiceSessionLeaf.subscribe.id,
+      permission: pushToTalkVoiceSessionLeaf.subscribe.permission,
+      target: pushToTalkVoiceSessionLeaf.subscribe.target,
     },
   },
   {
@@ -9378,6 +9485,68 @@ export const generatedNativeCapabilityIndex = {
       pushToTalkOverlayActionCapability.sessionAdmissionRationale,
     transport: pushToTalkOverlayActionCapability.transport,
   },
+  "pushToTalkVoice.session": {
+    artifacts: {
+      contract: "pushToTalkVoiceSessionContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["pushToTalkVoice.session"]',
+      leaf: "pushToTalkVoiceSessionCapability",
+      mainBinding: 'generatedNativeMainBindingsById["pushToTalkVoice.session"]',
+      mock: "pushToTalkVoiceSessionCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.pushToTalkVoice.session",
+      webFallback: "generatedNativeWebFallbacks.pushToTalkVoiceSession",
+    },
+    bridge: pushToTalkVoiceSessionCapability.bridge,
+    channel: pushToTalkVoiceSessionCapability.channel,
+    handler: pushToTalkVoiceSessionCapability.handler,
+    id: pushToTalkVoiceSessionCapability.id,
+    payloadClass: pushToTalkVoiceSessionCapability.payloadClass,
+    permission: pushToTalkVoiceSessionCapability.permission,
+    sessionAdmission: pushToTalkVoiceSessionCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      pushToTalkVoiceSessionCapability.sessionAdmissionRationale,
+    transport: pushToTalkVoiceSessionCapability.transport,
+  },
+  "pushToTalkVoice.offer": {
+    artifacts: {
+      contract: "pushToTalkVoiceOfferContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["pushToTalkVoice.offer"]',
+      leaf: "pushToTalkVoiceOfferCapability",
+      mainBinding: 'generatedNativeMainBindingsById["pushToTalkVoice.offer"]',
+      mock: "pushToTalkVoiceOfferCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.pushToTalkVoice.offer",
+      webFallback: "generatedNativeWebFallbacks.pushToTalkVoiceOffer",
+    },
+    bridge: pushToTalkVoiceOfferCapability.bridge,
+    channel: pushToTalkVoiceOfferCapability.channel,
+    handler: pushToTalkVoiceOfferCapability.handler,
+    id: pushToTalkVoiceOfferCapability.id,
+    payloadClass: pushToTalkVoiceOfferCapability.payloadClass,
+    permission: pushToTalkVoiceOfferCapability.permission,
+    sessionAdmission: pushToTalkVoiceOfferCapability.sessionAdmission,
+    sessionAdmissionRationale: pushToTalkVoiceOfferCapability.sessionAdmissionRationale,
+    transport: pushToTalkVoiceOfferCapability.transport,
+  },
+  "pushToTalkVoice.report": {
+    artifacts: {
+      contract: "pushToTalkVoiceReportContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["pushToTalkVoice.report"]',
+      leaf: "pushToTalkVoiceReportCapability",
+      mainBinding: 'generatedNativeMainBindingsById["pushToTalkVoice.report"]',
+      mock: "pushToTalkVoiceReportCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.pushToTalkVoice.report",
+      webFallback: "generatedNativeWebFallbacks.pushToTalkVoiceReport",
+    },
+    bridge: pushToTalkVoiceReportCapability.bridge,
+    channel: pushToTalkVoiceReportCapability.channel,
+    handler: pushToTalkVoiceReportCapability.handler,
+    id: pushToTalkVoiceReportCapability.id,
+    payloadClass: pushToTalkVoiceReportCapability.payloadClass,
+    permission: pushToTalkVoiceReportCapability.permission,
+    sessionAdmission: pushToTalkVoiceReportCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      pushToTalkVoiceReportCapability.sessionAdmissionRationale,
+    transport: pushToTalkVoiceReportCapability.transport,
+  },
   "airDrop.state": {
     artifacts: {
       contract: "airDropStateContract",
@@ -10203,6 +10372,16 @@ export const generatedNativeEventIndex = {
     permission: pushToTalkOverlayStateChangedEvent.permission,
     target: pushToTalkOverlayStateChangedEvent.target,
   },
+  "pushToTalkVoice.session.changed": {
+    artifacts: {
+      leaf: "pushToTalkVoiceSessionChangedEvent",
+      mock: "pushToTalkVoiceSessionChangedEvent.mock",
+    },
+    channel: pushToTalkVoiceSessionChangedEvent.channel,
+    id: pushToTalkVoiceSessionChangedEvent.id,
+    permission: pushToTalkVoiceSessionChangedEvent.permission,
+    target: pushToTalkVoiceSessionChangedEvent.target,
+  },
   "surfaces.windowResizeSettled": {
     artifacts: {
       leaf: "surfacesWindowResizeSettledEvent",
@@ -10773,6 +10952,31 @@ export const generatedNativeStateIndex = {
       target: pushToTalkOverlayStateLeaf.subscribe.target,
     },
   },
+  "pushToTalkVoice.session": {
+    artifacts: {
+      get: "generatedNativeStateBindings.pushToTalkVoice.session.get",
+      leaf: "pushToTalkVoiceSessionLeaf",
+      mock: "pushToTalkVoiceSessionLeaf.mock",
+      subscribe: "generatedNativeStateBindings.pushToTalkVoice.session.subscribe",
+      webFallback: "pushToTalkVoiceSessionLeaf.webFallback",
+    },
+    bridge: pushToTalkVoiceSessionLeaf.bridge,
+    get: {
+      channel: pushToTalkVoiceSessionLeaf.get.channel,
+      id: pushToTalkVoiceSessionLeaf.get.id,
+      permission: pushToTalkVoiceSessionLeaf.get.permission,
+      sessionAdmission: pushToTalkVoiceSessionLeaf.get.sessionAdmission,
+      sessionAdmissionRationale:
+        pushToTalkVoiceSessionLeaf.get.sessionAdmissionRationale,
+    },
+    id: pushToTalkVoiceSessionLeaf.id,
+    subscribe: {
+      channel: pushToTalkVoiceSessionLeaf.subscribe.channel,
+      id: pushToTalkVoiceSessionLeaf.subscribe.id,
+      permission: pushToTalkVoiceSessionLeaf.subscribe.permission,
+      target: pushToTalkVoiceSessionLeaf.subscribe.target,
+    },
+  },
   "airDrop.state": {
     artifacts: {
       get: "generatedNativeStateBindings.airDrop.state.get",
@@ -11152,6 +11356,12 @@ export const pushToTalkSetInteractiveContract =
   generatedNativeCapabilityContracts.pushToTalkSetInteractive;
 export const pushToTalkOverlayActionContract =
   generatedNativeCapabilityContracts.pushToTalkOverlayAction;
+export const pushToTalkVoiceSessionContract =
+  generatedNativeCapabilityContracts.pushToTalkVoiceSession;
+export const pushToTalkVoiceOfferContract =
+  generatedNativeCapabilityContracts.pushToTalkVoiceOffer;
+export const pushToTalkVoiceReportContract =
+  generatedNativeCapabilityContracts.pushToTalkVoiceReport;
 export const airDropStateContract = generatedNativeCapabilityContracts.airDropState;
 export const airDropActContract = generatedNativeCapabilityContracts.airDropAct;
 export const airDropPreviewContract = generatedNativeCapabilityContracts.airDropPreview;
@@ -11386,6 +11596,9 @@ export type NativeCapabilityTypeMap = {
   "pushToTalk.setStroke": typeof pushToTalkSetStrokeCapability;
   "pushToTalk.setInteractive": typeof pushToTalkSetInteractiveCapability;
   "pushToTalk.overlayAction": typeof pushToTalkOverlayActionCapability;
+  "pushToTalkVoice.session": typeof pushToTalkVoiceSessionCapability;
+  "pushToTalkVoice.offer": typeof pushToTalkVoiceOfferCapability;
+  "pushToTalkVoice.report": typeof pushToTalkVoiceReportCapability;
   "airDrop.state": typeof airDropStateCapability;
   "airDrop.act": typeof airDropActCapability;
   "airDrop.preview": typeof airDropPreviewCapability;
@@ -11444,6 +11657,7 @@ export type NativeEventTypeMap = {
   "calendar.state.changed": typeof calendarStateChangedEvent;
   "meetingRecorder.state.changed": typeof meetingRecorderStateChangedEvent;
   "pushToTalk.overlayState.changed": typeof pushToTalkOverlayStateChangedEvent;
+  "pushToTalkVoice.session.changed": typeof pushToTalkVoiceSessionChangedEvent;
   "surfaces.windowResizeSettled": typeof surfacesWindowResizeSettledEvent;
   "airDrop.state.changed": typeof airDropStateChangedEvent;
   "driveCatalog.state.changed": typeof driveCatalogChangedEvent;
@@ -11472,6 +11686,7 @@ export type NativeStateTypeMap = {
   "calendar.state": typeof calendarStateLeaf;
   "meetingRecorder.state": typeof meetingRecorderStateLeaf;
   "pushToTalk.overlayState": typeof pushToTalkOverlayStateLeaf;
+  "pushToTalkVoice.session": typeof pushToTalkVoiceSessionLeaf;
   "airDrop.state": typeof airDropStateLeaf;
   "driveCatalog.state": typeof driveCatalogStateLeaf;
 };
@@ -11966,6 +12181,11 @@ export type GeneratedNativeBridge = {
       typeof pushToTalkOverlayActionCapability
     >;
     overlayState: GeneratedNativeStateBridgeMethod<typeof pushToTalkOverlayStateLeaf>;
+  };
+  pushToTalkVoice: {
+    offer: GeneratedNativeCommandBridgeMethod<typeof pushToTalkVoiceOfferCapability>;
+    report: GeneratedNativeCommandBridgeMethod<typeof pushToTalkVoiceReportCapability>;
+    session: GeneratedNativeStateBridgeMethod<typeof pushToTalkVoiceSessionLeaf>;
   };
   airDrop: {
     act: GeneratedNativeCommandBridgeMethod<typeof airDropActCapability>;
@@ -12689,6 +12909,18 @@ export function createGeneratedNativePreloadBridge(
         subscribe: pushToTalkOverlayStateChangedEvent,
       }),
     },
+    pushToTalkVoice: {
+      offer: (
+        input: GeneratedNativeCommandInput<typeof pushToTalkVoiceOfferCapability>
+      ) => helpers.invoke(pushToTalkVoiceOfferCapability.contract, input),
+      report: (
+        input: GeneratedNativeCommandInput<typeof pushToTalkVoiceReportCapability>
+      ) => helpers.invoke(pushToTalkVoiceReportCapability.contract, input),
+      session: helpers.state({
+        get: pushToTalkVoiceSessionCapability.contract,
+        subscribe: pushToTalkVoiceSessionChangedEvent,
+      }),
+    },
     airDrop: {
       act: (input: GeneratedNativeCommandInput<typeof airDropActCapability>) =>
         helpers.invoke(airDropActCapability.contract, input),
@@ -13376,6 +13608,18 @@ export function createGeneratedNativeWebBridge(): GeneratedNativeBridge {
         GeneratedNativeStateSnapshot<typeof pushToTalkOverlayStateLeaf>,
         GeneratedNativeStateGetInput<typeof pushToTalkOverlayStateLeaf>
       >((_input) => pushToTalkOverlayStateLeaf.webFallback),
+    },
+    pushToTalkVoice: {
+      offer: async (
+        _input: GeneratedNativeCommandInput<typeof pushToTalkVoiceOfferCapability>
+      ) => pushToTalkVoiceOfferCapability.webFallback,
+      report: async (
+        _input: GeneratedNativeCommandInput<typeof pushToTalkVoiceReportCapability>
+      ) => pushToTalkVoiceReportCapability.webFallback,
+      session: createGeneratedWebStateBridge<
+        GeneratedNativeStateSnapshot<typeof pushToTalkVoiceSessionLeaf>,
+        GeneratedNativeStateGetInput<typeof pushToTalkVoiceSessionLeaf>
+      >((_input) => pushToTalkVoiceSessionLeaf.webFallback),
     },
     airDrop: {
       act: async (_input: GeneratedNativeCommandInput<typeof airDropActCapability>) =>
@@ -14310,6 +14554,22 @@ export function createGeneratedNativeBridgeMock(
           pushToTalkOverlayStateLeaf.mock
       ),
     },
+    pushToTalkVoice: {
+      offer: helpers.command(
+        async (
+          _input: GeneratedNativeCommandInput<typeof pushToTalkVoiceOfferCapability>
+        ) => pushToTalkVoiceOfferCapability.mock
+      ),
+      report: helpers.command(
+        async (
+          _input: GeneratedNativeCommandInput<typeof pushToTalkVoiceReportCapability>
+        ) => pushToTalkVoiceReportCapability.mock
+      ),
+      session: helpers.state(
+        (_input: GeneratedNativeStateGetInput<typeof pushToTalkVoiceSessionLeaf>) =>
+          pushToTalkVoiceSessionLeaf.mock
+      ),
+    },
     airDrop: {
       act: helpers.command(
         async (_input: GeneratedNativeCommandInput<typeof airDropActCapability>) =>
@@ -14593,6 +14853,10 @@ export function mergeGeneratedNativeBridgeOverrides(
     pushToTalk: {
       ...bridge.pushToTalk,
       ...overrides.pushToTalk,
+    },
+    pushToTalkVoice: {
+      ...bridge.pushToTalkVoice,
+      ...overrides.pushToTalkVoice,
     },
     airDrop: {
       ...bridge.airDrop,

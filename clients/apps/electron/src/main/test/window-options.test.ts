@@ -3,6 +3,7 @@ import {
   createMainWindowOptions,
   createOnboardingWindowOptions,
   createPushToTalkOverlayWindowOptions,
+  createPushToTalkVoiceWindowOptions,
   createRuntimeWorkbenchWindowOptions,
   createSideChatTestWindowOptions,
   createSideChatWindowOptions,
@@ -260,6 +261,27 @@ describe("createOnboardingWindowOptions", () => {
       additionalArguments: [
         "--window-id=win_onboarding",
         "--window-role=onboarding-window",
+      ],
+    });
+  });
+});
+
+describe("createPushToTalkVoiceWindowOptions", () => {
+  it("never shows or takes focus, plays without a gesture and stays sandboxed", () => {
+    const options = createPushToTalkVoiceWindowOptions({
+      preloadPath: "/tmp/comma-preload.js",
+    });
+
+    expect(options).toMatchObject({ focusable: false, show: false, skipTaskbar: true });
+    expect(options.webPreferences).toMatchObject({
+      autoplayPolicy: "no-user-gesture-required",
+      backgroundThrottling: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      additionalArguments: [
+        "--window-id=push-to-talk-voice",
+        "--window-role=push-to-talk-voice",
       ],
     });
   });
