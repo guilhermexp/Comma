@@ -35,12 +35,12 @@ class FakeNotch implements PushToTalkNotch {
 function createStatus(locale: "en" | "pt-BR" | "zh-CN" = "en") {
   const notch = new FakeNotch();
   const clock = new FakeClock();
-  const actions: PushToTalkErrorAction[] = [];
+  const actions: [PushToTalkErrorAction, { transcript: string | undefined }][] = [];
   const status = new NotchPushToTalkStatus({
     clock,
     locale,
     notch,
-    onAction: (action) => actions.push(action),
+    onAction: (action, context) => actions.push([action, context]),
   });
   return { actions, clock, notch, status };
 }
@@ -105,7 +105,8 @@ describe("NotchPushToTalkStatus", () => {
       payload: { action: "task:open", value: "copy-transcript" },
       type: "action",
     });
-    expect(actions).toEqual(["copy-transcript"]);
+    // The words to copy go to Main's action handler, never to the Notch.
+    expect(actions).toEqual([["copy-transcript", { transcript: "what is this?" }]]);
 
     // Once the error is gone, a late click on it does nothing.
     status.set(null);
@@ -113,7 +114,7 @@ describe("NotchPushToTalkStatus", () => {
       payload: { action: "voice:action", value: "copy-transcript" },
       type: "action",
     });
-    expect(actions).toEqual(["copy-transcript"]);
+    expect(actions).toHaveLength(1);
   });
 
   it("sends the microphone level at most ~20 times a second, keeping the latest", () => {

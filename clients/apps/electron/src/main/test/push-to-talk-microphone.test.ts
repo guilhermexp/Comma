@@ -55,6 +55,29 @@ describe("HelperPushToTalkMicrophone", () => {
     expect(wav.readUInt32LE(40)).toBe(1_600 * 2);
   });
 
+  // Ciclo normal: the notch and the companion show the voice level while listening.
+  it("reports the RMS level of every 50 ms of audio (~20 Hz)", async () => {
+    let feed: ((frames: Float32Array) => void) | undefined;
+    const helper = capture(async (input) => {
+      feed = input.onFrames;
+      return { stop: async () => undefined };
+    });
+    const microphone = new HelperPushToTalkMicrophone({ capture: helper, directory });
+    const levels: number[] = [];
+
+    const recording = await microphone.start({
+      onLevel: (level) => levels.push(level),
+    });
+    feed?.(new Float32Array(1_600).fill(0.5)); // two 800-sample windows, loud
+    feed?.(new Float32Array(400)); // half a window of silence: not yet
+    expect(levels).toEqual([1, 1]);
+    feed?.(new Float32Array(400).fill(0.01)); // completes a quiet window
+    expect(levels).toHaveLength(3);
+    expect(levels[2]).toBeGreaterThan(0);
+    expect(levels[2]).toBeLessThan(0.3);
+    await recording.stop();
+  });
+
   it("passes macOS's denial on as MicrophoneDeniedError and leaves no file", async () => {
     const microphone = new HelperPushToTalkMicrophone({
       capture: capture(() => Promise.reject(new MicrophoneDeniedError())),

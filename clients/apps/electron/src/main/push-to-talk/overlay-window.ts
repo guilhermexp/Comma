@@ -12,6 +12,7 @@ import type { NativeSurfaceService } from "../modules/surfaces";
 import { createPushToTalkOverlayWindowOptions } from "../window-options";
 import type {
   PushToTalkCompanion,
+  PushToTalkErrorAction,
   PushToTalkPoint,
   PushToTalkStroke,
   PushToTalkTurnState,
@@ -61,6 +62,8 @@ interface PushToTalkOverlayOptions {
 }
 
 const systemSettingsPane = {
+  "open-input-monitoring-settings":
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
   "open-microphone-settings":
     "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
   "open-screen-recording-settings":
@@ -164,21 +167,40 @@ export class PushToTalkOverlayWindow
     if (caption !== this.#state.caption) this.#publish({ caption });
   }
 
-  hide() {
+  hide(options: { immediate?: boolean } = {}) {
     this.#transcript = undefined;
+    if (options.immediate) {
+      clearTimeout(this.#hideTimer);
+      this.#hideTimer = undefined;
+      if (this.#state.companion === null) return;
+      this.#interactive = false;
+      this.#removeWindow();
+      return;
+    }
     if (!this.#shown()) return;
     this.#interactive = false;
     this.#publish({ hiding: true });
     this.#applyMouse();
     this.#hideTimer = setTimeout(() => {
       this.#hideTimer = undefined;
-      this.#stopFollowing();
-      this.#publish({ caption: null, companion: null, hiding: false, level: 0 });
-      const window = this.#liveWindow();
-      if (!window) return;
-      window.setIgnoreMouseEvents(true, { forward: true });
-      window.hide();
+      this.#removeWindow();
     }, PUSH_TO_TALK_HIDE_FADE_MS);
+  }
+
+  /**
+   * Runs an error's action, wherever the error was shown (companion or
+   * notch). `copy-transcript` copies `transcript`, the failed turn's words.
+   */
+  async runAction(action: PushToTalkErrorAction, transcript: string | undefined) {
+    if (action === "copy-transcript") {
+      if (transcript) this.#options.writeClipboard(transcript);
+      return;
+    }
+    if (action === "open-meeting-settings") {
+      await this.#options.openMeetingSettings();
+      return;
+    }
+    await this.#options.openExternal(systemSettingsPane[action]);
   }
 
   onStroke(listener: (stroke: PushToTalkStroke | null) => void) {
@@ -226,15 +248,7 @@ export class PushToTalkOverlayWindow
       for (const listener of this.#captionListeners) listener();
       return;
     }
-    if (action === "copy-transcript") {
-      if (this.#transcript) this.#options.writeClipboard(this.#transcript);
-      return;
-    }
-    if (action === "open-meeting-settings") {
-      await this.#options.openMeetingSettings();
-      return;
-    }
-    await this.#options.openExternal(systemSettingsPane[action]);
+    await this.runAction(action, this.#transcript);
   }
 
   #shown() {
@@ -257,6 +271,15 @@ export class PushToTalkOverlayWindow
   #publish(patch: Partial<Omit<PushToTalkOverlayState, "revision">>) {
     this.#state = { ...this.#state, ...patch, revision: this.#state.revision + 1 };
     this.#options.publish(this.overlayState());
+  }
+
+  #removeWindow() {
+    this.#stopFollowing();
+    this.#publish({ caption: null, companion: null, hiding: false, level: 0 });
+    const window = this.#liveWindow();
+    if (!window) return;
+    window.setIgnoreMouseEvents(true, { forward: true });
+    window.hide();
   }
 
   #setStroke(stroke: PushToTalkStroke | null) {

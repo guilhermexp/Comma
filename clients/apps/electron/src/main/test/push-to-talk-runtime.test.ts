@@ -61,12 +61,17 @@ function setup(initial: Partial<PushToTalkRuntimeInputs> = {}) {
     createController: (settings) =>
       new PushToTalkController({
         hotkey,
-        overlay: {
+        companion: {
           show: unused,
           setState: unused,
+          setLevel: unused,
+          setCaption: unused,
           hide: () => undefined,
-          onRegion: unused,
+          onStroke: unused,
+          onCaptionClick: () => () => undefined,
         },
+        status: { visible: unused, set: unused, setLevel: unused },
+        openSideChat: unused,
         microphone: { start: unused },
         screen: { locate: unused, capture: unused },
         transcriber: { ready: unused, transcribe: unused },

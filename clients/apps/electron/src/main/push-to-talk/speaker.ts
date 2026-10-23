@@ -9,16 +9,17 @@ export interface SpeakerProcess {
 }
 
 export interface PushToTalkSpeaker {
-  speak(text: string): void;
+  /** Resolves when the voice ends: finished, stopped or failed. */
+  speak(text: string): Promise<void>;
   stop(): void;
 }
 
 const sayPath = "/usr/bin/say";
 
 /**
- * Reads replies with the system voice (`/usr/bin/say`, D7). The text goes on
- * stdin, never argv. One voice at a time: a new reply or `stop()` kills the
- * running one.
+ * Reads reply sentences with the system voice (`/usr/bin/say`, D7). The text
+ * goes on stdin, never argv. One voice at a time: a new sentence or `stop()`
+ * kills the running one.
  */
 export class SaySpeaker implements PushToTalkSpeaker {
   readonly #spawn: (command: string, args: string[]) => SpeakerProcess;
@@ -37,12 +38,15 @@ export class SaySpeaker implements PushToTalkSpeaker {
     this.stop();
     const child = this.#spawn(sayPath, []);
     this.#child = child;
-    const forget = () => {
-      if (this.#child === child) this.#child = undefined;
-    };
-    child.once("exit", forget);
-    child.once("error", forget);
-    child.stdin?.end(text);
+    return new Promise<void>((resolve) => {
+      const forget = () => {
+        if (this.#child === child) this.#child = undefined;
+        resolve();
+      };
+      child.once("exit", forget);
+      child.once("error", forget);
+      child.stdin?.end(text);
+    });
   }
 
   speaking() {

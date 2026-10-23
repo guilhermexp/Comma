@@ -278,8 +278,6 @@ export class NativeSideChatService {
   #backdropUnavailable = false;
   #contentSize = DEFAULT_CONTENT_SIZE;
   #desiredOpen = false;
-  // The pending open was asked without focus: it shows the window inactive.
-  #openWithoutFocus = false;
   #debugSettings: SideChatDebugSettings = { ...defaultSideChatDebugSettings };
   #disposed = false;
   #enabled = true;
@@ -589,7 +587,6 @@ export class NativeSideChatService {
   setInteractiveProgress({
     progress,
   }: SideChatInteractiveProgressInput): ChatCommandReceipt {
-    this.#openWithoutFocus = false;
     if (!this.#enabled) return this.#receipt();
     if (this.#failCloseRecovery.barrier) {
       if (progress > 0.002) {
@@ -623,20 +620,6 @@ export class NativeSideChatService {
   }
 
   open() {
-    this.#openWithoutFocus = false;
-    return this.#open();
-  }
-
-  /**
-   * Opens Side Chat while the app in use keeps the keyboard (Talk to agent).
-   * Only the open it starts is inactive; an already open Side Chat stays as it is.
-   */
-  openWithoutFocus() {
-    if (this.#presentation.phase !== "open") this.#openWithoutFocus = true;
-    return this.#open();
-  }
-
-  #open() {
     if (!this.#enabled || !this.#prepareBackdropForOpen()) return this.#receipt();
     this.#desiredOpen = true;
     if (!this.#sendControl("side-chat.open")) this.#applyFallbackVisibility(true);
@@ -652,7 +635,6 @@ export class NativeSideChatService {
   }
 
   toggle() {
-    this.#openWithoutFocus = false;
     if (!this.#enabled) return this.close();
     const shouldOpen = !this.#desiredOpen;
     if (!shouldOpen) this.#transitionFailCloseRecovery({ type: "cancel-reopen" });
@@ -1066,8 +1048,6 @@ export class NativeSideChatService {
       });
       if (frame.phase === "open") this.#desiredOpen = true;
       if (frame.phase === "closed") this.#desiredOpen = false;
-      if (frame.phase === "closed" || frame.phase === "closing")
-        this.#openWithoutFocus = false;
       this.#applyPresentation(previous, this.#presentation);
       this.#onPresentationChanged?.(this.#presentation);
       if (shouldReopenAfterClose) this.open();
@@ -1276,9 +1256,7 @@ export class NativeSideChatService {
       attachment.browserWindow.showInactive();
     }
     if (presentation.phase === "open" && previous?.phase !== "open") {
-      const activate = this.#activateOpenWindow && !this.#openWithoutFocus;
-      this.#openWithoutFocus = false;
-      if (activate) {
+      if (this.#activateOpenWindow) {
         attachment.browserWindow.show();
         attachment.browserWindow.focus();
       } else {

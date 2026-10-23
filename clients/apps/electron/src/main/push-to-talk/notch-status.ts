@@ -20,6 +20,9 @@ export interface PushToTalkNotch {
   onEvent(listener: (event: NotchHostEvent) => void): () => void;
 }
 
+/** The error's own context its action needs (the words to copy). */
+export type PushToTalkErrorActionContext = { transcript: string | undefined };
+
 const errorActions = {
   microphone_denied: "open-microphone-settings",
   screen_denied: "open-screen-recording-settings",
@@ -38,16 +41,23 @@ export class NotchPushToTalkStatus implements PushToTalkStatus {
   readonly #notch: PushToTalkNotch;
   readonly #clock: PushToTalkClock;
   readonly #locale: MainLocaleSource;
-  readonly #onAction: (action: PushToTalkErrorAction) => void;
+  readonly #onAction: (
+    action: PushToTalkErrorAction,
+    context: PushToTalkErrorActionContext
+  ) => void;
   readonly #unsubscribe: () => void;
   #turn: NotchVoiceTurn | null = null;
+  #transcript: string | undefined;
   #level = 0;
   #levelSentAt = Number.NEGATIVE_INFINITY;
   #cancelLevel: (() => void) | undefined;
 
   constructor(options: {
     notch: PushToTalkNotch;
-    onAction: (action: PushToTalkErrorAction) => void;
+    onAction: (
+      action: PushToTalkErrorAction,
+      context: PushToTalkErrorActionContext
+    ) => void;
     clock?: PushToTalkClock | undefined;
     locale?: MainLocaleSource | undefined;
   }) {
@@ -62,7 +72,9 @@ export class NotchPushToTalkStatus implements PushToTalkStatus {
       if (!action || !knownActions.has(action) || this.#turn?.action?.id !== action) {
         return;
       }
-      this.#onAction(action as PushToTalkErrorAction);
+      this.#onAction(action as PushToTalkErrorAction, {
+        transcript: this.#transcript,
+      });
     });
   }
 
@@ -73,6 +85,7 @@ export class NotchPushToTalkStatus implements PushToTalkStatus {
   set(state: PushToTalkTurnState | null) {
     this.#cancelPendingLevel();
     this.#level = 0;
+    this.#transcript = state?.kind === "error" ? state.transcript : undefined;
     this.#turn = state ? this.#project(state) : null;
     this.#write(this.#turn);
   }

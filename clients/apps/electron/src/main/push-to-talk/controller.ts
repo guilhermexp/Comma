@@ -4,6 +4,7 @@ import type { PushToTalkClock } from "./clock";
 import {
   composePushToTalkMessage,
   speakableText,
+  splitSentences,
   type PushToTalkMessageScreen,
 } from "./message";
 import type { PushToTalkReplies } from "./reply-watcher";
@@ -19,24 +20,30 @@ import {
   type PushToTalkTranscriber,
 } from "./transcriber";
 import type {
+  PushToTalkCompanion,
   PushToTalkErrorCode,
   PushToTalkFrontmostApp,
   PushToTalkHotkey,
-  PushToTalkOverlay,
-  PushToTalkPillState,
-  PushToTalkRect,
   PushToTalkSettings,
+  PushToTalkStatus,
   PushToTalkStroke,
+  PushToTalkTurnState,
 } from "./types";
 
 /** Shorter recordings are taps: discarded without transcribing. */
 export const minRecordingMs = 300;
 /** A recording ends by itself here, as if the shortcut was released. */
 export const maxRecordingMs = 120_000;
-/** How long an error pill stays before the overlay hides. */
-export const errorPillMs = 4_000;
-/** How long the busy pill replaces "Transcribing". */
-export const busyPillMs = 1_500;
+/** How long an error stays in the notch or on the companion. */
+export const errorVisibleMs = 4_000;
+/** How long "wait" replaces "Transcribing" after an ignored press. */
+export const busyVisibleMs = 1_500;
+/** The last spoken sentence stays on the caption this long. */
+export const captionLingerMs = 1_500;
+/** Spoken replies off: the caption shows the reply for its reading time. */
+export const captionMsPerWord = 300;
+export const captionMinMs = 4_000;
+export const captionMaxMs = 20_000;
 
 /** A running microphone recording; `stop` resolves with the finished WAV. */
 export interface PushToTalkRecording {
@@ -44,8 +51,11 @@ export interface PushToTalkRecording {
 }
 
 export interface PushToTalkMicrophone {
-  /** Rejects with `MicrophoneDeniedError` when macOS denies the microphone. */
-  start(): Promise<PushToTalkRecording>;
+  /**
+   * Rejects with `MicrophoneDeniedError` when macOS denies the microphone.
+   * `onLevel` gets the voice level 0..1 at about 20 Hz.
+   */
+  start(input: { onLevel: (level: number) => void }): Promise<PushToTalkRecording>;
 }
 
 export interface PushToTalkScreenSource {
@@ -56,7 +66,7 @@ export interface PushToTalkScreenSource {
 export interface PushToTalkDelivery {
   /**
    * Sends the turn to the active workspace's agent conversation without the
-   * side chat's draft, shows it in the side chat and returns its target.
+   * side chat's draft or opening any window, and returns its target.
    */
   send(input: { text: string; attachments: PushToTalkImage[] }): Promise<ChatTarget>;
 }
@@ -70,7 +80,8 @@ export interface PushToTalkPowerMonitor {
 
 export type PushToTalkControllerDeps = {
   hotkey: PushToTalkHotkey;
-  overlay: PushToTalkOverlay;
+  companion: PushToTalkCompanion;
+  status: PushToTalkStatus;
   microphone: PushToTalkMicrophone;
   screen: PushToTalkScreenSource;
   transcriber: PushToTalkTranscriber;
@@ -79,12 +90,17 @@ export type PushToTalkControllerDeps = {
   replies: PushToTalkReplies;
   clock: PushToTalkClock;
   powerMonitor: PushToTalkPowerMonitor;
+  /** Opens Side Chat on the agent conversation (a click on the caption). */
+  openSideChat: () => void;
   removeFile: (path: string) => Promise<void>;
   /** The effective settings; `enabled` is false while the side chat is off. */
   settings: PushToTalkSettings;
   /** What the voice says in place of a code block, in Main's language. */
   codeBlockLabel?: () => string;
+  /** Failures worth a warning. */
   log?: (message: string) => void;
+  /** One line per step of the turn, for the smoke test and support. */
+  trace?: (message: string) => void;
 };
 
 type Turn = {
@@ -99,23 +115,35 @@ type Turn = {
   started?: PushToTalkRecording;
   /** Undefined while capturing or with the screenshot turned off. */
   screen?: PushToTalkScreenCaptureResult | undefined;
-  region: PushToTalkRect | null;
+  stroke: PushToTalkStroke | null;
   stopMaxTimer: () => void;
-  stopRegion?: () => void;
+  stopStroke?: () => void;
   stopBusyTimer?: () => void;
+};
+
+/** The sent turn while it waits for, shows and reads the agent's reply. */
+type Reply = {
+  phase: "thinking" | "speaking";
+  cancelled: boolean;
+  stopTimer?: () => void;
 };
 
 /**
  * Owns one push-to-talk turn at a time (openspec add-push-to-talk-agent,
- * D2): idle → recording → transcribing → sending → idle, with the reply
- * read afterwards. At the press it stops speech, captures the screen while
- * the microphone starts, and shows the overlay only after the capture.
+ * D2): idle → listening → transcribing → sending → thinking → speaking →
+ * idle. The notch status and the cursor companion show each state; errors
+ * go to the notch while it is visible, otherwise to the companion. At the
+ * press it stops a reply in progress, captures the screen while the
+ * microphone starts, and shows the turn only after the capture.
  */
 export class PushToTalkController {
   readonly #deps: PushToTalkControllerDeps;
   #settings: PushToTalkSettings;
   #turn: Turn | undefined;
-  #stopPillTimer: (() => void) | undefined;
+  #reply: Reply | undefined;
+  #companionShown = false;
+  #statusShown = false;
+  #stopErrorTimer: (() => void) | undefined;
   #unsubscribe: (() => void)[] = [];
 
   constructor(deps: PushToTalkControllerDeps) {
@@ -124,19 +152,25 @@ export class PushToTalkController {
   }
 
   start() {
-    const { hotkey, powerMonitor } = this.#deps;
-    const interrupt = () => this.#cancelRecording();
+    const { companion, hotkey, powerMonitor } = this.#deps;
     this.#unsubscribe = [
       hotkey.onPressed(({ frontmostApp }) => void this.#press(frontmostApp)),
       hotkey.onReleased(({ cancelled }) => {
         // Another key joined a modifier-only chord: a different shortcut, so
         // the turn goes without a trace (no error, capture and WAV dropped).
-        if (cancelled) this.#cancelRecording();
+        if (cancelled) this.#cancelRecording("the chord was joined by another key");
         else if (this.#turn) void this.#release(this.#turn);
       }),
-      hotkey.onHelperRestarted(interrupt),
+      hotkey.onHelperRestarted(() =>
+        this.#cancelRecording("the shortcut helper restarted")
+      ),
+      companion.onCaptionClick(() => {
+        this.#trace("push-to-talk caption clicked; opening Side Chat");
+        this.#deps.openSideChat();
+      }),
     ];
     for (const event of ["lock-screen", "suspend"] as const) {
+      const interrupt = () => this.#cancelRecording(event);
       powerMonitor.on(event, interrupt);
       this.#unsubscribe.push(() => powerMonitor.removeListener(event, interrupt));
     }
@@ -147,7 +181,13 @@ export class PushToTalkController {
   update(settings: PushToTalkSettings) {
     const previous = this.#settings;
     this.#settings = settings;
-    if (!settings.enabled) this.#cancelRecording();
+    if (!settings.enabled) {
+      this.#cancelRecording("Talk to agent was turned off");
+      if (this.#reply) {
+        this.#interruptReply();
+        this.#hideAll("Talk to agent was turned off");
+      }
+    }
     if (
       previous.enabled !== settings.enabled ||
       JSON.stringify(previous.shortcut) !== JSON.stringify(settings.shortcut)
@@ -157,9 +197,9 @@ export class PushToTalkController {
 
   dispose() {
     for (const unsubscribe of this.#unsubscribe.splice(0)) unsubscribe();
-    this.#cancelRecording();
-    this.#deps.replies.cancel();
-    this.#deps.speaker.stop();
+    this.#cancelRecording("Main is closing");
+    this.#interruptReply();
+    this.#clearErrorTimer();
   }
 
   #register() {
@@ -179,11 +219,15 @@ export class PushToTalkController {
         this.#showBusy(running);
       return;
     }
-    const { clock, microphone, overlay, screen, speaker, replies, transcriber } =
-      this.#deps;
-    speaker.stop();
-    replies.cancel();
-    this.#clearPill();
+    const { clock, companion, microphone, screen, status, transcriber } = this.#deps;
+    this.#trace(`push-to-talk pressed (frontmost: ${frontmostApp?.name ?? "unknown"})`);
+    this.#interruptReply();
+    this.#clearErrorTimer();
+    // The previous turn's companion and notch scene stay out of the screenshot.
+    if (this.#companionShown) companion.hide({ immediate: true });
+    this.#companionShown = false;
+    if (this.#statusShown) status.set(null);
+    this.#statusShown = false;
 
     const location = screen.locate();
     const turn: Turn = {
@@ -192,7 +236,7 @@ export class PushToTalkController {
       cancelled: false,
       frontmostApp,
       location,
-      region: null,
+      stroke: null,
       stopMaxTimer: () => undefined,
     };
     this.#turn = turn;
@@ -215,22 +259,28 @@ export class PushToTalkController {
       await capture;
       if (turn.cancelled) return;
       this.#endTurn(turn);
-      overlay.show({
-        ...this.#where(turn),
-        state: errorState("transcription_unavailable"),
-      });
-      this.#scheduleHide();
+      this.#showError("transcription_unavailable", { turn });
       return;
     }
 
-    turn.recording = microphone.start();
+    turn.recording = microphone.start({
+      onLevel: (level) => {
+        if (this.#turn !== turn) return;
+        status.setLevel(level);
+        companion.setLevel(level);
+      },
+    });
     // Observed here so a rejection after a cancel is never unhandled.
     turn.recording.catch(() => undefined);
     turn.screen = await capture;
     if (turn.cancelled) return;
-    overlay.show({ ...this.#where(turn), state: { kind: "listening" } });
-    turn.stopRegion = overlay.onRegion((rect) => {
-      turn.region = rect;
+    companion.show({ ...this.#where(turn), state: { kind: "listening" } });
+    this.#companionShown = true;
+    status.set({ kind: "listening" });
+    this.#statusShown = true;
+    this.#trace(`push-to-talk listening on display ${turn.location.displayId}`);
+    turn.stopStroke = companion.onStroke((stroke) => {
+      turn.stroke = stroke;
     });
 
     try {
@@ -239,10 +289,10 @@ export class PushToTalkController {
       if (turn.cancelled) return;
       this.#endTurn(turn);
       if (error instanceof MicrophoneDeniedError) {
-        this.#showError("microphone_denied");
+        this.#showError("microphone_denied", { turn });
       } else {
         this.#log(`Push-to-talk microphone failed: ${message(error)}`);
-        overlay.hide();
+        this.#hideAll("the microphone failed");
       }
       return;
     }
@@ -258,9 +308,10 @@ export class PushToTalkController {
     if (turn.phase !== "recording" || !turn.started) return;
     turn.phase = "transcribing";
     turn.stopMaxTimer();
-    turn.stopRegion?.();
-    const { overlay, transcriber } = this.#deps;
+    turn.stopStroke?.();
+    const { transcriber } = this.#deps;
     const heldMs = turn.releasedAt - turn.pressedAt;
+    this.#trace(`push-to-talk released after ${heldMs} ms`);
 
     let path: string;
     try {
@@ -268,7 +319,7 @@ export class PushToTalkController {
     } catch (error) {
       this.#log(`Push-to-talk recording failed: ${message(error)}`);
       this.#endTurn(turn);
-      overlay.hide();
+      this.#hideAll("the recording failed");
       return;
     }
 
@@ -276,17 +327,18 @@ export class PushToTalkController {
     try {
       if (heldMs < minRecordingMs) {
         this.#endTurn(turn);
-        overlay.hide();
+        this.#hideAll(`a ${heldMs} ms tap`);
         return;
       }
-      overlay.setState({ kind: "transcribing" });
+      this.#showState({ kind: "transcribing" });
       text = (await transcriber.transcribe(path)).text.trim();
     } catch (error) {
       this.#endTurn(turn);
       this.#showError(
         error instanceof PushToTalkTranscriptionError
           ? error.code
-          : "transcription_failed"
+          : "transcription_failed",
+        { turn }
       );
       return;
     } finally {
@@ -294,7 +346,7 @@ export class PushToTalkController {
     }
     if (!text) {
       this.#endTurn(turn);
-      this.#showError("nothing_heard");
+      this.#showError("nothing_heard", { turn });
       return;
     }
     await this.#send(turn, text);
@@ -302,11 +354,11 @@ export class PushToTalkController {
 
   async #send(turn: Turn, transcript: string) {
     turn.phase = "sending";
-    const { delivery, overlay, replies, speaker } = this.#deps;
+    const { delivery, replies } = this.#deps;
     let context: PushToTalkScreenContext | undefined;
     if (turn.screen?.status === "captured") {
       try {
-        context = turn.screen.finalize(turn.region && rectStroke(turn.region));
+        context = turn.screen.finalize(turn.stroke);
       } catch (error) {
         this.#log(`Push-to-talk screenshot encoding failed: ${message(error)}`);
       }
@@ -322,33 +374,90 @@ export class PushToTalkController {
           ? { screen: pointerContext(turn.location) }
           : {}),
     });
+    const attachments = context?.images ?? [];
     let target: ChatTarget;
     try {
-      target = await delivery.send({ text, attachments: context?.images ?? [] });
+      target = await delivery.send({ text, attachments });
     } catch (error) {
       this.#log(`Push-to-talk send failed: ${message(error)}`);
       this.#endTurn(turn);
-      this.#showError("send_failed", transcript);
+      this.#showError("send_failed", { turn, transcript });
       return;
     }
     this.#endTurn(turn);
-    if (screenMissing) this.#showError("screen_denied");
-    else overlay.hide();
-    if (this.#settings.speakReplies) {
-      const codeBlock = this.#deps.codeBlockLabel?.() ?? "code snippet";
-      replies.arm(target, (reply) =>
-        speaker.speak(speakableText(reply, { codeBlock }))
-      );
+    this.#trace(`push-to-talk sent with ${attachments.length} images`);
+
+    const reply: Reply = { phase: "thinking", cancelled: false };
+    this.#reply = reply;
+    replies.arm(target, {
+      onReply: (markdown) => void this.#answer(reply, markdown),
+      onTimeout: () => {
+        if (this.#reply !== reply) return;
+        this.#reply = undefined;
+        this.#hideAll("no reply within the wait");
+      },
+    });
+    if (screenMissing) this.#showError("screen_denied", { turn, keepsTurn: true });
+    else this.#showState({ kind: "thinking" });
+  }
+
+  /** Shows the reply: sentence by sentence while spoken, or whole for its reading time. */
+  async #answer(reply: Reply, markdown: string) {
+    if (this.#reply !== reply || reply.cancelled) return;
+    const { clock, companion, speaker } = this.#deps;
+    this.#clearErrorTimer();
+    reply.phase = "speaking";
+    const codeBlock = this.#deps.codeBlockLabel?.() ?? "code snippet";
+    const text = speakableText(markdown, { codeBlock });
+    this.#showState({ kind: "speaking" });
+    const finish = (ms: number, reason: string) => {
+      reply.stopTimer = clock.setTimeout(() => {
+        if (this.#reply !== reply) return;
+        this.#reply = undefined;
+        this.#hideAll(reason);
+      }, ms);
+    };
+
+    if (!this.#settings.speakReplies) {
+      companion.setCaption(text || null);
+      const ms = captionReadingMs(text);
+      this.#trace(`push-to-talk caption shown for ${ms} ms`);
+      finish(ms, "the caption was read");
+      return;
     }
+    const sentences = splitSentences(text);
+    for (const [index, sentence] of sentences.entries()) {
+      if (reply.cancelled) return;
+      companion.setCaption(sentence);
+      this.#trace(`push-to-talk speaking sentence ${index + 1}/${sentences.length}`);
+      await speaker.speak(sentence);
+    }
+    if (reply.cancelled) return;
+    finish(captionLingerMs, "the reply was read");
+  }
+
+  /** A new press, or the feature turned off: the voice stops at once. */
+  #interruptReply() {
+    const { companion, replies, speaker } = this.#deps;
+    speaker.stop();
+    replies.cancel();
+    const reply = this.#reply;
+    this.#reply = undefined;
+    if (!reply) return;
+    reply.cancelled = true;
+    reply.stopTimer?.();
+    if (this.#companionShown) companion.setCaption(null);
+    this.#trace(`push-to-talk reply interrupted while ${reply.phase}`);
   }
 
   /** The release can no longer be trusted: drop the recording. */
-  #cancelRecording() {
+  #cancelRecording(reason: string) {
     const turn = this.#turn;
     if (!turn || (turn.phase !== "starting" && turn.phase !== "recording")) return;
     turn.cancelled = true;
     this.#endTurn(turn);
-    this.#deps.overlay.hide();
+    this.#trace(`push-to-talk cancelled: ${reason}`);
+    this.#hideAll("the turn was cancelled");
     turn.recording
       ?.then((recording) => recording.stop())
       .then((path) => this.#remove(path))
@@ -359,36 +468,86 @@ export class PushToTalkController {
 
   #endTurn(turn: Turn) {
     turn.stopMaxTimer();
-    turn.stopRegion?.();
+    turn.stopStroke?.();
     turn.stopBusyTimer?.();
     if (this.#turn === turn) this.#turn = undefined;
   }
 
+  /** A progress state of a shown turn, on the notch and the companion. */
+  #showState(state: PushToTalkTurnState) {
+    this.#deps.status.set(state);
+    this.#statusShown = true;
+    if (this.#companionShown) this.#deps.companion.setState(state);
+    this.#trace(`push-to-talk ${state.kind}`);
+  }
+
   #showBusy(turn: Turn) {
-    const { clock, overlay } = this.#deps;
-    overlay.setState({ kind: "busy" });
+    const { clock, companion, status } = this.#deps;
+    const show = (state: PushToTalkTurnState) =>
+      status.visible() ? status.set(state) : companion.setState(state);
+    show({ kind: "busy" });
+    this.#trace("push-to-talk busy: a turn is still running");
     turn.stopBusyTimer?.();
     turn.stopBusyTimer = clock.setTimeout(() => {
-      if (this.#turn === turn) overlay.setState({ kind: "transcribing" });
-    }, busyPillMs);
+      if (this.#turn === turn) show({ kind: "transcribing" });
+    }, busyVisibleMs);
   }
 
-  #showError(code: PushToTalkErrorCode, transcript?: string) {
-    this.#deps.overlay.setState(errorState(code, transcript));
-    this.#scheduleHide();
+  /**
+   * Errors go to the notch while it is visible, otherwise next to the
+   * companion. An error that ends the turn hides everything after a while;
+   * one that `keepsTurn` (the screenshot was left out) returns to thinking.
+   */
+  #showError(
+    code: PushToTalkErrorCode,
+    options: { turn: Turn; transcript?: string; keepsTurn?: boolean }
+  ) {
+    const { clock, companion, status } = this.#deps;
+    const state: PushToTalkTurnState = {
+      kind: "error",
+      code,
+      ...(options.transcript ? { transcript: options.transcript } : {}),
+    };
+    const inNotch = status.visible();
+    this.#trace(`push-to-talk error ${code} on the ${inNotch ? "notch" : "companion"}`);
+    if (inNotch) {
+      status.set(state);
+      this.#statusShown = true;
+      if (!options.keepsTurn && this.#companionShown) {
+        companion.hide();
+        this.#companionShown = false;
+      }
+    } else {
+      if (this.#statusShown) status.set(null);
+      this.#statusShown = false;
+      if (this.#companionShown) companion.setState(state);
+      else companion.show({ ...this.#where(options.turn), state });
+      this.#companionShown = true;
+    }
+    this.#clearErrorTimer();
+    this.#stopErrorTimer = clock.setTimeout(() => {
+      this.#stopErrorTimer = undefined;
+      if (this.#turn) return;
+      if (!options.keepsTurn) {
+        if (!this.#reply) this.#hideAll("the error was shown");
+        return;
+      }
+      if (this.#reply?.phase === "thinking") this.#showState({ kind: "thinking" });
+    }, errorVisibleMs);
   }
 
-  #scheduleHide() {
-    this.#clearPill();
-    this.#stopPillTimer = this.#deps.clock.setTimeout(() => {
-      this.#stopPillTimer = undefined;
-      if (!this.#turn) this.#deps.overlay.hide();
-    }, errorPillMs);
+  #hideAll(reason: string) {
+    this.#clearErrorTimer();
+    if (this.#statusShown) this.#deps.status.set(null);
+    this.#statusShown = false;
+    if (this.#companionShown) this.#deps.companion.hide();
+    this.#companionShown = false;
+    this.#trace(`push-to-talk hidden: ${reason}`);
   }
 
-  #clearPill() {
-    this.#stopPillTimer?.();
-    this.#stopPillTimer = undefined;
+  #clearErrorTimer() {
+    this.#stopErrorTimer?.();
+    this.#stopErrorTimer = undefined;
   }
 
   #where(turn: Turn) {
@@ -406,26 +565,16 @@ export class PushToTalkController {
   #log(text: string) {
     this.#deps.log?.(text);
   }
+
+  #trace(text: string) {
+    this.#deps.trace?.(text);
+  }
 }
 
-function errorState(
-  code: PushToTalkErrorCode,
-  transcript?: string
-): PushToTalkPillState {
-  return { kind: "error", code, ...(transcript ? { transcript } : {}) };
-}
-
-/** The marked rectangle as the closed stroke the capture takes. */
-function rectStroke(rect: PushToTalkRect): PushToTalkStroke {
-  const right = rect.x + rect.width;
-  const bottom = rect.y + rect.height;
-  return [
-    { x: rect.x, y: rect.y },
-    { x: right, y: rect.y },
-    { x: right, y: bottom },
-    { x: rect.x, y: bottom },
-    { x: rect.x, y: rect.y },
-  ];
+/** clamp(words × 300 ms, 4 s, 20 s). */
+function captionReadingMs(text: string) {
+  const words = text.split(/\s+/).filter(Boolean).length;
+  return Math.min(captionMaxMs, Math.max(captionMinMs, words * captionMsPerWord));
 }
 
 function screenshotContext(context: PushToTalkScreenContext): PushToTalkMessageScreen {

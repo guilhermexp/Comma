@@ -27,12 +27,12 @@ describe("SaySpeaker", () => {
     });
     const speaker = new SaySpeaker({ spawn });
 
-    speaker.speak("first answer");
+    void speaker.speak("first answer");
     expect(spawn).toHaveBeenCalledWith("/usr/bin/say", []);
     expect(processes[0]?.input).toBe("first answer");
     expect(speaker.speaking()).toBe(true);
 
-    speaker.speak("second answer");
+    void speaker.speak("second answer");
     expect(processes[0]?.killed).toBe(true);
     expect(processes[1]?.input).toBe("second answer");
 
@@ -44,11 +44,38 @@ describe("SaySpeaker", () => {
   it("forgets a voice that finished on its own", () => {
     const child = new FakeSay();
     const speaker = new SaySpeaker({ spawn: () => child });
-    speaker.speak("done");
+    void speaker.speak("done");
     child.emit("exit", 0);
     expect(speaker.speaking()).toBe(false);
     speaker.stop();
     expect(child.killed).toBe(false);
+  });
+
+  // Leitura da resposta: the controller waits for each sentence to end.
+  it("resolves each sentence when its voice ends, is stopped or fails", async () => {
+    const processes: FakeSay[] = [];
+    const speaker = new SaySpeaker({
+      spawn: () => {
+        const child = new FakeSay();
+        processes.push(child);
+        return child;
+      },
+    });
+    const ended = vi.fn();
+    void speaker.speak("first").then(ended);
+    await Promise.resolve();
+    expect(ended).not.toHaveBeenCalled();
+    processes[0]?.emit("exit", 0);
+    await Promise.resolve();
+    expect(ended).toHaveBeenCalledOnce();
+
+    const stopped = speaker.speak("second");
+    speaker.stop();
+    await expect(stopped).resolves.toBeUndefined();
+
+    const failed = speaker.speak("third");
+    processes[2]?.emit("error", new Error("spawn failed"));
+    await expect(failed).resolves.toBeUndefined();
   });
 });
 
@@ -88,7 +115,7 @@ describe("PushToTalkReplyWatcher", () => {
     const clock = new FakeClock();
     const watcher = new PushToTalkReplyWatcher({ clock });
     const onReply = vi.fn();
-    watcher.arm(target, onReply);
+    watcher.arm(target, { onReply, onTimeout: vi.fn() });
 
     watcher.handleAppended(appended([message("user", "my question")]));
     watcher.handleAppended(
@@ -118,13 +145,18 @@ describe("PushToTalkReplyWatcher", () => {
     expect(onReply).not.toHaveBeenCalled();
   });
 
-  it("stops waiting silently after 180 s", () => {
+  // Agente demora
+  it("gives up after 180 s, says so once and ignores a later reply", () => {
     const clock = new FakeClock();
     const watcher = new PushToTalkReplyWatcher({ clock });
     const onReply = vi.fn();
-    watcher.arm(target, onReply);
-    clock.advance(replyWaitMs);
+    const onTimeout = vi.fn();
+    watcher.arm(target, { onReply, onTimeout });
+    clock.advance(replyWaitMs - 1);
+    expect(onTimeout).not.toHaveBeenCalled();
+    clock.advance(1);
     expect(replyWaitMs).toBe(180_000);
+    expect(onTimeout).toHaveBeenCalledOnce();
     watcher.handleAppended(appended([message("assistant", "Too late")]));
     expect(onReply).not.toHaveBeenCalled();
   });
@@ -133,14 +165,16 @@ describe("PushToTalkReplyWatcher", () => {
     const watcher = new PushToTalkReplyWatcher({ clock: new FakeClock() });
     const first = vi.fn();
     const second = vi.fn();
-    watcher.arm(target, first);
-    watcher.arm(target, second);
+    const firstTimeout = vi.fn();
+    watcher.arm(target, { onReply: first, onTimeout: firstTimeout });
+    watcher.arm(target, { onReply: second, onTimeout: vi.fn() });
     watcher.handleAppended(appended([message("assistant", "Answer")]));
     expect(first).not.toHaveBeenCalled();
     expect(second).toHaveBeenCalledWith("Answer");
+    expect(firstTimeout).not.toHaveBeenCalled();
 
     const third = vi.fn();
-    watcher.arm(target, third);
+    watcher.arm(target, { onReply: third, onTimeout: vi.fn() });
     watcher.cancel();
     watcher.handleAppended(appended([message("assistant", "Answer")]));
     expect(third).not.toHaveBeenCalled();

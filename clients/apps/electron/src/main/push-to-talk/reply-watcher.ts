@@ -6,9 +6,15 @@ import type { PushToTalkClock } from "./clock";
 /** How long a sent turn waits for the agent before giving up silently. */
 export const replyWaitMs = 180_000;
 
+export type PushToTalkReplyHandlers = {
+  onReply: (text: string) => void;
+  /** No reply came within the wait; a later one is ignored. */
+  onTimeout: () => void;
+};
+
 export interface PushToTalkReplies {
   /** Waits for the first agent reply in `target`, replacing any earlier wait. */
-  arm(target: ChatTarget, onReply: (text: string) => void): void;
+  arm(target: ChatTarget, handlers: PushToTalkReplyHandlers): void;
   cancel(): void;
 }
 
@@ -23,7 +29,7 @@ export class PushToTalkReplyWatcher implements PushToTalkReplies {
   readonly #clock: PushToTalkClock;
   readonly #timeoutMs: number;
   #waiting:
-    | { target: ChatTarget; onReply: (text: string) => void; cancelTimer: () => void }
+    | { target: ChatTarget; handlers: PushToTalkReplyHandlers; cancelTimer: () => void }
     | undefined;
 
   constructor(options: { clock: PushToTalkClock; timeoutMs?: number }) {
@@ -31,12 +37,14 @@ export class PushToTalkReplyWatcher implements PushToTalkReplies {
     this.#timeoutMs = options.timeoutMs ?? replyWaitMs;
   }
 
-  arm(target: ChatTarget, onReply: (text: string) => void) {
+  arm(target: ChatTarget, handlers: PushToTalkReplyHandlers) {
     this.cancel();
     const cancelTimer = this.#clock.setTimeout(() => {
-      if (this.#waiting?.onReply === onReply) this.#waiting = undefined;
+      if (this.#waiting?.handlers !== handlers) return;
+      this.#waiting = undefined;
+      handlers.onTimeout();
     }, this.#timeoutMs);
-    this.#waiting = { target, onReply, cancelTimer };
+    this.#waiting = { target, handlers, cancelTimer };
   }
 
   cancel() {
@@ -61,6 +69,6 @@ export class PushToTalkReplyWatcher implements PushToTalkReplies {
     );
     if (!reply) return;
     this.cancel();
-    waiting.onReply(reply.text);
+    waiting.handlers.onReply(reply.text);
   }
 }

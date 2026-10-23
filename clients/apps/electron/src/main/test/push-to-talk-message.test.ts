@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { composePushToTalkMessage, speakableText } from "../push-to-talk/message";
+import {
+  composePushToTalkMessage,
+  speakableText,
+  splitSentences,
+} from "../push-to-talk/message";
 
 const header = "Screen context (captured when I pressed the shortcut):";
 
@@ -116,5 +120,14 @@ describe("speakableText", () => {
     expect(speakableText("Set max_tokens to 5 * 3.", { codeBlock: "code" })).toBe(
       "Set max_tokens to 5 * 3."
     );
+  });
+});
+
+describe("splitSentences", () => {
+  // Leitura da resposta: each sentence is read and captioned on its own.
+  it("splits on sentence ends and line breaks, keeping decimals and empty-free", () => {
+    expect(
+      splitSentences("O arquivo tem 1.5 GB. Quer apagar?\nItem um\n\nPronto! Fim")
+    ).toEqual(["O arquivo tem 1.5 GB.", "Quer apagar?", "Item um", "Pronto!", "Fim"]);
   });
 });

@@ -354,6 +354,38 @@ describe("PushToTalkOverlayWindow", () => {
     await overlay.overlayAction({ action: "copy-transcript" });
     expect(writeClipboard).toHaveBeenCalledOnce();
   });
+
+  // Errors shown in the Notch reuse the same actions, Input Monitoring included.
+  it("runs a Notch error's action with that error's transcript", async () => {
+    const { openExternal, overlay, writeClipboard } = createOverlay();
+    await overlay.runAction("open-input-monitoring-settings", undefined);
+    expect(openExternal).toHaveBeenCalledWith(
+      "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+    );
+    await overlay.runAction("copy-transcript", "from the notch");
+    expect(writeClipboard).toHaveBeenCalledWith("from the notch");
+  });
+
+  // Interromper a leitura: the next press's screenshot never shows this turn.
+  it("hides at once, without the fade, for a new press", async () => {
+    const setup = createOverlay();
+    const { latest, overlay, window } = setup;
+    await showListening(setup);
+    overlay.setCaption("Reading this.");
+    overlay.hide({ immediate: true });
+    expect(window().visible).toBe(false);
+    expect(window().ignoringMouse).toBe(true);
+    expect(latest()).toMatchObject({ caption: null, companion: null, hiding: false });
+
+    // Also in the middle of a fade.
+    await showListening(setup);
+    overlay.hide();
+    overlay.hide({ immediate: true });
+    expect(window().visible).toBe(false);
+    await showListening(setup);
+    vi.advanceTimersByTime(PUSH_TO_TALK_HIDE_FADE_MS * 2);
+    expect(window().visible).toBe(true);
+  });
 });
 
 class FakeWindow implements PushToTalkOverlayBrowserWindow {

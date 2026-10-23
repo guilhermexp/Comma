@@ -1667,57 +1667,6 @@ describe("NativeSideChatService", () => {
     expect(attachment.window.focus).not.toHaveBeenCalled();
   });
 
-  // Talk to agent: the sidebar opens on the sent question while the app in
-  // use keeps the keyboard; the next ordinary open activates again.
-  it("opens without focus for one open, then activates ordinary opens again", () => {
-    const hosts: FakeHost[] = [];
-    const service = createService(hosts);
-    const attachment = createAttachment();
-
-    service.attachWindow(attachment.value);
-    attachment.emit("ready-to-show");
-    service.start();
-    service.openWithoutFocus();
-    expect(kinds(hosts[0])).toContain("side-chat.open");
-    hosts[0]?.emitPresentation(
-      presentationFrame({ offsetX: 0, phase: "open", progress: 1, revision: 1 })
-    );
-    expect(attachment.window.showInactive).toHaveBeenCalled();
-    expect(attachment.window.show).not.toHaveBeenCalled();
-    expect(attachment.window.focus).not.toHaveBeenCalled();
-
-    hosts[0]?.emitPresentation(
-      presentationFrame({ offsetX: -539, phase: "closed", progress: 0, revision: 2 })
-    );
-    service.open();
-    hosts[0]?.emitPresentation(
-      presentationFrame({ offsetX: 0, phase: "open", progress: 1, revision: 3 })
-    );
-    expect(attachment.window.show).toHaveBeenCalledOnce();
-    expect(attachment.window.focus).toHaveBeenCalledOnce();
-    service.dispose();
-  });
-
-  it("forgets a focusless open that was closed before it finished", () => {
-    const hosts: FakeHost[] = [];
-    const service = createService(hosts);
-    const attachment = createAttachment();
-
-    service.attachWindow(attachment.value);
-    attachment.emit("ready-to-show");
-    service.start();
-    service.openWithoutFocus();
-    hosts[0]?.emitPresentation(
-      presentationFrame({ offsetX: -200, phase: "closing", progress: 0.5, revision: 1 })
-    );
-    // The helper's own shortcut opens it next: an ordinary, activating open.
-    hosts[0]?.emitPresentation(
-      presentationFrame({ offsetX: 0, phase: "open", progress: 1, revision: 2 })
-    );
-    expect(attachment.window.focus).toHaveBeenCalledOnce();
-    service.dispose();
-  });
-
   it("replays identical bounds and backdrop geometry to a replacement window", () => {
     const hosts: FakeHost[] = [];
     const service = createService(hosts);

@@ -40,7 +40,11 @@ import {
 } from "../push-to-talk/runtime";
 import type { PushToTalkSpeaker } from "../push-to-talk/speaker";
 import type { PushToTalkTranscriber } from "../push-to-talk/transcriber";
-import type { PushToTalkHotkey, PushToTalkOverlay } from "../push-to-talk/types";
+import type {
+  PushToTalkCompanion,
+  PushToTalkHotkey,
+  PushToTalkStatus,
+} from "../push-to-talk/types";
 import { defaultLocalRoots } from "./synchronicity/default-root";
 import {
   createCallerBoundSessionHistoryProvider,
@@ -377,12 +381,17 @@ export interface ElectronMainRuntimeDeps {
   pushToTalk?:
     | {
         hotkey: PushToTalkHotkey;
-        overlay: PushToTalkOverlay;
+        /** The cursor companion window: state, level, caption and stroke. */
+        companion: PushToTalkCompanion;
+        /** The turn's scene in the Comma Notch. */
+        status: PushToTalkStatus;
         screen: PushToTalkScreenSource;
         speaker: PushToTalkSpeaker;
         powerMonitor: PushToTalkPowerMonitor;
-        /** Shows Side Chat while the app in use keeps the keyboard. */
-        openSideChatWithoutFocus: () => void;
+        /** Opens Side Chat normally (a click on the caption balloon). */
+        openSideChat: () => void;
+        /** One log line per step of a turn. */
+        trace?: ((message: string) => void) | undefined;
         /** Where each turn's WAV lives until the turn ends. */
         recordingsDir: string;
         /** Local mode's backend; absent, the server transcribes. */
@@ -1292,7 +1301,9 @@ export async function createElectronMainContext(
       createController: (settings) =>
         new PushToTalkController({
           hotkey,
-          overlay: pushToTalkDeps.overlay,
+          companion: pushToTalkDeps.companion,
+          status: pushToTalkDeps.status,
+          openSideChat: pushToTalkDeps.openSideChat,
           screen: pushToTalkDeps.screen,
           speaker: pushToTalkDeps.speaker,
           powerMonitor: pushToTalkDeps.powerMonitor,
@@ -1306,7 +1317,6 @@ export async function createElectronMainContext(
           transcriber,
           delivery: createPushToTalkDelivery({
             chat: appRuntime.chat,
-            sideChat: { openWithoutFocus: pushToTalkDeps.openSideChatWithoutFocus },
             runOwned: async (handler) => sessionAdmissionGuard.runOwned(handler),
           }),
           replies: pushToTalkReplies,
@@ -1319,6 +1329,7 @@ export async function createElectronMainContext(
               { locale: currentMainLocale() }
             ),
           log: logPushToTalk,
+          ...(pushToTalkDeps.trace ? { trace: pushToTalkDeps.trace } : {}),
         }),
     });
   }

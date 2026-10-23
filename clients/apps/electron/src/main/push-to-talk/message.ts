@@ -81,3 +81,19 @@ export function speakableText(markdown: string, options: { codeBlock: string }) 
     .filter(Boolean)
     .join("\n");
 }
+
+const sentenceSegmenter = new Intl.Segmenter(undefined, { granularity: "sentence" });
+
+/**
+ * The speakable reply as the sentences the voice reads and the caption
+ * shows one at a time. A line break also ends a sentence (list items,
+ * headings).
+ */
+export function splitSentences(text: string): string[] {
+  return text
+    .split("\n")
+    .flatMap((line) =>
+      Array.from(sentenceSegmenter.segment(line), ({ segment }) => segment.trim())
+    )
+    .filter(Boolean);
+}

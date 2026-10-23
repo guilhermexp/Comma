@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
+import type { CommaConversation } from "@comma/app/api";
+import type { ChatMessage, ChatTarget } from "@comma/chat-contract";
 import { MicrophoneDeniedError } from "../modules/audio-capture/microphone";
 import {
-  errorPillMs,
+  busyVisibleMs,
+  errorVisibleMs,
   maxRecordingMs,
   PushToTalkController,
   type PushToTalkControllerDeps,
   type PushToTalkRecording,
 } from "../push-to-talk/controller";
+import { PushToTalkReplyWatcher, replyWaitMs } from "../push-to-talk/reply-watcher";
 import type {
   PushToTalkCursorLocation,
   PushToTalkScreenCaptureResult,
@@ -14,13 +18,13 @@ import type {
 } from "../push-to-talk/screen-capture";
 import { PushToTalkTranscriptionError } from "../push-to-talk/transcriber";
 import type {
+  PushToTalkCompanion,
   PushToTalkFrontmostApp,
   PushToTalkHotkey,
-  PushToTalkOverlay,
-  PushToTalkPillState,
-  PushToTalkRect,
   PushToTalkSettings,
+  PushToTalkStatus,
   PushToTalkStroke,
+  PushToTalkTurnState,
 } from "../push-to-talk/types";
 import { FakeClock } from "./support/fake-clock";
 
@@ -57,6 +61,11 @@ const flush = async () => {
   for (let index = 0; index < 20; index++) await Promise.resolve();
 };
 
+function describeState(state: PushToTalkTurnState | null) {
+  if (state === null) return "null";
+  return state.kind === "error" ? `error ${state.code}` : state.kind;
+}
+
 class FakeHotkey implements PushToTalkHotkey {
   pressed = new Set<(event: { frontmostApp: PushToTalkFrontmostApp | null }) => void>();
   released = new Set<(event: { cancelled: boolean }) => void>();
@@ -91,36 +100,108 @@ class FakeHotkey implements PushToTalkHotkey {
   }
 }
 
-class FakeOverlay implements PushToTalkOverlay {
-  events: string[] = [];
-  states: PushToTalkPillState[] = [];
-  shown: Parameters<PushToTalkOverlay["show"]>[0][] = [];
+class FakeCompanion implements PushToTalkCompanion {
+  states: PushToTalkTurnState[] = [];
+  shown: Parameters<PushToTalkCompanion["show"]>[0][] = [];
+  captions: (string | null)[] = [];
+  levels: number[] = [];
   visible = false;
-  regionListeners = new Set<(rect: PushToTalkRect | null) => void>();
+  caption: string | null = null;
+  strokeListeners = new Set<(stroke: PushToTalkStroke | null) => void>();
+  captionListeners = new Set<() => void>();
   constructor(private readonly log: string[]) {}
-  show(input: Parameters<PushToTalkOverlay["show"]>[0]) {
+  show(input: Parameters<PushToTalkCompanion["show"]>[0]) {
     this.visible = true;
+    this.caption = null;
     this.shown.push(input);
     this.states.push(input.state);
-    this.log.push(`overlay.show ${input.state.kind}`);
+    this.log.push(`companion.show ${describeState(input.state)}`);
   }
-  setState(state: PushToTalkPillState) {
+  setState(state: PushToTalkTurnState) {
     this.states.push(state);
-    this.log.push(`overlay.state ${state.kind}`);
+    this.log.push(`companion.state ${describeState(state)}`);
+  }
+  setLevel(level: number) {
+    this.levels.push(level);
+  }
+  setCaption(text: string | null) {
+    this.caption = text;
+    this.captions.push(text);
+    this.log.push(`companion.caption ${text}`);
   }
   hide() {
     this.visible = false;
-    this.log.push("overlay.hide");
+    this.caption = null;
+    this.log.push("companion.hide");
   }
-  onRegion(listener: (rect: PushToTalkRect | null) => void) {
-    this.regionListeners.add(listener);
-    return () => this.regionListeners.delete(listener);
+  onStroke(listener: (stroke: PushToTalkStroke | null) => void) {
+    this.strokeListeners.add(listener);
+    return () => this.strokeListeners.delete(listener);
   }
-  mark(rect: PushToTalkRect | null) {
-    for (const listener of this.regionListeners) listener(rect);
+  onCaptionClick(listener: () => void) {
+    this.captionListeners.add(listener);
+    return () => this.captionListeners.delete(listener);
+  }
+  draw(stroke: PushToTalkStroke | null) {
+    for (const listener of this.strokeListeners) listener(stroke);
+  }
+  clickCaption() {
+    for (const listener of this.captionListeners) listener();
   }
   last() {
     return this.states.at(-1);
+  }
+}
+
+class FakeStatus implements PushToTalkStatus {
+  states: (PushToTalkTurnState | null)[] = [];
+  levels: number[] = [];
+  constructor(
+    private readonly log: string[],
+    public shownInNotch: boolean
+  ) {}
+  visible() {
+    return this.shownInNotch;
+  }
+  set(state: PushToTalkTurnState | null) {
+    // Repeated clears are no-ops for the notch; keep the sequence readable.
+    if (state === null && this.states.at(-1) === null) return;
+    this.states.push(state);
+    this.log.push(`notch ${describeState(state)}`);
+  }
+  setLevel(level: number) {
+    this.levels.push(level);
+  }
+  last() {
+    return this.states.at(-1);
+  }
+}
+
+class FakeSpeaker {
+  spoken: string[] = [];
+  #current: { text: string; done: () => void } | undefined;
+  constructor(private readonly log: string[]) {}
+  speak = vi.fn((text: string) => {
+    this.spoken.push(text);
+    this.log.push(`say ${text}`);
+    const { promise, resolve } = deferred<void>();
+    this.#current = { text, done: () => resolve() };
+    return promise;
+  });
+  stop = vi.fn(() => {
+    this.log.push("speaker.stop");
+    const current = this.#current;
+    this.#current = undefined;
+    current?.done();
+  });
+  /** The running sentence ends by itself. */
+  finish() {
+    const current = this.#current;
+    this.#current = undefined;
+    current?.done();
+  }
+  speaking() {
+    return this.#current?.text;
   }
 }
 
@@ -159,9 +240,31 @@ function strokeBox(stroke: PushToTalkStroke) {
   return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
 }
 
+const conversation = {
+  id: "cnv_home",
+  kind: "user_chat",
+  messages: [],
+  status: "active",
+  title: "Home",
+  group_id: "grp_1",
+} as CommaConversation;
+
+function agentMessage(text: string) {
+  return {
+    attachments: [],
+    delivery: "sent",
+    messageId: `msg_${text.length}`,
+    refs: [],
+    role: "assistant",
+    source: "server",
+    text,
+  } as unknown as ChatMessage;
+}
+
 function setup(
   options: {
     settings?: Partial<PushToTalkSettings>;
+    notchVisible?: boolean;
     capture?: () => Promise<PushToTalkScreenCaptureResult>;
     microphone?: () => Promise<PushToTalkRecording>;
     transcript?: () => Promise<{ text: string }>;
@@ -172,36 +275,38 @@ function setup(
   const log: string[] = [];
   const clock = new FakeClock();
   const hotkey = new FakeHotkey();
-  const overlay = new FakeOverlay(log);
+  const companion = new FakeCompanion(log);
+  const status = new FakeStatus(log, options.notchVisible ?? true);
+  const speaker = new FakeSpeaker(log);
   const powerMonitor = new FakePowerMonitor();
+  const replies = new PushToTalkReplyWatcher({ clock });
   const finalize = vi.fn((stroke: PushToTalkStroke | null) => ({
     ...screenshot,
     ...(stroke?.length ? { strokeBounds: strokeBox(stroke) } : {}),
   }));
-  const recordings: { stop: ReturnType<typeof vi.fn> }[] = [];
+  let onLevel: ((level: number) => void) | undefined;
   let wavCount = 0;
   const startMicrophone =
     options.microphone ??
     (async () => {
       const path = `/tmp/ptt-${++wavCount}.wav`;
-      const recording = {
+      return {
         stop: vi.fn(async () => {
           log.push(`mic.stop ${path}`);
           return path;
         }),
       };
-      recordings.push(recording);
-      return recording;
     });
-  const replies = { arm: vi.fn(), cancel: vi.fn() };
   const deps = {
     hotkey,
-    overlay,
+    companion,
+    status,
     clock,
     powerMonitor,
     microphone: {
-      start: vi.fn(() => {
+      start: vi.fn((input: { onLevel: (level: number) => void }) => {
         log.push("mic.start");
+        onLevel = input.onLevel;
         return startMicrophone();
       }),
     },
@@ -228,11 +333,9 @@ function setup(
         return options.send?.() ?? Promise.resolve(target);
       }),
     },
-    speaker: {
-      speak: vi.fn(),
-      stop: vi.fn(() => void log.push("speaker.stop")),
-    },
+    speaker,
     replies,
+    openSideChat: vi.fn(() => void log.push("sideChat.open")),
     removeFile: vi.fn(async (path: string) => void log.push(`rm ${path}`)),
     settings: { ...settings, ...options.settings },
     log: () => undefined,
@@ -247,30 +350,50 @@ function setup(
     hotkey.release();
     await flush();
   };
+  /** The agent's reply lands in `to` (the turn's conversation by default). */
+  const reply = async (text: string, to: ChatTarget = target) => {
+    replies.handleAppended({
+      conversation: { ...conversation, id: to.conversationId },
+      messages: [agentMessage(text)],
+      target: to,
+    });
+    await flush();
+  };
+  /** The running sentence ends; waits for the next one to start. */
+  const finishSentence = async () => {
+    speaker.finish();
+    await flush();
+  };
   return {
     controller,
     deps,
     hotkey,
-    overlay,
+    companion,
+    status,
+    speaker,
     clock,
     powerMonitor,
     log,
     finalize,
     hold,
+    reply,
+    finishSentence,
+    level: (value: number) => onLevel?.(value),
   };
 }
 
 describe("PushToTalkController", () => {
   // Padrão desligado
   it("registers nothing and ignores the shortcut while the feature is off", async () => {
-    const { deps, hotkey, overlay } = setup({ settings: { enabled: false } });
+    const { deps, hotkey, companion, status } = setup({ settings: { enabled: false } });
     await flush();
     expect(hotkey.register).toHaveBeenCalledWith(null);
     hotkey.press();
     await flush();
     expect(deps.microphone.start).not.toHaveBeenCalled();
     expect(deps.screen.capture).not.toHaveBeenCalled();
-    expect(overlay.shown).toEqual([]);
+    expect(companion.shown).toEqual([]);
+    expect(status.states).toEqual([]);
   });
 
   // Trocar o atalho
@@ -287,41 +410,30 @@ describe("PushToTalkController", () => {
     expect(hotkey.register).toHaveBeenLastCalledWith(null);
   });
 
-  // Janela principal fechada / Ciclo normal / Interromper a leitura
-  it("stops speech, captures and starts the mic in parallel, then shows Listening", async () => {
+  // Janela principal fechada
+  it("captures while the mic starts, then shows Listening in the notch and the companion", async () => {
     const capture = deferred<PushToTalkScreenCaptureResult>();
-    const { hotkey, overlay, log, finalize } = setup({
+    const { hotkey, companion, status, log, finalize } = setup({
       capture: () => capture.promise,
     });
     hotkey.press();
     await flush();
     expect(log).toEqual(["speaker.stop", "screen.capture", "mic.start"]);
-    // The pill never appears before the screenshot is taken.
-    expect(overlay.shown).toEqual([]);
+    // Nothing of the turn appears before the screenshot is taken.
+    expect(companion.shown).toEqual([]);
+    expect(status.states).toEqual([]);
     capture.resolve({ status: "captured", finalize });
     await flush();
-    expect(overlay.shown).toEqual([
+    expect(companion.shown).toEqual([
       { displayId: 2, cursor: { x: 2000, y: 500 }, state: { kind: "listening" } },
     ]);
+    expect(status.last()).toEqual({ kind: "listening" });
   });
 
-  // Segurar e soltar / Ciclo normal / Pergunta com print / Apontar sem arrastar
-  it("records the hold, transcribes, sends text, context and both images, then hides", async () => {
-    const { deps, overlay, log, finalize, hold } = setup();
+  // Estados em sequência / Ciclo normal / Pergunta com print / Apontar sem desenhar
+  it("walks listening → transcribing → thinking → speaking on the notch and the companion, then hides", async () => {
+    const { deps, companion, status, hold, reply, finishSentence, clock } = setup();
     await hold(4_000);
-    expect(log).toEqual([
-      "speaker.stop",
-      "screen.capture",
-      "mic.start",
-      "overlay.show listening",
-      "mic.stop /tmp/ptt-1.wav",
-      "overlay.state transcribing",
-      "transcribe /tmp/ptt-1.wav",
-      "rm /tmp/ptt-1.wav",
-      "delivery.send",
-      "overlay.hide",
-    ]);
-    expect(finalize).toHaveBeenCalledWith(null);
     const sent = deps.delivery.send.mock.calls[0] as unknown as [
       { text: string; attachments: { name: string }[] },
     ];
@@ -332,7 +444,37 @@ describe("PushToTalkController", () => {
       "screen.png",
       "detail.png",
     ]);
-    expect(overlay.visible).toBe(false);
+    // Waiting for the agent: the companion stays with its wait indicator.
+    expect(companion.visible).toBe(true);
+    expect(status.last()).toEqual({ kind: "thinking" });
+
+    await reply("Done.");
+    await finishSentence();
+    clock.advance(10_000);
+    expect(status.states.map(describeState)).toEqual([
+      "listening",
+      "transcribing",
+      "thinking",
+      "speaking",
+      "null",
+    ]);
+    expect(companion.states.map(describeState)).toEqual([
+      "listening",
+      "transcribing",
+      "thinking",
+      "speaking",
+    ]);
+    expect(companion.visible).toBe(false);
+  });
+
+  it("passes the microphone level to the notch and the companion", async () => {
+    const { hotkey, companion, status, level } = setup();
+    hotkey.press();
+    await flush();
+    level(0.4);
+    level(0.7);
+    expect(status.levels).toEqual([0.4, 0.7]);
+    expect(companion.levels).toEqual([0.4, 0.7]);
   });
 
   // Tela muda depois do aperto
@@ -347,59 +489,90 @@ describe("PushToTalkController", () => {
   });
 
   // Vários monitores
-  it("shows the overlay on the display the cursor was on", async () => {
-    const { overlay, hotkey } = setup();
+  it("shows the companion on the display the cursor was on", async () => {
+    const { companion, hotkey } = setup();
     hotkey.press();
     await flush();
-    expect(overlay.shown[0]?.displayId).toBe(2);
+    expect(companion.shown[0]?.displayId).toBe(2);
   });
 
-  // Marcar uma área
-  it("sends the latest marked area, a new one replacing the previous", async () => {
-    const { deps, overlay, hotkey, finalize, clock } = setup();
+  // Circular um gráfico
+  it("draws the latest freehand stroke on the screenshot, a new one replacing the previous", async () => {
+    const { deps, companion, hotkey, finalize, clock } = setup();
     hotkey.press();
     await flush();
-    overlay.mark({ x: 1, y: 2, width: 3, height: 4 });
-    overlay.mark({ x: 10, y: 20, width: 300, height: 400 });
+    companion.draw([
+      { x: 1, y: 2 },
+      { x: 3, y: 4 },
+    ]);
+    const circle = [
+      { x: 10, y: 20 },
+      { x: 310, y: 40 },
+      { x: 200, y: 420 },
+      { x: 12, y: 25 },
+    ];
+    companion.draw(circle);
     clock.advance(2_000);
     hotkey.release();
     await flush();
-    // The marked rectangle goes to the capture as a closed stroke.
-    expect(finalize).toHaveBeenCalledWith([
-      { x: 10, y: 20 },
-      { x: 310, y: 20 },
-      { x: 310, y: 420 },
-      { x: 10, y: 420 },
-      { x: 10, y: 20 },
-    ]);
+    expect(finalize).toHaveBeenCalledWith(circle);
     const [input] = deps.delivery.send.mock.calls[0] as unknown as [{ text: string }];
     expect(input.text).toContain("- Stroke area: 10, 20, 300 × 400 px");
   });
 
+  // Apontar sem desenhar
+  it("finalizes without a stroke when nothing was drawn", async () => {
+    const { finalize, hold } = setup();
+    await hold(1_000);
+    expect(finalize).toHaveBeenCalledWith(null);
+  });
+
+  // Nada abre
+  it("opens no window when the question is sent", async () => {
+    const { deps, hold, reply, finishSentence } = setup();
+    await hold(1_000);
+    expect(deps.delivery.send).toHaveBeenCalledOnce();
+    await reply("Done.");
+    await finishSentence();
+    expect(deps.openSideChat).not.toHaveBeenCalled();
+  });
+
+  // Abrir a conversa pelo balão
+  it("opens Side Chat when the caption balloon is clicked", async () => {
+    const { deps, companion, hold, reply } = setup();
+    await hold(1_000);
+    await reply("Here it is.");
+    expect(companion.caption).toBe("Here it is.");
+    companion.clickCaption();
+    expect(deps.openSideChat).toHaveBeenCalledOnce();
+  });
+
   // Toque acidental
   it("discards a 0.2 s tap without transcribing or sending", async () => {
-    const { deps, overlay, log, hold } = setup();
+    const { deps, companion, status, log, hold } = setup();
     await hold(200);
     expect(deps.transcriber.transcribe).not.toHaveBeenCalled();
     expect(deps.delivery.send).not.toHaveBeenCalled();
     expect(log).toContain("rm /tmp/ptt-1.wav");
-    expect(overlay.visible).toBe(false);
+    expect(companion.visible).toBe(false);
+    expect(status.last()).toBeNull();
   });
 
   // Outro atalho com os mesmos modificadores
   it("drops a turn whose modifier-only chord was joined by another key, silently", async () => {
-    const { deps, hotkey, overlay, clock, log } = setup();
+    const { deps, hotkey, companion, status, clock, log } = setup();
     hotkey.press();
     await flush();
-    expect(overlay.shown).toHaveLength(1);
+    expect(companion.shown).toHaveLength(1);
     clock.advance(1_500);
     hotkey.release(true);
     await flush();
     expect(deps.transcriber.transcribe).not.toHaveBeenCalled();
     expect(deps.delivery.send).not.toHaveBeenCalled();
     expect(log).toContain("rm /tmp/ptt-1.wav");
-    expect(overlay.visible).toBe(false);
-    expect(overlay.states.filter((state) => state.kind === "error")).toEqual([]);
+    expect(companion.visible).toBe(false);
+    expect(status.states.map(describeState)).toEqual(["listening", "null"]);
+    expect(companion.states.filter((state) => state.kind === "error")).toEqual([]);
     // The next hold is a normal turn.
     hotkey.press();
     await flush();
@@ -412,7 +585,9 @@ describe("PushToTalkController", () => {
   it("drops a turn cancelled before the microphone is ready", async () => {
     const mic = deferred<PushToTalkRecording>();
     const stop = vi.fn(async () => "/tmp/early.wav");
-    const { deps, hotkey, overlay, clock } = setup({ microphone: () => mic.promise });
+    const { deps, hotkey, companion, clock } = setup({
+      microphone: () => mic.promise,
+    });
     hotkey.press();
     await flush();
     clock.advance(1_000);
@@ -422,13 +597,13 @@ describe("PushToTalkController", () => {
     expect(stop).toHaveBeenCalledOnce();
     expect(deps.removeFile).toHaveBeenCalledWith("/tmp/early.wav");
     expect(deps.transcriber.transcribe).not.toHaveBeenCalled();
-    expect(overlay.visible).toBe(false);
+    expect(companion.visible).toBe(false);
   });
 
   it("handles a release that arrives before the microphone is ready", async () => {
     const mic = deferred<PushToTalkRecording>();
     const stop = vi.fn(async () => "/tmp/early.wav");
-    const { deps, hotkey, overlay } = setup({ microphone: () => mic.promise });
+    const { deps, hotkey, companion } = setup({ microphone: () => mic.promise });
     hotkey.press();
     await flush();
     hotkey.release();
@@ -437,7 +612,7 @@ describe("PushToTalkController", () => {
     expect(stop).toHaveBeenCalledOnce();
     expect(deps.removeFile).toHaveBeenCalledWith("/tmp/early.wav");
     expect(deps.delivery.send).not.toHaveBeenCalled();
-    expect(overlay.visible).toBe(false);
+    expect(companion.visible).toBe(false);
   });
 
   // Limite de duração
@@ -455,16 +630,18 @@ describe("PushToTalkController", () => {
   });
 
   // Aperto durante a transcrição
-  it("ignores a press while the previous turn transcribes and shows busy", async () => {
+  it("ignores a press while the previous turn transcribes and asks to wait in the notch", async () => {
     const transcript = deferred<{ text: string }>();
-    const { deps, hotkey, overlay, hold } = setup({
+    const { deps, hotkey, status, clock, hold } = setup({
       transcript: () => transcript.promise,
     });
     await hold(1_000);
     hotkey.press();
     await flush();
     expect(deps.microphone.start).toHaveBeenCalledOnce();
-    expect(overlay.last()).toEqual({ kind: "busy" });
+    expect(status.last()).toEqual({ kind: "busy" });
+    clock.advance(busyVisibleMs);
+    expect(status.last()).toEqual({ kind: "transcribing" });
     transcript.resolve({ text: "First" });
     await flush();
     expect(deps.delivery.send).toHaveBeenCalledOnce();
@@ -474,14 +651,15 @@ describe("PushToTalkController", () => {
   it.each(["lock-screen", "suspend", "helper-restart"] as const)(
     "cancels the recording on %s and starts fresh on the next press",
     async (interruption) => {
-      const { deps, hotkey, overlay, powerMonitor, log } = setup();
+      const { deps, hotkey, companion, status, powerMonitor, log } = setup();
       hotkey.press();
       await flush();
       if (interruption === "helper-restart") hotkey.restart();
       else powerMonitor.emit(interruption);
       await flush();
       expect(log).toContain("rm /tmp/ptt-1.wav");
-      expect(overlay.visible).toBe(false);
+      expect(companion.visible).toBe(false);
+      expect(status.last()).toBeNull();
       hotkey.release();
       await flush();
       expect(deps.transcriber.transcribe).not.toHaveBeenCalled();
@@ -490,7 +668,7 @@ describe("PushToTalkController", () => {
       hotkey.press();
       await flush();
       expect(deps.microphone.start).toHaveBeenCalledTimes(2);
-      expect(overlay.last()).toEqual({ kind: "listening" });
+      expect(companion.last()).toEqual({ kind: "listening" });
     }
   );
 
@@ -508,19 +686,20 @@ describe("PushToTalkController", () => {
   });
 
   // Microfone negado
-  it("shows the microphone permission error and sends nothing when macOS denies it", async () => {
-    const { deps, overlay, hold } = setup({
+  it("shows the microphone permission error in the notch and sends nothing", async () => {
+    const { deps, companion, status, hold } = setup({
       microphone: () => Promise.reject(new MicrophoneDeniedError()),
     });
     await hold(1_000);
-    expect(overlay.last()).toEqual({ kind: "error", code: "microphone_denied" });
+    expect(status.last()).toEqual({ kind: "error", code: "microphone_denied" });
+    expect(companion.visible).toBe(false);
     expect(deps.transcriber.transcribe).not.toHaveBeenCalled();
     expect(deps.delivery.send).not.toHaveBeenCalled();
   });
 
   // Permissão negada
-  it("sends without the screenshot and warns when Screen Recording is denied", async () => {
-    const { deps, overlay, hold, clock } = setup({
+  it("sends without the screenshot, warns, then waits for the reply", async () => {
+    const { deps, status, hold, clock } = setup({
       capture: async () => ({ status: "denied" }),
     });
     await hold(1_000);
@@ -530,45 +709,72 @@ describe("PushToTalkController", () => {
     expect(input.attachments).toEqual([]);
     expect(input.text).toContain("- No screenshot was included.");
     expect(input.text).toContain("- Cursor: (560, 500) pt on a 1728 × 1117 pt display");
-    expect(overlay.last()).toEqual({ kind: "error", code: "screen_denied" });
-    clock.advance(errorPillMs);
-    expect(overlay.visible).toBe(false);
+    expect(status.last()).toEqual({ kind: "error", code: "screen_denied" });
+    clock.advance(errorVisibleMs);
+    expect(status.last()).toEqual({ kind: "thinking" });
   });
 
   // Print desligado
   it("captures nothing with the screenshot off and sends the text with the app", async () => {
-    const { deps, overlay, hold } = setup({ settings: { sendScreen: false } });
+    const { deps, companion, hold } = setup({ settings: { sendScreen: false } });
     await hold(1_000);
     expect(deps.screen.capture).not.toHaveBeenCalled();
-    expect(overlay.shown[0]?.state).toEqual({ kind: "listening" });
+    expect(companion.shown[0]?.state).toEqual({ kind: "listening" });
     const [input] = deps.delivery.send.mock.calls[0] as unknown as [
       { text: string; attachments: unknown[] },
     ];
     expect(input.attachments).toEqual([]);
     expect(input.text).toContain("- Frontmost app: Safari");
     expect(input.text).not.toContain("Cursor");
-    expect(overlay.visible).toBe(false);
   });
 
   // Transcrição indisponível
-  it("reports unavailable transcription at the press without recording", async () => {
-    const { deps, overlay, hold } = setup({ ready: false });
+  it("reports unavailable transcription in the notch at the press without recording", async () => {
+    const { deps, companion, status, hold, clock } = setup({ ready: false });
     await hold(1_000);
     expect(deps.microphone.start).not.toHaveBeenCalled();
-    expect(overlay.shown.at(-1)?.state).toEqual({
+    expect(status.last()).toEqual({ kind: "error", code: "transcription_unavailable" });
+    expect(companion.shown).toEqual([]);
+    expect(deps.delivery.send).not.toHaveBeenCalled();
+    clock.advance(errorVisibleMs);
+    expect(status.last()).toBeNull();
+  });
+
+  // Notch desligado
+  it("shows the error next to the cursor companion when the notch is off", async () => {
+    const { companion, status, hold, clock } = setup({
+      ready: false,
+      notchVisible: false,
+    });
+    await hold(1_000);
+    expect(companion.shown.at(-1)?.state).toEqual({
       kind: "error",
       code: "transcription_unavailable",
     });
-    expect(deps.delivery.send).not.toHaveBeenCalled();
+    expect(status.states.filter((state) => state?.kind === "error")).toEqual([]);
+    clock.advance(errorVisibleMs);
+    expect(companion.visible).toBe(false);
+  });
+
+  it("moves a mid-turn error to the companion when the notch is off", async () => {
+    const { companion, status, hold } = setup({
+      notchVisible: false,
+      transcript: async () => ({ text: "" }),
+    });
+    await hold(1_000);
+    expect(companion.last()).toEqual({ kind: "error", code: "nothing_heard" });
+    expect(companion.visible).toBe(true);
+    expect(status.states.filter((state) => state?.kind === "error")).toEqual([]);
   });
 
   // Silêncio
   it("shows nothing_heard for an empty transcript, sends nothing and deletes the WAV", async () => {
-    const { deps, overlay, log, hold } = setup({
+    const { deps, companion, status, log, hold } = setup({
       transcript: async () => ({ text: "  " }),
     });
     await hold(1_000);
-    expect(overlay.last()).toEqual({ kind: "error", code: "nothing_heard" });
+    expect(status.last()).toEqual({ kind: "error", code: "nothing_heard" });
+    expect(companion.visible).toBe(false);
     expect(deps.delivery.send).not.toHaveBeenCalled();
     expect(log).toContain("rm /tmp/ptt-1.wav");
   });
@@ -578,55 +784,131 @@ describe("PushToTalkController", () => {
     "transcription_unavailable",
     "transcription_failed",
   ] as const)("shows %s and still deletes the WAV", async (code) => {
-    const { deps, overlay, log, hold } = setup({
+    const { deps, status, log, hold } = setup({
       transcript: () => Promise.reject(new PushToTalkTranscriptionError(code)),
     });
     await hold(1_000);
-    expect(overlay.last()).toEqual({ kind: "error", code });
+    expect(status.last()).toEqual({ kind: "error", code });
     expect(log).toContain("rm /tmp/ptt-1.wav");
     expect(deps.delivery.send).not.toHaveBeenCalled();
   });
 
   // Falha de envio
   it("shows send_failed with the transcript to copy", async () => {
-    const { overlay, hold } = setup({ send: () => Promise.reject(new Error("413")) });
+    const { status, hold } = setup({ send: () => Promise.reject(new Error("413")) });
     await hold(1_000);
-    expect(overlay.last()).toEqual({
+    expect(status.last()).toEqual({
       kind: "error",
       code: "send_failed",
       transcript: "What is this?",
     });
   });
 
-  // Leitura da resposta / Interromper a leitura
-  it("speaks the reply to the sent turn and stops it on the next press", async () => {
-    const { deps, hotkey, hold } = setup();
+  // Leitura da resposta
+  it("speaks the reply sentence by sentence, each one on the caption once", async () => {
+    const { speaker, companion, status, hold, reply, finishSentence } = setup();
     await hold(1_000);
-    expect(deps.replies.arm).toHaveBeenCalledWith(target, expect.any(Function));
-    const onReply = deps.replies.arm.mock.calls[0]![1] as (text: string) => void;
-    onReply("**Done.** See [the doc](https://x.test).");
-    expect(deps.speaker.speak).toHaveBeenCalledWith("Done. See the doc.");
-
-    deps.speaker.stop.mockClear();
-    hotkey.press();
-    await flush();
-    expect(deps.speaker.stop).toHaveBeenCalledOnce();
-    expect(deps.replies.cancel).toHaveBeenCalled();
+    await reply("**Done.** See [the doc](https://x.test). Anything else?");
+    expect(status.last()).toEqual({ kind: "speaking" });
+    expect(speaker.speaking()).toBe("Done.");
+    expect(companion.caption).toBe("Done.");
+    await finishSentence();
+    expect(speaker.speaking()).toBe("See the doc.");
+    expect(companion.caption).toBe("See the doc.");
+    await finishSentence();
+    expect(companion.caption).toBe("Anything else?");
+    await finishSentence();
+    expect(speaker.spoken).toEqual(["Done.", "See the doc.", "Anything else?"]);
+    expect(companion.captions.filter(Boolean)).toEqual([
+      "Done.",
+      "See the doc.",
+      "Anything else?",
+    ]);
   });
 
-  it("does not wait for a reply with spoken replies off", async () => {
-    const { deps, hold } = setup({ settings: { speakReplies: false } });
+  // Interromper a leitura
+  it("stops the voice, clears the caption and drops pending sentences on the next press", async () => {
+    const { deps, speaker, companion, status, hotkey, hold, reply, finishSentence } =
+      setup();
     await hold(1_000);
-    expect(deps.delivery.send).toHaveBeenCalledOnce();
-    expect(deps.replies.arm).not.toHaveBeenCalled();
+    await reply("First sentence. Second sentence.");
+    expect(speaker.speaking()).toBe("First sentence.");
+
+    hotkey.press();
+    expect(speaker.stop).toHaveBeenCalled();
+    expect(companion.caption).toBeNull();
+    await flush();
+    await finishSentence();
+    expect(speaker.spoken).toEqual(["First sentence."]);
+    expect(status.last()).toEqual({ kind: "listening" });
+    expect(companion.last()).toEqual({ kind: "listening" });
+    expect(deps.microphone.start).toHaveBeenCalledTimes(2);
+  });
+
+  // Voz desligada
+  it.each([
+    ["a short reply for 4 s", "All set now.", 4_000],
+    [
+      "30 words for 9 s",
+      Array.from({ length: 30 }, (_, index) => `w${index}`).join(" "),
+      9_000,
+    ],
+    [
+      "a long reply for 20 s",
+      Array.from({ length: 200 }, (_, index) => `w${index}`).join(" "),
+      20_000,
+    ],
+  ])(
+    "shows %s on the caption without a voice when spoken replies are off",
+    async (_name, text, ms) => {
+      const { speaker, companion, status, hold, reply, clock } = setup({
+        settings: { speakReplies: false },
+      });
+      await hold(1_000);
+      await reply(text);
+      expect(speaker.speak).not.toHaveBeenCalled();
+      expect(companion.caption).toBe(text);
+      expect(status.last()).toEqual({ kind: "speaking" });
+      clock.advance(ms - 1);
+      expect(companion.visible).toBe(true);
+      clock.advance(1);
+      expect(companion.visible).toBe(false);
+      expect(status.last()).toBeNull();
+    }
+  );
+
+  // Agente demora
+  it("hides silently when no reply comes in 180 s and ignores a later one", async () => {
+    const { speaker, companion, status, hold, reply, clock } = setup();
+    await hold(1_000);
+    expect(status.last()).toEqual({ kind: "thinking" });
+    clock.advance(replyWaitMs);
+    expect(companion.visible).toBe(false);
+    expect(status.last()).toBeNull();
+    await reply("Too late.");
+    expect(speaker.speak).not.toHaveBeenCalled();
+    expect(companion.captions).toEqual([]);
+  });
+
+  // Mensagem digitada
+  it("ignores agent replies in another conversation", async () => {
+    const { speaker, companion, hold, reply } = setup();
+    await hold(1_000);
+    await reply("Other chat.", { ...target, conversationId: "cnv_other" });
+    expect(speaker.speak).not.toHaveBeenCalled();
+    expect(companion.captions).toEqual([]);
   });
 
   // Fora de um turno
-  it("leaves nothing on screen after an error pill times out", async () => {
-    const { overlay, hold, clock } = setup({ transcript: async () => ({ text: "" }) });
+  it("leaves nothing on screen after an error times out", async () => {
+    const { companion, status, hold, clock } = setup({
+      notchVisible: false,
+      transcript: async () => ({ text: "" }),
+    });
     await hold(1_000);
-    expect(overlay.visible).toBe(true);
-    clock.advance(errorPillMs);
-    expect(overlay.visible).toBe(false);
+    expect(companion.visible).toBe(true);
+    clock.advance(errorVisibleMs);
+    expect(companion.visible).toBe(false);
+    expect(status.last()).toBeNull();
   });
 });

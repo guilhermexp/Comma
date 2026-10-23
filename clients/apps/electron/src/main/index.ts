@@ -93,9 +93,10 @@ import {
   PushToTalkOverlayWindow,
 } from "./push-to-talk/overlay-window";
 import { createNativePushToTalkHotkey } from "./push-to-talk/native-hotkey";
-import { PushToTalkScreen, strokeBox } from "./push-to-talk/screen-capture";
+import { NotchPushToTalkStatus } from "./push-to-talk/notch-status";
+import { PushToTalkScreen } from "./push-to-talk/screen-capture";
 import { SaySpeaker } from "./push-to-talk/speaker";
-import type { PushToTalkOverlay, PushToTalkTurnState } from "./push-to-talk/types";
+import type { PushToTalkTurnState } from "./push-to-talk/types";
 import { initializeElectronMainI18n } from "./main-locale";
 import { readStoredLocalePreference } from "./app-preferences";
 import { NativeEventBus, WebContentsRegistry, createSenderPolicy } from "./modules/ipc";
@@ -1504,27 +1505,23 @@ const pushToTalkOverlay = new PushToTalkOverlayWindow({
   writeClipboard: (text) => electronClipboard.writeText(text),
 });
 
-// The turn's view of the overlay, with each state change in the log. A shim
-// until the controller drives PushToTalkCompanion: it shows the pill states
-// and hands the stroke over as its box.
-const pushToTalkTurnOverlay: PushToTalkOverlay = {
-  show: (input) => {
-    log.info(`push-to-talk companion: ${describePushToTalkState(input.state)}`);
-    pushToTalkOverlay.show(input);
+// The turn's scene in the Comma Notch. Its error actions run through the
+// companion's handler, so both places open the same panes.
+const pushToTalkStatus = new NotchPushToTalkStatus({
+  notch,
+  locale: () => electronMainLocale,
+  onAction: (action, { transcript }) => {
+    log.info(`push-to-talk notch action: ${action}`);
+    pushToTalkOverlay
+      .runAction(action, transcript)
+      .catch((error: unknown) =>
+        log.warn(`push-to-talk notch action failed: ${String(error)}`)
+      );
   },
-  setState: (state) => {
-    log.info(`push-to-talk companion: ${describePushToTalkState(state)}`);
-    pushToTalkOverlay.setState(state);
-  },
-  hide: () => {
-    log.info("push-to-talk companion hidden");
-    pushToTalkOverlay.hide();
-  },
-  onRegion: (listener) =>
-    pushToTalkOverlay.onStroke((stroke) => listener(stroke && strokeBox(stroke))),
-};
+});
 
-function describePushToTalkState(state: PushToTalkTurnState) {
+function describePushToTalkState(state: PushToTalkTurnState | null) {
+  if (state === null) return "hidden";
   return state.kind === "error" ? `error ${state.code}` : state.kind;
 }
 
@@ -1534,7 +1531,15 @@ function createPushToTalkDeps() {
     hotkey: createNativePushToTalkHotkey(sideChat, {
       log: (message) => log.info(message),
     }),
-    overlay: pushToTalkTurnOverlay,
+    companion: pushToTalkOverlay,
+    status: {
+      visible: () => pushToTalkStatus.visible(),
+      set: (state: PushToTalkTurnState | null) => {
+        log.info(`push-to-talk notch: ${describePushToTalkState(state)}`);
+        pushToTalkStatus.set(state);
+      },
+      setLevel: (level: number) => pushToTalkStatus.setLevel(level),
+    },
     screen: new PushToTalkScreen({
       getCursorScreenPoint: () => screen.getCursorScreenPoint(),
       getDisplayNearestPoint: (point) => screen.getDisplayNearestPoint(point),
@@ -1542,18 +1547,10 @@ function createPushToTalkDeps() {
       mediaAccessStatus: () => systemPreferences.getMediaAccessStatus("screen"),
       createFromBitmap: (bitmap, size) => nativeImage.createFromBitmap(bitmap, size),
     }),
-    speaker: {
-      speak: (text: string) => {
-        log.info("push-to-talk speaking the reply");
-        speaker.speak(text);
-      },
-      stop: () => speaker.stop(),
-    },
+    speaker,
     powerMonitor,
-    openSideChatWithoutFocus: () => {
-      log.info("push-to-talk turn sent; opening Side Chat without focus");
-      safelyControlSideChat(() => sideChat.openWithoutFocus());
-    },
+    openSideChat: () => safelyControlSideChat(() => sideChat.open()),
+    trace: (message: string) => log.info(message),
     recordingsDir: join(app.getPath("temp"), "comma-push-to-talk"),
     localBackend,
   };

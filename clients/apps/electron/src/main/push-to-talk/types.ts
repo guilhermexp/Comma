@@ -56,31 +56,6 @@ export type PushToTalkErrorAction =
   | "open-meeting-settings"
   | "copy-transcript";
 
-/** Pill states of the current overlay (replaced by the companion in wave 2). */
-export type PushToTalkPillState =
-  | { kind: "listening" }
-  | { kind: "transcribing" }
-  | { kind: "busy" }
-  | { kind: "error"; code: PushToTalkErrorCode; transcript?: string };
-
-/**
- * Current overlay window: state pill + drag-to-mark rectangle. Wave 2 of the
- * UX revision replaces it with the cursor companion (see design D4): show /
- * setState(PushToTalkTurnState) / setLevel / setCaption / hide / onStroke /
- * onCaptionClick.
- */
-export interface PushToTalkOverlay {
-  show(input: {
-    displayId: number;
-    cursor: PushToTalkPoint;
-    state: PushToTalkPillState;
-  }): void;
-  setState(state: PushToTalkPillState): void;
-  hide(): void;
-  /** Latest marked region of the shown display; `null` clears it. */
-  onRegion(listener: (rect: PushToTalkRect | null) => void): () => void;
-}
-
 /**
  * The transparent window of the cursor's display that hosts the cursor
  * companion, its caption balloon and the freehand stroke. `show` is only
@@ -101,8 +76,12 @@ export interface PushToTalkCompanion {
   setLevel(level: number): void;
   /** Text of the caption balloon; `null` removes the balloon. */
   setCaption(text: string | null): void;
-  /** Fades the companion and the stroke out, then hides the window. */
-  hide(): void;
+  /**
+   * Fades the companion and the stroke out, then hides the window.
+   * `immediate` hides the window now, so a new press's screenshot never
+   * shows the previous turn's companion.
+   */
+  hide(options?: { immediate?: boolean }): void;
   /** Latest stroke of the shown display; `null` clears it. A new drag replaces it. */
   onStroke(listener: (stroke: PushToTalkStroke | null) => void): () => void;
   /** The user clicked the caption balloon. */
