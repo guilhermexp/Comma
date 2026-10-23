@@ -238,7 +238,7 @@ export class LocalBackendService {
         `port ${ports.redis}`,
         "protected-mode yes",
         `requirepass ${secrets.redisPassword}`,
-        `dir ${this.#paths.redisData}`,
+        `dir ${redisQuoted(this.#paths.redisData)}`,
         "appendonly yes",
         'save ""',
         "daemonize no",
@@ -715,4 +715,9 @@ export class LocalBackendService {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** A Redis config value as one double-quoted argument; data paths contain spaces. */
+function redisQuoted(value: string) {
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }

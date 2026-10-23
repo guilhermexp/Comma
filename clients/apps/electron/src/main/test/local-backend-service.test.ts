@@ -254,6 +254,24 @@ describe("local backend service", () => {
     }
   });
 
+  it("keeps a data folder with spaces as one Redis directory", async () => {
+    // The real data folder is under "Application Support"; Redis splits an
+    // unquoted value on spaces and refuses to start.
+    const root = mkdtempSync(join(tmpdir(), "comma local backend "));
+    dirs.push(root);
+    const layout = {
+      dataDir: join(root, "Application Support", "Comma \"local\""),
+      resourcesDir: join(root, "Resources", "local-backend"),
+    };
+    const { backend } = service(layout, new FakeRuntime());
+
+    await backend.prepare();
+    const conf = readFileSync(join(layout.dataDir, "redis.conf"), "utf8");
+    const dirLine = conf.split("\n").find((line) => line.startsWith("dir "));
+    const quoted = dirLine?.slice("dir ".length) ?? "";
+    expect(JSON.parse(quoted)).toBe(join(layout.dataDir, "redis"));
+  });
+
   it("reuses the installation on the next launch without initdb or a backup", async () => {
     const layout = install({ appVersion: "0.0.3" });
     const runtime = new FakeRuntime();
