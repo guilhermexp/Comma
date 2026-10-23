@@ -40,6 +40,7 @@ import type { AudioCaptureProvider } from "../modules/audio-capture/index";
 import type { MeetingPresenceProvider } from "../modules/meeting-presence/index";
 import type { CalendarProvider } from "../modules/calendar/index";
 import type { MeetingRecorderProvider } from "../modules/meeting-recorder/index";
+import type { PushToTalkOverlayProvider } from "../push-to-talk/overlay-window";
 import type { AirDropReceptionProvider } from "../modules/airdrop/reception";
 import type { DriveCatalogService } from "../modules/synchronicity/catalog";
 import type { SynchronicityProvider } from "../modules/synchronicity/index";
@@ -95,6 +96,7 @@ export type NativeCapabilityProviderMap = {
   meetingPresence: MeetingPresenceProvider;
   calendar: CalendarProvider;
   meetingRecorder: MeetingRecorderProvider;
+  pushToTalk: PushToTalkOverlayProvider;
   airDrop: AirDropReceptionProvider;
   driveCatalog: DriveCatalogService;
   synchronicity: SynchronicityProvider;
@@ -279,6 +281,10 @@ export type NativeCapabilityHandlerTypeMap = {
   "meetingRecorder.setInteractive": MeetingRecorderProvider["setInteractive"];
   "meetingRecorder.layoutWindow": MeetingRecorderProvider["layoutWindow"];
   "meetingRecorder.dragWindow": MeetingRecorderProvider["dragWindow"];
+  "pushToTalk.overlayState": PushToTalkOverlayProvider["overlayState"];
+  "pushToTalk.setRegion": PushToTalkOverlayProvider["setRegion"];
+  "pushToTalk.setInteractive": PushToTalkOverlayProvider["setInteractive"];
+  "pushToTalk.overlayAction": PushToTalkOverlayProvider["overlayAction"];
   "airDrop.state": AirDropReceptionProvider["state"];
   "airDrop.act": AirDropReceptionProvider["act"];
   "airDrop.preview": AirDropReceptionProvider["preview"];
@@ -569,6 +575,13 @@ export function registerGeneratedNativeMainBindings({
       providers.meetingRecorder.layoutWindow(input),
     "meetingRecorder.dragWindow": async (input) =>
       providers.meetingRecorder.dragWindow(input),
+    "pushToTalk.overlayState": async (input) =>
+      providers.pushToTalk.overlayState(input),
+    "pushToTalk.setRegion": async (input) => providers.pushToTalk.setRegion(input),
+    "pushToTalk.setInteractive": async (input) =>
+      providers.pushToTalk.setInteractive(input),
+    "pushToTalk.overlayAction": async (input) =>
+      providers.pushToTalk.overlayAction(input),
     "airDrop.state": async (input) => providers.airDrop.state(input),
     "airDrop.act": async (input) => providers.airDrop.act(input),
     "airDrop.preview": async (input) => providers.airDrop.preview(input),

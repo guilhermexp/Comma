@@ -7,6 +7,7 @@
 @import "./styles/icon-press-motion.css";
 @import "./components/ai-activity/ai-activity.css";
 @import "./components/meeting-recorder/meeting-recorder.css";
+@import "./components/push-to-talk/push-to-talk.css";
 @import "./components/ai-input/attachments/ai-input-attachment.css";
 @import "./components/ai-input/files/ai-input-drop-overlay.css";
 @import "./components/ai-input/menu/ai-input-menu.css";

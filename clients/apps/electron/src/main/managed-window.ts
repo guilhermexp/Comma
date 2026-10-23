@@ -2,6 +2,7 @@ type ManagedWindowId = string;
 type ManagedWindowRole =
   | "site-permission-menu"
   | "meeting-recorder-window"
+  | "push-to-talk-overlay"
   | "dev-workbench"
   | "main-window"
   | "onboarding-window"

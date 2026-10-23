@@ -361,6 +361,7 @@ export function CommaApp() {
 export { SessionHistoryBridgeProvider } from "./runtime-chat/sessionHistoryBridge";
 
 export { MeetingRecorderWindowApp } from "./components/MeetingRecorderWindowApp";
+export { PushToTalkOverlayApp } from "./components/push-to-talk/PushToTalkOverlayApp";
 
 export { SitePermissionMenuApp } from "./components/SitePermissionMenuApp";
 export { TaskPanelApp } from "./components/tasks/TaskPanelApp";

@@ -157,6 +157,28 @@ function installWorkspaceList(workspaceIds: readonly string[]) {
   );
 }
 
+const installTalkToAgentMac = (sideChatEnabled: boolean) => {
+  const preferences = appPreferencesSchema.parse({
+    launchAtLogin: false,
+    showInDock: true,
+    showInMenuBar: true,
+    sideChatEnabled,
+  });
+  installNativeBridgeMock({
+    appPreferences: {
+      state: createNativeStateBridgeMock(() => preferences),
+      update: vi.fn(async () => preferences),
+    },
+    os: "macos",
+    platform: "electron",
+    sideChat: { updateShortcut: vi.fn(async (shortcut) => shortcut) },
+  });
+};
+const openTalkToAgentSettings = async () => {
+  await userEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts" }));
+  return within(await screen.findByRole("region", { name: "Talk to agent" }));
+};
+
 describe("AppSettingsRoute", () => {
   beforeEach(() => {
     installWorkspaceList(["wsp_default"]);
@@ -1609,6 +1631,113 @@ describe("AppSettingsRoute", () => {
     expect(readStoredClientSettings().sideChatShortcut).toEqual(
       defaultCommaClientSettings.sideChatShortcut
     );
+  });
+
+  describe("Talk to agent", () => {
+    it("starts off, says where audio and screenshots go, and persists its controls", async () => {
+      installTalkToAgentMac(true);
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+
+      expect(
+        section.getByText(/Audio goes to the transcription engine chosen in Meeting/)
+      ).toBeVisible();
+      expect(
+        section.getByText(
+          /Screenshots go to the workspace agent and its model provider/
+        )
+      ).toBeVisible();
+      const enabled = section.getByRole("switch", { name: "Talk to agent" });
+      await waitFor(() => expect(enabled).toBeEnabled());
+      expect(enabled).not.toBeChecked();
+      expect(
+        section.getByRole("switch", { name: "Read replies aloud" })
+      ).toBeDisabled();
+
+      await userEvent.click(enabled);
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkEnabled).toBe(true)
+      );
+      const speak = section.getByRole("switch", { name: "Read replies aloud" });
+      const screenshot = section.getByRole("switch", { name: "Send a screenshot" });
+      expect(speak).toBeChecked();
+      expect(screenshot).toBeChecked();
+      await userEvent.click(speak);
+      await userEvent.click(screenshot);
+      await waitFor(() =>
+        expect(readStoredClientSettings()).toMatchObject({
+          pushToTalkSendScreen: false,
+          pushToTalkSpeakReplies: false,
+        })
+      );
+
+      await userEvent.click(
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt + Space" })
+      );
+      await userEvent.keyboard("{Control>}{Shift>}k{/Shift}{/Control}");
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkShortcut).toEqual({
+          key: "k",
+          modifiers: { alt: false, control: true, meta: false, shift: true },
+        })
+      );
+    });
+
+    it("is unavailable, with the reason, while Side Chat is off", async () => {
+      installTalkToAgentMac(false);
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+
+      await waitFor(() =>
+        expect(
+          section.getByText("Needs Side Chat. Turn it on in General.")
+        ).toBeVisible()
+      );
+      expect(section.getByRole("switch", { name: "Talk to agent" })).toBeDisabled();
+      expect(
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt + Space" })
+      ).toBeDisabled();
+    });
+
+    it("refuses a chord that Side Chat or Open Comma already uses and names it", async () => {
+      installTalkToAgentMac(true);
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+      const enabled = section.getByRole("switch", { name: "Talk to agent" });
+      await waitFor(() => expect(enabled).toBeEnabled());
+      await userEvent.click(enabled);
+
+      const shortcut = section.getByRole("button", {
+        name: "Hold to talk: Ctrl + Alt + Space",
+      });
+      await waitFor(() => expect(shortcut).toBeEnabled());
+      await userEvent.click(shortcut);
+      await userEvent.keyboard("{Control>}z{/Control}");
+      expect(
+        await section.findByText("Already used by Open Side Chat.")
+      ).toBeInTheDocument();
+
+      await userEvent.click(
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt + Space" })
+      );
+      await userEvent.keyboard("{Alt>}[Comma]{/Alt}");
+      expect(
+        await section.findByText("Already used by Open Comma.")
+      ).toBeInTheDocument();
+      expect(readStoredClientSettings().pushToTalkShortcut).toEqual({
+        key: "space",
+        modifiers: { alt: true, control: true, meta: false, shift: false },
+      });
+
+      // The other direction: Side Chat cannot take the Talk to agent chord.
+      await userEvent.click(
+        screen.getByRole("button", { name: "Open Side Chat: Ctrl + Z" })
+      );
+      await userEvent.keyboard("{Control>}{Alt>} {/Alt}{/Control}");
+      expect(
+        screen.getByRole("button", { name: "Open Side Chat: Ctrl + Z" })
+      ).toBeInTheDocument();
+    });
   });
 
   it("keeps unavailable settings controls disabled", async () => {

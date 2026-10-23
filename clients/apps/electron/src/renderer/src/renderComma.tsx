@@ -5,6 +5,7 @@ import {
   CommaAppearanceProvider,
   MeetingRecorderWindowApp,
   OnboardingWindowApp,
+  PushToTalkOverlayApp,
   SitePermissionMenuApp,
   BrowserInspectionComposer,
   CommaClientSettingsI18nProvider,
@@ -50,6 +51,12 @@ if (isMeetingRecorderWindow) {
   document.documentElement.dataset.commaWindowRole = "meeting-recorder";
   document.body.dataset.commaWindowRole = "meeting-recorder";
 }
+const isPushToTalkOverlay = rendererRole === "push-to-talk-overlay";
+if (isPushToTalkOverlay) {
+  // Transparent from the first paint: the overlay covers a whole display.
+  document.documentElement.dataset.commaWindowRole = "push-to-talk-overlay";
+  document.body.dataset.commaWindowRole = "push-to-talk-overlay";
+}
 const isSideChatWindow = rendererRole === "side-chat-window";
 const isSideChatTestWindow = rendererRole === "side-chat-test-window";
 if (isSideChatWindow || isSideChatTestWindow) {
@@ -84,6 +91,7 @@ const RendererApp = isBrowserInspectionComposer
 setToastsEnabled(
   !isSitePermissionMenu &&
     !isMeetingRecorderWindow &&
+    !isPushToTalkOverlay &&
     !isBrowserInspectionComposer &&
     !isSideChatWindow &&
     !isSideChatTestWindow
@@ -104,7 +112,7 @@ async function renderComma() {
     defaultCommaClientSettings;
   const locale = resolveLocalePreference(initialClientSettings.localePreference);
   initializeCommaI18n([locale]);
-  if (isMeetingRecorderWindow || isSitePermissionMenu) {
+  if (isMeetingRecorderWindow || isSitePermissionMenu || isPushToTalkOverlay) {
     createRoot(root!).render(
       <StrictMode>
         <CommaElectronClientSettingsProvider initialPreferences={initialPreferences}>
@@ -113,6 +121,10 @@ async function renderComma() {
               {isSitePermissionMenu ? (
                 <CommaAppearanceProvider syncNativeAppearance={false}>
                   <SitePermissionMenuApp />
+                </CommaAppearanceProvider>
+              ) : isPushToTalkOverlay ? (
+                <CommaAppearanceProvider syncNativeAppearance={false}>
+                  <PushToTalkOverlayApp />
                 </CommaAppearanceProvider>
               ) : (
                 <MeetingRecorderWindowApp />

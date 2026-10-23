@@ -19,6 +19,7 @@ export interface NativeCallerContext {
   role:
     | "site-permission-menu"
     | "meeting-recorder-window"
+    | "push-to-talk-overlay"
     | "main-window"
     | "dev-workbench"
     | "onboarding-window"

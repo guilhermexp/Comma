@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createMainWindowOptions,
   createOnboardingWindowOptions,
+  createPushToTalkOverlayWindowOptions,
   createRuntimeWorkbenchWindowOptions,
   createSideChatTestWindowOptions,
   createSideChatWindowOptions,
@@ -261,5 +262,58 @@ describe("createOnboardingWindowOptions", () => {
         "--window-role=onboarding-window",
       ],
     });
+  });
+});
+
+describe("createPushToTalkOverlayWindowOptions", () => {
+  it("covers one display with a transparent overlay that never takes focus", () => {
+    const options = createPushToTalkOverlayWindowOptions({
+      bounds: { height: 1080, width: 1920, x: 1728, y: -200 },
+      platform: "darwin",
+      preloadPath: "/tmp/comma-preload.js",
+    });
+
+    expect(options).toMatchObject({
+      alwaysOnTop: true,
+      backgroundColor: "#00000000",
+      enableLargerThanScreen: true,
+      focusable: false,
+      frame: false,
+      fullscreenable: false,
+      hasShadow: false,
+      height: 1080,
+      maximizable: false,
+      minimizable: false,
+      movable: false,
+      resizable: false,
+      roundedCorners: false,
+      show: false,
+      skipTaskbar: true,
+      transparent: true,
+      // A non-activating panel joins full-screen Spaces without activating Comma.
+      type: "panel",
+      width: 1920,
+      x: 1728,
+      y: -200,
+    });
+    expect(options.webPreferences).toMatchObject({
+      backgroundThrottling: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: "/tmp/comma-preload.js",
+      sandbox: true,
+      webSecurity: true,
+      additionalArguments: [
+        "--window-id=push-to-talk-overlay",
+        "--window-role=push-to-talk-overlay",
+      ],
+    });
+    expect(
+      createPushToTalkOverlayWindowOptions({
+        bounds: { height: 1, width: 1, x: 0, y: 0 },
+        platform: "linux",
+        preloadPath: "/tmp/comma-preload.js",
+      }).type
+    ).toBeUndefined();
   });
 });

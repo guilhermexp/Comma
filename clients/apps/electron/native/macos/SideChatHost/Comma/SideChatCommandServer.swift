@@ -11,6 +11,11 @@ final class SideChatCommandServer {
     private lazy var statusMenu = StatusMenuController { [weak self] id in
         self?.emit(.statusMenuSelect(requestId: UUID().uuidString, id: id))
     }
+    /// Hold-to-talk chord. It is independent of the Side Chat hotkey and of
+    /// `side-chat.enabled`: Main decides when it is registered.
+    private var pushToTalkHotKey: GlobalHotKey?
+    private var pushToTalkBinding: (keyCode: UInt32, modifiers: UInt32)?
+    private var isPushToTalkHeld = false
 
     init(controller: EdgeChatController) {
         self.controller = controller
@@ -110,6 +115,16 @@ final class SideChatCommandServer {
                 error: registered ? nil : "The global shortcut is unavailable.",
                 ok: registered
             ))
+        case let .pushToTalkShortcut(requestId, keyCode, modifiers):
+            let registered = updatePushToTalkHotKey(
+                keyCode: keyCode.map { UInt32($0) },
+                modifiers: UInt32(modifiers)
+            )
+            emit(.result(
+                requestId: requestId,
+                error: registered ? nil : "The push-to-talk shortcut is unavailable.",
+                ok: registered
+            ))
         case let .statusMenuShow(requestId, iconPath, rows, toolTip, width):
             statusMenu.show(iconPath: iconPath, toolTip: toolTip, rows: rows, width: width)
             emit(.result(requestId: requestId, error: nil, ok: true))
@@ -128,6 +143,70 @@ final class SideChatCommandServer {
             return
         }
     }
+
+    private func updatePushToTalkHotKey(keyCode: UInt32?, modifiers: UInt32) -> Bool {
+        guard let keyCode else {
+            pushToTalkHotKey = nil
+            pushToTalkBinding = nil
+            releasePushToTalkIfHeld()
+            return true
+        }
+        if let pushToTalkHotKey,
+           pushToTalkHotKey.isRegistered,
+           pushToTalkBinding?.keyCode == keyCode,
+           pushToTalkBinding?.modifiers == modifiers {
+            return true
+        }
+        // Carbon rejects a second registration of the same chord, so the old
+        // binding is dropped before the candidate registers. A held chord is
+        // released first so Main never waits on a key that no longer exists.
+        releasePushToTalkIfHeld()
+        pushToTalkHotKey = nil
+        let candidate = GlobalHotKey(
+            id: Self.pushToTalkHotKeyID,
+            keyCode: keyCode,
+            modifiers: modifiers,
+            onPressed: { [weak self] in
+                self?.pushToTalkPressed()
+            },
+            onReleased: { [weak self] in
+                self?.releasePushToTalkIfHeld()
+            }
+        )
+        guard candidate.isRegistered else {
+            pushToTalkBinding = nil
+            return false
+        }
+        pushToTalkHotKey = candidate
+        pushToTalkBinding = (keyCode, modifiers)
+        return true
+    }
+
+    private func pushToTalkPressed() {
+        // Carbon repeats the pressed event while a key auto-repeats; one hold
+        // is one turn.
+        guard !isPushToTalkHeld else { return }
+        isPushToTalkHeld = true
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        emit(.pushToTalkPressed(
+            requestId: UUID().uuidString,
+            frontmostApp: frontmost.map {
+                CommaPushToTalkPressedFrontmostApp(
+                    bundleId: $0.bundleIdentifier.flatMap { $0.isEmpty ? nil : String($0.prefix(256)) },
+                    name: String(($0.localizedName ?? "").prefix(256))
+                )
+            }
+        ))
+    }
+
+    private func releasePushToTalkIfHeld() {
+        guard isPushToTalkHeld else { return }
+        isPushToTalkHeld = false
+        emit(.pushToTalkReleased(requestId: UUID().uuidString))
+    }
+
+    /// The Side Chat hotkey uses ids from 1 upward; this one stays apart.
+    private static let pushToTalkHotKeyID = UInt32(0x5054_5400)
 
     private func emitPresentation(_ presentation: SideChatPresentation) {
         emit(.presentation(

@@ -17,6 +17,8 @@ export function useCommaAppPreferences() {
     showInMenuBar: available,
     showInNotch: available && bridge.os === "macos",
     sideChat: available,
+    // Talk to agent uses the macOS Side Chat helper's hold-to-talk hotkey.
+    pushToTalk: available && bridge.os === "macos",
   };
   const showInSystemTray = available && bridge.os !== "macos";
   const [preferences, setPreferences] = useState<AppPreferences | null>(null);

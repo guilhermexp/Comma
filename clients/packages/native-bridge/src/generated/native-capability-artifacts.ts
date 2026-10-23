@@ -182,6 +182,12 @@ import {
   productInboxStateCapability,
   productInboxStateChangedEvent,
   productInboxStateLeaf,
+  pushToTalkOverlayActionCapability,
+  pushToTalkOverlayStateCapability,
+  pushToTalkOverlayStateChangedEvent,
+  pushToTalkOverlayStateLeaf,
+  pushToTalkSetInteractiveCapability,
+  pushToTalkSetRegionCapability,
   recommendationMediaLoadCapability,
   resumeHostMaintenanceCapability,
   sessionCancelAuthAttemptCapability,
@@ -455,6 +461,10 @@ export const generatedNativeCapabilityContracts = {
   meetingRecorderSetInteractive: meetingRecorderSetInteractiveCapability.contract,
   meetingRecorderLayoutWindow: meetingRecorderLayoutWindowCapability.contract,
   meetingRecorderDragWindow: meetingRecorderDragWindowCapability.contract,
+  pushToTalkOverlayState: pushToTalkOverlayStateCapability.contract,
+  pushToTalkSetRegion: pushToTalkSetRegionCapability.contract,
+  pushToTalkSetInteractive: pushToTalkSetInteractiveCapability.contract,
+  pushToTalkOverlayAction: pushToTalkOverlayActionCapability.contract,
   airDropState: airDropStateCapability.contract,
   airDropAct: airDropActCapability.contract,
   airDropPreview: airDropPreviewCapability.contract,
@@ -675,6 +685,10 @@ export const generatedNativeWebFallbacks = {
   meetingRecorderSetInteractive: meetingRecorderSetInteractiveCapability.webFallback,
   meetingRecorderLayoutWindow: meetingRecorderLayoutWindowCapability.webFallback,
   meetingRecorderDragWindow: meetingRecorderDragWindowCapability.webFallback,
+  pushToTalkOverlayState: pushToTalkOverlayStateCapability.webFallback,
+  pushToTalkSetRegion: pushToTalkSetRegionCapability.webFallback,
+  pushToTalkSetInteractive: pushToTalkSetInteractiveCapability.webFallback,
+  pushToTalkOverlayAction: pushToTalkOverlayActionCapability.webFallback,
   airDropState: airDropStateCapability.webFallback,
   airDropAct: airDropActCapability.webFallback,
   airDropPreview: airDropPreviewCapability.webFallback,
@@ -953,6 +967,12 @@ export const generatedNativePreloadBindings = {
     layoutWindow: meetingRecorderLayoutWindowCapability.contract,
     dragWindow: meetingRecorderDragWindowCapability.contract,
   },
+  pushToTalk: {
+    overlayState: pushToTalkOverlayStateCapability.contract,
+    setRegion: pushToTalkSetRegionCapability.contract,
+    setInteractive: pushToTalkSetInteractiveCapability.contract,
+    overlayAction: pushToTalkOverlayActionCapability.contract,
+  },
   airDrop: {
     state: airDropStateCapability.contract,
     act: airDropActCapability.contract,
@@ -1060,6 +1080,9 @@ export const generatedNativePreloadEventBindings = {
   },
   meetingRecorder: {
     state: meetingRecorderStateChangedEvent,
+  },
+  pushToTalk: {
+    overlayState: pushToTalkOverlayStateChangedEvent,
   },
   airDrop: {
     state: airDropStateChangedEvent,
@@ -1188,6 +1211,12 @@ export const generatedNativeStateBindings = {
     state: {
       get: meetingRecorderStateCapability.contract,
       subscribe: meetingRecorderStateChangedEvent,
+    },
+  },
+  pushToTalk: {
+    overlayState: {
+      get: pushToTalkOverlayStateCapability.contract,
+      subscribe: pushToTalkOverlayStateChangedEvent,
     },
   },
   airDrop: {
@@ -2633,6 +2662,41 @@ export const generatedNativeMainBindingsById = {
     sessionAdmission: meetingRecorderDragWindowCapability.sessionAdmission,
     sessionAdmissionRationale:
       meetingRecorderDragWindowCapability.sessionAdmissionRationale,
+  },
+  "pushToTalk.overlayState": {
+    contract: pushToTalkOverlayStateCapability.contract,
+    id: pushToTalkOverlayStateCapability.id,
+    method: "overlayState",
+    provider: "pushToTalk",
+    sessionAdmission: pushToTalkOverlayStateCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      pushToTalkOverlayStateCapability.sessionAdmissionRationale,
+  },
+  "pushToTalk.setRegion": {
+    contract: pushToTalkSetRegionCapability.contract,
+    id: pushToTalkSetRegionCapability.id,
+    method: "setRegion",
+    provider: "pushToTalk",
+    sessionAdmission: pushToTalkSetRegionCapability.sessionAdmission,
+    sessionAdmissionRationale: pushToTalkSetRegionCapability.sessionAdmissionRationale,
+  },
+  "pushToTalk.setInteractive": {
+    contract: pushToTalkSetInteractiveCapability.contract,
+    id: pushToTalkSetInteractiveCapability.id,
+    method: "setInteractive",
+    provider: "pushToTalk",
+    sessionAdmission: pushToTalkSetInteractiveCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      pushToTalkSetInteractiveCapability.sessionAdmissionRationale,
+  },
+  "pushToTalk.overlayAction": {
+    contract: pushToTalkOverlayActionCapability.contract,
+    id: pushToTalkOverlayActionCapability.id,
+    method: "overlayAction",
+    provider: "pushToTalk",
+    sessionAdmission: pushToTalkOverlayActionCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      pushToTalkOverlayActionCapability.sessionAdmissionRationale,
   },
   "airDrop.state": {
     contract: airDropStateCapability.contract,
@@ -4647,6 +4711,49 @@ export const generatedNativeCapabilityManifest = [
     transport: meetingRecorderDragWindowCapability.transport,
   },
   {
+    bridge: pushToTalkOverlayStateCapability.bridge,
+    channel: pushToTalkOverlayStateCapability.channel,
+    id: pushToTalkOverlayStateCapability.id,
+    payloadClass: pushToTalkOverlayStateCapability.payloadClass,
+    permission: pushToTalkOverlayStateCapability.permission,
+    sessionAdmission: pushToTalkOverlayStateCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      pushToTalkOverlayStateCapability.sessionAdmissionRationale,
+    transport: pushToTalkOverlayStateCapability.transport,
+  },
+  {
+    bridge: pushToTalkSetRegionCapability.bridge,
+    channel: pushToTalkSetRegionCapability.channel,
+    id: pushToTalkSetRegionCapability.id,
+    payloadClass: pushToTalkSetRegionCapability.payloadClass,
+    permission: pushToTalkSetRegionCapability.permission,
+    sessionAdmission: pushToTalkSetRegionCapability.sessionAdmission,
+    sessionAdmissionRationale: pushToTalkSetRegionCapability.sessionAdmissionRationale,
+    transport: pushToTalkSetRegionCapability.transport,
+  },
+  {
+    bridge: pushToTalkSetInteractiveCapability.bridge,
+    channel: pushToTalkSetInteractiveCapability.channel,
+    id: pushToTalkSetInteractiveCapability.id,
+    payloadClass: pushToTalkSetInteractiveCapability.payloadClass,
+    permission: pushToTalkSetInteractiveCapability.permission,
+    sessionAdmission: pushToTalkSetInteractiveCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      pushToTalkSetInteractiveCapability.sessionAdmissionRationale,
+    transport: pushToTalkSetInteractiveCapability.transport,
+  },
+  {
+    bridge: pushToTalkOverlayActionCapability.bridge,
+    channel: pushToTalkOverlayActionCapability.channel,
+    id: pushToTalkOverlayActionCapability.id,
+    payloadClass: pushToTalkOverlayActionCapability.payloadClass,
+    permission: pushToTalkOverlayActionCapability.permission,
+    sessionAdmission: pushToTalkOverlayActionCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      pushToTalkOverlayActionCapability.sessionAdmissionRationale,
+    transport: pushToTalkOverlayActionCapability.transport,
+  },
+  {
     bridge: airDropStateCapability.bridge,
     channel: airDropStateCapability.channel,
     id: airDropStateCapability.id,
@@ -5090,6 +5197,12 @@ export const generatedNativeEventManifest = [
     target: meetingRecorderStateChangedEvent.target,
   },
   {
+    channel: pushToTalkOverlayStateChangedEvent.channel,
+    id: pushToTalkOverlayStateChangedEvent.id,
+    permission: pushToTalkOverlayStateChangedEvent.permission,
+    target: pushToTalkOverlayStateChangedEvent.target,
+  },
+  {
     channel: surfacesWindowResizeSettledEvent.channel,
     id: surfacesWindowResizeSettledEvent.id,
     permission: surfacesWindowResizeSettledEvent.permission,
@@ -5473,6 +5586,24 @@ export const generatedNativeStateManifest = [
       id: meetingRecorderStateLeaf.subscribe.id,
       permission: meetingRecorderStateLeaf.subscribe.permission,
       target: meetingRecorderStateLeaf.subscribe.target,
+    },
+  },
+  {
+    bridge: pushToTalkOverlayStateLeaf.bridge,
+    get: {
+      channel: pushToTalkOverlayStateLeaf.get.channel,
+      id: pushToTalkOverlayStateLeaf.get.id,
+      permission: pushToTalkOverlayStateLeaf.get.permission,
+      sessionAdmission: pushToTalkOverlayStateLeaf.get.sessionAdmission,
+      sessionAdmissionRationale:
+        pushToTalkOverlayStateLeaf.get.sessionAdmissionRationale,
+    },
+    id: pushToTalkOverlayStateLeaf.id,
+    subscribe: {
+      channel: pushToTalkOverlayStateLeaf.subscribe.channel,
+      id: pushToTalkOverlayStateLeaf.subscribe.id,
+      permission: pushToTalkOverlayStateLeaf.subscribe.permission,
+      target: pushToTalkOverlayStateLeaf.subscribe.target,
     },
   },
   {
@@ -9109,6 +9240,89 @@ export const generatedNativeCapabilityIndex = {
       meetingRecorderDragWindowCapability.sessionAdmissionRationale,
     transport: meetingRecorderDragWindowCapability.transport,
   },
+  "pushToTalk.overlayState": {
+    artifacts: {
+      contract: "pushToTalkOverlayStateContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["pushToTalk.overlayState"]',
+      leaf: "pushToTalkOverlayStateCapability",
+      mainBinding: 'generatedNativeMainBindingsById["pushToTalk.overlayState"]',
+      mock: "pushToTalkOverlayStateCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.pushToTalk.overlayState",
+      webFallback: "generatedNativeWebFallbacks.pushToTalkOverlayState",
+    },
+    bridge: pushToTalkOverlayStateCapability.bridge,
+    channel: pushToTalkOverlayStateCapability.channel,
+    handler: pushToTalkOverlayStateCapability.handler,
+    id: pushToTalkOverlayStateCapability.id,
+    payloadClass: pushToTalkOverlayStateCapability.payloadClass,
+    permission: pushToTalkOverlayStateCapability.permission,
+    sessionAdmission: pushToTalkOverlayStateCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      pushToTalkOverlayStateCapability.sessionAdmissionRationale,
+    transport: pushToTalkOverlayStateCapability.transport,
+  },
+  "pushToTalk.setRegion": {
+    artifacts: {
+      contract: "pushToTalkSetRegionContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["pushToTalk.setRegion"]',
+      leaf: "pushToTalkSetRegionCapability",
+      mainBinding: 'generatedNativeMainBindingsById["pushToTalk.setRegion"]',
+      mock: "pushToTalkSetRegionCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.pushToTalk.setRegion",
+      webFallback: "generatedNativeWebFallbacks.pushToTalkSetRegion",
+    },
+    bridge: pushToTalkSetRegionCapability.bridge,
+    channel: pushToTalkSetRegionCapability.channel,
+    handler: pushToTalkSetRegionCapability.handler,
+    id: pushToTalkSetRegionCapability.id,
+    payloadClass: pushToTalkSetRegionCapability.payloadClass,
+    permission: pushToTalkSetRegionCapability.permission,
+    sessionAdmission: pushToTalkSetRegionCapability.sessionAdmission,
+    sessionAdmissionRationale: pushToTalkSetRegionCapability.sessionAdmissionRationale,
+    transport: pushToTalkSetRegionCapability.transport,
+  },
+  "pushToTalk.setInteractive": {
+    artifacts: {
+      contract: "pushToTalkSetInteractiveContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["pushToTalk.setInteractive"]',
+      leaf: "pushToTalkSetInteractiveCapability",
+      mainBinding: 'generatedNativeMainBindingsById["pushToTalk.setInteractive"]',
+      mock: "pushToTalkSetInteractiveCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.pushToTalk.setInteractive",
+      webFallback: "generatedNativeWebFallbacks.pushToTalkSetInteractive",
+    },
+    bridge: pushToTalkSetInteractiveCapability.bridge,
+    channel: pushToTalkSetInteractiveCapability.channel,
+    handler: pushToTalkSetInteractiveCapability.handler,
+    id: pushToTalkSetInteractiveCapability.id,
+    payloadClass: pushToTalkSetInteractiveCapability.payloadClass,
+    permission: pushToTalkSetInteractiveCapability.permission,
+    sessionAdmission: pushToTalkSetInteractiveCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      pushToTalkSetInteractiveCapability.sessionAdmissionRationale,
+    transport: pushToTalkSetInteractiveCapability.transport,
+  },
+  "pushToTalk.overlayAction": {
+    artifacts: {
+      contract: "pushToTalkOverlayActionContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["pushToTalk.overlayAction"]',
+      leaf: "pushToTalkOverlayActionCapability",
+      mainBinding: 'generatedNativeMainBindingsById["pushToTalk.overlayAction"]',
+      mock: "pushToTalkOverlayActionCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.pushToTalk.overlayAction",
+      webFallback: "generatedNativeWebFallbacks.pushToTalkOverlayAction",
+    },
+    bridge: pushToTalkOverlayActionCapability.bridge,
+    channel: pushToTalkOverlayActionCapability.channel,
+    handler: pushToTalkOverlayActionCapability.handler,
+    id: pushToTalkOverlayActionCapability.id,
+    payloadClass: pushToTalkOverlayActionCapability.payloadClass,
+    permission: pushToTalkOverlayActionCapability.permission,
+    sessionAdmission: pushToTalkOverlayActionCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      pushToTalkOverlayActionCapability.sessionAdmissionRationale,
+    transport: pushToTalkOverlayActionCapability.transport,
+  },
   "airDrop.state": {
     artifacts: {
       contract: "airDropStateContract",
@@ -9924,6 +10138,16 @@ export const generatedNativeEventIndex = {
     permission: meetingRecorderStateChangedEvent.permission,
     target: meetingRecorderStateChangedEvent.target,
   },
+  "pushToTalk.overlayState.changed": {
+    artifacts: {
+      leaf: "pushToTalkOverlayStateChangedEvent",
+      mock: "pushToTalkOverlayStateChangedEvent.mock",
+    },
+    channel: pushToTalkOverlayStateChangedEvent.channel,
+    id: pushToTalkOverlayStateChangedEvent.id,
+    permission: pushToTalkOverlayStateChangedEvent.permission,
+    target: pushToTalkOverlayStateChangedEvent.target,
+  },
   "surfaces.windowResizeSettled": {
     artifacts: {
       leaf: "surfacesWindowResizeSettledEvent",
@@ -10469,6 +10693,31 @@ export const generatedNativeStateIndex = {
       target: meetingRecorderStateLeaf.subscribe.target,
     },
   },
+  "pushToTalk.overlayState": {
+    artifacts: {
+      get: "generatedNativeStateBindings.pushToTalk.overlayState.get",
+      leaf: "pushToTalkOverlayStateLeaf",
+      mock: "pushToTalkOverlayStateLeaf.mock",
+      subscribe: "generatedNativeStateBindings.pushToTalk.overlayState.subscribe",
+      webFallback: "pushToTalkOverlayStateLeaf.webFallback",
+    },
+    bridge: pushToTalkOverlayStateLeaf.bridge,
+    get: {
+      channel: pushToTalkOverlayStateLeaf.get.channel,
+      id: pushToTalkOverlayStateLeaf.get.id,
+      permission: pushToTalkOverlayStateLeaf.get.permission,
+      sessionAdmission: pushToTalkOverlayStateLeaf.get.sessionAdmission,
+      sessionAdmissionRationale:
+        pushToTalkOverlayStateLeaf.get.sessionAdmissionRationale,
+    },
+    id: pushToTalkOverlayStateLeaf.id,
+    subscribe: {
+      channel: pushToTalkOverlayStateLeaf.subscribe.channel,
+      id: pushToTalkOverlayStateLeaf.subscribe.id,
+      permission: pushToTalkOverlayStateLeaf.subscribe.permission,
+      target: pushToTalkOverlayStateLeaf.subscribe.target,
+    },
+  },
   "airDrop.state": {
     artifacts: {
       get: "generatedNativeStateBindings.airDrop.state.get",
@@ -10838,6 +11087,14 @@ export const meetingRecorderLayoutWindowContract =
   generatedNativeCapabilityContracts.meetingRecorderLayoutWindow;
 export const meetingRecorderDragWindowContract =
   generatedNativeCapabilityContracts.meetingRecorderDragWindow;
+export const pushToTalkOverlayStateContract =
+  generatedNativeCapabilityContracts.pushToTalkOverlayState;
+export const pushToTalkSetRegionContract =
+  generatedNativeCapabilityContracts.pushToTalkSetRegion;
+export const pushToTalkSetInteractiveContract =
+  generatedNativeCapabilityContracts.pushToTalkSetInteractive;
+export const pushToTalkOverlayActionContract =
+  generatedNativeCapabilityContracts.pushToTalkOverlayAction;
 export const airDropStateContract = generatedNativeCapabilityContracts.airDropState;
 export const airDropActContract = generatedNativeCapabilityContracts.airDropAct;
 export const airDropPreviewContract = generatedNativeCapabilityContracts.airDropPreview;
@@ -11067,6 +11324,10 @@ export type NativeCapabilityTypeMap = {
   "meetingRecorder.setInteractive": typeof meetingRecorderSetInteractiveCapability;
   "meetingRecorder.layoutWindow": typeof meetingRecorderLayoutWindowCapability;
   "meetingRecorder.dragWindow": typeof meetingRecorderDragWindowCapability;
+  "pushToTalk.overlayState": typeof pushToTalkOverlayStateCapability;
+  "pushToTalk.setRegion": typeof pushToTalkSetRegionCapability;
+  "pushToTalk.setInteractive": typeof pushToTalkSetInteractiveCapability;
+  "pushToTalk.overlayAction": typeof pushToTalkOverlayActionCapability;
   "airDrop.state": typeof airDropStateCapability;
   "airDrop.act": typeof airDropActCapability;
   "airDrop.preview": typeof airDropPreviewCapability;
@@ -11124,6 +11385,7 @@ export type NativeEventTypeMap = {
   "meetingPresence.state.changed": typeof meetingPresenceStateChangedEvent;
   "calendar.state.changed": typeof calendarStateChangedEvent;
   "meetingRecorder.state.changed": typeof meetingRecorderStateChangedEvent;
+  "pushToTalk.overlayState.changed": typeof pushToTalkOverlayStateChangedEvent;
   "surfaces.windowResizeSettled": typeof surfacesWindowResizeSettledEvent;
   "airDrop.state.changed": typeof airDropStateChangedEvent;
   "driveCatalog.state.changed": typeof driveCatalogChangedEvent;
@@ -11151,6 +11413,7 @@ export type NativeStateTypeMap = {
   "meetingPresence.state": typeof meetingPresenceStateLeaf;
   "calendar.state": typeof calendarStateLeaf;
   "meetingRecorder.state": typeof meetingRecorderStateLeaf;
+  "pushToTalk.overlayState": typeof pushToTalkOverlayStateLeaf;
   "airDrop.state": typeof airDropStateLeaf;
   "driveCatalog.state": typeof driveCatalogStateLeaf;
 };
@@ -11632,6 +11895,16 @@ export type GeneratedNativeBridge = {
       typeof meetingRecorderDragWindowCapability
     >;
     state: GeneratedNativeStateBridgeMethod<typeof meetingRecorderStateLeaf>;
+  };
+  pushToTalk: {
+    setRegion: GeneratedNativeCommandBridgeMethod<typeof pushToTalkSetRegionCapability>;
+    setInteractive: GeneratedNativeCommandBridgeMethod<
+      typeof pushToTalkSetInteractiveCapability
+    >;
+    overlayAction: GeneratedNativeCommandBridgeMethod<
+      typeof pushToTalkOverlayActionCapability
+    >;
+    overlayState: GeneratedNativeStateBridgeMethod<typeof pushToTalkOverlayStateLeaf>;
   };
   airDrop: {
     act: GeneratedNativeCommandBridgeMethod<typeof airDropActCapability>;
@@ -12335,6 +12608,21 @@ export function createGeneratedNativePreloadBridge(
         subscribe: meetingRecorderStateChangedEvent,
       }),
     },
+    pushToTalk: {
+      setRegion: (
+        input: GeneratedNativeCommandInput<typeof pushToTalkSetRegionCapability>
+      ) => helpers.invoke(pushToTalkSetRegionCapability.contract, input),
+      setInteractive: (
+        input: GeneratedNativeCommandInput<typeof pushToTalkSetInteractiveCapability>
+      ) => helpers.invoke(pushToTalkSetInteractiveCapability.contract, input),
+      overlayAction: (
+        input: GeneratedNativeCommandInput<typeof pushToTalkOverlayActionCapability>
+      ) => helpers.invoke(pushToTalkOverlayActionCapability.contract, input),
+      overlayState: helpers.state({
+        get: pushToTalkOverlayStateCapability.contract,
+        subscribe: pushToTalkOverlayStateChangedEvent,
+      }),
+    },
     airDrop: {
       act: (input: GeneratedNativeCommandInput<typeof airDropActCapability>) =>
         helpers.invoke(airDropActCapability.contract, input),
@@ -13005,6 +13293,21 @@ export function createGeneratedNativeWebBridge(): GeneratedNativeBridge {
         GeneratedNativeStateSnapshot<typeof meetingRecorderStateLeaf>,
         GeneratedNativeStateGetInput<typeof meetingRecorderStateLeaf>
       >((_input) => meetingRecorderStateLeaf.webFallback),
+    },
+    pushToTalk: {
+      setRegion: async (
+        _input: GeneratedNativeCommandInput<typeof pushToTalkSetRegionCapability>
+      ) => pushToTalkSetRegionCapability.webFallback,
+      setInteractive: async (
+        _input: GeneratedNativeCommandInput<typeof pushToTalkSetInteractiveCapability>
+      ) => pushToTalkSetInteractiveCapability.webFallback,
+      overlayAction: async (
+        _input: GeneratedNativeCommandInput<typeof pushToTalkOverlayActionCapability>
+      ) => pushToTalkOverlayActionCapability.webFallback,
+      overlayState: createGeneratedWebStateBridge<
+        GeneratedNativeStateSnapshot<typeof pushToTalkOverlayStateLeaf>,
+        GeneratedNativeStateGetInput<typeof pushToTalkOverlayStateLeaf>
+      >((_input) => pushToTalkOverlayStateLeaf.webFallback),
     },
     airDrop: {
       act: async (_input: GeneratedNativeCommandInput<typeof airDropActCapability>) =>
@@ -13915,6 +14218,27 @@ export function createGeneratedNativeBridgeMock(
           meetingRecorderStateLeaf.mock
       ),
     },
+    pushToTalk: {
+      setRegion: helpers.command(
+        async (
+          _input: GeneratedNativeCommandInput<typeof pushToTalkSetRegionCapability>
+        ) => pushToTalkSetRegionCapability.mock
+      ),
+      setInteractive: helpers.command(
+        async (
+          _input: GeneratedNativeCommandInput<typeof pushToTalkSetInteractiveCapability>
+        ) => pushToTalkSetInteractiveCapability.mock
+      ),
+      overlayAction: helpers.command(
+        async (
+          _input: GeneratedNativeCommandInput<typeof pushToTalkOverlayActionCapability>
+        ) => pushToTalkOverlayActionCapability.mock
+      ),
+      overlayState: helpers.state(
+        (_input: GeneratedNativeStateGetInput<typeof pushToTalkOverlayStateLeaf>) =>
+          pushToTalkOverlayStateLeaf.mock
+      ),
+    },
     airDrop: {
       act: helpers.command(
         async (_input: GeneratedNativeCommandInput<typeof airDropActCapability>) =>
@@ -14194,6 +14518,10 @@ export function mergeGeneratedNativeBridgeOverrides(
     meetingRecorder: {
       ...bridge.meetingRecorder,
       ...overrides.meetingRecorder,
+    },
+    pushToTalk: {
+      ...bridge.pushToTalk,
+      ...overrides.pushToTalk,
     },
     airDrop: {
       ...bridge.airDrop,
