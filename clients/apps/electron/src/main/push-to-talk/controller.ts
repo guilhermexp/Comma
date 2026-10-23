@@ -25,6 +25,7 @@ import type {
   PushToTalkErrorCode,
   PushToTalkFrontmostApp,
   PushToTalkHotkey,
+  PushToTalkScreenRecording,
   PushToTalkSettings,
   PushToTalkStatus,
   PushToTalkStroke,
@@ -85,6 +86,7 @@ export type PushToTalkControllerDeps = {
   status: PushToTalkStatus;
   microphone: PushToTalkMicrophone;
   screen: PushToTalkScreenSource;
+  screenRecording: PushToTalkScreenRecording;
   transcriber: PushToTalkTranscriber;
   delivery: PushToTalkDelivery;
   /** The system voice: the fallback of `voice`, or the only voice without it. */
@@ -149,6 +151,8 @@ export class PushToTalkController {
   #companionShown = false;
   #statusShown = false;
   #stopErrorTimer: (() => void) | undefined;
+  /** Screen Recording is asked for at most once per run by the first press. */
+  #screenRecordingRequested = false;
   #unsubscribe: (() => void)[] = [];
 
   constructor(deps: PushToTalkControllerDeps) {
@@ -188,6 +192,8 @@ export class PushToTalkController {
     this.#settings = settings;
     // A voice refused as disabled or without an account is tried again.
     this.#deps.voice?.reset();
+    if (settings.enabled && settings.sendScreen && !previous.sendScreen)
+      this.#requestScreenRecording();
     if (!settings.enabled) {
       this.#cancelRecording("Talk to agent was turned off");
       if (this.#reply) {
@@ -215,6 +221,22 @@ export class PushToTalkController {
       .register(enabled ? shortcut : null)
       .catch((error: unknown) =>
         this.#log(`Push-to-talk shortcut registration failed: ${message(error)}`)
+      );
+  }
+
+  /**
+   * Asks macOS so Comma joins the Screen Recording list (D11); the turn does
+   * not wait for the answer. Granted needs no request.
+   */
+  #requestScreenRecording() {
+    const { screenRecording } = this.#deps;
+    if (screenRecording.status() === "granted") return;
+    this.#screenRecordingRequested = true;
+    this.#trace("push-to-talk requesting Screen Recording");
+    screenRecording
+      .request()
+      .catch((error: unknown) =>
+        this.#log(`Push-to-talk Screen Recording request failed: ${message(error)}`)
       );
   }
 
@@ -252,6 +274,8 @@ export class PushToTalkController {
       maxRecordingMs
     );
 
+    if (this.#settings.sendScreen && !this.#screenRecordingRequested)
+      this.#requestScreenRecording();
     const capture: Promise<PushToTalkScreenCaptureResult | undefined> = this.#settings
       .sendScreen
       ? screen.capture(location).catch((error: unknown) => {

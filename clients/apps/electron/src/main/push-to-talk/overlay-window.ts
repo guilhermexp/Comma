@@ -58,6 +58,8 @@ interface PushToTalkOverlayOptions {
   /** Comma Settings → Meeting, where transcription is chosen. */
   openMeetingSettings(): Promise<void> | void;
   publish(state: PushToTalkOverlayState): void;
+  /** Asks macOS for Screen Recording on Comma's behalf, so the pane lists Comma. */
+  requestScreenRecording(): Promise<void>;
   writeClipboard(text: string): void;
 }
 
@@ -199,6 +201,13 @@ export class PushToTalkOverlayWindow
     if (action === "open-meeting-settings") {
       await this.#options.openMeetingSettings();
       return;
+    }
+    if (action === "open-screen-recording-settings") {
+      await this.#options.requestScreenRecording().catch((error: unknown) => {
+        this.#options.logger.warn(
+          `Screen Recording request failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      });
     }
     await this.#options.openExternal(systemSettingsPane[action]);
   }

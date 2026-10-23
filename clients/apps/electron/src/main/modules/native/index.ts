@@ -144,6 +144,7 @@ export interface AppPreferencesProvider {
   openLoginItemsSettings(input: void): Promise<{ opened: boolean }>;
   /** macOS: asks for Input Monitoring and opens its Privacy pane. */
   openInputMonitoringSettings(input: void): Promise<{ opened: boolean }>;
+  openScreenRecordingSettings(input: void): Promise<{ opened: boolean }>;
   /**
    * Asks the OS to let Comma notify (macOS prompts while it has not asked the
    * user yet) and resolves with the status the answer leaves behind.

@@ -37,6 +37,22 @@ describe("push-to-talk side chat frames", () => {
     ).toBe(true);
   });
 
+  it("lets Main ask the helper for Screen Recording on Comma's behalf", () => {
+    expect(
+      sideChatHostFrameSchema.parse({
+        ...envelope,
+        kind: "push-to-talk.request-screen-recording",
+      })
+    ).toMatchObject({ kind: "push-to-talk.request-screen-recording" });
+    // Main-to-helper only: the helper answers with command.result.
+    expect(
+      sideChatClientFrameSchema.safeParse({
+        ...envelope,
+        kind: "push-to-talk.request-screen-recording",
+      }).success
+    ).toBe(false);
+  });
+
   it("reports press with the frontmost app and release from the helper", () => {
     expect(
       sideChatClientFrameSchema.parse({

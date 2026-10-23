@@ -2126,6 +2126,24 @@
         },
         {
           "properties": {
+            "kind": {
+              "const": "push-to-talk.request-screen-recording",
+              "type": "string"
+            },
+            "protocolVersion": {
+              "const": 3,
+              "type": "number"
+            },
+            "requestId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": ["kind", "protocolVersion", "requestId"],
+          "type": "object"
+        },
+        {
+          "properties": {
             "enabled": {
               "type": "boolean"
             },
@@ -2613,6 +2631,24 @@
           "properties": {
             "kind": {
               "const": "push-to-talk.request-input-monitoring",
+              "type": "string"
+            },
+            "protocolVersion": {
+              "const": 3,
+              "type": "number"
+            },
+            "requestId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": ["kind", "protocolVersion", "requestId"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "push-to-talk.request-screen-recording",
               "type": "string"
             },
             "protocolVersion": {

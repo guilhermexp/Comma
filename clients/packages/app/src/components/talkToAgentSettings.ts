@@ -11,16 +11,19 @@ import type { SettingsPanelItem, SettingsPanelSection } from "@comma/ui";
  * Settings → Keyboard shortcuts → Talk to agent. It rides on the Side Chat
  * helper, so it is unavailable, with the reason, while Side Chat is off; its
  * options wait until it is on. A modifier-only chord adds the Input Monitoring
- * row it depends on. The last row says where audio and screenshots go.
+ * row it depends on, and the screenshot adds the Screen Recording row. The
+ * last row says where audio and screenshots go.
  */
 export function talkToAgentSettingsSection({
   inputMonitoring,
   m,
   onOpenInputMonitoringSettings,
+  onOpenScreenRecordingSettings,
   onShortcutChange,
   onUpdate,
   pending,
   preferencesLoaded,
+  screenRecording,
   settings,
   shortcutError,
   sideChatOff,
@@ -29,10 +32,13 @@ export function talkToAgentSettingsSection({
   inputMonitoring?: AppPreferences["pushToTalkInputMonitoringStatus"];
   m: typeof messages;
   onOpenInputMonitoringSettings: () => void;
+  onOpenScreenRecordingSettings: () => void;
   onShortcutChange: (shortcut: PushToTalkShortcut | null) => void;
   onUpdate: (patch: CommaClientSettingsPatch) => void;
   pending: boolean;
   preferencesLoaded: boolean;
+  /** Main's macOS readback; undefined on other platforms. */
+  screenRecording?: AppPreferences["pushToTalkScreenRecordingStatus"];
   settings: CommaClientSettings;
   shortcutError?: string;
   sideChatOff: boolean;
@@ -98,6 +104,9 @@ export function talkToAgentSettingsSection({
         onChange: (event) => onUpdate({ pushToTalkSendScreen: event.target.checked }),
       },
     },
+    ...(on && settings.pushToTalkSendScreen && screenRecording
+      ? [screenRecordingItem({ m, onOpenScreenRecordingSettings, screenRecording })]
+      : []),
     {
       id: "keyboard.talk-to-agent.privacy",
       title: m.settings_talk_to_agent_privacy(),
@@ -142,6 +151,44 @@ function inputMonitoringItem({
           type: "button",
           label: m.settings_system_notifications_open_system_settings(),
           onPress: onOpenInputMonitoringSettings,
+        },
+      };
+}
+
+function screenRecordingItem({
+  m,
+  onOpenScreenRecordingSettings,
+  screenRecording,
+}: {
+  m: typeof messages;
+  onOpenScreenRecordingSettings: () => void;
+  screenRecording: "denied" | "granted";
+}): SettingsPanelItem {
+  const item = {
+    id: "keyboard.talk-to-agent.screen-recording",
+    title: m.settings_talk_to_agent_screen_recording(),
+    keywords: ["permission", "permissão", "权限", "privacy", "screen recording"],
+  };
+  return screenRecording === "granted"
+    ? {
+        ...item,
+        description: m.settings_talk_to_agent_screen_recording_granted_description(),
+        status: {
+          label: m.settings_talk_to_agent_input_monitoring_allowed(),
+          color: "success",
+        },
+      }
+    : {
+        ...item,
+        description: m.settings_talk_to_agent_screen_recording_denied_description(),
+        status: {
+          label: m.settings_talk_to_agent_screen_recording_off(),
+          color: "warning",
+        },
+        control: {
+          type: "button",
+          label: m.settings_system_notifications_open_system_settings(),
+          onPress: onOpenScreenRecordingSettings,
         },
       };
 }

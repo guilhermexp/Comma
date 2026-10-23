@@ -120,6 +120,13 @@ export function useCommaAppPreferences() {
     return bridge.appPreferences.openInputMonitoringSettings();
   }, [available, bridge]);
 
+  // macOS: asks for Screen Recording through the helper, so the pane lists
+  // Comma, and opens it. Main reads the status back on the next state read.
+  const openScreenRecordingSettings = useCallback(async () => {
+    if (!available) return { opened: false as const };
+    return bridge.appPreferences.openScreenRecordingSettings();
+  }, [available, bridge]);
+
   // macOS prompts while it has not asked about Comma yet. Main publishes the
   // answer through the state event the preferences follow, and resolves with it.
   const requestNotificationAuthorization = useCallback(
@@ -132,6 +139,7 @@ export function useCommaAppPreferences() {
     openInputMonitoringSettings,
     openLoginItemsSettings,
     openNotificationSettings,
+    openScreenRecordingSettings,
     pending,
     preferences,
     requestNotificationAuthorization,

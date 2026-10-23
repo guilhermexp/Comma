@@ -309,6 +309,8 @@ function setup(
     ready?: boolean;
     send?: () => Promise<typeof target>;
     liveVoice?: boolean;
+    /** `getMediaAccessStatus("screen")`; macOS 15+ says `denied` before any request. */
+    screenAccess?: string;
   } = {}
 ) {
   const log: string[] = [];
@@ -349,6 +351,10 @@ function setup(
         onLevel = input.onLevel;
         return startMicrophone();
       }),
+    },
+    screenRecording: {
+      status: vi.fn(() => options.screenAccess ?? "granted"),
+      request: vi.fn(async () => void log.push("screenRecording.request")),
     },
     screen: {
       locate: vi.fn(() => location),
@@ -754,6 +760,54 @@ describe("PushToTalkController", () => {
     expect(status.last()).toEqual({ kind: "error", code: "screen_denied" });
     clock.advance(errorVisibleMs);
     expect(status.last()).toEqual({ kind: "thinking" });
+  });
+
+  // Primeira vez: macOS 15+ answers `denied` before Comma ever asked, so the
+  // capture alone would never put Comma in the Screen Recording list.
+  it("asks macOS for Screen Recording at the first press of the run, before the capture, once", async () => {
+    const { deps, hold, log } = setup({
+      capture: async () => ({ status: "denied" }),
+      screenAccess: "denied",
+    });
+    await hold(1_000);
+    expect(log.indexOf("screenRecording.request")).toBeLessThan(
+      log.indexOf("screen.capture")
+    );
+    await hold(1_000);
+    expect(deps.screenRecording.request).toHaveBeenCalledOnce();
+  });
+
+  it("does not ask for Screen Recording when it is granted or the screenshot is off", async () => {
+    const granted = setup({ screenAccess: "granted" });
+    await granted.hold(1_000);
+    expect(granted.deps.screenRecording.request).not.toHaveBeenCalled();
+
+    const off = setup({ screenAccess: "denied", settings: { sendScreen: false } });
+    await off.hold(1_000);
+    expect(off.deps.screenRecording.request).not.toHaveBeenCalled();
+  });
+
+  it("asks for Screen Recording when the screenshot is turned on in Settings", async () => {
+    const { controller, deps, hold } = setup({
+      screenAccess: "not-determined",
+      settings: { sendScreen: false },
+    });
+    controller.update({ ...settings, speakReplies: false, sendScreen: false });
+    expect(deps.screenRecording.request).not.toHaveBeenCalled();
+    controller.update({ ...settings, sendScreen: true });
+    expect(deps.screenRecording.request).toHaveBeenCalledOnce();
+    // Already asked in this run: the first press does not ask again.
+    await hold(1_000);
+    expect(deps.screenRecording.request).toHaveBeenCalledOnce();
+  });
+
+  it("does not ask for Screen Recording when the screenshot is turned on with the feature off", async () => {
+    const { controller, deps } = setup({
+      screenAccess: "denied",
+      settings: { enabled: false, sendScreen: false },
+    });
+    controller.update({ ...settings, enabled: false, sendScreen: true });
+    expect(deps.screenRecording.request).not.toHaveBeenCalled();
   });
 
   // Print desligado

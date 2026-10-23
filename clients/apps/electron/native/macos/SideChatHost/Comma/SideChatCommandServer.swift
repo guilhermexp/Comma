@@ -137,6 +137,12 @@ final class SideChatCommandServer {
                 emitPushToTalkPermission(granted: CGRequestListenEventAccess())
             }
             emit(.result(requestId: requestId, error: nil, ok: true))
+        case let .pushToTalkRequestScreenRecording(requestId):
+            // TCC attributes the request to Comma, the responsible process:
+            // the first one prompts and adds Comma to the Screen Recording
+            // list. Main reads the status itself.
+            _ = CGRequestScreenCaptureAccess()
+            emit(.result(requestId: requestId, error: nil, ok: true))
         case let .statusMenuShow(requestId, iconPath, rows, toolTip, width):
             statusMenu.show(iconPath: iconPath, toolTip: toolTip, rows: rows, width: width)
             emit(.result(requestId: requestId, error: nil, ok: true))

@@ -2342,6 +2342,9 @@ public enum CommaSideChatSurfaceControl: Codable, Equatable, Sendable {
     case pushToTalkRequestInputMonitoring(
         requestId: String
     )
+    case pushToTalkRequestScreenRecording(
+        requestId: String
+    )
     case enabled(
         requestId: String,
         enabled: Bool
@@ -2482,6 +2485,17 @@ public enum CommaSideChatSurfaceControl: Codable, Equatable, Sendable {
             self = .pushToTalkRequestInputMonitoring(
                 requestId: try CommaNativeContractValidation.decodeString(String.self, from: container, forKey: .requestId, minimumLength: 1, maximumLength: nil)
             )
+        case "push-to-talk.request-screen-recording":
+            guard protocolVersion == .v3 else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .protocolVersion,
+                    in: container,
+                    debugDescription: "Unexpected protocolVersion \(protocolVersion.rawValue) for push-to-talk.request-screen-recording; expected 3."
+                )
+            }
+            self = .pushToTalkRequestScreenRecording(
+                requestId: try CommaNativeContractValidation.decodeString(String.self, from: container, forKey: .requestId, minimumLength: 1, maximumLength: nil)
+            )
         case "side-chat.enabled":
             guard protocolVersion == .v3 else {
                 throw DecodingError.dataCorruptedError(
@@ -2605,6 +2619,13 @@ public enum CommaSideChatSurfaceControl: Codable, Equatable, Sendable {
         ):
             try container.encode(CommaChatProtocolVersion.v3, forKey: .protocolVersion)
             try container.encode("push-to-talk.request-input-monitoring", forKey: .kind)
+            try CommaNativeContractValidation.validateStringForEncoding(requestId, minimumLength: 1, maximumLength: nil, codingPath: container.codingPath + [CodingKeys.requestId])
+            try container.encode(requestId, forKey: .requestId)
+        case let .pushToTalkRequestScreenRecording(
+            requestId
+        ):
+            try container.encode(CommaChatProtocolVersion.v3, forKey: .protocolVersion)
+            try container.encode("push-to-talk.request-screen-recording", forKey: .kind)
             try CommaNativeContractValidation.validateStringForEncoding(requestId, minimumLength: 1, maximumLength: nil, codingPath: container.codingPath + [CodingKeys.requestId])
             try container.encode(requestId, forKey: .requestId)
         case let .enabled(
@@ -2830,6 +2851,9 @@ public enum CommaSideChatHostFrame: Codable, Equatable, Sendable {
     case pushToTalkRequestInputMonitoring(
         requestId: String
     )
+    case pushToTalkRequestScreenRecording(
+        requestId: String
+    )
     case enabled(
         requestId: String,
         enabled: Bool
@@ -2994,6 +3018,17 @@ public enum CommaSideChatHostFrame: Codable, Equatable, Sendable {
                 )
             }
             self = .pushToTalkRequestInputMonitoring(
+                requestId: try CommaNativeContractValidation.decodeString(String.self, from: container, forKey: .requestId, minimumLength: 1, maximumLength: nil)
+            )
+        case "push-to-talk.request-screen-recording":
+            guard protocolVersion == .v3 else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .protocolVersion,
+                    in: container,
+                    debugDescription: "Unexpected protocolVersion \(protocolVersion.rawValue) for push-to-talk.request-screen-recording; expected 3."
+                )
+            }
+            self = .pushToTalkRequestScreenRecording(
                 requestId: try CommaNativeContractValidation.decodeString(String.self, from: container, forKey: .requestId, minimumLength: 1, maximumLength: nil)
             )
         case "side-chat.enabled":
@@ -3164,6 +3199,13 @@ public enum CommaSideChatHostFrame: Codable, Equatable, Sendable {
         ):
             try container.encode(CommaChatProtocolVersion.v3, forKey: .protocolVersion)
             try container.encode("push-to-talk.request-input-monitoring", forKey: .kind)
+            try CommaNativeContractValidation.validateStringForEncoding(requestId, minimumLength: 1, maximumLength: nil, codingPath: container.codingPath + [CodingKeys.requestId])
+            try container.encode(requestId, forKey: .requestId)
+        case let .pushToTalkRequestScreenRecording(
+            requestId
+        ):
+            try container.encode(CommaChatProtocolVersion.v3, forKey: .protocolVersion)
+            try container.encode("push-to-talk.request-screen-recording", forKey: .kind)
             try CommaNativeContractValidation.validateStringForEncoding(requestId, minimumLength: 1, maximumLength: nil, codingPath: container.codingPath + [CodingKeys.requestId])
             try container.encode(requestId, forKey: .requestId)
         case let .enabled(

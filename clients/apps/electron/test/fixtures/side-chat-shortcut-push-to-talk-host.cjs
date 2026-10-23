@@ -11,6 +11,7 @@
 // - "chord": a modifier-only binding reports Input Monitoring denied until
 //   push-to-talk.request-input-monitoring grants it; the grant is followed by
 //   a press and release, then a press cancelled by another key.
+// In every mode push-to-talk.request-screen-recording is logged and acknowledged.
 
 const { appendFileSync, existsSync, writeFileSync } = require("node:fs");
 const readline = require("node:readline");
@@ -68,6 +69,12 @@ input.on("line", (line) => {
     ]) {
       emit({ ...extra, kind, protocolVersion, requestId: `fixture-${kind}` });
     }
+    return;
+  }
+
+  if (frame.kind === "push-to-talk.request-screen-recording") {
+    appendFileSync(logPath, `${JSON.stringify({ request: "screen-recording" })}\n`);
+    emitResult(requestId, true);
     return;
   }
 
