@@ -166,6 +166,18 @@ type PendingSideChatShortcutRegistration = PendingSideChatShortcutRegistrationBa
       }
   );
 
+interface PendingPushToTalkRegistration {
+  readonly helperGeneration: number;
+  readonly reject: (error: Error) => void;
+  readonly resolve: () => void;
+  readonly shortcut: SideChatShortcutBinding;
+  readonly timeout: ReturnType<typeof setTimeout>;
+}
+
+export type PushToTalkPressedEvent = {
+  frontmostApp: { bundleId?: string | undefined; name: string } | undefined;
+};
+
 interface QueuedSideChatShortcutUpdate {
   readonly reject: (error: Error) => void;
   readonly resolve: (shortcut: SideChatShortcutBinding) => void;
@@ -277,6 +289,15 @@ export class NativeSideChatService {
   #confirmedShortcutGeneration: number | undefined;
   #queuedShortcutUpdate: QueuedSideChatShortcutUpdate | undefined;
   #restartTimer: ReturnType<typeof setTimeout> | undefined;
+  // Hold-to-talk chord: off (null) until Main registers it; the last
+  // confirmed binding is replayed to every restarted helper.
+  #pushToTalkShortcut: SideChatShortcutBinding = null;
+  readonly #pushToTalkRegistrations = new Map<string, PendingPushToTalkRegistration>();
+  readonly #pushToTalkPressedListeners = new Set<
+    (event: PushToTalkPressedEvent) => void
+  >();
+  readonly #pushToTalkReleasedListeners = new Set<() => void>();
+  readonly #pushToTalkHelperRestartedListeners = new Set<() => void>();
   #shortcut: SideChatShortcutBinding = structuredClone(defaultSideChatShortcut);
   #started = false;
   #statusMenu:
@@ -435,6 +456,40 @@ export class NativeSideChatService {
       }
       this.#startShortcutUpdate(host, update);
     });
+  }
+
+  /**
+   * Registers (or with `null` clears) the hold-to-talk chord in the helper.
+   * Resolves once the helper confirmed it; the confirmed binding is replayed
+   * after a helper restart.
+   */
+  updatePushToTalkShortcut(input: SideChatShortcutBinding): Promise<void> {
+    const shortcut = sideChatShortcutBindingSchema.parse(input);
+    let host: ChildProcessWithoutNullStreams;
+    try {
+      host = this.#host && !this.#host.killed ? this.#host : this.#ensureHost();
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    return new Promise((resolve, reject) => {
+      this.#sendPushToTalkShortcut(host, shortcut, { reject, resolve });
+    });
+  }
+
+  onPushToTalkPressed(listener: (event: PushToTalkPressedEvent) => void) {
+    this.#pushToTalkPressedListeners.add(listener);
+    return () => void this.#pushToTalkPressedListeners.delete(listener);
+  }
+
+  onPushToTalkReleased(listener: () => void) {
+    this.#pushToTalkReleasedListeners.add(listener);
+    return () => void this.#pushToTalkReleasedListeners.delete(listener);
+  }
+
+  /** The helper that delivered a press was lost; its release will not come. */
+  onPushToTalkHelperRestarted(listener: () => void) {
+    this.#pushToTalkHelperRestartedListeners.add(listener);
+    return () => void this.#pushToTalkHelperRestartedListeners.delete(listener);
   }
 
   resetDebugSettings(_input?: void) {
@@ -631,6 +686,9 @@ export class NativeSideChatService {
       new Error("The Side Chat service was disposed.")
     );
     this.#rejectQueuedShortcutUpdate(new Error("The Side Chat service was disposed."));
+    this.#rejectPushToTalkRegistrations(
+      new Error("The Side Chat service was disposed.")
+    );
     this.#confirmedShortcutGeneration = undefined;
     this.#stopHost();
     this.#stopBackdropHealthMonitor();
@@ -685,6 +743,7 @@ export class NativeSideChatService {
       );
       this.#clearActiveShortcutRegistration(registrationError, lostGeneration);
       this.#rejectQueuedShortcutUpdate(registrationError);
+      this.#losePushToTalk(lostGeneration);
       this.#releaseFailCloseBarrierAfterHostLoss(lostGeneration);
       this.#loseStatusMenu();
     }
@@ -730,6 +789,7 @@ export class NativeSideChatService {
       );
       this.#clearActiveShortcutRegistration(registrationError, generation);
       this.#rejectQueuedShortcutUpdate(registrationError);
+      this.#losePushToTalk(generation);
       if (code) log.warn(`CommaSideChatHost exited with code ${code}.`);
       this.#releaseFailCloseBarrierAfterHostLoss(generation);
       this.#loseStatusMenu();
@@ -746,6 +806,13 @@ export class NativeSideChatService {
     // registers the chord.
     if (!this.#enabled) this.#writeHostFrame(host, enabledFrame(false));
     this.#replayShortcut(host);
+    if (this.#pushToTalkShortcut) {
+      this.#sendPushToTalkShortcut(host, this.#pushToTalkShortcut, {
+        reject: (error) =>
+          log.warn(`push-to-talk shortcut replay failed: ${errorMessage(error)}`),
+        resolve: () => undefined,
+      });
+    }
     if (this.#statusMenu) {
       this.#writeHostFrame(host, statusMenuShowFrame(this.#statusMenu.menu));
     }
@@ -955,7 +1022,35 @@ export class NativeSideChatService {
       return;
     }
 
+    if (frame.kind === "push-to-talk.pressed") {
+      const event: PushToTalkPressedEvent = { frontmostApp: frame.frontmostApp };
+      for (const listener of this.#pushToTalkPressedListeners) listener(event);
+      return;
+    }
+
+    if (frame.kind === "push-to-talk.released") {
+      for (const listener of this.#pushToTalkReleasedListeners) listener();
+      return;
+    }
+
     if (frame.kind === "command.result") {
+      const pushToTalk = this.#pushToTalkRegistrations.get(frame.requestId);
+      if (pushToTalk?.helperGeneration === helperGeneration) {
+        this.#pushToTalkRegistrations.delete(frame.requestId);
+        clearTimeout(pushToTalk.timeout);
+        if (frame.ok) {
+          this.#pushToTalkShortcut = pushToTalk.shortcut;
+          pushToTalk.resolve();
+        } else {
+          pushToTalk.reject(
+            new Error(
+              `CommaSideChatHost rejected the push-to-talk shortcut: ${frame.error ?? "unknown"}`
+            )
+          );
+        }
+        return;
+      }
+
       const pendingShortcut = this.#activeShortcutRegistration;
       if (
         pendingShortcut?.requestId === frame.requestId &&
@@ -1333,6 +1428,7 @@ export class NativeSideChatService {
     );
     this.#clearActiveShortcutRegistration(registrationError, helperGeneration);
     this.#rejectQueuedShortcutUpdate(registrationError);
+    this.#losePushToTalk(helperGeneration);
     log.warn(`CommaSideChatHost stream failed: ${errorMessage(error)}`);
     this.#releaseFailCloseBarrierAfterHostLoss(helperGeneration);
     this.#loseStatusMenu();
@@ -1378,6 +1474,59 @@ export class NativeSideChatService {
 
   #isCurrentHost(host: ChildProcessWithoutNullStreams, generation: number) {
     return this.#host === host && this.#hostGeneration === generation;
+  }
+
+  #sendPushToTalkShortcut(
+    host: ChildProcessWithoutNullStreams,
+    shortcut: SideChatShortcutBinding,
+    settlement: { reject: (error: Error) => void; resolve: () => void }
+  ) {
+    const requestId = randomUUID();
+    const timeout = setTimeout(() => {
+      if (!this.#pushToTalkRegistrations.delete(requestId)) return;
+      settlement.reject(
+        new Error("Timed out while registering the push-to-talk shortcut.")
+      );
+    }, SHORTCUT_REGISTRATION_TIMEOUT_MS);
+    timeout.unref?.();
+    this.#pushToTalkRegistrations.set(requestId, {
+      helperGeneration: this.#hostGeneration,
+      shortcut,
+      timeout,
+      ...settlement,
+    });
+    this.#writeHostFrame(host, {
+      ...shortcutRegistration(shortcut),
+      kind: "push-to-talk.shortcut",
+      protocolVersion: chatProtocolVersion,
+      requestId,
+    });
+  }
+
+  /** A lost helper settles its pending registrations and any held chord. */
+  #losePushToTalk(helperGeneration: number) {
+    this.#rejectPushToTalkRegistrations(
+      new Error(
+        "The Side Chat helper was lost before registering the push-to-talk shortcut."
+      ),
+      helperGeneration
+    );
+    if (this.#disposed) return;
+    for (const listener of this.#pushToTalkHelperRestartedListeners) listener();
+  }
+
+  #rejectPushToTalkRegistrations(error: Error, helperGeneration?: number) {
+    for (const [requestId, pending] of this.#pushToTalkRegistrations) {
+      if (
+        helperGeneration !== undefined &&
+        pending.helperGeneration !== helperGeneration
+      ) {
+        continue;
+      }
+      this.#pushToTalkRegistrations.delete(requestId);
+      clearTimeout(pending.timeout);
+      pending.reject(error);
+    }
   }
 
   #clearActiveShortcutRegistration(error: Error, helperGeneration?: number) {

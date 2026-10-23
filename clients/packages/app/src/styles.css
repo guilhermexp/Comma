@@ -6864,6 +6864,15 @@ body[data-comma-window-role="site-permission-menu"] #root {
   height: 100%;
 }
 
+html[data-comma-window-role="push-to-talk-overlay"],
+body[data-comma-window-role="push-to-talk-overlay"],
+body[data-comma-window-role="push-to-talk-overlay"] #root {
+  background: transparent !important;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
 /* Match Home's rail fold: the layout closes while its fixed-width content
    fades, slides left and scales gently, without squeezing folder labels. */
 .comma-drive-space-rail-slot {

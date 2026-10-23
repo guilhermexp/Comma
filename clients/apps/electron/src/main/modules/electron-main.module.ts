@@ -22,6 +22,7 @@ import {
   type AirDropPresentationPlatform,
 } from "./airdrop/reception";
 import { MeetingTaskService } from "./meeting-recorder/tasks";
+import type { PushToTalkOverlayProvider } from "../push-to-talk/overlay-window";
 import { defaultLocalRoots } from "./synchronicity/default-root";
 import {
   createCallerBoundSessionHistoryProvider,
@@ -59,6 +60,7 @@ import {
   meetingPresenceStateChangedEvent,
   calendarStateChangedEvent,
   meetingRecorderStateChangedEvent,
+  hiddenPushToTalkOverlayState,
   audioCaptureStartCapability,
   audioCaptureStopCapability,
   audioCaptureSelectMicrophoneCapability,
@@ -347,6 +349,8 @@ export interface ElectronMainRuntimeDeps {
     | undefined;
   /** The full-screen onboarding window; without it nothing is presented. */
   onboardingWindow?: OnboardingWindowProvider | undefined;
+  /** macOS Talk to agent overlay; without it the overlay role reads it hidden. */
+  pushToTalkOverlay?: PushToTalkOverlayProvider | undefined;
   secureSessionFilePath: string;
   /**
    * Explicit unpackaged startup credential. The composition root persists it
@@ -1694,6 +1698,7 @@ export function registerNativeBridgeHandlersFromContext(context: ElectronMainCon
     meetingPresence: context.meetingPresence,
     calendar: context.calendar,
     meetingRecorder: context.meetingRecorder,
+    pushToTalk: context.runtimeDeps.pushToTalkOverlay ?? unavailablePushToTalkOverlay,
     ...(context.runtimeDeps.browserSitePermissionPlatform?.menu
       ? { sitePermissionMenu: context.runtimeDeps.browserSitePermissionPlatform.menu }
       : {}),
@@ -1728,6 +1733,13 @@ export function registerNativeBridgeHandlersFromContext(context: ElectronMainCon
     windows: context.windows,
   });
 }
+
+const unavailablePushToTalkOverlay: PushToTalkOverlayProvider = {
+  overlayAction: async () => undefined,
+  overlayState: () => hiddenPushToTalkOverlayState,
+  setInteractive: () => undefined,
+  setRegion: () => undefined,
+};
 
 const unavailableWindowsProvider: WindowsProvider = {
   close() {
@@ -1845,6 +1857,7 @@ function grantsByRole({ isDevelopment }: { isDevelopment: boolean }) {
       "app-preferences.read",
     ],
     "onboarding-window": onboardingWindowNativePermissions,
+    "push-to-talk-overlay": ["push-to-talk.overlay", "app-preferences.read"],
     "side-chat-test-window": sideChatTestWindowNativePermissions,
     "side-chat-window": sideChatWindowNativePermissions,
     ...(isDevelopment ? { "dev-workbench": devWorkbenchNativePermissions } : {}),

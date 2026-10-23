@@ -52,6 +52,7 @@ import {
   notchHostEvent,
   onboardingHandoffEvent,
   onboardingWindowChangedEvent,
+  pushToTalkOverlayStateChangedEvent,
   sideChatDebugSettingsChangedEvent,
   sideChatPresentationChangedEvent,
   surfacesWindowFullScreenChangedEvent,
@@ -86,6 +87,10 @@ import {
 import { configureManagedWindow } from "./managed-window";
 import { bindRecorderClientVisibility } from "./recorder-client-visibility";
 import { MeetingRecorderWindow } from "./meeting-recorder-window";
+import {
+  createElectronPushToTalkOverlayWindowFactory,
+  PushToTalkOverlayWindow,
+} from "./push-to-talk/overlay-window";
 import { initializeElectronMainI18n } from "./main-locale";
 import { readStoredLocalePreference } from "./app-preferences";
 import { NativeEventBus, WebContentsRegistry, createSenderPolicy } from "./modules/ipc";
@@ -1461,6 +1466,37 @@ function registerNativeEventSources(eventBus: NativeEventBus) {
   });
 }
 
+// Talk to agent overlay (macOS). Nothing is created until a turn shows it.
+const pushToTalkOverlay = new PushToTalkOverlayWindow({
+  createWindow: (bounds) => {
+    if (closingMainServices || !appContext)
+      return Promise.reject(new Error("Talk to agent overlay is unavailable."));
+    return createElectronPushToTalkOverlayWindowFactory({
+      logger: log,
+      preloadPath: join(__dirname, "preload.js"),
+      registry: appContext.webContentsRegistry,
+      secure: (window) =>
+        installWindowSecurity({
+          allowedNavigationOrigins: allowedRendererOrigins(forgeRendererURL()),
+          logger: log,
+          webContents: window.webContents,
+        }),
+      surfaces: appContext.surfaces,
+      url: withHashRoute(
+        e2eHooks.rendererUrl ?? appRendererUrl(),
+        "/push-to-talk-overlay"
+      ),
+    })(bounds);
+  },
+  displays: () => screen.getAllDisplays(),
+  logger: log,
+  openExternal: (url) => shell.openExternal(url),
+  openMeetingSettings: () => requestOpenMainAppRoute("/settings?category=meeting"),
+  publish: (state) =>
+    appContext?.nativeEventBus.emit(pushToTalkOverlayStateChangedEvent, state),
+  writeClipboard: (text) => electronClipboard.writeText(text),
+});
+
 function ensureMeetingRecorderWindow() {
   if (closingMainServices || !appContext)
     throw new Error("Recorder window is unavailable.");
@@ -1753,6 +1789,7 @@ async function createElectronMainContext() {
     },
     productName: releaseConfig.productName,
     onboardingWindow: onboardingWindowFor(operatingSystem(), onboardingWindow),
+    ...(process.platform === "darwin" ? { pushToTalkOverlay } : {}),
     onSessionStateChanged: (state) => {
       // Signed out (or another account) before the onboarding: sign-in needs
       // the main window.

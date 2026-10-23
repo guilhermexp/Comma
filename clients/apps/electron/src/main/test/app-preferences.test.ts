@@ -54,6 +54,59 @@ describe("AppPreferencesService", () => {
     });
     await reopened.close();
   });
+  it("defaults Talk to agent to off and persists each of its settings", async () => {
+    const filePath = await temporaryPreferencesPath();
+    const {
+      pushToTalkEnabled: _enabled,
+      pushToTalkShortcut: _shortcut,
+      pushToTalkSpeakReplies: _speak,
+      pushToTalkSendScreen: _screen,
+      ...legacy
+    } = defaultCommaClientSettings;
+    const service = await AppPreferencesService.open({
+      filePath,
+      platform: createPlatform(),
+    });
+    await service.update({ clientSettings: legacy });
+    expect(service.state().clientSettings).toMatchObject({
+      pushToTalkEnabled: false,
+      pushToTalkSendScreen: true,
+      pushToTalkShortcut: {
+        key: "space",
+        modifiers: { alt: true, control: true, meta: false, shift: false },
+      },
+      pushToTalkSpeakReplies: true,
+    });
+    const commandK = {
+      key: "k",
+      modifiers: { alt: false, control: false, meta: true, shift: true },
+    } as const;
+    await service.update({ clientSettings: { pushToTalkEnabled: true } });
+    await service.update({
+      clientSettings: {
+        pushToTalkSendScreen: false,
+        pushToTalkShortcut: commandK,
+        pushToTalkSpeakReplies: false,
+      },
+    });
+    await service.close();
+    const reopened = await AppPreferencesService.open({
+      filePath,
+      platform: createPlatform(),
+    });
+    expect(reopened.state().clientSettings).toMatchObject({
+      pushToTalkEnabled: true,
+      pushToTalkSendScreen: false,
+      pushToTalkShortcut: commandK,
+      pushToTalkSpeakReplies: false,
+    });
+    await reopened.update({ clientSettings: { pushToTalkShortcut: null } });
+    expect(reopened.state().clientSettings).toMatchObject({
+      pushToTalkEnabled: true,
+      pushToTalkShortcut: null,
+    });
+    await reopened.close();
+  });
   it("moves an Open Comma shortcut still at the old Option-Space default to Option-Comma, once", async () => {
     const optionSpace = {
       key: "space",

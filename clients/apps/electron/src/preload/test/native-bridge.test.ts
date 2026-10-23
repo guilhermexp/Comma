@@ -798,6 +798,12 @@ function sampleCommandInput(id: string) {
       return { width: 418, height: 104, anchorY: 52 };
     case "meetingRecorder.dragWindow":
       return { phase: "move", screenX: 500, screenY: 100, reducedMotion: false };
+    case "pushToTalk.setRegion":
+      return { rect: { height: 40, width: 60, x: 10, y: 20 }, turn: 1 };
+    case "pushToTalk.setInteractive":
+      return { interactive: true };
+    case "pushToTalk.overlayAction":
+      return { action: "copy-transcript" };
     case "meetingPresence.icon":
       return { bundleIdentifier: "us.zoom.xos" };
     case "calendar.events":

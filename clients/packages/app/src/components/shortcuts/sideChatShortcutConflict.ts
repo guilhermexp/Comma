@@ -40,3 +40,15 @@ export const sameGlobalShortcut = (
   right !== null &&
   left.key === right.key &&
   sameAppKeyModifiers(left.modifiers, right.modifiers);
+
+/** System-wide chords Comma registers outside its own windows. */
+export type GlobalShortcutId = "open-comma" | "push-to-talk" | "side-chat";
+
+/** The other global shortcut that already holds this chord, if any. */
+export const findGlobalShortcutConflict = (
+  shortcut: SideChatShortcutBinding,
+  globals: Partial<Record<GlobalShortcutId, SideChatShortcutBinding>>
+): GlobalShortcutId | undefined =>
+  (Object.keys(globals) as GlobalShortcutId[]).find((id) =>
+    sameGlobalShortcut(shortcut, globals[id] ?? null)
+  );

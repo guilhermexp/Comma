@@ -39,6 +39,7 @@ describe("NativeSideChatService", () => {
   it("keeps native helper fixtures on the canonical chat protocol version", async () => {
     const fixtureNames = [
       "side-chat-shortcut-overlap-host.cjs",
+      "side-chat-shortcut-push-to-talk-host.cjs",
       "side-chat-shortcut-rejection-host.cjs",
       "side-chat-shortcut-replay-host.cjs",
       "side-chat-slow-close-host.cjs",

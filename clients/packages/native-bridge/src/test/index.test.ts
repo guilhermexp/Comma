@@ -713,6 +713,7 @@ describe("native bridge contracts", () => {
       "meetingPresence.state.changed",
       "calendar.state.changed",
       "meetingRecorder.state.changed",
+      "pushToTalk.overlayState.changed",
       "surfaces.windowResizeSettled",
       "airDrop.state.changed",
       "driveCatalog.state.changed",
@@ -887,6 +888,12 @@ describe("native bridge contracts", () => {
         target: { type: "all" },
       },
       {
+        channel: "comma:push-to-talk:overlay-state-changed",
+        id: "pushToTalk.overlayState.changed",
+        permission: "push-to-talk.overlay",
+        target: { type: "all" },
+      },
+      {
         channel: "comma:surfaces:window-resize-settled",
         id: "surfaces.windowResizeSettled",
         permission: "surfaces.state.read",
@@ -1018,6 +1025,7 @@ describe("native bridge contracts", () => {
       "meetingPresence.state",
       "calendar.state",
       "meetingRecorder.state",
+      "pushToTalk.overlayState",
       "airDrop.state",
       "driveCatalog.state",
     ]);
@@ -1391,6 +1399,24 @@ describe("native bridge contracts", () => {
           channel: "comma:meeting-recorder:state-changed",
           id: "meetingRecorder.state.changed",
           permission: "meeting-recorder.read",
+          target: { type: "all" },
+        },
+      },
+      {
+        bridge: { method: "overlayState", namespace: "pushToTalk" },
+        get: {
+          channel: "comma:push-to-talk:overlay-state",
+          id: "pushToTalk.overlayState",
+          permission: "push-to-talk.overlay",
+          sessionAdmission: "local_only",
+          sessionAdmissionRationale:
+            "Controls only Main's local Talk to agent overlay; Main admits the turn itself against its current Session.",
+        },
+        id: "pushToTalk.overlayState",
+        subscribe: {
+          channel: "comma:push-to-talk:overlay-state-changed",
+          id: "pushToTalk.overlayState.changed",
+          permission: "push-to-talk.overlay",
           target: { type: "all" },
         },
       },

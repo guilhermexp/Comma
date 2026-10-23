@@ -868,6 +868,12 @@ const sideChatSurfaceControlVariants = [
     kind: z.literal("side-chat.stop"),
     ...sideChatCommandEnvelopeShape,
   }),
+  // Hold-to-talk chord, separate from the Side Chat shortcut. A missing
+  // keyCode unregisters it; Main replays the saved binding after a restart.
+  sideChatShortcutRegistrationInputSchema.extend({
+    kind: z.literal("push-to-talk.shortcut"),
+    ...sideChatCommandEnvelopeShape,
+  }),
   // Off: the helper drops the edge gesture and the global shortcut, closes the
   // surface, and ignores open requests until turned on again.
   z.object({
@@ -903,10 +909,29 @@ export const statusMenuSelectSchema = z.object({
   ...sideChatCommandEnvelopeShape,
 });
 
+/** App that was frontmost when the hold-to-talk chord went down. */
+export const pushToTalkFrontmostAppSchema = z.object({
+  bundleId: z.string().min(1).max(256).optional(),
+  name: z.string().max(256),
+});
+
+export const pushToTalkPressedSchema = z.object({
+  frontmostApp: pushToTalkFrontmostAppSchema.optional(),
+  kind: z.literal("push-to-talk.pressed"),
+  ...sideChatCommandEnvelopeShape,
+});
+
+export const pushToTalkReleasedSchema = z.object({
+  kind: z.literal("push-to-talk.released"),
+  ...sideChatCommandEnvelopeShape,
+});
+
 export const sideChatClientFrameSchema = z.discriminatedUnion("kind", [
   ...sideChatCommandVariants,
   sideChatPresentationSchema,
   statusMenuSelectSchema,
+  pushToTalkPressedSchema,
+  pushToTalkReleasedSchema,
   sideChatCommandResultSchema,
   sideChatProtocolErrorSchema,
 ]);
