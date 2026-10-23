@@ -57,7 +57,7 @@ export function boundNotificationBody(
 // Router attribution: the server stamps actor_role only on agent_task
 // conversations, so an unattributed assistant message in a user_chat is the
 // Router replying in Home chat.
-function isRouterMessage(
+export function isRouterMessage(
   message: ChatMessage,
   conversation: CommaConversation
 ): boolean {

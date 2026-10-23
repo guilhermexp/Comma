@@ -32,13 +32,14 @@ import type {
   ChatProvider,
 } from "./hostContract";
 import { AttachmentIntake } from "./intake/AttachmentIntake";
-import { SendIntents } from "./send/SendIntents";
+import { SendIntents, type ChatDetachedAttachment } from "./send/SendIntents";
 import { SurfaceLeases } from "./SurfaceLeases";
 import { GroupImagePreviews } from "./workspace/GroupImagePreviews";
 import { SkillsCache } from "./workspace/SkillsCache";
 import { WorkspaceChatResolver } from "./workspace/WorkspaceChatResolver";
 
 export type * from "./hostContract";
+export type { ChatDetachedAttachment } from "./send/SendIntents";
 
 export class ChatCoordinator implements ChatProvider {
   readonly #commands: ConversationCommands;
@@ -157,8 +158,12 @@ export class ChatCoordinator implements ChatProvider {
     return this.#drafts.retryAttachment(input);
   }
 
-  sendDetachedMessage(target: ChatTarget, text: string): Promise<void> {
-    return this.#sends.sendDetached(target, text);
+  sendDetachedMessage(
+    target: ChatTarget,
+    text: string,
+    attachments?: readonly ChatDetachedAttachment[]
+  ): Promise<void> {
+    return this.#sends.sendDetached(target, text, attachments);
   }
 
   send(input: ChatLeasedSendInput): Promise<ChatCommandReceipt> {

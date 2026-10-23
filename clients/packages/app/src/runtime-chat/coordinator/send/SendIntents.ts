@@ -5,6 +5,7 @@ import type {
   ChatLeasedSendInput,
   ChatTarget,
 } from "@comma/chat-contract";
+import { composeMessageWithAttachments } from "../../../components/chat/model/protocol";
 import type { ChatEntries } from "../entries/ChatEntries";
 import { chatKey } from "../entries/chatEntry";
 import type { ChatPublisher } from "../entries/ChatPublisher";
@@ -12,6 +13,9 @@ import { isSameLiveBoundary } from "../entries/sessionBoundary";
 import type { ChatCoordinatorOptions } from "../hostContract";
 import { commitSend } from "./sendCommit";
 import { assertNotSent, isReservedBy } from "./sendGates";
+
+/** A file a detached send uploads to the group before the message. */
+export type ChatDetachedAttachment = { name: string; data: Blob };
 
 // Modeled in tla/connector/AttachmentSendIntent.tla: the host owns the immutable
 // send reservation, exact intake outcomes, replay fences, and commit point.
@@ -78,11 +82,23 @@ export class SendIntents {
   }
 
   // Sends outside the renderer's draft lease, for Main-owned surfaces such as
-  // a notification reply. The send-intent fence guards renderer draft
-  // ownership, which a detached send never touches.
-  async sendDetached(target: ChatTarget, text: string): Promise<void> {
+  // a notification reply or push-to-talk. The send-intent fence guards
+  // renderer draft ownership, which a detached send never touches. Files are
+  // uploaded first and cited like the composer does; a failed upload sends
+  // nothing.
+  async sendDetached(
+    target: ChatTarget,
+    message: string,
+    attachments: readonly ChatDetachedAttachment[] = []
+  ): Promise<void> {
     const boundary = this.#entries.openBoundary();
     boundary.assertCurrent();
+    const uploaded = [];
+    for (const attachment of attachments) {
+      uploaded.push(await boundary.api.uploadGroupFile(target.groupId, attachment));
+      boundary.assertCurrent();
+    }
+    const text = composeMessageWithAttachments(message, uploaded);
     const entry = this.#entries.get(chatKey(target));
     if (entry && isSameLiveBoundary(entry.boundary, boundary)) {
       await entry.channel.send(text, { consumeDraft: false });

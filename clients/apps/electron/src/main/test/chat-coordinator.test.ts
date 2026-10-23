@@ -149,6 +149,78 @@ describe("ChatCoordinator", () => {
     coordinator.close();
   });
 
+  it("uploads detached attachments, cites them like the composer, and keeps the draft", async () => {
+    const api = createApi();
+    api.uploadGroupFile = vi.fn(async (_groupId, { name }) => ({
+      name,
+      path: `/uploads/${name}`,
+      size: 3,
+    }));
+    const coordinator = new ChatCoordinator({ createApi: () => api });
+    const target = {
+      conversationId: "cnv_ptt",
+      groupId: "grp_1",
+      workspaceId: "wsp_ptt",
+    };
+    const lease = retainLease(coordinator, target, "side-chat");
+    coordinator.setDraft({ ...lease, draft: "typed by hand", surfaceId: "side-chat" });
+
+    await coordinator.sendDetachedMessage(target, "What does this do?", [
+      { name: "screen.png", data: new Blob(["png"], { type: "image/png" }) },
+      { name: "detail.png", data: new Blob(["png"], { type: "image/png" }) },
+    ]);
+
+    expect(api.uploadGroupFile).toHaveBeenCalledTimes(2);
+    expect(api.uploadGroupFile).toHaveBeenCalledWith(
+      "grp_1",
+      expect.objectContaining({ name: "screen.png" })
+    );
+    expect(api.sendMessage).toHaveBeenCalledWith(
+      "grp_1",
+      "cnv_ptt",
+      expect.objectContaining({
+        text: [
+          "What does this do?",
+          "",
+          "Attached files in your workspace:",
+          "- screen.png (workspace file: /uploads/screen.png)",
+          "- detail.png (workspace file: /uploads/detail.png)",
+        ].join("\n"),
+      })
+    );
+    expect(coordinator.state().sessions[0]).toMatchObject({
+      draftOwnerSurfaceId: "side-chat",
+      state: { draft: "typed by hand" },
+    });
+    coordinator.close();
+  });
+
+  it("sends no detached message when an attachment upload fails", async () => {
+    const api = createApi();
+    api.uploadGroupFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        name: "screen.png",
+        path: "/uploads/screen.png",
+        size: 3,
+      })
+      .mockRejectedValueOnce(new Error("413"));
+    const coordinator = new ChatCoordinator({ createApi: () => api });
+
+    await expect(
+      coordinator.sendDetachedMessage(
+        { conversationId: "cnv_ptt", groupId: "grp_1", workspaceId: "wsp_ptt" },
+        "What does this do?",
+        [
+          { name: "screen.png", data: new Blob(["png"]) },
+          { name: "detail.png", data: new Blob(["png"]) },
+        ]
+      )
+    ).rejects.toThrow("413");
+    expect(api.sendMessage).not.toHaveBeenCalled();
+    coordinator.close();
+  });
+
   it("keeps selected local refs in the Main-owned draft and sends them without bytes", async () => {
     const api = createApi();
     const coordinator = new ChatCoordinator({ createApi: () => api });

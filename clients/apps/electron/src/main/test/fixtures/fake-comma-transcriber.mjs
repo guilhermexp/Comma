@@ -136,13 +136,17 @@ const cloudBody = (body) =>
 // /fake/provider-ack {"mode":"ok"|"refuse"|"lost"} makes /v1/provider answer
 // 503 without applying ("refuse") or after applying ("lost": an
 // acknowledgment that never reaches Main). POST /v1/audio/transcriptions
-// answers with the provider a job would use.
+// answers with the provider a job would use; PUT /fake/transcription
+// {"status", "body"} scripts its answer and GET /fake/last-transcription
+// reports the multipart fields of the last request.
 if (command === "serve") {
   const token = readFileSync(option("--token-file"), "utf8").trim();
   let provider = { kind: "local" };
   let configured = false;
   let lastFailure;
   let ackMode = "ok";
+  let transcription;
+  let lastTranscription;
   const server = createServer(async (request, response) => {
     let text = "";
     for await (const chunk of request) text += chunk;
@@ -162,7 +166,8 @@ if (command === "serve") {
       return json(response, 401, { error: { code: "unauthorized" } });
     let body;
     try {
-      body = text ? JSON.parse(text) : undefined;
+      const multipart = request.headers["content-type"]?.startsWith("multipart/");
+      body = text && !multipart ? JSON.parse(text) : undefined;
     } catch {
       return json(response, 400, { error: { code: "bad_request" } });
     }
@@ -177,9 +182,32 @@ if (command === "serve") {
       response.writeHead(204);
       return response.end();
     }
-    // A job runs with whatever provider the helper holds at that moment.
-    if (request.method === "POST" && request.url === "/v1/audio/transcriptions")
+    // A job runs with whatever provider the helper holds at that moment,
+    // unless PUT /fake/transcription scripted the answer.
+    if (request.method === "POST" && request.url === "/v1/audio/transcriptions") {
+      const form = (name) =>
+        text.match(new RegExp(`name="${name}"\\r\\n\\r\\n([^\\r]*)`))?.[1];
+      lastTranscription = {
+        contentType: request.headers["content-type"] ?? null,
+        fileName: text.match(/name="file"; filename="([^"]*)"/)?.[1] ?? null,
+        responseFormat: form("response_format") ?? null,
+      };
+      if (
+        lastTranscription.contentType?.startsWith("multipart/") &&
+        !lastTranscription.fileName
+      )
+        return json(response, 400, { error: { code: "bad_request" } });
+      if (transcription)
+        return json(response, transcription.status, transcription.body);
       return json(response, 200, { text: "", provider: provider.kind });
+    }
+    if (request.method === "PUT" && request.url === "/fake/transcription") {
+      transcription = body;
+      response.writeHead(204);
+      return response.end();
+    }
+    if (request.method === "GET" && request.url === "/fake/last-transcription")
+      return json(response, 200, lastTranscription ?? null);
     if (request.method === "PUT" && request.url === "/fake/provider-ack") {
       ackMode = body.mode;
       response.writeHead(204);
