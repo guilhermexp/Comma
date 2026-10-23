@@ -1,14 +1,16 @@
 import {
   getNativeBridge,
   hiddenPushToTalkOverlayState,
+  pushToTalkStrokeColor,
   type PushToTalkOverlayState,
 } from "@comma/native-bridge";
-import { PushToTalkOverlay } from "@comma/ui";
+import { PushToTalkCompanion } from "@comma/ui";
 import { useCallback, useEffect, useState } from "react";
 
 /**
- * Renderer of the Talk to agent overlay window. Main owns the turn and the
- * window; this draws its replay-last state and reports the marked area.
+ * Renderer of the Talk to agent overlay window. Main owns the turn, the
+ * window and the pointer; this draws the cursor companion from its
+ * replay-last state and reports the stroke and the balloon's clicks.
  */
 export function PushToTalkOverlayApp() {
   const bridge = getNativeBridge();
@@ -24,8 +26,9 @@ export function PushToTalkOverlayApp() {
   }, [accept, bridge]);
 
   // Outside a drag the window lets clicks through; Main forwards the pointer
-  // so the pill's own buttons can take clicks while it is over them.
-  const clickThrough = state.pill !== null && state.pill.kind !== "listening";
+  // so the balloon and its buttons can take clicks while it is over them.
+  const clickThrough =
+    state.companion !== null && state.companion.kind !== "listening" && !state.hiding;
   useEffect(() => {
     if (!clickThrough) return;
     let interactive = false;
@@ -47,17 +50,24 @@ export function PushToTalkOverlayApp() {
     };
   }, [bridge, clickThrough]);
 
-  const { turn } = state;
+  const { surface } = state;
   return (
-    <PushToTalkOverlay
-      // A new turn starts without the previous area.
-      key={turn}
-      anchor={state.anchor}
+    <PushToTalkCompanion
+      // A new turn or another display starts without the previous stroke.
+      key={surface}
+      caption={state.caption}
+      color={pushToTalkStrokeColor}
+      cursor={state.cursor}
+      hiding={state.hiding}
+      level={state.level}
       onAction={(action) => bridge.pushToTalk.overlayAction({ action })}
-      onRegionChange={(rect) => {
-        void bridge.pushToTalk.setRegion({ rect, turn });
+      onCaptionClick={() => {
+        void bridge.pushToTalk.overlayAction({ action: "caption-click" });
       }}
-      pill={state.pill}
+      onStrokeChange={(points) => {
+        void bridge.pushToTalk.setStroke({ points, surface });
+      }}
+      state={state.companion}
       testId="push-to-talk-overlay"
     />
   );

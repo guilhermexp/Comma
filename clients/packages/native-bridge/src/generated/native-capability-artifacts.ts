@@ -187,7 +187,7 @@ import {
   pushToTalkOverlayStateChangedEvent,
   pushToTalkOverlayStateLeaf,
   pushToTalkSetInteractiveCapability,
-  pushToTalkSetRegionCapability,
+  pushToTalkSetStrokeCapability,
   recommendationMediaLoadCapability,
   resumeHostMaintenanceCapability,
   sessionCancelAuthAttemptCapability,
@@ -462,7 +462,7 @@ export const generatedNativeCapabilityContracts = {
   meetingRecorderLayoutWindow: meetingRecorderLayoutWindowCapability.contract,
   meetingRecorderDragWindow: meetingRecorderDragWindowCapability.contract,
   pushToTalkOverlayState: pushToTalkOverlayStateCapability.contract,
-  pushToTalkSetRegion: pushToTalkSetRegionCapability.contract,
+  pushToTalkSetStroke: pushToTalkSetStrokeCapability.contract,
   pushToTalkSetInteractive: pushToTalkSetInteractiveCapability.contract,
   pushToTalkOverlayAction: pushToTalkOverlayActionCapability.contract,
   airDropState: airDropStateCapability.contract,
@@ -686,7 +686,7 @@ export const generatedNativeWebFallbacks = {
   meetingRecorderLayoutWindow: meetingRecorderLayoutWindowCapability.webFallback,
   meetingRecorderDragWindow: meetingRecorderDragWindowCapability.webFallback,
   pushToTalkOverlayState: pushToTalkOverlayStateCapability.webFallback,
-  pushToTalkSetRegion: pushToTalkSetRegionCapability.webFallback,
+  pushToTalkSetStroke: pushToTalkSetStrokeCapability.webFallback,
   pushToTalkSetInteractive: pushToTalkSetInteractiveCapability.webFallback,
   pushToTalkOverlayAction: pushToTalkOverlayActionCapability.webFallback,
   airDropState: airDropStateCapability.webFallback,
@@ -969,7 +969,7 @@ export const generatedNativePreloadBindings = {
   },
   pushToTalk: {
     overlayState: pushToTalkOverlayStateCapability.contract,
-    setRegion: pushToTalkSetRegionCapability.contract,
+    setStroke: pushToTalkSetStrokeCapability.contract,
     setInteractive: pushToTalkSetInteractiveCapability.contract,
     overlayAction: pushToTalkOverlayActionCapability.contract,
   },
@@ -2672,13 +2672,13 @@ export const generatedNativeMainBindingsById = {
     sessionAdmissionRationale:
       pushToTalkOverlayStateCapability.sessionAdmissionRationale,
   },
-  "pushToTalk.setRegion": {
-    contract: pushToTalkSetRegionCapability.contract,
-    id: pushToTalkSetRegionCapability.id,
-    method: "setRegion",
+  "pushToTalk.setStroke": {
+    contract: pushToTalkSetStrokeCapability.contract,
+    id: pushToTalkSetStrokeCapability.id,
+    method: "setStroke",
     provider: "pushToTalk",
-    sessionAdmission: pushToTalkSetRegionCapability.sessionAdmission,
-    sessionAdmissionRationale: pushToTalkSetRegionCapability.sessionAdmissionRationale,
+    sessionAdmission: pushToTalkSetStrokeCapability.sessionAdmission,
+    sessionAdmissionRationale: pushToTalkSetStrokeCapability.sessionAdmissionRationale,
   },
   "pushToTalk.setInteractive": {
     contract: pushToTalkSetInteractiveCapability.contract,
@@ -4722,14 +4722,14 @@ export const generatedNativeCapabilityManifest = [
     transport: pushToTalkOverlayStateCapability.transport,
   },
   {
-    bridge: pushToTalkSetRegionCapability.bridge,
-    channel: pushToTalkSetRegionCapability.channel,
-    id: pushToTalkSetRegionCapability.id,
-    payloadClass: pushToTalkSetRegionCapability.payloadClass,
-    permission: pushToTalkSetRegionCapability.permission,
-    sessionAdmission: pushToTalkSetRegionCapability.sessionAdmission,
-    sessionAdmissionRationale: pushToTalkSetRegionCapability.sessionAdmissionRationale,
-    transport: pushToTalkSetRegionCapability.transport,
+    bridge: pushToTalkSetStrokeCapability.bridge,
+    channel: pushToTalkSetStrokeCapability.channel,
+    id: pushToTalkSetStrokeCapability.id,
+    payloadClass: pushToTalkSetStrokeCapability.payloadClass,
+    permission: pushToTalkSetStrokeCapability.permission,
+    sessionAdmission: pushToTalkSetStrokeCapability.sessionAdmission,
+    sessionAdmissionRationale: pushToTalkSetStrokeCapability.sessionAdmissionRationale,
+    transport: pushToTalkSetStrokeCapability.transport,
   },
   {
     bridge: pushToTalkSetInteractiveCapability.bridge,
@@ -9261,25 +9261,25 @@ export const generatedNativeCapabilityIndex = {
       pushToTalkOverlayStateCapability.sessionAdmissionRationale,
     transport: pushToTalkOverlayStateCapability.transport,
   },
-  "pushToTalk.setRegion": {
+  "pushToTalk.setStroke": {
     artifacts: {
-      contract: "pushToTalkSetRegionContract",
-      handlerType: 'NativeCapabilityHandlerTypeMap["pushToTalk.setRegion"]',
-      leaf: "pushToTalkSetRegionCapability",
-      mainBinding: 'generatedNativeMainBindingsById["pushToTalk.setRegion"]',
-      mock: "pushToTalkSetRegionCapability.mock",
-      preloadBinding: "generatedNativePreloadBindings.pushToTalk.setRegion",
-      webFallback: "generatedNativeWebFallbacks.pushToTalkSetRegion",
+      contract: "pushToTalkSetStrokeContract",
+      handlerType: 'NativeCapabilityHandlerTypeMap["pushToTalk.setStroke"]',
+      leaf: "pushToTalkSetStrokeCapability",
+      mainBinding: 'generatedNativeMainBindingsById["pushToTalk.setStroke"]',
+      mock: "pushToTalkSetStrokeCapability.mock",
+      preloadBinding: "generatedNativePreloadBindings.pushToTalk.setStroke",
+      webFallback: "generatedNativeWebFallbacks.pushToTalkSetStroke",
     },
-    bridge: pushToTalkSetRegionCapability.bridge,
-    channel: pushToTalkSetRegionCapability.channel,
-    handler: pushToTalkSetRegionCapability.handler,
-    id: pushToTalkSetRegionCapability.id,
-    payloadClass: pushToTalkSetRegionCapability.payloadClass,
-    permission: pushToTalkSetRegionCapability.permission,
-    sessionAdmission: pushToTalkSetRegionCapability.sessionAdmission,
-    sessionAdmissionRationale: pushToTalkSetRegionCapability.sessionAdmissionRationale,
-    transport: pushToTalkSetRegionCapability.transport,
+    bridge: pushToTalkSetStrokeCapability.bridge,
+    channel: pushToTalkSetStrokeCapability.channel,
+    handler: pushToTalkSetStrokeCapability.handler,
+    id: pushToTalkSetStrokeCapability.id,
+    payloadClass: pushToTalkSetStrokeCapability.payloadClass,
+    permission: pushToTalkSetStrokeCapability.permission,
+    sessionAdmission: pushToTalkSetStrokeCapability.sessionAdmission,
+    sessionAdmissionRationale: pushToTalkSetStrokeCapability.sessionAdmissionRationale,
+    transport: pushToTalkSetStrokeCapability.transport,
   },
   "pushToTalk.setInteractive": {
     artifacts: {
@@ -11089,8 +11089,8 @@ export const meetingRecorderDragWindowContract =
   generatedNativeCapabilityContracts.meetingRecorderDragWindow;
 export const pushToTalkOverlayStateContract =
   generatedNativeCapabilityContracts.pushToTalkOverlayState;
-export const pushToTalkSetRegionContract =
-  generatedNativeCapabilityContracts.pushToTalkSetRegion;
+export const pushToTalkSetStrokeContract =
+  generatedNativeCapabilityContracts.pushToTalkSetStroke;
 export const pushToTalkSetInteractiveContract =
   generatedNativeCapabilityContracts.pushToTalkSetInteractive;
 export const pushToTalkOverlayActionContract =
@@ -11325,7 +11325,7 @@ export type NativeCapabilityTypeMap = {
   "meetingRecorder.layoutWindow": typeof meetingRecorderLayoutWindowCapability;
   "meetingRecorder.dragWindow": typeof meetingRecorderDragWindowCapability;
   "pushToTalk.overlayState": typeof pushToTalkOverlayStateCapability;
-  "pushToTalk.setRegion": typeof pushToTalkSetRegionCapability;
+  "pushToTalk.setStroke": typeof pushToTalkSetStrokeCapability;
   "pushToTalk.setInteractive": typeof pushToTalkSetInteractiveCapability;
   "pushToTalk.overlayAction": typeof pushToTalkOverlayActionCapability;
   "airDrop.state": typeof airDropStateCapability;
@@ -11897,7 +11897,7 @@ export type GeneratedNativeBridge = {
     state: GeneratedNativeStateBridgeMethod<typeof meetingRecorderStateLeaf>;
   };
   pushToTalk: {
-    setRegion: GeneratedNativeCommandBridgeMethod<typeof pushToTalkSetRegionCapability>;
+    setStroke: GeneratedNativeCommandBridgeMethod<typeof pushToTalkSetStrokeCapability>;
     setInteractive: GeneratedNativeCommandBridgeMethod<
       typeof pushToTalkSetInteractiveCapability
     >;
@@ -12609,9 +12609,9 @@ export function createGeneratedNativePreloadBridge(
       }),
     },
     pushToTalk: {
-      setRegion: (
-        input: GeneratedNativeCommandInput<typeof pushToTalkSetRegionCapability>
-      ) => helpers.invoke(pushToTalkSetRegionCapability.contract, input),
+      setStroke: (
+        input: GeneratedNativeCommandInput<typeof pushToTalkSetStrokeCapability>
+      ) => helpers.invoke(pushToTalkSetStrokeCapability.contract, input),
       setInteractive: (
         input: GeneratedNativeCommandInput<typeof pushToTalkSetInteractiveCapability>
       ) => helpers.invoke(pushToTalkSetInteractiveCapability.contract, input),
@@ -13295,9 +13295,9 @@ export function createGeneratedNativeWebBridge(): GeneratedNativeBridge {
       >((_input) => meetingRecorderStateLeaf.webFallback),
     },
     pushToTalk: {
-      setRegion: async (
-        _input: GeneratedNativeCommandInput<typeof pushToTalkSetRegionCapability>
-      ) => pushToTalkSetRegionCapability.webFallback,
+      setStroke: async (
+        _input: GeneratedNativeCommandInput<typeof pushToTalkSetStrokeCapability>
+      ) => pushToTalkSetStrokeCapability.webFallback,
       setInteractive: async (
         _input: GeneratedNativeCommandInput<typeof pushToTalkSetInteractiveCapability>
       ) => pushToTalkSetInteractiveCapability.webFallback,
@@ -14219,10 +14219,10 @@ export function createGeneratedNativeBridgeMock(
       ),
     },
     pushToTalk: {
-      setRegion: helpers.command(
+      setStroke: helpers.command(
         async (
-          _input: GeneratedNativeCommandInput<typeof pushToTalkSetRegionCapability>
-        ) => pushToTalkSetRegionCapability.mock
+          _input: GeneratedNativeCommandInput<typeof pushToTalkSetStrokeCapability>
+        ) => pushToTalkSetStrokeCapability.mock
       ),
       setInteractive: helpers.command(
         async (

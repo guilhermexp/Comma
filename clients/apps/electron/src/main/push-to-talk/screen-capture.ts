@@ -1,3 +1,4 @@
+import { pushToTalkStrokeColor } from "@comma/native-bridge";
 import type { PushToTalkPoint, PushToTalkRect, PushToTalkStroke } from "./types";
 
 // Screenshot of the cursor's display at the press (openspec
@@ -16,8 +17,12 @@ export const cursorDetailSize = { width: 800, height: 500 };
 export const strokeMargin = 0.1;
 /** The stroke's line width in pixels of the sent screenshot. */
 export const strokeWidth = 6;
-/** The stroke's color, the cursor companion's blue. */
-export const strokeColor = { red: 0x2f, green: 0x80, blue: 0xff };
+/** The stroke's color, the cursor companion's blue the overlay draws with. */
+export const strokeColor = {
+  red: Number.parseInt(pushToTalkStrokeColor.slice(1, 3), 16),
+  green: Number.parseInt(pushToTalkStrokeColor.slice(3, 5), 16),
+  blue: Number.parseInt(pushToTalkStrokeColor.slice(5, 7), 16),
+};
 const jpegQuality = 85;
 
 /** The subset of Electron's `nativeImage` this module uses. */
@@ -224,7 +229,7 @@ function finalizeCapture(
 }
 
 /** The box of a stroke in points; `null` when it has no extent. */
-function strokeBox(stroke: PushToTalkStroke): PushToTalkRect | null {
+export function strokeBox(stroke: PushToTalkStroke): PushToTalkRect | null {
   if (stroke.length < 2) return null;
   const xs = stroke.map((point) => point.x);
   const ys = stroke.map((point) => point.y);
