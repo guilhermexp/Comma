@@ -22,7 +22,7 @@ describe("desktop release identity", () => {
       packId: "com.guilhermexp.comma",
       urlScheme: "comma-gx",
       runtimeNamespace: "@comma-gx",
-      updateUrl: "https://github.com/guilhermexp/Comma/releases/latest/download",
+      updateUrl: "https://github.com/guilhermexp/Comma",
     });
   });
 
@@ -55,7 +55,7 @@ describe("desktop release identity", () => {
     expect(getCommaReleaseConfig("prod")).toMatchObject({
       backendMode: "remote",
       apiBaseUrl: "https://api.example.test",
-      updateUrl: "https://github.com/someone/Comma/releases/latest/download",
+      updateUrl: "https://github.com/someone/Comma",
     });
 
     vi.stubEnv("COMMA_UPDATE_URL", "http://127.0.0.1:8787/feed");

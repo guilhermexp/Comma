@@ -10,11 +10,15 @@ Cluster releases are in [release operations](../../../docs/release-operations.md
   Velopack update feed. No other storage is part of the release.
 - The workflow is [`desktop-release.yml`](../../../.github/workflows/desktop-release.yml).
   It needs only `GITHUB_TOKEN`. Only the publish job has `contents: write`.
-- Velopack is the updater. The installed app reads
-  `https://github.com/guilhermexp/Comma/releases/latest/download/releases.prod.json`
-  and the packages it lists. GitHub resolves `latest` to the newest
-  non-draft, non-prerelease release. Thus every desktop release is a full
-  release marked latest. Any other release must be a prerelease.
+- Velopack is the updater. The installed app's feed is the repository URL
+  `https://github.com/guilhermexp/Comma`. Velopack treats it as a GitHub source:
+  it asks the GitHub API for the newest non-draft, non-prerelease release and
+  reads `releases.prod.json` and the packages from its assets. A deeper URL
+  under `github.com`, such as `releases/latest/download`, makes that lookup
+  answer 404; versions 0.0.4 and earlier shipped that URL and cannot update
+  themselves, so they need one manual install from the DMG. Every desktop
+  release is thus a full release marked latest. Any other release must be a
+  prerelease.
   The Synch mirror (`synch-v0.1.13`) is a prerelease for this reason.
 - The tag is `v<version>`. The version is `clients/apps/electron/package.json`
   `version`, in `X.Y.Z` form. The build fails when the tag and the version

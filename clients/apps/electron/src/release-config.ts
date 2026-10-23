@@ -124,13 +124,14 @@ function joinUrl(baseUrl: string, path: string) {
 }
 
 /**
- * Velopack reads `releases.<channel>.json` and the packages it names relative
- * to this URL. GitHub redirects `releases/latest/download/<asset>` to the
- * asset of the newest non-prerelease release, so the feed always follows the
- * repository's latest desktop release.
+ * Velopack treats a `github.com` URL as a GitHub source: given the repository
+ * URL it asks the GitHub API for the newest non-prerelease release and reads
+ * `releases.<channel>.json` and the packages from its assets. Any other path
+ * under `github.com` (such as `releases/latest/download`) makes that API lookup
+ * answer 404, so the feed must be the bare repository URL.
  */
 export function githubReleaseUpdateUrl(repository: string) {
-  return `https://github.com/${repository}/releases/latest/download`;
+  return `https://github.com/${repository}`;
 }
 
 function assertPackableReleaseConfig(

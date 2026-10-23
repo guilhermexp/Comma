@@ -1,7 +1,7 @@
 # Builds the macOS (arm64) desktop app and publishes it as a GitHub release of
-# this repository. The installed app updates itself from
-# https://github.com/<repo>/releases/latest/download through Velopack, so every
-# published desktop release is a full (non-prerelease) release marked latest.
+# this repository. The installed app updates itself through Velopack's GitHub
+# source for https://github.com/<repo> (the newest non-prerelease release), so
+# every published desktop release is a full (non-prerelease) release marked latest.
 #
 # A pushed tag v<version> builds and publishes. The tag must equal the version
 # in clients/apps/electron/package.json. A manual run builds the selected ref
