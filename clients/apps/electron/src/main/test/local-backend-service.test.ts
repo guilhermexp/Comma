@@ -260,7 +260,7 @@ describe("local backend service", () => {
     const root = mkdtempSync(join(tmpdir(), "comma local backend "));
     dirs.push(root);
     const layout = {
-      dataDir: join(root, "Application Support", "Comma \"local\""),
+      dataDir: join(root, "Application Support", 'Comma "local"'),
       resourcesDir: join(root, "Resources", "local-backend"),
     };
     const { backend } = service(layout, new FakeRuntime());
