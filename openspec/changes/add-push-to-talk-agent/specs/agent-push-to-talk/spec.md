@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Permitir que o usuário converse com o agente do workspace a partir de qualquer app do Mac segurando um atalho global: o app grava a fala, captura o contexto da tela no momento do gesto (print, ponto do cursor, área marcada e app em primeiro plano), transcreve, envia a pergunta ao agente pela sidebar e lê a resposta em voz alta.
+Permitir que o usuário converse com o agente do workspace a partir de qualquer app do Mac segurando um atalho global: o app grava a fala, captura o contexto da tela no momento do gesto (print, ponto do cursor, traço desenhado e app em primeiro plano), transcreve, envia a pergunta à conversa do agente e responde por voz e por um balão junto ao cursor, com o estado no notch.
 
 ## ADDED Requirements
 
@@ -13,12 +13,12 @@ A função "Falar com o agente" MUST existir só no app desktop para macOS e MUS
 #### Scenario: Padrão desligado
 
 - **WHEN** o usuário instala o app e não mexe nos Ajustes
-- **THEN** segurar o atalho padrão não grava nada nem mostra a pílula
+- **THEN** segurar `⌃⌥` não grava nada nem mostra nada na tela
 
 #### Scenario: Janela principal fechada
 
 - **WHEN** a função está ligada, a janela principal está fechada e o usuário segura o atalho em outro app
-- **THEN** a pílula "Ouvindo" aparece e a gravação começa
+- **THEN** o notch mostra "Ouvindo", o cursor companheiro aparece e a gravação começa
 
 #### Scenario: Sidebar desligada
 
@@ -27,17 +27,55 @@ A função "Falar com o agente" MUST existir só no app desktop para macOS e MUS
 
 ### Requirement: Atalho de segurar para falar
 
-O atalho MUST ser uma tecla comum com ao menos um modificador, escolhida pelo usuário, com padrão `⌃⌥Espaço`. Ele MUST ser distinto do atalho da sidebar e do atalho de abrir o Comma; os Ajustes MUST recusar um atalho que conflite com eles. Registrar o atalho MUST NOT pedir permissão de Acessibilidade nem de Monitoramento de Entrada. Apertar MUST iniciar um turno; soltar MUST encerrar a gravação do turno.
+O atalho MUST ser escolhido pelo usuário entre uma combinação só de modificadores (ao menos dois) ou uma tecla comum com ao menos um modificador; o padrão MUST ser `⌃⌥`. Ele MUST ser distinto do atalho da sidebar e do atalho de abrir o Comma; os Ajustes MUST recusar um atalho que conflite com eles. Apertar MUST iniciar um turno; soltar qualquer tecla da combinação MUST encerrar a gravação do turno.
+
+#### Scenario: Atalho padrão
+
+- **WHEN** o usuário segura `⌃⌥` por 4 segundos falando e solta
+- **THEN** a gravação contém esses 4 segundos e o turno passa para transcrição
+
+#### Scenario: Gravar só modificadores nos Ajustes
+
+- **WHEN** o usuário clica para gravar o atalho, segura `⌃⌥` e solta sem apertar outra tecla
+- **THEN** os Ajustes salvam `⌃⌥` como atalho
 
 #### Scenario: Conflito com a sidebar
 
 - **WHEN** o usuário tenta usar como atalho de falar o mesmo atalho da sidebar
 - **THEN** os Ajustes recusam e mostram com qual atalho conflita
 
-#### Scenario: Segurar e soltar
+### Requirement: Atalho só de modificadores não rouba outros atalhos
 
-- **WHEN** o usuário segura o atalho por 4 segundos falando e solta
-- **THEN** a gravação contém esses 4 segundos e o turno passa para transcrição
+Com um atalho só de modificadores, o app MUST apenas observar o teclado, sem impedir que as teclas cheguem aos outros apps. Se qualquer outra tecla for apertada enquanto a combinação está pressionada, o turno MUST ser cancelado sem enviar nada. Um turno MUST começar só quando exatamente os modificadores da combinação estiverem pressionados.
+
+#### Scenario: Outro atalho com os mesmos modificadores
+
+- **WHEN** o usuário aperta `⌃⌥←` em outro app
+- **THEN** o outro app recebe `⌃⌥←`, nenhum turno é enviado e o que tiver aparecido some
+
+#### Scenario: Modificador a mais
+
+- **WHEN** o usuário segura `⌃⌥⇧`
+- **THEN** nenhum turno começa
+
+### Requirement: Permissão de Monitoramento de Entrada
+
+Um atalho só de modificadores MUST depender da permissão de Monitoramento de Entrada concedida ao Comma; um atalho com tecla comum MUST NOT pedir essa permissão nem a de Acessibilidade. Sem a permissão, os Ajustes MUST mostrar que o atalho não está ativo, com um botão para abrir os Ajustes do Sistema, e o atalho MUST passar a funcionar depois de concedida, sem reiniciar o Comma.
+
+#### Scenario: Permissão ausente
+
+- **WHEN** o atalho é `⌃⌥` e o Comma não tem Monitoramento de Entrada
+- **THEN** os Ajustes mostram que o atalho está inativo por falta da permissão, com o botão para os Ajustes do Sistema
+
+#### Scenario: Permissão concedida depois
+
+- **WHEN** o usuário concede a permissão nos Ajustes do Sistema
+- **THEN** segurar `⌃⌥` passa a iniciar um turno sem reiniciar o Comma
+
+#### Scenario: Tecla comum
+
+- **WHEN** o atalho escolhido é `⌃⌥Espaço`
+- **THEN** o atalho funciona sem pedir Monitoramento de Entrada
 
 ### Requirement: Gravação do turno
 
@@ -46,7 +84,7 @@ Enquanto o atalho está pressionado, o app MUST gravar o microfone. Uma gravaç�
 #### Scenario: Toque acidental
 
 - **WHEN** o usuário aperta e solta o atalho em 0,2 s
-- **THEN** nada é transcrito nem enviado e a pílula some
+- **THEN** nada é transcrito nem enviado e o que tiver aparecido some
 
 #### Scenario: Limite de duração
 
@@ -55,12 +93,12 @@ Enquanto o atalho está pressionado, o app MUST gravar o microfone. Uma gravaç�
 
 ### Requirement: Um turno por vez e cancelamento
 
-Só um turno MUST existir por vez: apertar o atalho enquanto um turno ainda está transcrevendo ou enviando MUST ser ignorado, com a pílula indicando que é preciso aguardar. Se o soltar do atalho não puder ser garantido (Mac bloqueado, suspenso ou helper do atalho reiniciado durante a gravação), o turno MUST ser cancelado e a gravação descartada.
+Só um turno MUST existir por vez: apertar o atalho enquanto um turno ainda está transcrevendo ou enviando MUST ser ignorado, com o notch indicando que é preciso aguardar. Se o soltar do atalho não puder ser garantido (Mac bloqueado, suspenso ou helper do atalho reiniciado durante a gravação), o turno MUST ser cancelado e a gravação descartada.
 
 #### Scenario: Aperto durante a transcrição
 
 - **WHEN** o usuário aperta o atalho enquanto o turno anterior ainda está transcrevendo
-- **THEN** nenhum turno novo começa e a pílula pede para aguardar
+- **THEN** nenhum turno novo começa e o notch pede para aguardar
 
 #### Scenario: Mac bloqueado durante a gravação
 
@@ -70,13 +108,13 @@ Só um turno MUST existir por vez: apertar o atalho enquanto um turno ainda est�
 #### Scenario: Microfone negado
 
 - **WHEN** o macOS nega o acesso ao microfone
-- **THEN** a pílula mostra que falta a permissão de Microfone, com um botão para abrir os Ajustes do Sistema, e nada é enviado
+- **THEN** o notch mostra que falta a permissão de Microfone, com um botão para abrir os Ajustes do Sistema, e nada é enviado
 
 ### Requirement: Contexto da tela no momento do gesto
 
-Com o envio do print ligado, o app MUST capturar o monitor onde está o cursor no instante em que o atalho é apertado, antes de mostrar qualquer elemento próprio sobre a tela. O app MUST registrar a posição do cursor e o nome do app em primeiro plano nesse instante. O print MUST refletir a tela do momento do aperto e MUST NOT incluir a pílula nem a marcação.
+Com o envio do print ligado, o app MUST capturar o monitor onde está o cursor no instante em que o atalho é apertado, antes de mostrar qualquer elemento próprio sobre a tela. O app MUST registrar a posição do cursor e o nome do app em primeiro plano nesse instante. O print MUST refletir a tela do momento do aperto e MUST NOT incluir o cursor companheiro.
 
-#### Scenario: Apontar sem arrastar
+#### Scenario: Apontar sem desenhar
 
 - **WHEN** o usuário segura o atalho com o cursor sobre um botão e fala "o que esse botão faz?"
 - **THEN** a pergunta enviada leva o print do monitor do cursor, o recorte em volta do cursor e a posição do cursor
@@ -91,23 +129,28 @@ Com o envio do print ligado, o app MUST capturar o monitor onde está o cursor n
 - **WHEN** o cursor está no monitor secundário ao apertar o atalho
 - **THEN** o print e as coordenadas são desse monitor
 
-### Requirement: Marcação de área
+### Requirement: Traço livre sobre a tela
 
-Enquanto o atalho estiver pressionado, o usuário MUST poder arrastar o mouse para marcar uma área retangular do monitor capturado. A área marcada MUST ficar visível até soltar o atalho, e uma nova marcação MUST substituir a anterior.
+Enquanto o atalho estiver pressionado, o usuário MUST poder arrastar o mouse para desenhar um traço livre sobre o monitor capturado. O traço MUST aparecer na tela enquanto é desenhado e sumir pouco depois de soltar o atalho; um novo arrasto MUST substituir o traço anterior. O print enviado MUST levar o traço desenhado por cima, e o recorte MUST cobrir a área do traço.
 
-#### Scenario: Marcar uma área
+#### Scenario: Circular um gráfico
 
-- **WHEN** o usuário, com o atalho pressionado, arrasta sobre um gráfico
-- **THEN** a pergunta enviada leva o print, o recorte da área marcada e as coordenadas da área
+- **WHEN** o usuário, com o atalho pressionado, circula um gráfico com o mouse
+- **THEN** a pergunta enviada leva o print com o círculo desenhado, o recorte da área do círculo e os limites dessa área
+
+#### Scenario: Traço some
+
+- **WHEN** o usuário solta o atalho depois de desenhar
+- **THEN** o traço some da tela em poucos segundos
 
 ### Requirement: Permissão de Gravação de Tela
 
-O print MUST depender da permissão de Gravação de Tela concedida ao próprio Comma. Sem a permissão, o turno MUST seguir só com o texto, a posição do cursor e o app em primeiro plano, e a pílula MUST avisar que o print não foi enviado, com um botão para abrir os Ajustes do Sistema. Com o envio do print desligado nos Ajustes, o app MUST NOT capturar a tela nem pedir a permissão. O texto de uso da permissão no macOS MUST mencionar o print enviado ao agente.
+O print MUST depender da permissão de Gravação de Tela concedida ao próprio Comma. Sem a permissão, o turno MUST seguir só com o texto, a posição do cursor e o app em primeiro plano, e o notch MUST avisar que o print não foi enviado, com um botão para abrir os Ajustes do Sistema. Com o envio do print desligado, o app MUST NOT capturar a tela nem pedir a permissão. O texto de uso da permissão MUST mencionar o print enviado ao agente.
 
 #### Scenario: Permissão negada
 
 - **WHEN** a Gravação de Tela está negada para o Comma e o usuário faz uma pergunta
-- **THEN** a pergunta é enviada sem print e a pílula avisa que o print não foi incluído
+- **THEN** a pergunta é enviada sem print e o notch avisa que o print não foi incluído
 
 #### Scenario: Print desligado
 
@@ -116,17 +159,17 @@ O print MUST depender da permissão de Gravação de Tela concedida ao próprio 
 
 ### Requirement: Transcrição
 
-O app MUST transcrever a gravação pelo mecanismo escolhido em Ajustes → Reunião (Local, Groq ou API compatível com OpenAI), com o mesmo fallback para o modelo local definido para reuniões. Se a transcrição não estiver disponível, a pílula MUST dizer isso com um botão que abre a seção de Reunião dos Ajustes, e nada MUST ser enviado. Uma transcrição vazia MUST ser tratada como "não entendi", sem envio. O áudio MUST ser apagado do disco ao fim do turno, com sucesso ou não.
+O app MUST transcrever a gravação pelo mecanismo escolhido em Ajustes → Reunião (Local, Groq ou API compatível com OpenAI), com o mesmo fallback para o modelo local definido para reuniões. Se a transcrição não estiver disponível, o notch MUST dizer isso com um botão que abre a seção de Reunião dos Ajustes, e nada MUST ser enviado. Uma transcrição vazia MUST ser tratada como "não entendi", sem envio. O áudio MUST ser apagado do disco ao fim do turno.
 
 #### Scenario: Transcrição indisponível
 
 - **WHEN** o modelo local não está instalado e nenhum provedor de nuvem está configurado
-- **THEN** a pílula avisa que é preciso configurar a transcrição e nada é enviado ao agente
+- **THEN** o notch avisa que é preciso configurar a transcrição e nada é enviado ao agente
 
 #### Scenario: Silêncio
 
 - **WHEN** a transcrição volta vazia
-- **THEN** a pílula mostra "Não entendi" e nada é enviado
+- **THEN** o notch mostra "Não entendi" e nada é enviado
 
 #### Scenario: Fallback da nuvem
 
@@ -135,21 +178,21 @@ O app MUST transcrever a gravação pelo mecanismo escolhido em Ajustes → Reun
 
 ### Requirement: Envio ao agente
 
-O app MUST enviar o turno como uma mensagem do usuário na conversa do agente do workspace ativo, a mesma mostrada na sidebar. A mensagem MUST conter o texto transcrito e um bloco de contexto com o app em primeiro plano e, quando houver print, o tamanho do print em pixels, a posição do cursor e a área marcada nas coordenadas do print. O print do monitor e o recorte MUST ir como anexos de imagem pelo mecanismo de anexos do chat.
+O app MUST enviar o turno como uma mensagem do usuário na conversa do agente do workspace ativo, a mesma mostrada na sidebar. A mensagem MUST conter o texto transcrito e um bloco de contexto com o app em primeiro plano e, quando houver print, o tamanho do print em pixels, a posição do cursor e os limites do traço nas coordenadas do print. O print do monitor e o recorte MUST ir como anexos de imagem pelo mecanismo de anexos do chat.
 
 #### Scenario: Pergunta com print
 
 - **WHEN** o usuário solta o atalho depois de falar com o print ligado
-- **THEN** a conversa do agente recebe uma mensagem com o texto, o bloco de contexto e dois anexos de imagem, e a sidebar abre nela
+- **THEN** a conversa do agente recebe uma mensagem com o texto, o bloco de contexto e dois anexos de imagem
 
 ### Requirement: Envio sem interferir no uso
 
-O envio MUST NOT usar nem apagar o rascunho que o usuário tenha digitado na sidebar. Após o envio, a sidebar MUST abrir na conversa sem roubar o foco do app em uso. Uma falha de envio MUST aparecer na pílula, com a opção de copiar o texto transcrito.
+O envio MUST NOT usar nem apagar o rascunho que o usuário tenha digitado na sidebar. O envio MUST NOT abrir a sidebar, a janela principal nem tirar o foco do app em uso. Uma falha de envio MUST aparecer no notch, com a opção de copiar o texto transcrito.
 
-#### Scenario: Sidebar abre sem roubar o foco
+#### Scenario: Nada abre
 
 - **WHEN** a pergunta é enviada enquanto o usuário está num editor de texto
-- **THEN** a sidebar mostra a conversa e o editor continua com o foco do teclado
+- **THEN** nenhuma janela do Comma abre e o editor continua com o foco do teclado
 
 #### Scenario: Rascunho preservado
 
@@ -159,44 +202,77 @@ O envio MUST NOT usar nem apagar o rascunho que o usuário tenha digitado na sid
 #### Scenario: Falha de envio
 
 - **WHEN** o upload do print ou o envio da mensagem falha
-- **THEN** a pílula mostra a falha com a opção de copiar o texto transcrito
+- **THEN** o notch mostra a falha com a opção de copiar o texto transcrito
 
-### Requirement: Resposta falada
+### Requirement: Resposta falada e no balão
 
-Com a resposta falada ligada (padrão ligado), o app MUST ler em voz alta, com a voz do sistema e sem marcações de formatação, a primeira resposta completa do agente que chegar na conversa depois do envio de um turno. Respostas a mensagens que não vieram do atalho MUST NOT ser lidas. Se o agente não responder em 180 s, o app MUST parar de esperar sem avisar por voz. Com a resposta falada desligada, a resposta aparece só na sidebar.
+O app MUST mostrar a primeira resposta completa do agente que chegar na conversa depois do envio de um turno num balão junto ao cursor companheiro, sem marcações de formatação. Com a resposta falada ligada (padrão), o app MUST lê-la com a voz do sistema frase por frase, mostrando no balão a frase em leitura. Com ela desligada, o balão MUST mostrar a resposta pelo tempo de leitura.
 
 #### Scenario: Leitura da resposta
 
 - **WHEN** o agente responde ao turno enviado pelo atalho
-- **THEN** a resposta aparece na sidebar e é lida em voz alta uma única vez
+- **THEN** cada frase aparece no balão enquanto é lida em voz alta, uma única vez
 
-### Requirement: Interromper a leitura
+#### Scenario: Voz desligada
 
-Apertar o atalho durante a leitura MUST interromper a voz imediatamente e iniciar um novo turno.
+- **WHEN** a resposta falada está desligada e o agente responde
+- **THEN** o balão mostra a resposta sem voz e some depois do tempo de leitura
 
-#### Scenario: Interromper a leitura
+#### Scenario: Abrir a conversa pelo balão
 
-- **WHEN** o app está lendo uma resposta e o usuário aperta o atalho
-- **THEN** a leitura para na hora e a pílula "Ouvindo" aparece
+- **WHEN** o usuário clica no balão
+- **THEN** a sidebar abre na conversa do agente
+
+### Requirement: Só respostas do atalho
+
+Respostas a mensagens que não vieram do atalho MUST NOT aparecer no balão nem ser lidas. Sem resposta em 180 s, o app MUST parar de esperar e o companheiro MUST sumir.
 
 #### Scenario: Mensagem digitada
 
 - **WHEN** o usuário envia uma mensagem digitando na sidebar
-- **THEN** a resposta do agente não é lida em voz alta
+- **THEN** a resposta do agente não aparece no balão nem é lida em voz alta
 
-### Requirement: Estado visível do turno
+#### Scenario: Agente demora
 
-O app MUST mostrar uma pílula discreta perto do cursor, sobre todos os apps e espaços, com o estado do turno: "Ouvindo" enquanto o atalho está pressionado, "Transcrevendo" depois de soltar e até o envio. A pílula MUST sumir quando a mensagem é enviada ou ao ser cancelada, e MUST mostrar erros com a ação correspondente por alguns segundos. A pílula e a marcação de área MUST NOT tirar o foco do app em uso nem bloquear cliques fora de um turno.
+- **WHEN** o agente não responde em 180 s
+- **THEN** o companheiro some e nada é lido quando a resposta chegar depois
+
+### Requirement: Interromper a leitura
+
+Apertar o atalho durante a leitura MUST interromper a voz imediatamente, fechar o balão e iniciar um novo turno.
+
+#### Scenario: Interromper a leitura
+
+- **WHEN** o app está lendo uma resposta e o usuário aperta o atalho
+- **THEN** a leitura para na hora e o notch volta a "Ouvindo"
+
+### Requirement: Cursor companheiro
+
+Durante um turno, o app MUST mostrar um indicador junto ao cursor, que o acompanha em qualquer app e espaço: com o nível da voz enquanto ouve, com um indicador de espera enquanto transcreve e enquanto o agente pensa, e com o balão enquanto responde. Ele MUST sumir alguns segundos depois do fim do turno ou do cancelamento. O companheiro e o traço MUST NOT tirar o foco do app em uso nem bloquear cliques fora do gesto.
 
 #### Scenario: Ciclo normal
 
-- **WHEN** o usuário segura, fala e solta o atalho
-- **THEN** a pílula mostra "Ouvindo", depois "Transcrevendo" e some quando a sidebar abre com a pergunta
+- **WHEN** o usuário segura, fala e solta o atalho e o agente responde
+- **THEN** o companheiro mostra o nível da voz, depois a espera, depois o balão, e some ao fim
 
 #### Scenario: Fora de um turno
 
 - **WHEN** nenhum turno está em andamento
 - **THEN** nenhum elemento do gesto fica na tela e cliques chegam normalmente aos outros apps
+
+### Requirement: Estado no notch
+
+Com o notch do Comma ligado, o app MUST mostrar nele o estado do turno: "Ouvindo" com o nível de áudio, "Transcrevendo", "Pensando" até a resposta chegar e "Falando" enquanto lê, cada um com sua cor. Erros MUST aparecer no notch com a ação correspondente por alguns segundos. Ao fim do turno, o notch MUST voltar ao que mostrava antes. Com o notch desligado, o companheiro mostra os erros.
+
+#### Scenario: Estados em sequência
+
+- **WHEN** o usuário segura, fala, solta e o agente responde
+- **THEN** o notch mostra "Ouvindo", "Transcrevendo", "Pensando", "Falando" e volta ao normal
+
+#### Scenario: Notch desligado
+
+- **WHEN** o notch está desligado e a transcrição não está disponível
+- **THEN** o aviso aparece junto ao cursor companheiro
 
 ### Requirement: Ajustes e privacidade
 
