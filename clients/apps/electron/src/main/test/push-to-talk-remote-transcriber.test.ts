@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -94,6 +95,7 @@ function remote(response: () => Response) {
       url: new URL("https://api.example/v1/comma/me/recordings/transcribe"),
       assertCurrent: () => undefined,
     }),
+    runOwned: (handler) => handler(),
   });
   return { transcriber, fetch, wavPath, m4aPath };
 }
@@ -144,5 +146,38 @@ describe("RemotePushToTalkTranscriber", () => {
     expect(await code(http.transcriber.transcribe(http.wavPath))).toBe(
       "transcription_failed"
     );
+  });
+
+  it("binds the session inside a Main-owned admission, not the hotkey's context", async () => {
+    // The turn starts from the native hotkey, outside any renderer call, so the
+    // session can only be bound inside the guard's own admission.
+    const admission = new AsyncLocalStorage<true>();
+    const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+      sse([event(ready("abre o relatório"))])
+    );
+    const root = mkdtempSync(join(tmpdir(), "comma-ptt-remote-"));
+    roots.push(root);
+    const wavPath = join(root, "turn.wav");
+    writeFileSync(wavPath, "wav");
+    const transcriber = new RemotePushToTalkTranscriber({
+      encoder: {
+        encode: async () => {
+          writeFileSync(join(root, "turn.m4a"), "m4a");
+          return join(root, "turn.m4a");
+        },
+      },
+      bindSession: () => {
+        if (!admission.getStore())
+          throw new Error("No native Session admission context is active.");
+        return {
+          fetch,
+          url: new URL("https://api.example/v1/comma/me/recordings/transcribe"),
+          assertCurrent: () => undefined,
+        };
+      },
+      runOwned: (handler) => admission.run(true, handler),
+    });
+    expect(await transcriber.transcribe(wavPath)).toEqual({ text: "abre o relatório" });
+    expect(fetch).toHaveBeenCalledOnce();
   });
 });

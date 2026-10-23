@@ -1284,6 +1284,7 @@ export async function createElectronMainContext(
         new RemotePushToTalkTranscriber({
           encoder: new HelperRecordingEncoder(microphoneHostPath),
           bindSession: bindRecordingTranscriptionSession,
+          runOwned: async (handler) => sessionAdmissionGuard.runOwned(handler),
         }),
     });
     const hotkey = reportPushToTalkInputMonitoring(pushToTalkDeps.hotkey, (state) =>

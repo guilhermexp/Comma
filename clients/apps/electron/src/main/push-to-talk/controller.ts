@@ -333,6 +333,7 @@ export class PushToTalkController {
       this.#showState({ kind: "transcribing" });
       text = (await transcriber.transcribe(path)).text.trim();
     } catch (error) {
+      this.#log(`Push-to-talk transcription failed: ${message(error)}`);
       this.#endTurn(turn);
       this.#showError(
         error instanceof PushToTalkTranscriptionError

@@ -34,13 +34,17 @@ export function stripTranscriptLabels(transcript: string) {
 export class RemotePushToTalkTranscriber implements PushToTalkTranscriber {
   readonly #encoder: RecordingEncoder;
   readonly #bindSession: () => RecordingASRSession;
+  readonly #runOwned: <T>(handler: () => Promise<T>) => Promise<T>;
 
   constructor(options: {
     encoder: RecordingEncoder;
     bindSession: () => RecordingASRSession;
+    /** The turn starts from the native hotkey, outside any renderer call. */
+    runOwned: <T>(handler: () => Promise<T>) => Promise<T>;
   }) {
     this.#encoder = options.encoder;
     this.#bindSession = options.bindSession;
+    this.#runOwned = options.runOwned;
   }
 
   /** The server owns the engine; its refusal arrives with the answer. */
@@ -48,7 +52,11 @@ export class RemotePushToTalkTranscriber implements PushToTalkTranscriber {
     return true;
   }
 
-  async transcribe(wavPath: string): Promise<PushToTalkTranscript> {
+  transcribe(wavPath: string): Promise<PushToTalkTranscript> {
+    return this.#runOwned(() => this.#transcribe(wavPath));
+  }
+
+  async #transcribe(wavPath: string): Promise<PushToTalkTranscript> {
     const session = this.#bindSession();
     let m4aPath: string | undefined;
     try {
