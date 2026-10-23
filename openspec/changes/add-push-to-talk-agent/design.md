@@ -94,7 +94,7 @@ A entrega não abre a sidebar nem nenhuma janela (revisão da UX): a resposta ap
 
 Alternativas: injetar no composer da sidebar por evento — usaria o rascunho do usuário; anexar pela chamada de voz (`CallActor`) — exige backend novo e só serve à chamada contínua.
 
-### D7. Resposta lida com `say`
+### D7. Resposta lida com `say` (substituída por D12 como voz principal; `say` fica como fallback)
 
 Ao enviar, o controlador guarda `{ conversationId, enviadoEm }`. O gancho `onCanonicalMessagesAppended` (já ligado às notificações) também chama o controlador; a primeira mensagem que passa em `isRouterMessage` nessa conversa e é posterior ao envio encerra a espera. O texto passa por uma função que tira Markdown (títulos, ênfase, links → rótulo, blocos de código → "trecho de código") e é dividido em frases; cada frase vai para `/usr/bin/say` em sequência e, ao começar, vira o texto do balão (`overlay.setCaption`) e o estado `speaking` do notch. O próximo aperto mata o processo e descarta as frases restantes. Com a voz desligada, o balão mostra a resposta inteira por `clamp(palavras × 300 ms, 4 s, 20 s)`.
 
@@ -123,6 +123,21 @@ Alternativas: `NSEvent.addGlobalMonitorForEvents(.flagsChanged)` também exige M
 
 [INFERENCE] A permissão pode ficar atribuída ao processo responsável (o Comma) ou ao helper `surf.comma.desktop.side-chat`; o smoke confirma qual nome aparece em Ajustes do Sistema, e o texto do botão aponta para o painel certo.
 
+### D11. Pedido de Gravação de Tela pelo helper
+
+No macOS 15+, `systemPreferences.getMediaAccessStatus("screen")` responde `denied` também quando o Comma nunca pediu a permissão (medido: um Electron com a identidade do Comma Dev responde `denied` antes de qualquer pedido). Pular a captura nesse estado deixava o Comma fora da lista de Gravação de Tela, sem como o usuário conceder. O `SideChatHost` ganha o frame `push-to-talk.request-screen-recording`, que chama `CGRequestScreenCaptureAccess()`; o TCC atribui o pedido ao Comma (processo responsável), como já acontece com o Monitoramento de Entrada. O Main pede quando: o print está ligado e o status não é `granted` — no primeiro aperto de cada execução, ao ligar "Enviar print" nos Ajustes e na ação de erro "Abrir Ajustes do Sistema" (antes de abrir o painel). Os Ajustes ganham a linha de estado "Gravação de Tela", no mesmo padrão da linha de Monitoramento de Entrada.
+
+### D12. Resposta falada pela voz GPT Live das chamadas
+
+A resposta é lida por uma sessão de voz GPT Live da assinatura ChatGPT, a mesma das chamadas (`Model.Codex`, `gpt-live-1-codex`, voz `gpt_live_voice` dos ajustes de voz), num modo novo de leitura:
+
+- **Backend.** `POST /v1/comma/workspaces/:id/voice/calls` aceita `mode: "read_aloud"`. Nesse modo o `CallActor` usa instruções de leitura (ler exatamente o texto recebido, no idioma dele, sem saudar, resumir, perguntar ou comentar; ficar em silêncio sem texto), não resolve o perfil (economiza até 2,5 s), não saúda, não envia `voice.call_started`/`voice.call_ended` ao Router e ignora delegações. Rota nova `POST …/voice/calls/:call_id/say {text}`, com o mesmo escopo `{tenant, group, user}` de `events`/`hang_up`, que enfileira o texto e o entrega ao modelo quando a sessão começa. Duração máxima curta (120 s).
+- **Desktop.** Uma janela oculta nova (`push-to-talk-voice`, sem foco, `autoplayPolicy: "no-user-gesture-required"`) hospeda o `RTCPeerConnection` com uma faixa de áudio silenciosa sintética (sem microfone e sem permissão; o modelo precisa de áudio de entrada contínuo) e o canal `oai-events`. O Main faz as chamadas HTTP com a sessão dele, faz o polling dos eventos e repassa as legendas do agente ao balão (última frase do texto acumulado). O fim da fala é a legenda final do agente seguida de silêncio no áudio recebido; então o Main desliga (`DELETE`). Um novo aperto desliga na hora.
+- **Pré-aquecimento.** A sessão abre quando a pergunta é enviada (estado `thinking`), para a voz começar perto de 1 s depois da resposta chegar; se a resposta não vier em 180 s, desliga.
+- **Fallback.** Qualquer falha ao abrir ou falar (`disabled`, `codex_account_required`, `busy`, timeout, sem áudio em 8 s) cai na leitura por `say` (D7) da mesma resposta, sem repetir o que já foi falado. `disabled` e `codex_account_required` ficam memorizados até a próxima mudança de ajustes, para não pagar a espera a cada turno.
+
+Alternativas: OpenAI TTS por chave de API (lê literalmente, mas cobra por uso e pede chave); vozes Premium do macOS (grátis, mas não é a voz do GPT); chamada contínua com o modelo de voz ouvindo o usuário (mais natural, mas depende de protocolo não documentado e de backend para anexos) — fora desta change.
+
 ## Risks / Trade-offs
 
 - **R1** — [O modelo do agente não aceita imagem e não há descritor configurado; `fs.read_file` da imagem falha] → a mensagem já traz texto, app e coordenadas; o aviso de privacidade/ajuda dos Ajustes explica que o print exige um modelo com visão. Sem mudança no backend nesta change.
@@ -134,6 +149,9 @@ Alternativas: `NSEvent.addGlobalMonitorForEvents(.flagsChanged)` também exige M
 - **R9** — [Campos de senha ativam a entrada segura do macOS e o event tap deixa de ver as teclas] → o atalho fica inativo nesse momento; aceito.
 - **R6** — [A voz padrão do sistema pode não ser pt-BR] → aceitar nesta change (segue o ajuste "Conteúdo falado" do macOS); escolha de voz fica para depois.
 - **R7** — [Print com dados sensíveis vai ao provedor do modelo] → desligável, padrão explicado nos Ajustes, nada é capturado com o print desligado.
+
+- **R10** — [O GPT Live pode reformular o texto em vez de ler literalmente, ou não falar com faixa silenciosa] → o spike da tarefa 8.2 mede: legenda final do agente comparada ao texto enviado e bytes de áudio recebidos; se não ler de forma aceitável, a change volta para decisão do dono antes de seguir.
+- **R11** — [Uma sessão de leitura ocupa a vaga de chamada do grupo] → a sessão dura só a leitura; uma chamada manual em andamento faz cair no fallback.
 
 ## Migration Plan
 

@@ -145,7 +145,12 @@ Enquanto o atalho estiver pressionado, o usuário MUST poder arrastar o mouse pa
 
 ### Requirement: Permissão de Gravação de Tela
 
-O print MUST depender da permissão de Gravação de Tela concedida ao próprio Comma. Sem a permissão, o turno MUST seguir só com o texto, a posição do cursor e o app em primeiro plano, e o notch MUST avisar que o print não foi enviado, com um botão para abrir os Ajustes do Sistema. Com o envio do print desligado, o app MUST NOT capturar a tela nem pedir a permissão. O texto de uso da permissão MUST mencionar o print enviado ao agente.
+O print MUST depender da permissão de Gravação de Tela do próprio Comma. Sem ela, o turno MUST seguir sem print e o notch MUST avisar, com um botão para os Ajustes do Sistema. Com o print ligado e a permissão não concedida, o app MUST pedir a permissão ao macOS em nome do Comma, para que ele apareça na lista de Gravação de Tela. Com o print desligado, o app MUST NOT capturar nem pedir. O texto de uso MUST mencionar o print enviado ao agente.
+
+#### Scenario: Primeira vez
+
+- **WHEN** o print está ligado, o Comma nunca pediu Gravação de Tela e o usuário faz uma pergunta
+- **THEN** o macOS mostra o pedido de Gravação de Tela para o Comma e o Comma passa a aparecer na lista dos Ajustes do Sistema
 
 #### Scenario: Permissão negada
 
@@ -206,12 +211,22 @@ O envio MUST NOT usar nem apagar o rascunho que o usuário tenha digitado na sid
 
 ### Requirement: Resposta falada e no balão
 
-O app MUST mostrar a primeira resposta completa do agente que chegar na conversa depois do envio de um turno num balão junto ao cursor companheiro, sem marcações de formatação. Com a resposta falada ligada (padrão), o app MUST lê-la com a voz do sistema frase por frase, mostrando no balão a frase em leitura. Com ela desligada, o balão MUST mostrar a resposta pelo tempo de leitura.
+O app MUST mostrar a primeira resposta completa do agente que chegar na conversa depois do envio de um turno num balão junto ao cursor companheiro, sem marcações de formatação. Com a resposta falada ligada (padrão), o app MUST lê-la com a mesma voz GPT Live das chamadas de voz do Comma, mostrando no balão a frase em leitura. Com ela desligada, o balão MUST mostrar a resposta pelo tempo de leitura.
 
 #### Scenario: Leitura da resposta
 
 - **WHEN** o agente responde ao turno enviado pelo atalho
 - **THEN** cada frase aparece no balão enquanto é lida em voz alta, uma única vez
+
+#### Scenario: Mesma voz das chamadas
+
+- **WHEN** a conta ChatGPT está conectada, a voz está ligada no workspace e o agente responde
+- **THEN** a resposta é falada pela voz GPT Live configurada para as chamadas, sem saudação nem comentários além do texto da resposta
+
+#### Scenario: Voz GPT Live indisponível
+
+- **WHEN** a sessão de voz GPT Live não pode começar (voz desligada, sem conta ChatGPT, chamada em andamento ou falha de conexão)
+- **THEN** a resposta é lida com a voz do sistema, uma única vez, sem repetir trechos
 
 #### Scenario: Voz desligada
 
