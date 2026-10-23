@@ -1100,6 +1100,9 @@
         },
         {
           "properties": {
+            "cancelled": {
+              "type": "boolean"
+            },
             "kind": {
               "const": "push-to-talk.released",
               "type": "string"
@@ -1113,7 +1116,29 @@
               "type": "string"
             }
           },
-          "required": ["kind", "protocolVersion", "requestId"],
+          "required": ["cancelled", "kind", "protocolVersion", "requestId"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "inputMonitoring": {
+              "enum": ["granted", "denied"],
+              "type": "string"
+            },
+            "kind": {
+              "const": "push-to-talk.permission",
+              "type": "string"
+            },
+            "protocolVersion": {
+              "const": 3,
+              "type": "number"
+            },
+            "requestId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": ["inputMonitoring", "kind", "protocolVersion", "requestId"],
           "type": "object"
         },
         {
@@ -2003,19 +2028,25 @@
         },
         {
           "properties": {
-            "keyCode": {
-              "maximum": 127,
-              "minimum": 0,
-              "type": "integer"
+            "binding": {
+              "properties": {
+                "keyCode": {
+                  "maximum": 127,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "modifiers": {
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": ["modifiers"],
+              "type": "object"
             },
             "kind": {
               "const": "push-to-talk.shortcut",
               "type": "string"
-            },
-            "modifiers": {
-              "maximum": 65535,
-              "minimum": 0,
-              "type": "integer"
             },
             "protocolVersion": {
               "const": 3,
@@ -2026,7 +2057,25 @@
               "type": "string"
             }
           },
-          "required": ["modifiers", "kind", "protocolVersion", "requestId"],
+          "required": ["kind", "protocolVersion", "requestId"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "push-to-talk.request-input-monitoring",
+              "type": "string"
+            },
+            "protocolVersion": {
+              "const": 3,
+              "type": "number"
+            },
+            "requestId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": ["kind", "protocolVersion", "requestId"],
           "type": "object"
         },
         {
@@ -2482,19 +2531,25 @@
         },
         {
           "properties": {
-            "keyCode": {
-              "maximum": 127,
-              "minimum": 0,
-              "type": "integer"
+            "binding": {
+              "properties": {
+                "keyCode": {
+                  "maximum": 127,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "modifiers": {
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": ["modifiers"],
+              "type": "object"
             },
             "kind": {
               "const": "push-to-talk.shortcut",
               "type": "string"
-            },
-            "modifiers": {
-              "maximum": 65535,
-              "minimum": 0,
-              "type": "integer"
             },
             "protocolVersion": {
               "const": 3,
@@ -2505,7 +2560,25 @@
               "type": "string"
             }
           },
-          "required": ["modifiers", "kind", "protocolVersion", "requestId"],
+          "required": ["kind", "protocolVersion", "requestId"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "push-to-talk.request-input-monitoring",
+              "type": "string"
+            },
+            "protocolVersion": {
+              "const": 3,
+              "type": "number"
+            },
+            "requestId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": ["kind", "protocolVersion", "requestId"],
           "type": "object"
         },
         {

@@ -157,9 +157,18 @@ function installWorkspaceList(workspaceIds: readonly string[]) {
   );
 }
 
-const installTalkToAgentMac = (sideChatEnabled: boolean) => {
+const installTalkToAgentMac = (
+  sideChatEnabled: boolean,
+  options: {
+    inputMonitoring?: "granted" | "denied" | "not-needed";
+    openInputMonitoringSettings?: () => Promise<{ opened: boolean }>;
+  } = {}
+) => {
   const preferences = appPreferencesSchema.parse({
     launchAtLogin: false,
+    ...(options.inputMonitoring
+      ? { pushToTalkInputMonitoringStatus: options.inputMonitoring }
+      : {}),
     showInDock: true,
     showInMenuBar: true,
     sideChatEnabled,
@@ -168,6 +177,9 @@ const installTalkToAgentMac = (sideChatEnabled: boolean) => {
     appPreferences: {
       state: createNativeStateBridgeMock(() => preferences),
       update: vi.fn(async () => preferences),
+      ...(options.openInputMonitoringSettings
+        ? { openInputMonitoringSettings: options.openInputMonitoringSettings }
+        : {}),
     },
     os: "macos",
     platform: "electron",
@@ -1672,7 +1684,7 @@ describe("AppSettingsRoute", () => {
       );
 
       await userEvent.click(
-        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt + Space" })
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt" })
       );
       await userEvent.keyboard("{Control>}{Shift>}k{/Shift}{/Control}");
       await waitFor(() =>
@@ -1681,6 +1693,73 @@ describe("AppSettingsRoute", () => {
           modifiers: { alt: false, control: true, meta: false, shift: true },
         })
       );
+    });
+
+    // Gravar só modificadores nos Ajustes
+    it("records modifiers held alone, such as Control-Option, as the shortcut", async () => {
+      installTalkToAgentMac(true);
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+      const enabled = section.getByRole("switch", { name: "Talk to agent" });
+      await waitFor(() => expect(enabled).toBeEnabled());
+      await userEvent.click(enabled);
+
+      await userEvent.click(
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt" })
+      );
+      await userEvent.keyboard("{Meta>}{Shift>}{/Shift}{/Meta}");
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkShortcut).toEqual({
+          key: null,
+          modifiers: { alt: false, control: false, meta: true, shift: true },
+        })
+      );
+      expect(
+        section.getByRole("button", { name: "Hold to talk: Shift + Cmd" })
+      ).toBeInTheDocument();
+    });
+
+    // Permissão ausente
+    it("says the chord is inactive without Input Monitoring and opens System Settings", async () => {
+      const openInputMonitoringSettings = vi.fn(async () => ({ opened: true }));
+      installTalkToAgentMac(true, {
+        inputMonitoring: "denied",
+        openInputMonitoringSettings,
+      });
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+      const enabled = section.getByRole("switch", { name: "Talk to agent" });
+      await waitFor(() => expect(enabled).toBeEnabled());
+      // Off: no permission row.
+      expect(section.queryByText("Input Monitoring")).not.toBeInTheDocument();
+      await userEvent.click(enabled);
+
+      expect(await section.findByText("Input Monitoring")).toBeVisible();
+      expect(section.getByText("Shortcut inactive")).toBeVisible();
+      await userEvent.click(
+        section.getByRole("button", { name: "Open System Settings" })
+      );
+      expect(openInputMonitoringSettings).toHaveBeenCalledOnce();
+    });
+
+    // Tecla comum
+    it("shows no Input Monitoring row for a chord with a key", async () => {
+      installTalkToAgentMac(true, { inputMonitoring: "not-needed" });
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+      const enabled = section.getByRole("switch", { name: "Talk to agent" });
+      await waitFor(() => expect(enabled).toBeEnabled());
+      await userEvent.click(enabled);
+      await userEvent.click(
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt" })
+      );
+      await userEvent.keyboard("{Control>}{Alt>} {/Alt}{/Control}");
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkShortcut).toMatchObject({
+          key: "space",
+        })
+      );
+      expect(section.queryByText("Input Monitoring")).not.toBeInTheDocument();
     });
 
     it("is unavailable, with the reason, while Side Chat is off", async () => {
@@ -1695,7 +1774,7 @@ describe("AppSettingsRoute", () => {
       );
       expect(section.getByRole("switch", { name: "Talk to agent" })).toBeDisabled();
       expect(
-        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt + Space" })
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt" })
       ).toBeDisabled();
     });
 
@@ -1708,7 +1787,7 @@ describe("AppSettingsRoute", () => {
       await userEvent.click(enabled);
 
       const shortcut = section.getByRole("button", {
-        name: "Hold to talk: Ctrl + Alt + Space",
+        name: "Hold to talk: Ctrl + Alt",
       });
       await waitFor(() => expect(shortcut).toBeEnabled());
       await userEvent.click(shortcut);
@@ -1718,18 +1797,28 @@ describe("AppSettingsRoute", () => {
       ).toBeInTheDocument();
 
       await userEvent.click(
-        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt + Space" })
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt" })
       );
       await userEvent.keyboard("{Alt>}[Comma]{/Alt}");
       expect(
         await section.findByText("Already used by Open Comma.")
       ).toBeInTheDocument();
       expect(readStoredClientSettings().pushToTalkShortcut).toEqual({
-        key: "space",
+        key: null,
         modifiers: { alt: true, control: true, meta: false, shift: false },
       });
 
       // The other direction: Side Chat cannot take the Talk to agent chord.
+      await userEvent.click(
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt" })
+      );
+      await userEvent.keyboard("{Control>}{Alt>} {/Alt}{/Control}");
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkShortcut).toEqual({
+          key: "space",
+          modifiers: { alt: true, control: true, meta: false, shift: false },
+        })
+      );
       await userEvent.click(
         screen.getByRole("button", { name: "Open Side Chat: Ctrl + Z" })
       );

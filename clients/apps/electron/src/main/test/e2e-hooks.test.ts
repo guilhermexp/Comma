@@ -337,6 +337,7 @@ describe("Electron e2e hooks", () => {
       close: vi.fn(async () => {}),
       initializeClientSettings: vi.fn(async () => defaultAppPreferences),
       openLoginItemsSettings: vi.fn(async () => ({ opened: false })),
+      openInputMonitoringSettings: vi.fn(async () => ({ opened: false })),
       openNotificationSettings: vi.fn(async () => ({ opened: false })),
       requestNotificationAuthorization: vi.fn(async () => "available" as const),
       state: vi.fn(() => defaultAppPreferences),

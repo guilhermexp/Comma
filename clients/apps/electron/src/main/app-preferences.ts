@@ -255,6 +255,21 @@ export class AppPreferencesService {
     return queued;
   }
 
+  /**
+   * Publishes the Input Monitoring readback the side chat helper reports for
+   * a modifier-only Talk to agent chord. Never persisted; a repeat is no change.
+   */
+  setPushToTalkInputMonitoringStatus(
+    status: NonNullable<AppPreferences["pushToTalkInputMonitoringStatus"]>
+  ) {
+    const refreshed = { ...this.#preferences, pushToTalkInputMonitoringStatus: status };
+    if (samePreferenceValues(refreshed, this.#preferences)) return this.state();
+    this.#preferences = withNextRevision(refreshed, this.#preferences);
+    const snapshot = this.state();
+    this.#onStateChanged(snapshot);
+    return snapshot;
+  }
+
   #applySystemNotificationsStatus(status: SystemNotificationsStatus) {
     const refreshed = withSystemNotificationsStatusReadback(this.#preferences, status);
     if (samePreferenceValues(refreshed, this.#preferences)) return this.state();
@@ -532,6 +547,7 @@ function samePreferenceValues(left: AppPreferences, right: AppPreferences) {
   return (
     sameClientSettings(left.clientSettings, right.clientSettings) &&
     left.openCommaShortcutStatus === right.openCommaShortcutStatus &&
+    left.pushToTalkInputMonitoringStatus === right.pushToTalkInputMonitoringStatus &&
     left.airDropName === right.airDropName &&
     left.keepAwakeWhenLidClosed === right.keepAwakeWhenLidClosed &&
     left.keepAwakeWhenLidClosedStatus === right.keepAwakeWhenLidClosedStatus &&

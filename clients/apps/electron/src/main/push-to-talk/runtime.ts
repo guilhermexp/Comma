@@ -4,7 +4,11 @@ import {
 } from "@comma/native-bridge";
 import type { PushToTalkController } from "./controller";
 import type { PushToTalkTranscriber } from "./transcriber";
-import type { PushToTalkSettings } from "./types";
+import type {
+  PushToTalkHotkey,
+  PushToTalkInputMonitoring,
+  PushToTalkSettings,
+} from "./types";
 
 /** What decides whether the hold-to-talk shortcut is registered. */
 export type PushToTalkRuntimeInputs = {
@@ -72,6 +76,29 @@ export class PushToTalkRuntime {
     this.#controller?.dispose();
     this.#controller = undefined;
   }
+}
+
+/**
+ * Passes every Input Monitoring state the hotkey learns, at registration and
+ * on later helper reports, to `report` (Main publishes it to Settings).
+ */
+export function reportPushToTalkInputMonitoring(
+  hotkey: PushToTalkHotkey,
+  report: (state: PushToTalkInputMonitoring) => void
+): PushToTalkHotkey {
+  hotkey.onInputMonitoring(report);
+  return {
+    register: async (shortcut) => {
+      const result = await hotkey.register(shortcut);
+      report(result.inputMonitoring);
+      return result;
+    },
+    requestInputMonitoring: () => hotkey.requestInputMonitoring(),
+    onPressed: (listener) => hotkey.onPressed(listener),
+    onReleased: (listener) => hotkey.onReleased(listener),
+    onInputMonitoring: (listener) => hotkey.onInputMonitoring(listener),
+    onHelperRestarted: (listener) => hotkey.onHelperRestarted(listener),
+  };
 }
 
 const unavailableTranscriber: PushToTalkTranscriber = {

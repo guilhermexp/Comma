@@ -4,7 +4,7 @@ import {
   sameAppKeybinding,
   type AppKeybinding,
 } from "@comma/ui";
-import { type SideChatShortcutBinding } from "@comma/native-bridge";
+import { type PushToTalkShortcutBinding } from "@comma/native-bridge";
 import {
   createContext,
   useCallback,
@@ -60,7 +60,7 @@ const findConflict = (
 
 const disableSideChatConflict = (
   bindings: AppShortcutBindings,
-  ...shortcuts: Array<SideChatShortcutBinding | undefined>
+  ...shortcuts: Array<PushToTalkShortcutBinding | undefined>
 ) => {
   let next = bindings;
   for (const shortcut of shortcuts) {

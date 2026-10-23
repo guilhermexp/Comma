@@ -8,6 +8,9 @@
 //   front and exits while it is held; the restarted helper presses (no
 //   frontmost app) and releases after the replayed registration.
 // - "reject": every registration with a keyCode is refused.
+// - "chord": a modifier-only binding reports Input Monitoring denied until
+//   push-to-talk.request-input-monitoring grants it; the grant is followed by
+//   a press and release, then a press cancelled by another key.
 
 const { appendFileSync, existsSync, writeFileSync } = require("node:fs");
 const readline = require("node:readline");
@@ -16,6 +19,7 @@ const protocolVersion = 3;
 const logPath = process.env.COMMA_PTT_FIXTURE_LOG;
 const mode = process.env.COMMA_PTT_FIXTURE_MODE;
 const crashedMarker = `${logPath}.crashed`;
+let inputMonitoring = "denied";
 
 function emit(frame) {
   process.stdout.write(`${JSON.stringify(frame)}\n`);
@@ -31,6 +35,15 @@ function emitResult(requestId, ok, error) {
   });
 }
 
+function emitPermission() {
+  emit({
+    inputMonitoring,
+    kind: "push-to-talk.permission",
+    protocolVersion,
+    requestId: "fixture-permission",
+  });
+}
+
 const input = readline.createInterface({ input: process.stdin });
 input.on("line", (line) => {
   let frame;
@@ -41,17 +54,33 @@ input.on("line", (line) => {
   }
 
   const requestId = typeof frame.requestId === "string" ? frame.requestId : "fixture";
+  if (frame.kind === "push-to-talk.request-input-monitoring") {
+    appendFileSync(logPath, `${JSON.stringify({ request: "input-monitoring" })}\n`);
+    inputMonitoring = "granted";
+    emitPermission();
+    emitResult(requestId, true);
+    if (mode !== "chord") return;
+    for (const [kind, extra] of [
+      ["push-to-talk.pressed", { frontmostApp: { name: "Finder" } }],
+      ["push-to-talk.released", { cancelled: false }],
+      ["push-to-talk.pressed", {}],
+      ["push-to-talk.released", { cancelled: true }],
+    ]) {
+      emit({ ...extra, kind, protocolVersion, requestId: `fixture-${kind}` });
+    }
+    return;
+  }
+
   if (frame.kind === "push-to-talk.shortcut") {
-    appendFileSync(
-      logPath,
-      `${JSON.stringify({ keyCode: frame.keyCode ?? null, modifiers: frame.modifiers })}\n`
-    );
-    if (mode === "reject" && frame.keyCode !== undefined) {
+    const binding = frame.binding ?? null;
+    appendFileSync(logPath, `${JSON.stringify({ binding })}\n`);
+    if (mode === "reject" && binding?.keyCode !== undefined) {
       emitResult(requestId, false, "The fixture refused the push-to-talk chord.");
       return;
     }
+    if (binding && binding.keyCode === undefined) emitPermission();
     emitResult(requestId, true);
-    if (mode !== "crash-while-held" || frame.keyCode === undefined) return;
+    if (mode !== "crash-while-held" || binding?.keyCode === undefined) return;
 
     if (!existsSync(crashedMarker)) {
       writeFileSync(crashedMarker, "1");
@@ -70,6 +99,7 @@ input.on("line", (line) => {
       requestId: "fixture-pressed-2",
     });
     emit({
+      cancelled: false,
       kind: "push-to-talk.released",
       protocolVersion,
       requestId: "fixture-released-2",

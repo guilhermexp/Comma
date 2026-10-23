@@ -7,6 +7,8 @@ import {
   browserSidebarOpenInputSchema,
   browserSidebarStateSchema,
   browserSidebarUpdateInputSchema,
+  commaClientSettingsPatchSchema,
+  defaultCommaClientSettings,
   defineNativeCapability,
   generatedNativeCapabilityContracts,
   generatedNativeCapabilityIndex,
@@ -83,6 +85,9 @@ const TEST_SESSION_PRODUCT_LEASE = {
   sessionId: "session-1",
 } as const;
 
+const parsesPushToTalkShortcut = (pushToTalkShortcut: unknown) =>
+  commaClientSettingsPatchSchema.safeParse({ pushToTalkShortcut }).success;
+
 describe("app preference schemas", () => {
   it("keeps omitted patch fields absent and rejects an empty patch", () => {
     expect(appPreferencesPatchSchema.parse({ notificationSound: false })).toEqual({
@@ -109,6 +114,62 @@ describe("app preference schemas", () => {
       notifyRouterMessages: true,
       systemNotifications: true,
     });
+  });
+
+  it("defaults Talk to agent to the Control-Option chord and accepts modifier-only chords", () => {
+    const controlOption = {
+      key: null,
+      modifiers: { alt: true, control: true, meta: false, shift: false },
+    };
+    expect(defaultCommaClientSettings.pushToTalkShortcut).toEqual(controlOption);
+    expect(parsesPushToTalkShortcut(controlOption)).toBe(true);
+    expect(
+      parsesPushToTalkShortcut({
+        key: null,
+        modifiers: { alt: false, control: false, meta: true, shift: true },
+      })
+    ).toBe(true);
+    // A single modifier alone fires on every ordinary use of that key.
+    expect(
+      parsesPushToTalkShortcut({
+        key: null,
+        modifiers: { alt: true, control: false, meta: false, shift: false },
+      })
+    ).toBe(false);
+    expect(
+      parsesPushToTalkShortcut({
+        key: "k",
+        modifiers: { alt: false, control: false, meta: true, shift: false },
+      })
+    ).toBe(true);
+    expect(
+      parsesPushToTalkShortcut({
+        key: "k",
+        modifiers: { alt: false, control: false, meta: false, shift: false },
+      })
+    ).toBe(false);
+    expect(parsesPushToTalkShortcut(null)).toBe(true);
+    // Side Chat and Open Comma still need a regular key.
+    expect(
+      commaClientSettingsPatchSchema.safeParse({ sideChatShortcut: controlOption })
+        .success
+    ).toBe(false);
+  });
+
+  it("keeps the Input Monitoring readback out of patches", () => {
+    expect(
+      appPreferencesSchema.parse({
+        launchAtLogin: false,
+        pushToTalkInputMonitoringStatus: "denied",
+        showInDock: true,
+        showInMenuBar: true,
+      }).pushToTalkInputMonitoringStatus
+    ).toBe("denied");
+    expect(
+      appPreferencesPatchSchema.safeParse({
+        pushToTalkInputMonitoringStatus: "granted",
+      }).success
+    ).toBe(false);
   });
 
   it("keeps the OS notification readback out of patches", () => {

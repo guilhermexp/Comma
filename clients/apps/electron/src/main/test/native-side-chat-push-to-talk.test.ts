@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { SideChatShortcut } from "@comma/native-bridge";
+import type { PushToTalkShortcut } from "@comma/native-bridge";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NativeSideChatService } from "../native-side-chat";
 import { createNativePushToTalkHotkey } from "../push-to-talk/native-hotkey";
@@ -20,10 +20,11 @@ const fixturePath = fileURLToPath(
   )
 );
 
-const controlOptionSpace: SideChatShortcut = {
+const controlOptionSpace: PushToTalkShortcut = {
   key: "space",
   modifiers: { alt: true, control: true, meta: false, shift: false },
 };
+const controlOption: PushToTalkShortcut = { ...controlOptionSpace, key: null };
 
 describe("push-to-talk hotkey over the Side Chat helper", () => {
   const cleanups: Array<() => Promise<void> | void> = [];
@@ -31,7 +32,7 @@ describe("push-to-talk hotkey over the Side Chat helper", () => {
     for (const cleanup of cleanups.splice(0).toReversed()) await cleanup();
   });
 
-  async function startFixture(mode: "crash-while-held" | "reject") {
+  async function startFixture(mode: "chord" | "crash-while-held" | "reject") {
     const directory = await mkdtemp(join(tmpdir(), "comma-ptt-fixture-"));
     const logPath = join(directory, "frames.jsonl");
     const service = new NativeSideChatService({
@@ -53,9 +54,7 @@ describe("push-to-talk hotkey over the Side Chat helper", () => {
       return text
         .split("\n")
         .filter(Boolean)
-        .map(
-          (line) => JSON.parse(line) as { keyCode: number | null; modifiers: number }
-        );
+        .map((line) => JSON.parse(line) as unknown);
     };
     return { registrations, service };
   }
@@ -65,7 +64,7 @@ describe("push-to-talk hotkey over the Side Chat helper", () => {
     const hotkey = createNativePushToTalkHotkey(service);
     const events: unknown[] = [];
     hotkey.onPressed((event) => events.push({ pressed: event }));
-    hotkey.onReleased(() => events.push("released"));
+    hotkey.onReleased((event) => events.push({ released: event }));
     hotkey.onHelperRestarted(() => events.push("helper-restarted"));
     service.start();
 
@@ -73,7 +72,9 @@ describe("push-to-talk hotkey over the Side Chat helper", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(await registrations()).toEqual([]);
 
-    await hotkey.register(controlOptionSpace);
+    await expect(hotkey.register(controlOptionSpace)).resolves.toEqual({
+      inputMonitoring: "not-needed",
+    });
     await vi.waitFor(
       () => {
         expect(events).toEqual([
@@ -86,18 +87,18 @@ describe("push-to-talk hotkey over the Side Chat helper", () => {
           "helper-restarted",
           // The restarted helper received the replayed chord.
           { pressed: { frontmostApp: null } },
-          "released",
+          { released: { cancelled: false } },
         ]);
       },
       { interval: 20, timeout: 4_000 }
     );
     expect(await registrations()).toEqual([
-      { keyCode: 49, modifiers: 6_144 },
-      { keyCode: 49, modifiers: 6_144 },
+      { binding: { keyCode: 49, modifiers: 6_144 } },
+      { binding: { keyCode: 49, modifiers: 6_144 } },
     ]);
 
     await hotkey.register(null);
-    expect((await registrations()).at(-1)).toEqual({ keyCode: null, modifiers: 0 });
+    expect((await registrations()).at(-1)).toEqual({ binding: null });
   });
 
   it("rejects a chord the helper cannot register and does not replay it", async () => {
@@ -108,7 +109,52 @@ describe("push-to-talk hotkey over the Side Chat helper", () => {
     await expect(hotkey.register(controlOptionSpace)).rejects.toThrow(
       "The fixture refused the push-to-talk chord."
     );
-    expect(await registrations()).toEqual([{ keyCode: 49, modifiers: 6_144 }]);
+    expect(await registrations()).toEqual([
+      { binding: { keyCode: 49, modifiers: 6_144 } },
+    ]);
+  });
+
+  it("registers a modifier-only chord, reports Input Monitoring and a cancelled release", async () => {
+    const { registrations, service } = await startFixture("chord");
+    const hotkey = createNativePushToTalkHotkey(service);
+    const events: unknown[] = [];
+    hotkey.onPressed((event) => events.push({ pressed: event }));
+    hotkey.onReleased((event) => events.push({ released: event }));
+    hotkey.onInputMonitoring((state) => events.push({ inputMonitoring: state }));
+    service.start();
+
+    // ⌃⌥ alone: the helper observes it only with Input Monitoring.
+    await expect(hotkey.register(controlOption)).resolves.toEqual({
+      inputMonitoring: "denied",
+    });
+    await hotkey.requestInputMonitoring();
+    await vi.waitFor(
+      () =>
+        expect(events).toEqual([
+          { inputMonitoring: "denied" },
+          { inputMonitoring: "granted" },
+          { pressed: { frontmostApp: { bundleId: null, name: "Finder" } } },
+          { released: { cancelled: false } },
+          { pressed: { frontmostApp: null } },
+          // ⌃⌥ joined by another key: a different shortcut.
+          { released: { cancelled: true } },
+        ]),
+      { interval: 20, timeout: 2_000 }
+    );
+
+    // A chord with a regular key never needs Input Monitoring.
+    await expect(hotkey.register(controlOptionSpace)).resolves.toEqual({
+      inputMonitoring: "not-needed",
+    });
+    await expect(hotkey.register(null)).resolves.toEqual({
+      inputMonitoring: "not-needed",
+    });
+    expect(await registrations()).toEqual([
+      { binding: { modifiers: 6_144 } },
+      { request: "input-monitoring" },
+      { binding: { keyCode: 49, modifiers: 6_144 } },
+      { binding: null },
+    ]);
   });
 
   it("stops delivering events to a listener after it unsubscribes", async () => {

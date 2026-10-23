@@ -14,6 +14,7 @@ import {
   appPreferencesCapability,
   appPreferencesChangedEvent,
   appPreferencesInitializeClientSettingsCapability,
+  appPreferencesOpenInputMonitoringSettingsCapability,
   appPreferencesOpenLoginItemsSettingsCapability,
   appPreferencesOpenNotificationSettingsCapability,
   appPreferencesRequestNotificationAuthorizationCapability,
@@ -296,6 +297,8 @@ export const generatedNativeCapabilityContracts = {
     appPreferencesInitializeClientSettingsCapability.contract,
   appPreferencesOpenLoginItemsSettings:
     appPreferencesOpenLoginItemsSettingsCapability.contract,
+  appPreferencesOpenInputMonitoringSettings:
+    appPreferencesOpenInputMonitoringSettingsCapability.contract,
   appPreferencesOpenNotificationSettings:
     appPreferencesOpenNotificationSettingsCapability.contract,
   appPreferencesRequestNotificationAuthorization:
@@ -516,6 +519,8 @@ export const generatedNativeWebFallbacks = {
     appPreferencesInitializeClientSettingsCapability.webFallback,
   appPreferencesOpenLoginItemsSettings:
     appPreferencesOpenLoginItemsSettingsCapability.webFallback,
+  appPreferencesOpenInputMonitoringSettings:
+    appPreferencesOpenInputMonitoringSettingsCapability.webFallback,
   appPreferencesOpenNotificationSettings:
     appPreferencesOpenNotificationSettingsCapability.webFallback,
   appPreferencesRequestNotificationAuthorization:
@@ -749,6 +754,8 @@ export const generatedNativePreloadBindings = {
     state: appPreferencesCapability.contract,
     initializeClientSettings: appPreferencesInitializeClientSettingsCapability.contract,
     openLoginItemsSettings: appPreferencesOpenLoginItemsSettingsCapability.contract,
+    openInputMonitoringSettings:
+      appPreferencesOpenInputMonitoringSettingsCapability.contract,
     openNotificationSettings: appPreferencesOpenNotificationSettingsCapability.contract,
     requestNotificationAuthorization:
       appPreferencesRequestNotificationAuthorizationCapability.contract,
@@ -1390,6 +1397,16 @@ export const generatedNativeMainBindingsById = {
     sessionAdmission: appPreferencesOpenLoginItemsSettingsCapability.sessionAdmission,
     sessionAdmissionRationale:
       appPreferencesOpenLoginItemsSettingsCapability.sessionAdmissionRationale,
+  },
+  "appPreferences.openInputMonitoringSettings": {
+    contract: appPreferencesOpenInputMonitoringSettingsCapability.contract,
+    id: appPreferencesOpenInputMonitoringSettingsCapability.id,
+    method: "openInputMonitoringSettings",
+    provider: "appPreferences",
+    sessionAdmission:
+      appPreferencesOpenInputMonitoringSettingsCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      appPreferencesOpenInputMonitoringSettingsCapability.sessionAdmissionRationale,
   },
   "appPreferences.openNotificationSettings": {
     contract: appPreferencesOpenNotificationSettingsCapability.contract,
@@ -3117,6 +3134,18 @@ export const generatedNativeCapabilityManifest = [
     sessionAdmissionRationale:
       appPreferencesOpenLoginItemsSettingsCapability.sessionAdmissionRationale,
     transport: appPreferencesOpenLoginItemsSettingsCapability.transport,
+  },
+  {
+    bridge: appPreferencesOpenInputMonitoringSettingsCapability.bridge,
+    channel: appPreferencesOpenInputMonitoringSettingsCapability.channel,
+    id: appPreferencesOpenInputMonitoringSettingsCapability.id,
+    payloadClass: appPreferencesOpenInputMonitoringSettingsCapability.payloadClass,
+    permission: appPreferencesOpenInputMonitoringSettingsCapability.permission,
+    sessionAdmission:
+      appPreferencesOpenInputMonitoringSettingsCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      appPreferencesOpenInputMonitoringSettingsCapability.sessionAdmissionRationale,
+    transport: appPreferencesOpenInputMonitoringSettingsCapability.transport,
   },
   {
     bridge: appPreferencesOpenNotificationSettingsCapability.bridge,
@@ -6023,6 +6052,32 @@ export const generatedNativeCapabilityIndex = {
     sessionAdmissionRationale:
       appPreferencesOpenLoginItemsSettingsCapability.sessionAdmissionRationale,
     transport: appPreferencesOpenLoginItemsSettingsCapability.transport,
+  },
+  "appPreferences.openInputMonitoringSettings": {
+    artifacts: {
+      contract: "appPreferencesOpenInputMonitoringSettingsContract",
+      handlerType:
+        'NativeCapabilityHandlerTypeMap["appPreferences.openInputMonitoringSettings"]',
+      leaf: "appPreferencesOpenInputMonitoringSettingsCapability",
+      mainBinding:
+        'generatedNativeMainBindingsById["appPreferences.openInputMonitoringSettings"]',
+      mock: "appPreferencesOpenInputMonitoringSettingsCapability.mock",
+      preloadBinding:
+        "generatedNativePreloadBindings.appPreferences.openInputMonitoringSettings",
+      webFallback:
+        "generatedNativeWebFallbacks.appPreferencesOpenInputMonitoringSettings",
+    },
+    bridge: appPreferencesOpenInputMonitoringSettingsCapability.bridge,
+    channel: appPreferencesOpenInputMonitoringSettingsCapability.channel,
+    handler: appPreferencesOpenInputMonitoringSettingsCapability.handler,
+    id: appPreferencesOpenInputMonitoringSettingsCapability.id,
+    payloadClass: appPreferencesOpenInputMonitoringSettingsCapability.payloadClass,
+    permission: appPreferencesOpenInputMonitoringSettingsCapability.permission,
+    sessionAdmission:
+      appPreferencesOpenInputMonitoringSettingsCapability.sessionAdmission,
+    sessionAdmissionRationale:
+      appPreferencesOpenInputMonitoringSettingsCapability.sessionAdmissionRationale,
+    transport: appPreferencesOpenInputMonitoringSettingsCapability.transport,
   },
   "appPreferences.openNotificationSettings": {
     artifacts: {
@@ -10802,6 +10857,8 @@ export const appPreferencesInitializeClientSettingsContract =
   generatedNativeCapabilityContracts.appPreferencesInitializeClientSettings;
 export const appPreferencesOpenLoginItemsSettingsContract =
   generatedNativeCapabilityContracts.appPreferencesOpenLoginItemsSettings;
+export const appPreferencesOpenInputMonitoringSettingsContract =
+  generatedNativeCapabilityContracts.appPreferencesOpenInputMonitoringSettings;
 export const appPreferencesOpenNotificationSettingsContract =
   generatedNativeCapabilityContracts.appPreferencesOpenNotificationSettings;
 export const appPreferencesRequestNotificationAuthorizationContract =
@@ -11164,6 +11221,7 @@ export type NativeCapabilityTypeMap = {
   "appPreferences.state": typeof appPreferencesCapability;
   "appPreferences.initializeClientSettings": typeof appPreferencesInitializeClientSettingsCapability;
   "appPreferences.openLoginItemsSettings": typeof appPreferencesOpenLoginItemsSettingsCapability;
+  "appPreferences.openInputMonitoringSettings": typeof appPreferencesOpenInputMonitoringSettingsCapability;
   "appPreferences.openNotificationSettings": typeof appPreferencesOpenNotificationSettingsCapability;
   "appPreferences.requestNotificationAuthorization": typeof appPreferencesRequestNotificationAuthorizationCapability;
   "appPreferences.update": typeof appPreferencesUpdateCapability;
@@ -11520,6 +11578,9 @@ export type GeneratedNativeBridge = {
     >;
     openLoginItemsSettings: GeneratedNativeCommandBridgeMethod<
       typeof appPreferencesOpenLoginItemsSettingsCapability
+    >;
+    openInputMonitoringSettings: GeneratedNativeCommandBridgeMethod<
+      typeof appPreferencesOpenInputMonitoringSettingsCapability
     >;
     openNotificationSettings: GeneratedNativeCommandBridgeMethod<
       typeof appPreferencesOpenNotificationSettingsCapability
@@ -12091,6 +12152,11 @@ export function createGeneratedNativePreloadBridge(
       openLoginItemsSettings: () =>
         helpers.invoke(
           appPreferencesOpenLoginItemsSettingsCapability.contract,
+          undefined
+        ),
+      openInputMonitoringSettings: () =>
+        helpers.invoke(
+          appPreferencesOpenInputMonitoringSettingsCapability.contract,
           undefined
         ),
       openNotificationSettings: () =>
@@ -12770,6 +12836,8 @@ export function createGeneratedNativeWebBridge(): GeneratedNativeBridge {
       ) => appPreferencesInitializeClientSettingsCapability.webFallback,
       openLoginItemsSettings: async () =>
         appPreferencesOpenLoginItemsSettingsCapability.webFallback,
+      openInputMonitoringSettings: async () =>
+        appPreferencesOpenInputMonitoringSettingsCapability.webFallback,
       openNotificationSettings: async () =>
         appPreferencesOpenNotificationSettingsCapability.webFallback,
       requestNotificationAuthorization: async () =>
@@ -13474,6 +13542,9 @@ export function createGeneratedNativeBridgeMock(
       ),
       openLoginItemsSettings: helpers.command(
         async () => appPreferencesOpenLoginItemsSettingsCapability.mock
+      ),
+      openInputMonitoringSettings: helpers.command(
+        async () => appPreferencesOpenInputMonitoringSettingsCapability.mock
       ),
       openNotificationSettings: helpers.command(
         async () => appPreferencesOpenNotificationSettingsCapability.mock

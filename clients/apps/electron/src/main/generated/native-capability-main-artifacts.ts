@@ -121,6 +121,7 @@ export type NativeCapabilityHandlerTypeMap = {
   "appPreferences.state": AppPreferencesProvider["state"];
   "appPreferences.initializeClientSettings": AppPreferencesProvider["initializeClientSettings"];
   "appPreferences.openLoginItemsSettings": AppPreferencesProvider["openLoginItemsSettings"];
+  "appPreferences.openInputMonitoringSettings": AppPreferencesProvider["openInputMonitoringSettings"];
   "appPreferences.openNotificationSettings": AppPreferencesProvider["openNotificationSettings"];
   "appPreferences.requestNotificationAuthorization": AppPreferencesProvider["requestNotificationAuthorization"];
   "appPreferences.update": AppPreferencesProvider["update"];
@@ -359,6 +360,8 @@ export function registerGeneratedNativeMainBindings({
       providers.appPreferences.initializeClientSettings(input),
     "appPreferences.openLoginItemsSettings": async (input) =>
       providers.appPreferences.openLoginItemsSettings(input),
+    "appPreferences.openInputMonitoringSettings": async (input) =>
+      providers.appPreferences.openInputMonitoringSettings(input),
     "appPreferences.openNotificationSettings": async (input) =>
       providers.appPreferences.openNotificationSettings(input),
     "appPreferences.requestNotificationAuthorization": async (input) =>

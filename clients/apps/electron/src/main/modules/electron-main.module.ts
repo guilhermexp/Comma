@@ -36,6 +36,7 @@ import { PushToTalkReplyWatcher } from "../push-to-talk/reply-watcher";
 import {
   choosePushToTalkTranscriber,
   PushToTalkRuntime,
+  reportPushToTalkInputMonitoring,
 } from "../push-to-talk/runtime";
 import type { PushToTalkSpeaker } from "../push-to-talk/speaker";
 import type { PushToTalkTranscriber } from "../push-to-talk/transcriber";
@@ -804,6 +805,22 @@ export async function createElectronMainContext(
       }),
     openLoginItemsSettings: async () =>
       deps.appPreferencesPlatform.openLoginItemsSettings?.() ?? { opened: false },
+    openInputMonitoringSettings: async () => {
+      const hotkey = deps.pushToTalk?.hotkey;
+      if (!hotkey) return { opened: false };
+      // The first request adds Comma to the list (and prompts once); the pane
+      // is where the user turns it on later.
+      await hotkey.requestInputMonitoring().catch((error: unknown) => {
+        deps.logger?.warn(
+          `Input Monitoring request failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          { source: "push-to-talk" }
+        );
+      });
+      await deps.openExternalUrl(INPUT_MONITORING_SETTINGS_URL);
+      return { opened: true };
+    },
     requestNotificationAuthorization: () =>
       appPreferencesService.requestSystemNotificationsAuthorization(),
     state: () => {
@@ -1260,6 +1277,9 @@ export async function createElectronMainContext(
           bindSession: bindRecordingTranscriptionSession,
         }),
     });
+    const hotkey = reportPushToTalkInputMonitoring(pushToTalkDeps.hotkey, (state) =>
+      appPreferencesService.setPushToTalkInputMonitoringStatus(state)
+    );
     pushToTalk = new PushToTalkRuntime({
       read: () => {
         const preferences = appPreferencesService.state();
@@ -1271,7 +1291,7 @@ export async function createElectronMainContext(
       },
       createController: (settings) =>
         new PushToTalkController({
-          hotkey: pushToTalkDeps.hotkey,
+          hotkey,
           overlay: pushToTalkDeps.overlay,
           screen: pushToTalkDeps.screen,
           speaker: pushToTalkDeps.speaker,
@@ -1836,6 +1856,9 @@ export function registerNativeBridgeHandlersFromContext(context: ElectronMainCon
     windows: context.windows,
   });
 }
+
+const INPUT_MONITORING_SETTINGS_URL =
+  "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent";
 
 const unavailablePushToTalkOverlay: PushToTalkOverlayProvider = {
   overlayAction: async () => undefined,

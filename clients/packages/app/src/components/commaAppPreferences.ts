@@ -113,6 +113,13 @@ export function useCommaAppPreferences() {
     return bridge.appPreferences.openLoginItemsSettings();
   }, [available, bridge]);
 
+  // macOS: asks for Input Monitoring and opens its pane; the helper rechecks
+  // and Main publishes the readback through the preferences state.
+  const openInputMonitoringSettings = useCallback(async () => {
+    if (!available) return { opened: false as const };
+    return bridge.appPreferences.openInputMonitoringSettings();
+  }, [available, bridge]);
+
   // macOS prompts while it has not asked about Comma yet. Main publishes the
   // answer through the state event the preferences follow, and resolves with it.
   const requestNotificationAuthorization = useCallback(
@@ -122,6 +129,7 @@ export function useCommaAppPreferences() {
 
   return {
     availability,
+    openInputMonitoringSettings,
     openLoginItemsSettings,
     openNotificationSettings,
     pending,

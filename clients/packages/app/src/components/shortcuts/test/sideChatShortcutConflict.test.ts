@@ -79,6 +79,34 @@ describe("sideChatShortcutConflict", () => {
     ).toBeUndefined();
   });
 
+  it("treats a modifier-only Talk to agent chord as distinct from chords with a key", () => {
+    const controlOption = defaultPushToTalkShortcut;
+    const controlOptionZ = { key: "z" as const, modifiers: controlOption.modifiers };
+    // ⌃⌥Z still reaches its owner: the ⌃⌥ turn is cancelled by the Z.
+    expect(
+      findGlobalShortcutConflict(controlOption, { "side-chat": controlOptionZ })
+    ).toBeUndefined();
+    expect(
+      findGlobalShortcutConflict(controlOptionZ, { "push-to-talk": controlOption })
+    ).toBeUndefined();
+    // The same modifiers alone are the same chord, whatever the listing order.
+    expect(
+      findGlobalShortcutConflict(
+        {
+          key: null,
+          modifiers: { shift: false, meta: false, control: true, alt: true },
+        },
+        { "push-to-talk": controlOption }
+      )
+    ).toBe("push-to-talk");
+    expect(
+      appBindingConflictsWithSideChatShortcut(
+        chordKeybinding("KeyZ", { alt: true, control: true }),
+        controlOption
+      )
+    ).toBe(false);
+  });
+
   it("keeps the default Talk to agent chord free of every default app shortcut", () => {
     for (const platform of ["macos", "windows"] as const) {
       expect(

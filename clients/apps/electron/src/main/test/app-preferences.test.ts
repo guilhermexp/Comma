@@ -72,7 +72,7 @@ describe("AppPreferencesService", () => {
       pushToTalkEnabled: false,
       pushToTalkSendScreen: true,
       pushToTalkShortcut: {
-        key: "space",
+        key: null,
         modifiers: { alt: true, control: true, meta: false, shift: false },
       },
       pushToTalkSpeakReplies: true,
@@ -106,6 +106,30 @@ describe("AppPreferencesService", () => {
       pushToTalkShortcut: null,
     });
     await reopened.close();
+  });
+  it("publishes the Input Monitoring readback of the Talk to agent chord without persisting it", async () => {
+    const filePath = await temporaryPreferencesPath();
+    const onStateChanged = vi.fn();
+    const service = await AppPreferencesService.open({
+      filePath,
+      onStateChanged,
+      platform: createPlatform(),
+    });
+    const revision = service.state().revision;
+
+    expect(service.setPushToTalkInputMonitoringStatus("denied")).toMatchObject({
+      pushToTalkInputMonitoringStatus: "denied",
+      revision: revision + 1,
+    });
+    expect(onStateChanged).toHaveBeenCalledOnce();
+    // The same answer again is not a change.
+    service.setPushToTalkInputMonitoringStatus("denied");
+    expect(onStateChanged).toHaveBeenCalledOnce();
+    service.setPushToTalkInputMonitoringStatus("granted");
+    expect(service.state().pushToTalkInputMonitoringStatus).toBe("granted");
+    await service.update({ showInDock: false });
+    await service.close();
+    expect(await readFile(filePath, "utf8")).not.toContain("InputMonitoring");
   });
   it("moves an Open Comma shortcut still at the old Option-Space default to Option-Comma, once", async () => {
     const optionSpace = {
