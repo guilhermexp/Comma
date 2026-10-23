@@ -82,6 +82,34 @@ export interface PushToTalkOverlay {
 }
 
 /**
+ * The transparent window of the cursor's display that hosts the cursor
+ * companion, its caption balloon and the freehand stroke. `show` is only
+ * called after the screenshot was taken. The window follows the cursor by
+ * itself (and moves to the cursor's display) while shown. While `listening`
+ * it accepts mouse drags to draw the stroke; in any other state it is
+ * click-through except over the caption balloon and error actions.
+ * Errors are shown here only when the notch is off (the controller decides).
+ */
+export interface PushToTalkCompanion {
+  show(input: {
+    displayId: number;
+    cursor: PushToTalkPoint;
+    state: PushToTalkTurnState;
+  }): void;
+  setState(state: PushToTalkTurnState): void;
+  /** Microphone level 0..1 while listening (~20 Hz). */
+  setLevel(level: number): void;
+  /** Text of the caption balloon; `null` removes the balloon. */
+  setCaption(text: string | null): void;
+  /** Fades the companion and the stroke out, then hides the window. */
+  hide(): void;
+  /** Latest stroke of the shown display; `null` clears it. A new drag replaces it. */
+  onStroke(listener: (stroke: PushToTalkStroke | null) => void): () => void;
+  /** The user clicked the caption balloon. */
+  onCaptionClick(listener: () => void): () => void;
+}
+
+/**
  * The notch scene of the turn. Error actions are routed to the `onAction`
  * callback given to the notch status when it is created.
  */

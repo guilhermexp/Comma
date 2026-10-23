@@ -93,9 +93,9 @@ import {
   PushToTalkOverlayWindow,
 } from "./push-to-talk/overlay-window";
 import { createNativePushToTalkHotkey } from "./push-to-talk/native-hotkey";
-import { PushToTalkScreen } from "./push-to-talk/screen-capture";
+import { PushToTalkScreen, strokeBox } from "./push-to-talk/screen-capture";
 import { SaySpeaker } from "./push-to-talk/speaker";
-import type { PushToTalkOverlay, PushToTalkPillState } from "./push-to-talk/types";
+import type { PushToTalkOverlay, PushToTalkTurnState } from "./push-to-talk/types";
 import { initializeElectronMainI18n } from "./main-locale";
 import { readStoredLocalePreference } from "./app-preferences";
 import { NativeEventBus, WebContentsRegistry, createSenderPolicy } from "./modules/ipc";
@@ -1471,7 +1471,7 @@ function registerNativeEventSources(eventBus: NativeEventBus) {
   });
 }
 
-// Talk to agent overlay (macOS). Nothing is created until a turn shows it.
+// Talk to agent cursor companion (macOS). Nothing is created until a turn shows it.
 const pushToTalkOverlay = new PushToTalkOverlayWindow({
   createWindow: (bounds) => {
     if (closingMainServices || !appContext)
@@ -1493,6 +1493,8 @@ const pushToTalkOverlay = new PushToTalkOverlayWindow({
       ),
     })(bounds);
   },
+  cursorPoint: () => screen.getCursorScreenPoint(),
+  displayNearestPoint: (point) => screen.getDisplayNearestPoint(point),
   displays: () => screen.getAllDisplays(),
   logger: log,
   openExternal: (url) => shell.openExternal(url),
@@ -1502,24 +1504,27 @@ const pushToTalkOverlay = new PushToTalkOverlayWindow({
   writeClipboard: (text) => electronClipboard.writeText(text),
 });
 
-// The turn's view of the overlay, with each pill change in the log.
+// The turn's view of the overlay, with each state change in the log. A shim
+// until the controller drives PushToTalkCompanion: it shows the pill states
+// and hands the stroke over as its box.
 const pushToTalkTurnOverlay: PushToTalkOverlay = {
   show: (input) => {
-    log.info(`push-to-talk pill: ${describePushToTalkPill(input.state)}`);
+    log.info(`push-to-talk companion: ${describePushToTalkState(input.state)}`);
     pushToTalkOverlay.show(input);
   },
   setState: (state) => {
-    log.info(`push-to-talk pill: ${describePushToTalkPill(state)}`);
+    log.info(`push-to-talk companion: ${describePushToTalkState(state)}`);
     pushToTalkOverlay.setState(state);
   },
   hide: () => {
-    log.info("push-to-talk pill hidden");
+    log.info("push-to-talk companion hidden");
     pushToTalkOverlay.hide();
   },
-  onRegion: (listener) => pushToTalkOverlay.onRegion(listener),
+  onRegion: (listener) =>
+    pushToTalkOverlay.onStroke((stroke) => listener(stroke && strokeBox(stroke))),
 };
 
-function describePushToTalkPill(state: PushToTalkPillState) {
+function describePushToTalkState(state: PushToTalkTurnState) {
   return state.kind === "error" ? `error ${state.code}` : state.kind;
 }
 

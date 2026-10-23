@@ -1864,7 +1864,7 @@ const unavailablePushToTalkOverlay: PushToTalkOverlayProvider = {
   overlayAction: async () => undefined,
   overlayState: () => hiddenPushToTalkOverlayState,
   setInteractive: () => undefined,
-  setRegion: () => undefined,
+  setStroke: () => undefined,
 };
 
 const unavailableWindowsProvider: WindowsProvider = {

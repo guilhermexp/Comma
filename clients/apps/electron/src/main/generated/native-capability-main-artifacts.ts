@@ -283,7 +283,7 @@ export type NativeCapabilityHandlerTypeMap = {
   "meetingRecorder.layoutWindow": MeetingRecorderProvider["layoutWindow"];
   "meetingRecorder.dragWindow": MeetingRecorderProvider["dragWindow"];
   "pushToTalk.overlayState": PushToTalkOverlayProvider["overlayState"];
-  "pushToTalk.setRegion": PushToTalkOverlayProvider["setRegion"];
+  "pushToTalk.setStroke": PushToTalkOverlayProvider["setStroke"];
   "pushToTalk.setInteractive": PushToTalkOverlayProvider["setInteractive"];
   "pushToTalk.overlayAction": PushToTalkOverlayProvider["overlayAction"];
   "airDrop.state": AirDropReceptionProvider["state"];
@@ -580,7 +580,7 @@ export function registerGeneratedNativeMainBindings({
       providers.meetingRecorder.dragWindow(input),
     "pushToTalk.overlayState": async (input) =>
       providers.pushToTalk.overlayState(input),
-    "pushToTalk.setRegion": async (input) => providers.pushToTalk.setRegion(input),
+    "pushToTalk.setStroke": async (input) => providers.pushToTalk.setStroke(input),
     "pushToTalk.setInteractive": async (input) =>
       providers.pushToTalk.setInteractive(input),
     "pushToTalk.overlayAction": async (input) =>

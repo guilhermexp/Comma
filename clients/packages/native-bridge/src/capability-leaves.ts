@@ -7648,9 +7648,11 @@ export const meetingRecorderStateLeaf = defineNativeState({
   subscribe: meetingRecorderStateChangedEvent,
 });
 
-// Talk to agent (macOS): Main owns the transparent overlay that shows the turn's
-// state pill and lets the user mark an area while the shortcut is held. The
-// transcript stays in Main; the overlay only learns whether it can be copied.
+// Talk to agent (macOS): Main owns the transparent overlay that draws the
+// cursor companion, its caption balloon and, while the shortcut is held, the
+// freehand stroke. Main follows the cursor and publishes its position; the
+// renderer draws and reports the stroke. The transcript stays in Main; the
+// overlay only learns whether it can be copied.
 export const pushToTalkErrorCodeSchema = z.enum([
   "microphone_denied",
   "screen_denied",
@@ -7660,9 +7662,16 @@ export const pushToTalkErrorCodeSchema = z.enum([
   "nothing_heard",
   "send_failed",
 ]);
-export const pushToTalkOverlayPillSchema = z.discriminatedUnion("kind", [
+/**
+ * The stroke's blue, also the cursor companion's. The capture draws the stroke
+ * into the screenshot with this colour, so what the user sees is what is sent.
+ */
+export const pushToTalkStrokeColor = "#2F80FF";
+export const pushToTalkCompanionStateSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("listening") }).strict(),
   z.object({ kind: z.literal("transcribing") }).strict(),
+  z.object({ kind: z.literal("thinking") }).strict(),
+  z.object({ kind: z.literal("speaking") }).strict(),
   z.object({ kind: z.literal("busy") }).strict(),
   z
     .object({
@@ -7672,36 +7681,44 @@ export const pushToTalkOverlayPillSchema = z.discriminatedUnion("kind", [
     })
     .strict(),
 ]);
-export type PushToTalkOverlayPill = z.infer<typeof pushToTalkOverlayPillSchema>;
+export type PushToTalkCompanionState = z.infer<typeof pushToTalkCompanionStateSchema>;
 export const pushToTalkOverlayPointSchema = z
   .object({ x: z.number().finite(), y: z.number().finite() })
   .strict();
-export const pushToTalkOverlayRectSchema = z
-  .object({
-    height: z.number().finite().nonnegative(),
-    width: z.number().finite().nonnegative(),
-    x: z.number().finite(),
-    y: z.number().finite(),
-  })
-  .strict();
-export type PushToTalkOverlayRect = z.infer<typeof pushToTalkOverlayRectSchema>;
+export type PushToTalkOverlayPoint = z.infer<typeof pushToTalkOverlayPointSchema>;
+/** Longest caption Main publishes; a longer reply is cut with an ellipsis. */
+export const pushToTalkCaptionMaxLength = 4_000;
+/** Most points of one stroke; the renderer drops points closer than a few px. */
+export const pushToTalkStrokeMaxPoints = 2_048;
 export const pushToTalkOverlayStateSchema = z
   .object({
-    /** Pointer when the shortcut went down, in the overlay window's DIP space. */
-    anchor: pushToTalkOverlayPointSchema,
+    /** The caption balloon's text; `null` shows no balloon. */
+    caption: z.string().max(pushToTalkCaptionMaxLength).nullable(),
     /** `null` while the overlay is hidden. */
-    pill: pushToTalkOverlayPillSchema.nullable(),
+    companion: pushToTalkCompanionStateSchema.nullable(),
+    /** The pointer, in the overlay window's DIP space; Main follows it. */
+    cursor: pushToTalkOverlayPointSchema,
+    /** The companion and the stroke are fading out before the window hides. */
+    hiding: z.boolean(),
+    /** Microphone level while listening. */
+    level: z.number().min(0).max(1),
     revision: z.number().int().nonnegative(),
-    /** Increments on every shown turn; fences region reports from an older one. */
-    turn: z.number().int().nonnegative(),
+    /**
+     * Increments when a turn is shown or the overlay moves to another display;
+     * fences stroke reports drawn on an older surface.
+     */
+    surface: z.number().int().nonnegative(),
   })
   .strict();
 export type PushToTalkOverlayState = z.infer<typeof pushToTalkOverlayStateSchema>;
 export const hiddenPushToTalkOverlayState: PushToTalkOverlayState = {
-  anchor: { x: 0, y: 0 },
-  pill: null,
+  caption: null,
+  companion: null,
+  cursor: { x: 0, y: 0 },
+  hiding: false,
+  level: 0,
   revision: 0,
-  turn: 0,
+  surface: 0,
 };
 export const pushToTalkOverlayStateCapability = defineNativeCapability({
   bridge: { method: "overlayState", namespace: "pushToTalk" },
@@ -7736,21 +7753,24 @@ export const pushToTalkOverlayStateLeaf = defineNativeState({
   id: "pushToTalk.overlayState",
   subscribe: pushToTalkOverlayStateChangedEvent,
 });
-export const pushToTalkSetRegionCapability = defineNativeCapability({
-  bridge: { method: "setRegion", namespace: "pushToTalk" },
-  channel: "comma:push-to-talk:set-region",
+export const pushToTalkSetStrokeCapability = defineNativeCapability({
+  bridge: { method: "setStroke", namespace: "pushToTalk" },
+  channel: "comma:push-to-talk:set-stroke",
   handler: {
     exportName: "PushToTalkOverlayProvider",
-    member: "setRegion",
+    member: "setStroke",
     module: "../../../apps/electron/src/main/push-to-talk/overlay-window",
     provider: "pushToTalk",
   },
-  id: "pushToTalk.setRegion",
+  id: "pushToTalk.setStroke",
   input: z
     .object({
-      /** In the overlay window's DIP space; `null` clears the marked area. */
-      rect: pushToTalkOverlayRectSchema.nullable(),
-      turn: z.number().int().nonnegative(),
+      /** In drawing order, in the overlay window's DIP space; `null` clears it. */
+      points: z
+        .array(pushToTalkOverlayPointSchema)
+        .max(pushToTalkStrokeMaxPoints)
+        .nullable(),
+      surface: z.number().int().nonnegative(),
     })
     .strict(),
   output: z.void(),
@@ -7781,6 +7801,8 @@ export const pushToTalkSetInteractiveCapability = defineNativeCapability({
     "Controls only Main's local Talk to agent overlay; Main admits the turn itself against its current Session.",
 });
 export const pushToTalkOverlayActionSchema = z.enum([
+  /** The user clicked the caption balloon. */
+  "caption-click",
   "copy-transcript",
   "open-meeting-settings",
   "open-microphone-settings",
@@ -9747,7 +9769,7 @@ export const nativeCapabilityRegistry = [
   meetingRecorderLayoutWindowCapability,
   meetingRecorderDragWindowCapability,
   pushToTalkOverlayStateCapability,
-  pushToTalkSetRegionCapability,
+  pushToTalkSetStrokeCapability,
   pushToTalkSetInteractiveCapability,
   pushToTalkOverlayActionCapability,
   airDropStateCapability,

@@ -164,13 +164,13 @@ export type {
   MeetingRecorderPhase,
   MeetingRecorderProps,
 } from "./meeting-recorder";
-export { PushToTalkOverlay } from "./push-to-talk";
+export { PushToTalkCompanion } from "./push-to-talk";
 export type {
+  PushToTalkCompanionAction,
+  PushToTalkCompanionProps,
+  PushToTalkCompanionState,
   PushToTalkErrorCode,
-  PushToTalkOverlayAction,
-  PushToTalkOverlayProps,
-  PushToTalkPill,
-  PushToTalkRegion,
+  PushToTalkPoint,
 } from "./push-to-talk";
 export {
   AiInput,

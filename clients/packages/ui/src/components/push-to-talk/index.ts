@@ -1,8 +1,8 @@
-export { PushToTalkOverlay } from "./PushToTalkOverlay";
+export { PushToTalkCompanion } from "./PushToTalkCompanion";
 export type {
+  PushToTalkCompanionAction,
+  PushToTalkCompanionProps,
+  PushToTalkCompanionState,
   PushToTalkErrorCode,
-  PushToTalkOverlayAction,
-  PushToTalkOverlayProps,
-  PushToTalkPill,
-  PushToTalkRegion,
-} from "./PushToTalkOverlay";
+  PushToTalkPoint,
+} from "./PushToTalkCompanion";
