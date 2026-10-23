@@ -1328,6 +1328,8 @@
   "push_to_talk_listening": "正在聆听",
   "push_to_talk_listening_hint": "拖动可标记区域",
   "push_to_talk_transcribing": "正在转写",
+  "push_to_talk_thinking": "正在思考",
+  "push_to_talk_speaking": "正在回答",
   "push_to_talk_busy": "请等待当前问题完成",
   "push_to_talk_microphone_denied": "Comma 需要麦克风权限",
   "push_to_talk_screen_denied": "已发送，但未附截图。请允许屏幕录制。",

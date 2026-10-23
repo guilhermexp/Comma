@@ -12,6 +12,7 @@ import {
   type NotchPreviewInput,
   type NotchScenePayload,
   type NotchStatus,
+  type NotchVoiceTurn,
 } from "@comma/native-bridge";
 import { isMacOS } from "./os";
 
@@ -213,6 +214,11 @@ export class NotchService {
     }
   }
 
+  /** False where NotchKit cannot run or while the reader has the Notch off. */
+  visible() {
+    return this.#isSupportedPlatform() && this.presentation.visible;
+  }
+
   start() {
     return this.command("start");
   }
@@ -226,6 +232,15 @@ export class NotchService {
   update(payload: NotchHostScenePayload) {
     this.retainScene(payload);
     return this.command("update", payload);
+  }
+
+  /**
+   * Main's push-to-talk turn, drawn ahead of AirDrop and tasks. Each write is
+   * the turn alone, so microphone levels stay small; `null` gives the Notch
+   * back to the scene it showed before.
+   */
+  setVoice(turn: NotchVoiceTurn | null) {
+    return this.update({ voice: turn ? { turn } : {} });
   }
 
   hide() {

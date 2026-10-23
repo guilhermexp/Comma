@@ -1328,6 +1328,8 @@
   "push_to_talk_listening": "Listening",
   "push_to_talk_listening_hint": "Drag to mark an area",
   "push_to_talk_transcribing": "Transcribing",
+  "push_to_talk_thinking": "Thinking",
+  "push_to_talk_speaking": "Speaking",
   "push_to_talk_busy": "Wait for the current question",
   "push_to_talk_microphone_denied": "Comma needs Microphone access",
   "push_to_talk_screen_denied": "Sent without a screenshot. Allow Screen Recording.",

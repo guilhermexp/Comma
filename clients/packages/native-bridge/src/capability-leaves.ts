@@ -504,6 +504,32 @@ export const notchAirDropTransferSchema = z.object({
 
 export type NotchAirDropTransfer = z.infer<typeof notchAirDropTransferSchema>;
 
+export const notchVoiceStateSchema = z.enum([
+  "listening",
+  "transcribing",
+  "thinking",
+  "speaking",
+  "busy",
+  "error",
+]);
+export type NotchVoiceState = z.infer<typeof notchVoiceStateSchema>;
+
+// Main projects the push-to-talk turn into the Notch ahead of AirDrop and
+// tasks while it lasts. Main localizes the copy.
+export const notchVoiceTurnSchema = z.object({
+  /** An error's way out; NotchHost returns `id` as the `voice:action` value. */
+  action: z
+    .object({ id: z.string().min(1).max(64), label: z.string().max(64) })
+    .optional(),
+  /** Microphone level while listening, already throttled by Main. */
+  level: z.number().min(0).max(1).optional(),
+  /** The state's text, or the error's sentence. */
+  message: z.string().max(256),
+  state: notchVoiceStateSchema,
+});
+
+export type NotchVoiceTurn = z.infer<typeof notchVoiceTurnSchema>;
+
 export const notchScenePayloadSchema = z.object({
   title: z.string().optional(),
   subtitle: z.string().optional(),
@@ -563,11 +589,13 @@ export function defaultAirDropName({
   return head ? `${head.trimEnd()}${airDropNameSuffix}` : "Comma";
 }
 
-// What Main writes to NotchHost: the renderer scene plus Main-owned AirDrop
-// and layout, which no renderer `notch.update` can carry.
+// What Main writes to NotchHost: the renderer scene plus Main-owned AirDrop,
+// voice turn, and layout, which no renderer `notch.update` can carry.
 export const notchHostScenePayloadSchema = notchScenePayloadSchema.extend({
   /** Present only when Main changes the AirDrop projection; no transfer clears it. */
   airDrop: z.object({ transfer: notchAirDropTransferSchema.optional() }).optional(),
+  /** Present only when Main changes the voice turn; no turn gives the Notch back. */
+  voice: z.object({ turn: notchVoiceTurnSchema.optional() }).optional(),
   /** Main's `configure` command: the reader's Notch width preference. */
   compactSideWidth: notchSideWidthSchema.optional(),
 });

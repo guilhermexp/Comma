@@ -170,4 +170,27 @@ let notchData = try encoder.encode(notch)
 let decodedNotch = try decoder.decode(CommaNotchScenePayload.self, from: notchData)
 precondition(decodedNotch == notch)
 
+let voice = CommaNotchScenePayload(
+    voice: CommaNotchScenePayloadVoice(
+        turn: CommaNotchScenePayloadVoiceTurn(
+            action: CommaNotchScenePayloadVoiceTurnAction(
+                id: "copy-transcript",
+                label: "Copy transcript"
+            ),
+            level: 0.5,
+            message: "Couldn’t send your question",
+            state: .error
+        )
+    )
+)
+let decodedVoice = try decoder.decode(
+    CommaNotchScenePayload.self,
+    from: try encoder.encode(voice)
+)
+precondition(decodedVoice == voice)
+let loudVoice = Data(#"{"voice":{"turn":{"state":"listening","message":"Listening","level":2}}}"#.utf8)
+if let _ = try? decoder.decode(CommaNotchScenePayload.self, from: loudVoice) {
+    fatalError("out-of-range voice level unexpectedly decoded")
+}
+
 print("native partner Codable round-trip passed")
