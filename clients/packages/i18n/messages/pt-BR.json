@@ -2995,6 +2995,7 @@
   "local_files_connector_not_ready": "O conector do Comma deste espaço de trabalho ainda não está pronto. Selecione o arquivo de novo para tentar novamente.",
   "local_files_connector_reconnect": "Reconecte o conector do Comma deste espaço de trabalho com um token recém-emitido e selecione o arquivo de novo.",
   "electron_meeting_recovery_unavailable": "Abra o Comma para resolver a tarefa da reunião anterior.",
+  "electron_push_to_talk_code_block": "trecho de código",
   "electron_macos_camera_usage": "Os sites que você permitir podem usar sua câmera em reuniões por vídeo.",
   "electron_macos_microphone_usage": "O Comma usa seu microfone para gravações e para os sites que você permitir, incluindo chamadas de reunião.",
   "electron_macos_audio_capture_usage": "O Comma grava o áudio da reunião que está tocando neste Mac para transcrevê-lo e resumi-lo.",

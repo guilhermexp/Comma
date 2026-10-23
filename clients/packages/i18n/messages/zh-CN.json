@@ -2995,6 +2995,7 @@
   "local_files_connector_not_ready": "此工作区的 Comma Connector 尚未就绪。请重新选择该文件以重试。",
   "local_files_connector_reconnect": "请使用新签发的令牌重新连接此工作区的 Comma Connector，然后重新选择该文件。",
   "electron_meeting_recovery_unavailable": "请打开 Comma 处理之前的会议任务。",
+  "electron_push_to_talk_code_block": "代码片段",
   "electron_macos_camera_usage": "你允许的网站可以在视频会议中使用你的摄像头。",
   "electron_macos_microphone_usage": "Comma 会在录音时以及你允许的网站（包括会议通话）中使用你的麦克风。",
   "electron_macos_audio_capture_usage": "Comma 会录制此 Mac 上正在播放的会议音频，以便转写和总结。",

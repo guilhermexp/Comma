@@ -2995,6 +2995,7 @@
   "local_files_connector_not_ready": "This workspace's Comma Connector is not ready yet. Select the file again to retry.",
   "local_files_connector_reconnect": "Reconnect this workspace's Comma Connector with a newly issued token, then select the file again.",
   "electron_meeting_recovery_unavailable": "Open Comma to resolve the previous meeting Task.",
+  "electron_push_to_talk_code_block": "code snippet",
   "electron_macos_camera_usage": "Websites you allow can use your camera for video meetings.",
   "electron_macos_microphone_usage": "Comma uses your microphone for recording and for websites you allow, including meeting calls.",
   "electron_macos_audio_capture_usage": "Comma records meeting audio playing on this Mac so it can transcribe and summarize it.",

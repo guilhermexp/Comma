@@ -23,6 +23,23 @@ import {
 } from "./airdrop/reception";
 import { MeetingTaskService } from "./meeting-recorder/tasks";
 import type { PushToTalkOverlayProvider } from "../push-to-talk/overlay-window";
+import {
+  PushToTalkController,
+  type PushToTalkPowerMonitor,
+  type PushToTalkScreenSource,
+} from "../push-to-talk/controller";
+import { systemClock } from "../push-to-talk/clock";
+import { createPushToTalkDelivery } from "../push-to-talk/delivery";
+import { HelperPushToTalkMicrophone } from "../push-to-talk/microphone";
+import { RemotePushToTalkTranscriber } from "../push-to-talk/remote-transcriber";
+import { PushToTalkReplyWatcher } from "../push-to-talk/reply-watcher";
+import {
+  choosePushToTalkTranscriber,
+  PushToTalkRuntime,
+} from "../push-to-talk/runtime";
+import type { PushToTalkSpeaker } from "../push-to-talk/speaker";
+import type { PushToTalkTranscriber } from "../push-to-talk/transcriber";
+import type { PushToTalkHotkey, PushToTalkOverlay } from "../push-to-talk/types";
 import { defaultLocalRoots } from "./synchronicity/default-root";
 import {
   createCallerBoundSessionHistoryProvider,
@@ -70,6 +87,7 @@ import {
   type AppPreferences,
   type CommaOperatingSystem,
 } from "@comma/native-bridge";
+import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   defaultLocale,
@@ -351,6 +369,27 @@ export interface ElectronMainRuntimeDeps {
   onboardingWindow?: OnboardingWindowProvider | undefined;
   /** macOS Talk to agent overlay; without it the overlay role reads it hidden. */
   pushToTalkOverlay?: PushToTalkOverlayProvider | undefined;
+  /**
+   * macOS Talk to agent turn (openspec add-push-to-talk-agent). Absent
+   * (other platforms, tests) no hold-to-talk shortcut is ever registered.
+   */
+  pushToTalk?:
+    | {
+        hotkey: PushToTalkHotkey;
+        overlay: PushToTalkOverlay;
+        screen: PushToTalkScreenSource;
+        speaker: PushToTalkSpeaker;
+        powerMonitor: PushToTalkPowerMonitor;
+        /** Shows Side Chat while the app in use keeps the keyboard. */
+        openSideChatWithoutFocus: () => void;
+        /** Where each turn's WAV lives until the turn ends. */
+        recordingsDir: string;
+        /** Local mode's backend; absent, the server transcribes. */
+        localBackend?:
+          | { pushToTalkTranscriber: PushToTalkTranscriber | undefined }
+          | undefined;
+      }
+    | undefined;
   secureSessionFilePath: string;
   /**
    * Explicit unpackaged startup credential. The composition root persists it
@@ -465,6 +504,8 @@ export interface ElectronMainContext {
   tokenDanceAuthorization: TokenDanceAuthorizationService;
   shell: ShellProvider;
   sideChat: SideChatProvider;
+  /** Started by the composition root after the Side Chat helper starts. */
+  pushToTalk: PushToTalkRuntime | undefined;
   surfaces: NativeSurfaceService;
   transport: TransportDiagnosticsService;
   computeNode: ComputeNodeProvider;
@@ -675,6 +716,7 @@ export async function createElectronMainContext(
   let mainLocale: CommaLocale = deps.locale ?? defaultLocale;
   let mainLocalePreference: CommaLocalePreference | undefined;
   const currentMainLocale = () => mainLocale;
+  let pushToTalk: PushToTalkRuntime | undefined;
   const appPreferencesService = await AppPreferencesService.open({
     filePath: deps.appPreferencesFilePath,
     onStateChanged: (preferences) => {
@@ -688,6 +730,7 @@ export async function createElectronMainContext(
       nativeEventBus.emit(appPreferencesChangedEvent, preferences);
       applyNotchPreferences(preferences);
       deps.sideChat.setEnabled(preferences.sideChatEnabled);
+      pushToTalk?.refresh();
       statusTrayPreferences = preferences;
       followStatusTrayTasks();
       publishStatusTray();
@@ -774,6 +817,9 @@ export async function createElectronMainContext(
     ? deps.decorateAppPreferencesProvider(appPreferencesRuntime)
     : appPreferencesRuntime;
   let chat: ChatCoordinator | undefined;
+  // Fed by the chat coordinator's confirmed messages; only a sent Talk to
+  // agent turn arms it.
+  const pushToTalkReplies = new PushToTalkReplyWatcher({ clock: systemClock });
   const messageNotifications = deps.messageNotificationsPlatform
     ? new MessageNotificationsService({
         emitEvent: (payload) => nativeEventBus.emit(messageNotificationsEvent, payload),
@@ -816,6 +862,7 @@ export async function createElectronMainContext(
     ...(deps.googleAuth ? { googleAuth: deps.googleAuth } : {}),
     onSnapshotChanged: (state) => {
       meetingRecorder?.sessionChanged();
+      pushToTalk?.refresh();
       computeNodeSession?.sessionChanged(state);
       if (state.generation !== publishedSessionGeneration) {
         publishedSessionGeneration = state.generation;
@@ -967,13 +1014,11 @@ export async function createElectronMainContext(
           .scopes.find((scope) => scope.workspaceId === workspaceId)?.deviceId,
       ...(deps.fetch ? { fetch: deps.fetch } : {}),
       locale: currentMainLocale,
-      ...(messageNotifications
-        ? {
-            onCanonicalMessagesAppended: (input) => {
-              void messageNotifications.handleAppendedMessages(input);
-            },
-          }
-        : {}),
+      onCanonicalMessagesAppended: (input) => {
+        if (messageNotifications)
+          void messageNotifications.handleAppendedMessages(input);
+        pushToTalkReplies.handleAppended(input);
+      },
       ...(transcodeAttachment ? { transcodeAttachment } : {}),
       onLocalFilesCommitted: async (files, committedAtMs) => {
         await Promise.all(
@@ -1114,20 +1159,21 @@ export async function createElectronMainContext(
       .catch(() => undefined);
     if (failure) noticeRecording("cloud_failed", recording, failure);
   };
+  const bindRecordingTranscriptionSession = () => {
+    const { credential } = getCurrentNativeSessionAdmission();
+    return {
+      fetch: createMainSessionFetch({ credential, session }),
+      url: new URL("/v1/comma/me/recordings/transcribe", credential.audience),
+      assertCurrent: () => {
+        if (!session.authority.isCurrentProductCredential(credential)) {
+          throw new Error("The recording's session ended.");
+        }
+      },
+    };
+  };
   const recordingTranscription = new RecordingTranscriptionService(
     recordingDrive,
-    () => {
-      const { credential } = getCurrentNativeSessionAdmission();
-      return {
-        fetch: createMainSessionFetch({ credential, session }),
-        url: new URL("/v1/comma/me/recordings/transcribe", credential.audience),
-        assertCurrent: () => {
-          if (!session.authority.isCurrentProductCredential(credential)) {
-            throw new Error("The recording's session ended.");
-          }
-        },
-      };
-    },
+    bindRecordingTranscriptionSession,
     {
       onModelMissing: (recording) => {
         void deps.localTranscription
@@ -1201,6 +1247,61 @@ export async function createElectronMainContext(
     screenAccessStatus: deps.screenAccessStatus,
     drive: recordingDrive,
   });
+  const pushToTalkDeps = deps.pushToTalk;
+  if (pushToTalkDeps && deps.microphoneHostPath) {
+    const microphoneHostPath = deps.microphoneHostPath;
+    const logPushToTalk = (message: string) =>
+      deps.logger?.warn(message, { source: "push-to-talk" });
+    const transcriber = choosePushToTalkTranscriber({
+      localBackend: pushToTalkDeps.localBackend,
+      remote: () =>
+        new RemotePushToTalkTranscriber({
+          encoder: new HelperRecordingEncoder(microphoneHostPath),
+          bindSession: bindRecordingTranscriptionSession,
+        }),
+    });
+    pushToTalk = new PushToTalkRuntime({
+      read: () => {
+        const preferences = appPreferencesService.state();
+        return {
+          clientSettings: preferences.clientSettings,
+          sideChatEnabled: preferences.sideChatEnabled,
+          signedIn: session.state().phase === "signed_in",
+        };
+      },
+      createController: (settings) =>
+        new PushToTalkController({
+          hotkey: pushToTalkDeps.hotkey,
+          overlay: pushToTalkDeps.overlay,
+          screen: pushToTalkDeps.screen,
+          speaker: pushToTalkDeps.speaker,
+          powerMonitor: pushToTalkDeps.powerMonitor,
+          microphone: new HelperPushToTalkMicrophone({
+            capture: new HelperMicrophoneCapture({
+              executablePath: microphoneHostPath,
+            }),
+            directory: pushToTalkDeps.recordingsDir,
+            log: logPushToTalk,
+          }),
+          transcriber,
+          delivery: createPushToTalkDelivery({
+            chat: appRuntime.chat,
+            sideChat: { openWithoutFocus: pushToTalkDeps.openSideChatWithoutFocus },
+            runOwned: async (handler) => sessionAdmissionGuard.runOwned(handler),
+          }),
+          replies: pushToTalkReplies,
+          clock: systemClock,
+          removeFile: (path) => rm(path, { force: true }),
+          settings,
+          codeBlockLabel: () =>
+            messages.electron_push_to_talk_code_block(
+              {},
+              { locale: currentMainLocale() }
+            ),
+          log: logPushToTalk,
+        }),
+    });
+  }
   meetingRecorder = new MeetingRecorderService({
     locale: currentMainLocale,
     preferences: () =>
@@ -1622,6 +1723,7 @@ export async function createElectronMainContext(
     tokenDanceAuthorization,
     shell,
     sideChat: deps.sideChat,
+    pushToTalk,
     surfaces,
     transport,
     computeNode,
@@ -1632,6 +1734,7 @@ export async function createElectronMainContext(
       // Modeled in tla/app-preferences/AppPreferences.tla: seal admission and
       // drain every accepted preference mutation before teardown can complete.
       await appPreferences.close();
+      pushToTalk?.dispose();
       activityReporter?.close();
       await airdrop?.close();
       airDropReception.close();

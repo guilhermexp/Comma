@@ -81,8 +81,8 @@ export type PushToTalkControllerDeps = {
   removeFile: (path: string) => Promise<void>;
   /** The effective settings; `enabled` is false while the side chat is off. */
   settings: PushToTalkSettings;
-  /** What the voice says in place of a code block. */
-  codeBlockLabel?: string;
+  /** What the voice says in place of a code block, in Main's language. */
+  codeBlockLabel?: () => string;
   log?: (message: string) => void;
 };
 
@@ -331,7 +331,7 @@ export class PushToTalkController {
     if (screenMissing) this.#showError("screen_denied");
     else overlay.hide();
     if (this.#settings.speakReplies) {
-      const codeBlock = this.#deps.codeBlockLabel ?? "code snippet";
+      const codeBlock = this.#deps.codeBlockLabel?.() ?? "code snippet";
       replies.arm(target, (reply) =>
         speaker.speak(speakableText(reply, { codeBlock }))
       );

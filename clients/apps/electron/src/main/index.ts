@@ -30,6 +30,7 @@ import {
   Tray,
   WebContentsView,
   clipboard as electronClipboard,
+  desktopCapturer,
   dialog,
   ipcMain,
   globalShortcut,
@@ -91,6 +92,10 @@ import {
   createElectronPushToTalkOverlayWindowFactory,
   PushToTalkOverlayWindow,
 } from "./push-to-talk/overlay-window";
+import { createNativePushToTalkHotkey } from "./push-to-talk/native-hotkey";
+import { PushToTalkScreen } from "./push-to-talk/screen-capture";
+import { SaySpeaker } from "./push-to-talk/speaker";
+import type { PushToTalkOverlay, PushToTalkPillState } from "./push-to-talk/types";
 import { initializeElectronMainI18n } from "./main-locale";
 import { readStoredLocalePreference } from "./app-preferences";
 import { NativeEventBus, WebContentsRegistry, createSenderPolicy } from "./modules/ipc";
@@ -1497,6 +1502,57 @@ const pushToTalkOverlay = new PushToTalkOverlayWindow({
   writeClipboard: (text) => electronClipboard.writeText(text),
 });
 
+// The turn's view of the overlay, with each pill change in the log.
+const pushToTalkTurnOverlay: PushToTalkOverlay = {
+  show: (input) => {
+    log.info(`push-to-talk pill: ${describePushToTalkPill(input.state)}`);
+    pushToTalkOverlay.show(input);
+  },
+  setState: (state) => {
+    log.info(`push-to-talk pill: ${describePushToTalkPill(state)}`);
+    pushToTalkOverlay.setState(state);
+  },
+  hide: () => {
+    log.info("push-to-talk pill hidden");
+    pushToTalkOverlay.hide();
+  },
+  onRegion: (listener) => pushToTalkOverlay.onRegion(listener),
+};
+
+function describePushToTalkPill(state: PushToTalkPillState) {
+  return state.kind === "error" ? `error ${state.code}` : state.kind;
+}
+
+function createPushToTalkDeps() {
+  const speaker = new SaySpeaker();
+  return {
+    hotkey: createNativePushToTalkHotkey(sideChat, {
+      log: (message) => log.info(message),
+    }),
+    overlay: pushToTalkTurnOverlay,
+    screen: new PushToTalkScreen({
+      getCursorScreenPoint: () => screen.getCursorScreenPoint(),
+      getDisplayNearestPoint: (point) => screen.getDisplayNearestPoint(point),
+      getSources: (options) => desktopCapturer.getSources(options),
+      mediaAccessStatus: () => systemPreferences.getMediaAccessStatus("screen"),
+    }),
+    speaker: {
+      speak: (text: string) => {
+        log.info("push-to-talk speaking the reply");
+        speaker.speak(text);
+      },
+      stop: () => speaker.stop(),
+    },
+    powerMonitor,
+    openSideChatWithoutFocus: () => {
+      log.info("push-to-talk turn sent; opening Side Chat without focus");
+      safelyControlSideChat(() => sideChat.openWithoutFocus());
+    },
+    recordingsDir: join(app.getPath("temp"), "comma-push-to-talk"),
+    localBackend,
+  };
+}
+
 function ensureMeetingRecorderWindow() {
   if (closingMainServices || !appContext)
     throw new Error("Recorder window is unavailable.");
@@ -1789,7 +1845,9 @@ async function createElectronMainContext() {
     },
     productName: releaseConfig.productName,
     onboardingWindow: onboardingWindowFor(operatingSystem(), onboardingWindow),
-    ...(process.platform === "darwin" ? { pushToTalkOverlay } : {}),
+    ...(process.platform === "darwin"
+      ? { pushToTalkOverlay, pushToTalk: createPushToTalkDeps() }
+      : {}),
     onSessionStateChanged: (state) => {
       // Signed out (or another account) before the onboarding: sign-in needs
       // the main window.
@@ -2017,6 +2075,9 @@ function startElectronApp() {
         );
         await ensureSideChatWindow();
         if (e2eHooks.openSideChat) safelyControlSideChat(() => sideChat.open());
+        // After the helper has the Side Chat binding, so registering the
+        // hold-to-talk chord never launches a helper before it.
+        appContext.pushToTalk?.start();
       }
       registerLegacyIpc({
         senderPolicy: createSenderPolicy({
