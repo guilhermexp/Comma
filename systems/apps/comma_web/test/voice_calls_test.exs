@@ -43,7 +43,7 @@ defmodule CommaWeb.VoiceCallsTest do
     for {method, path} <- [
           {:post, base},
           {:get, base <> "/vc_other/events"},
-          {:post, base <> "/vc_other/say"},
+          {:post, base <> "/vc_other/context"},
           {:delete, base <> "/vc_other"}
         ] do
       assert request(method, path, nil).status == 401
@@ -58,23 +58,57 @@ defmodule CommaWeb.VoiceCallsTest do
     assert request(:delete, base <> "/vc_missing", c.token).status == 404
   end
 
-  test "read-aloud calls validate their mode and text before reaching a call", c do
+  test "call context validates text and image references before dispatch", c do
     base = "/v1/comma/workspaces/#{c.workspace["id"]}/voice/calls"
 
     unknown_mode = request(:post, base, c.token, %{"sdp" => "v=0", "mode" => "karaoke"})
     assert unknown_mode.status == 400
     assert Jason.decode!(unknown_mode.resp_body)["error"] == "invalid_input"
 
-    for body <- [%{}, %{"text" => "  "}, %{"text" => 42}] do
-      response = request(:post, base <> "/vc_missing/say", c.token, body)
+    for body <- [
+          %{},
+          %{"text" => "  "},
+          %{"text" => 42},
+          %{"text" => String.duplicate("x", 20_001)},
+          %{"text" => "Screen", "attachments" => "not-a-list"},
+          %{
+            "text" => "Screen",
+            "attachments" => [
+              %{"path" => "/etc/passwd", "name" => "screen.png", "mime" => "image/png"}
+            ]
+          },
+          %{
+            "text" => "Screen",
+            "attachments" => [%{"path" => "/uploads/screen.png", "mime" => "image/png"}]
+          },
+          %{
+            "text" => "Screen",
+            "attachments" => [%{"path" => 42, "name" => "screen.png", "mime" => "image/png"}]
+          }
+        ] do
+      response = request(:post, base <> "/vc_missing/context", c.token, body)
       assert response.status == 400
       assert Jason.decode!(response.resp_body)["error"] == "invalid_input"
     end
 
-    missing = request(:post, base <> "/vc_missing/say", c.token, %{"text" => "Olá."})
-    assert missing.status == 404
-    assert Jason.decode!(missing.resp_body)["error"] == "call_not_found"
-    assert get_resp_header(missing, "cache-control") == ["no-store"]
+    for body <- [
+          %{"text" => "App: Editor; cursor: 20,30"},
+          %{
+            "text" => "Print: screen.png",
+            "attachments" => [
+              %{
+                "path" => "/uploads/abcdefghijklmnopqrstuv-screen.png",
+                "name" => "screen.png",
+                "mime" => "image/png"
+              }
+            ]
+          }
+        ] do
+      missing = request(:post, base <> "/vc_missing/context", c.token, body)
+      assert missing.status == 404
+      assert Jason.decode!(missing.resp_body)["error"] == "call_not_found"
+      assert get_resp_header(missing, "cache-control") == ["no-store"]
+    end
   end
 
   test "restricted workspace sessions cannot start, read or end calls", c do
@@ -91,7 +125,7 @@ defmodule CommaWeb.VoiceCallsTest do
     base = "/v1/comma/workspaces/#{c.workspace["id"]}/voice/calls"
     assert request(:post, base, token).status == 403
     assert request(:get, base <> "/vc_other/events", token).status == 403
-    assert request(:post, base <> "/vc_other/say", token, %{"text" => "x"}).status == 403
+    assert request(:post, base <> "/vc_other/context", token, %{"text" => "x"}).status == 403
     assert request(:delete, base <> "/vc_other", token).status == 403
   end
 

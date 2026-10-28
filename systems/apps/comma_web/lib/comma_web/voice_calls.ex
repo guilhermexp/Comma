@@ -2,13 +2,11 @@ defmodule CommaWeb.VoiceCalls do
   @moduledoc "Workspace authority for Electron calls. Credentials stay inside Salix."
   alias SalixVoice.Carrier.Electron
 
-  # A text a read-aloud call may be sent at once (the voice ends at 120 s).
-  @max_say_bytes 20_000
+  @max_context_bytes 20_000
+  @max_context_attachments 2
+  @upload_path ~r|\A/uploads/[A-Za-z0-9_-]{22}-[A-Za-z0-9._-]+\z|
 
-  @doc """
-  Starts an Electron call. `"mode" => "read_aloud"` opens a call that only
-  reads the text sent with `say/4`.
-  """
+  @doc "Starts an Electron conversation or a push-to-talk call."
   def start(workspace, user, %{"sdp" => sdp} = params)
       when is_binary(sdp) and byte_size(sdp) in 1..131_072 do
     with {:ok, mode} <- mode(params["mode"]),
@@ -52,18 +50,39 @@ defmodule CommaWeb.VoiceCalls do
 
   def hang_up(workspace, user, id), do: Electron.hang_up(id, scope(workspace, user))
 
-  @doc "Queues text for a read-aloud call; it is spoken once the session starts."
-  def say(workspace, user, id, %{"text" => text})
-      when is_binary(text) and byte_size(text) <= @max_say_bytes do
-    if String.valid?(text) and String.trim(text) != "",
-      do: Electron.say(id, scope(workspace, user), text),
+  @doc "Adds text to the call and image references to its next Router delegation."
+  def context(workspace, user, id, %{"text" => text} = params)
+      when is_binary(text) and byte_size(text) <= @max_context_bytes do
+    attachments = Map.get(params, "attachments", [])
+
+    if String.valid?(text) and String.trim(text) != "" and valid_attachments?(attachments),
+      do: Electron.context(id, scope(workspace, user), text, attachments),
       else: {:error, :invalid_input}
   end
 
-  def say(_, _, _, _), do: {:error, :invalid_input}
+  def context(_, _, _, _), do: {:error, :invalid_input}
+
+  defp valid_attachments?(attachments) when is_list(attachments) do
+    length(attachments) <= @max_context_attachments and
+      Enum.all?(attachments, &valid_attachment?/1)
+  end
+
+  defp valid_attachments?(_), do: false
+
+  defp valid_attachment?(%{"path" => path, "name" => name, "mime" => mime}) do
+    valid_string?(name, 255) and mime in ["image/png", "image/jpeg"] and
+      valid_string?(path, 4_096) and Regex.match?(@upload_path, path)
+  end
+
+  defp valid_attachment?(_), do: false
+
+  defp valid_string?(value, max_bytes) when is_binary(value),
+    do: byte_size(value) in 1..max_bytes and String.valid?(value) and String.trim(value) != ""
+
+  defp valid_string?(_, _), do: false
 
   defp mode(nil), do: {:ok, %{}}
-  defp mode("read_aloud"), do: {:ok, %{mode: :read_aloud}}
+  defp mode("push_to_talk"), do: {:ok, %{mode: :push_to_talk}}
   defp mode(_), do: {:error, :invalid_input}
 
   defp scope(workspace, user),
@@ -83,7 +102,7 @@ defmodule CommaWeb.VoiceCalls do
   def message(:call_not_found), do: "This voice call has ended."
 
   def message(:invalid_input),
-    do: "A valid SDP offer, call mode, event cursor or text to read is required."
+    do: "A valid SDP offer, call mode, event cursor or call context is required."
 
   def message(_), do: "ChatGPT voice could not connect. Check your ChatGPT Profile and try again."
 end

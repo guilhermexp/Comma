@@ -218,7 +218,12 @@ Soltar MUST apenas mutar a entrada de áudio. O serviço MUST decidir o fim do t
 
 ### Requirement: Contexto da chamada e delegação ao agente
 
-O modelo de voz MUST delegar ao Router tudo que envolva a tela ou exija ferramentas do agente. O contexto textual MUST incluir app em primeiro plano, cursor e, com print, tamanho, área marcada e nomes dos arquivos. O app MUST fazer upload do print/recorte e associá-los à chamada; o texto MUST chegar como `session.context.append`. Os anexos MUST acompanhar a próxima delegação ao Router, e somente ela. O modelo de voz não recebe imagem diretamente.
+O modelo de voz MUST delegar ao Router pedidos sobre a tela ou ferramentas. O app MUST enviar contexto com app e cursor e, com print, tamanho, área e nomes; o texto MUST chegar como `session.context.append`. Os anexos MUST chegar ao VFS do Router no formato consumido por ele, acompanhar apenas a próxima delegação e não ser descartados silenciosamente. O modelo de voz não recebe imagem.
+
+#### Scenario: Referência do upload
+
+- **WHEN** o app associa um print ou recorte à chamada
+- **THEN** envia `attachments: [{ path, name, mime }]` na rota `context`, usando somente o `path` devolvido por `uploadGroupFile`, sem nova identidade de arquivo
 
 #### Scenario: Pergunta com print
 

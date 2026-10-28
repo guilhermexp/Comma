@@ -23,6 +23,27 @@ defmodule SalixVoice.Model.CodexTest do
     def notify_conversation(_, _), do: :ok
   end
 
+  defmodule ObservedIngress do
+    def enqueue_group_router_im_provider_message(group, content, metadata, source, opts) do
+      observer = Application.get_env(:salix_voice, :codex_test_pid)
+
+      result =
+        SalixIM.ProviderConnects.enqueue_group_router_im_provider_message(
+          group,
+          content,
+          metadata,
+          source,
+          opts
+        )
+
+      if is_pid(observer) do
+        send(observer, {:ingress, group, content, metadata, source, opts})
+      end
+
+      result
+    end
+  end
+
   defmodule Socket do
     @behaviour WebSock
     def init(state) do
@@ -362,7 +383,7 @@ defmodule SalixVoice.Model.CodexTest do
     )
 
     {:ok, conversation} = SalixIM.RouterConversationInput.ensure(group)
-    messages = wait_messages(group, conversation["conversation_id"], 50)
+    messages = wait_messages(group, conversation["conversation_id"], 50, "del_call")
 
     delegation =
       Enum.find(
@@ -442,32 +463,35 @@ defmodule SalixVoice.Model.CodexTest do
     assert {:error, :not_configured} = SalixVoice.admit(%{attrs | carrier: :websocket})
   end
 
-  test "a read-aloud Electron call speaks only the text it is given and never reaches the Router" do
-    alias SalixStore.{S3, Ids}
-    alias SalixVoice.{CallActor, Settings, TestStubs}
+  test "a push_to_talk Electron call runs with 600s ceiling, skips profile/greeting, delegates to Router, and ingests context" do
+    alias SalixStore.{S3, Ids, Keys, CasRecord}
+    alias SalixVoice.{Settings, TestStubs}
     alias SalixVoice.Carrier.Electron
     start_supervised!(S3.Fake)
+    SalixAgent.TestSupport.configure_control_fixtures!()
 
     overrides = [
-      ingress_mod: TestStubs.Ingress,
-      profile_decider_mod: TestStubs.ProfileDecider,
-      test_pid: self(),
-      metering_mod: TestStubs.Metering,
-      group_directory_mod: TestStubs.GroupDirectory
+      {:salix_voice, :ingress_mod, ObservedIngress},
+      {:salix_voice, :profile_decider_mod, TestStubs.ProfileDecider},
+      {:salix_voice, :test_pid, self()},
+      {:salix_voice, :metering_mod, TestStubs.Metering},
+      {:salix_voice, :group_directory_mod, TestStubs.GroupDirectory},
+      {:salix_im, :agent_delivery_mod, LostNotification},
+      {:salix_im, :agent_workspace_mod, Salix.Bindings.IMAgentWorkspace}
     ]
 
     previous =
-      for {key, value} <- overrides do
-        old = Application.fetch_env(:salix_voice, key)
-        Application.put_env(:salix_voice, key, value)
-        {key, old}
+      for {app, key, value} <- overrides do
+        old = Application.fetch_env(app, key)
+        Application.put_env(app, key, value)
+        {app, key, old}
       end
 
     on_exit(fn ->
-      for {key, old} <- previous do
+      for {app, key, old} <- previous do
         case old do
-          {:ok, value} -> Application.put_env(:salix_voice, key, value)
-          :error -> Application.delete_env(:salix_voice, key)
+          {:ok, value} -> Application.put_env(app, key, value)
+          :error -> Application.delete_env(app, key)
         end
       end
     end)
@@ -475,13 +499,37 @@ defmodule SalixVoice.Model.CodexTest do
     {:ok, _} = Settings.update(%{"enabled" => true, "clear_secrets" => ["openai_api_key"]})
     tenant = Ids.new_tenant_id()
     group = Ids.new_group_id(tenant)
+    SalixAgent.TestSupport.create_control_group!(group)
+
+    router =
+      SalixAgent.TestSupport.create_control_agent_in_group!(tenant, group, %{
+        "role" => "router",
+        "name" => "Router",
+        "runtime_config" => %{"kind" => "internal"}
+      })
+
+    {:ok, _} =
+      CasRecord.update(Keys.ctl_group(group), &Map.put(&1, "router_agent_id", router["agent_id"]))
+
+    {:ok, connect} = SalixIM.VoiceConnects.ensure_voice_im_connect(tenant, group)
+
+    image =
+      Base.decode64!(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=="
+      )
+
+    path = "/uploads/abcdefghijklmnopqrstuv-screen.png"
+    {:ok, write} = SalixAgent.AgentWorkspace.prepare_write(router["agent_id"], path, image)
+
+    {:ok, :seeded} =
+      SalixAgent.AgentWorkspace.seed_operation(router["agent_id"], "ptt-upload", :seeded, [write])
 
     attrs = %{
       carrier: :electron,
-      mode: :read_aloud,
+      mode: :push_to_talk,
       tenant_id: tenant,
       group_id: group,
-      connect_id: "connect_read_aloud",
+      connect_id: connect["connect_id"],
       caller: %{"kind" => "comma_user", "value" => "owner"},
       audio_format: :pcm16_24k,
       sdp: "offer-sdp"
@@ -489,49 +537,59 @@ defmodule SalixVoice.Model.CodexTest do
 
     scope = {tenant, group, "owner"}
     assert {:ok, answer} = Electron.start(attrs)
-    assert_receive {:offer, %{"session" => session}}, 2_000
-    assert session["instructions"] == CallActor.read_aloud_instructions()
-    assert {:ok, %{max_duration_s: 120}} = SalixVoice.info(answer.call_id)
+    assert_receive {:offer, %{"session" => _session}}, 2_000
+    assert {:ok, %{max_duration_s: 600}} = SalixVoice.info(answer.call_id)
     assert_receive {:socket, server}, 2_000
 
-    # Text that arrives before the session starts waits for it.
-    first = "A reunião foi movida para as 15h. Avise o time."
-    assert {:ok, %{queued: true, chunks: 1}} = Electron.say(answer.call_id, scope, first)
-    refute_receive {:sent, _}, 100
-
+    # Starts without greeting append or waiting for profile resolution
     send(server, {:push, %{"type" => "session.started", "session" => %{"id" => "rtc_fixture"}}})
+    refute_received {:profile_decide, _, _, _}
+
+    # Emits voice.call_started to the Router
+    assert_receive {:ingress, ^group, _content, %{"event_type" => "voice.call_started"}, _, _},
+                   2_000
+
+    # Context can be ingested during the call
+    context_text = "Foreground app: Safari. Cursor: 100, 200."
+
+    attachments = [
+      %{"path" => path, "name" => "screen.png", "mime" => "image/png"}
+    ]
+
+    # Unauthorized scope requests fail and do not send commentary
+    assert {:error, :call_not_found} =
+             Electron.context(answer.call_id, {tenant, group, "other"}, context_text, attachments)
+
+    assert {:error, :call_not_found} =
+             Electron.context(
+               answer.call_id,
+               {tenant, "other_group", "owner"},
+               context_text,
+               attachments
+             )
+
+    assert {:error, :call_not_found} =
+             Electron.context(
+               answer.call_id,
+               {"other_tenant", group, "owner"},
+               context_text,
+               attachments
+             )
+
+    refute_receive {:sent, %{"type" => "session.context.append"}}, 100
+
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, context_text, attachments)
 
     assert_receive {:sent,
                     %{
                       "type" => "session.context.append",
                       "channel" => "commentary",
-                      "content" => [%{"type" => "input_text", "text" => ^first}]
+                      "content" => [%{"type" => "input_text", "text" => ^context_text}]
                     }},
                    2_000
 
-    # No greeting follows the queued text.
-    refute_receive {:sent, _}, 200
-
-    sentence = String.duplicate("Frase com acentuação é longa", 6) <> "."
-    long = Enum.join(List.duplicate(sentence, 6), " ")
-    assert {:ok, %{queued: true, chunks: chunk_count}} = Electron.say(answer.call_id, scope, long)
-
-    chunks =
-      for _ <- 1..chunk_count do
-        assert_receive {:sent,
-                        %{"type" => "session.context.append", "content" => [%{"text" => chunk}]}},
-                       2_000
-
-        assert byte_size(chunk) <= 500
-        assert String.ends_with?(chunk, ".")
-        chunk
-      end
-
-    assert chunk_count > 1
-    assert Enum.join(chunks, " ") == long
-    refute_receive {:sent, _}, 100
-
-    # A delegation the model opens is ignored: nothing reaches the Router.
+    # When delegation happens, pending attachments are passed to Router ingress once
     send(
       server,
       {:push,
@@ -539,37 +597,117 @@ defmodule SalixVoice.Model.CodexTest do
          "type" => "delegation.created",
          "item" => %{
            "target" => "client",
-           "id" => "del_read",
-           "content" => [%{"type" => "input_text", "text" => "look it up"}]
+           "id" => "del_ptt_1",
+           "content" => [%{"type" => "input_text", "text" => "Look at this screenshot"}]
          }
        }}
     )
 
-    assert {:error, :invalid_input} = Electron.say(answer.call_id, scope, "  ")
-    assert {:error, :call_not_found} = Electron.say(answer.call_id, {tenant, group, "other"}, "x")
-    assert {:ok, %{events: events}} = Electron.events(answer.call_id, scope, 0)
-    refute Enum.any?(events, &(Map.get(&1, :type) == "delegation"))
+    assert_receive {:ingress, ^group, _content, %{"event_type" => "voice.delegation"}, _source_id,
+                    _opts},
+                   2_000
 
+    {:ok, conversation} = SalixIM.RouterConversationInput.ensure(group)
+    messages = wait_messages(group, conversation["conversation_id"], 50, "del_ptt_1")
+
+    delegation =
+      Enum.find(
+        messages,
+        &(get_in(&1, ["agent_input", "trusted_origin", "provider_context", "message_id"]) ==
+            "del_ptt_1")
+      )
+
+    blocks = Jason.decode!(delegation["agent_input"]["content"])
+
+    assert [
+             %{
+               "type" => "image",
+               "file_ref" => %{"environment_id" => "vfs", "path" => ^path},
+               "file_name" => "screen.png",
+               "mime_type" => "image/png",
+               "size" => size
+             }
+           ] =
+             Enum.filter(blocks, &(&1["type"] == "image"))
+
+    assert size == byte_size(image)
+    assert {:ok, ^image} = SalixAgent.AgentWorkspace.read(router["agent_id"], path)
+
+    # Second delegation does NOT receive the same attachments again
+    send(
+      server,
+      {:push,
+       %{
+         "type" => "delegation.created",
+         "item" => %{
+           "target" => "client",
+           "id" => "del_ptt_2",
+           "content" => [%{"type" => "input_text", "text" => "Second question"}]
+         }
+       }}
+    )
+
+    assert_receive {:ingress, ^group, _content, %{"event_type" => "voice.delegation"}, _source_id,
+                    _opts2},
+                   2_000
+
+    second =
+      wait_messages(group, conversation["conversation_id"], 50, "del_ptt_2")
+      |> Enum.find(
+        &(get_in(&1, ["agent_input", "trusted_origin", "provider_context", "message_id"]) ==
+            "del_ptt_2")
+      )
+
+    refute String.contains?(second["agent_input"]["content"], path)
+
+    [actor] = :pg.get_members(SalixVoice.PG, {:call, answer.call_id})
+
+    assert {:ok, _} =
+             GenServer.call(
+               actor,
+               {:voice_provider, :say,
+                %{
+                  "group_id" => group,
+                  "connect_id" => connect["connect_id"],
+                  "delegation_id" => "del_ptt_1",
+                  "text" => "I checked the screenshot."
+                }}
+             )
+
+    assert_receive {:sent,
+                    %{
+                      "type" => "delegation.context.append",
+                      "delegation_item_id" => "del_ptt_1",
+                      "content" => [
+                        %{"type" => "input_text", "text" => "I checked the screenshot."}
+                      ]
+                    }},
+                   2_000
+
+    # End call emits voice.call_ended
     assert {:ok, _} = Electron.hang_up(answer.call_id, scope)
     assert_receive {:sent, %{"type" => "session.close"}}, 2_000
     send(server, {:push, %{"type" => "session.closed"}})
-    assert_receive {:metered, %{carrier: "electron"}}, 2_000
-    assert {:error, :call_not_found} = Electron.say(answer.call_id, scope, "late")
-    refute_received {:profile_decide, _, _, _}
-    refute_received {:ingress, _, _, _, _, _}
+
+    assert_receive {:ingress, ^group, _content, %{"event_type" => "voice.call_ended"} = ended, _,
+                    _},
+                   2_000
+
+    assert ended["voice_mode"] == "push_to_talk"
+    assert ended["voice_pending_delegation_ids"] == ["del_ptt_2"]
   end
 
-  defp wait_messages(group, conversation, remaining) do
+  defp wait_messages(group, conversation, remaining, delegation_id) do
     {:ok, messages} = SalixIM.Conversations.list_group_conversation_messages(group, conversation)
 
     if remaining > 0 and
          not Enum.any?(
            messages,
            &(get_in(&1, ["agent_input", "trusted_origin", "provider_context", "message_id"]) ==
-               "del_call")
+               delegation_id)
          ) do
       Process.sleep(20)
-      wait_messages(group, conversation, remaining - 1)
+      wait_messages(group, conversation, remaining - 1, delegation_id)
     else
       messages
     end

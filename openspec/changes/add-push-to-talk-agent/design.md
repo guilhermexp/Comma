@@ -129,6 +129,8 @@ Delegação pendente impede o fechamento por inatividade, com "Pensando". Reutil
 
 Resposta do Router depois do teto ou com PTT desligado: "avisa e espera". Garantir que a continuação chegue à conversa pelo caminho existente do Router, inclusive quando `im_api.voice.say` encontra a chamada encerrada. O aviso pertence à chamada/delegação da conta original, não à primeira resposta arbitrária da conversa. Mostrar `ready` ("Resposta pronta") e balão; clicar abre a sidebar no texto do Router. Não iniciar ligação automática. Uma troca de conta invalida também avisos antigos.
 
+A autorização tardia usa a origem fornecida pelo runtime, nunca metadados passados pelo modelo. A origem da delegação conserva `voice_mode`. Se a origem corrente já é `voice.call_ended`, o CallActor publica `voice_pending_delegation_ids` somente das entradas `pending` que ele aceitou; a projeção acompanha o evento existente e seus IDs ficam visíveis no texto ao Router. `voice.say` aceita somente um desses IDs: um argumento explícito inválido não escolhe outro, e a omissão só é aceita com um único pendente. Com vários, retorna erro que pede `delegation_id`. A mutação continua em `ConversationServer -> ConversationActor`, como mensagem do Router sem redelivery para agentes/provedores. Isso conserva a autorização existente, sem nova entidade, índice, sessão ou busca de histórico. Chamadas manuais, `note` e `hang_up` não recebem esse caminho.
+
 Reutilizar o poll serial de eventos da ligação (500 ms, até 200 eventos/512 KiB por página), apenas com a chamada ativa. A legenda acompanha a fala por frases; não prova leitura literal nem exige comparação de palavras. A observação da continuação tardia deve usar a identidade da delegação e a entrega existente da conversa, sem varredura de histórico ou poll por anexo.
 
 ### D17. Print e contexto pela próxima delegação ao Router
@@ -139,15 +141,17 @@ Captura, monitor, traço e recorte continuam em D3/D4. O Main faz upload por `up
 {
   "text": "App em primeiro plano, cursor, tamanho do print, área marcada e nomes dos arquivos",
   "attachments": [
-    { "file_id": "id-do-upload", "name": "screen.png", "mime": "image/png" },
-    { "path": "/uploads/detail.png", "name": "detail.png", "mime": "image/png" }
+    { "path": "/uploads/abcdefghijklmnopqrstuv-screen.png", "name": "screen.png", "mime": "image/png" },
+    { "path": "/uploads/abcdefghijklmnopqrstuv-detail.png", "name": "detail.png", "mime": "image/png" }
   ]
 }
 ```
 
-A rota usa o mesmo escopo `{tenant, group, user}` de `events` e `hang_up`, sem permitir contexto em outra chamada. O CallActor envia `text` como `session.context.append` e guarda os anexos para passá-los como `attachments:` na próxima delegação por `enqueue_group_router_im_provider_message`. Depois dessa entrega, os anexos não reaparecem na delegação seguinte. Não há imagem no sideband: só `input_text`. As instruções de PTT mandam delegar tudo que envolva a tela.
+A rota aceita somente o `path` devolvido por `uploadGroupFile`, junto com `name` e `mime`, e usa o mesmo escopo `{tenant, group, user}` de `events` e `hang_up`, sem permitir contexto em outra chamada. Não há identidade ou mapeamento paralelo de upload. O CallActor envia `text` como `session.context.append` e guarda os anexos para passá-los como `attachments:` na próxima delegação por `enqueue_group_router_im_provider_message`. Cada referência usa o formato de anexo consumido pelo VFS do Router, com resolução do blob existente; mapas crus não bastam. Depois dessa entrega, os anexos não reaparecem na delegação seguinte. Não há imagem no sideband: só `input_text`. As instruções de PTT mandam delegar tudo que envolva a tela.
 
 Com "Enviar print" desligado, não capturar, pedir Gravação de Tela ou fazer upload; enviar apenas contexto textual. Sem permissão de tela, avisar e continuar sem imagem. Contexto não usa o rascunho, não abre janela e não muda o foco. Falha de upload/contexto é visível, sem fingir que a imagem chegou. O modelo do Router precisa aceitar imagem (R1/R15).
+
+Limite de execução, não de turnos: até duas operações de contexto reservadas antes da captura, com até quatro uploads simultâneos. A reserva fica ocupada até a operação terminar, inclusive após cancelamento ou troca de conta. Se as duas estão ocupadas, um novo aperto ainda interrompe/desmuta a voz, mas seu contexto falha de forma visível (`context_failed`), sem reutilizar print anterior ou criar fila ilimitada. A barreira de apresentação espera somente as capturas, não uploads; a entrega continua vinculada à sessão original.
 
 ### D18. Remover o fluxo de transcrição e leitura
 

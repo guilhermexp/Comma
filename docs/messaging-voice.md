@@ -79,35 +79,33 @@ User-sent locations, answers to earlier requests and internal host location are 
 
 ## Voice calls
 
-`salix_voice` serves Twilio, WebSocket and Electron. GPT-Live speaks; the Group Router acts.
-`CallActor` owns profile, model, transport, transcript, delegations, deadline and metering, not durably.
-When ready, it greets and sends `voice.call_started`. Ending sends `voice.call_ended`, reason and open delegations.
+`salix_voice`: Twilio/WebSocket/Electron. GPT Live speaks; Router acts.
+`CallActor` owns profile/model/transport/transcript/delegations/deadline/metering in memory.
+Manual calls greet; PTT skips profile/greeting. Both emit `voice.call_started/ended` (reason, open delegations).
 
-After 300 ms, delegations send caller text/last agent sentence through `ConversationServer -> ConversationActor`.
-Codex supplies the request; API calls use transcript offsets. Metadata: `provider=voice`, `chat_id=call`, `message_id=delegation`, source `im_provider:voice:<connect>:<call>:<delegation>`.
-`im_api.voice.say` speaks and answers; `voice.note` adds quiet context; `voice.hang_up` ends within 10 s, with optional farewell.
-Text: at most 16,000 bytes; API chunks: 1,800 characters. IDs default to source. Group/connect must match. `voice_call_ended` is terminal; do not retry.
-Pending delegations get quiet progress at 20 s and spoken apology at 90 s, not Lean reply obligations.
-Replies reach only the caller: provider identity for phone, key creator for WebSocket, authenticated Comma user for Electron.
+Delegations send caller text/last agent sentence after 300 ms via `ConversationServer -> ConversationActor`.
+Codex requests; API uses transcript offsets. Metadata `provider=voice`, `chat_id=call`, `message_id=delegation`; source `im_provider:voice:<connect>:<call>:<delegation>`.
+Router: `im_api.voice.say` speaks; `voice.note` quiet context; `voice.hang_up` ≤10 s, optional farewell.
+Text ≤16,000 bytes; API chunks ≤1,800 chars. IDs default to source; Group/connect must match.
+Ended PTT `voice.say`: Router text in the original chat; no Agent/provider wakeup/redial. Canonical input binds caller/connect/call/delegation; metadata carries lineage. Other ended operations: terminal `voice_call_ended`, no retry.
+Pending: quiet progress at 20 s, spoken apology at 90 s; no Lean reply obligations.
+Caller: phone identity, WebSocket key creator, authenticated Electron user.
 
 ### Electron subscription calls
 
-Mac Electron Home has Call, mute, live captions, hang up and transcript; Web has none.
-Renderers own WebRTC audio. Only the main renderer gets the microphone (macOS permission); deny other windows, frames and camera.
+Mac Home: Call/mute/captions/hang up/transcript; no Web call UI.
+WebRTC: main/`push-to-talk-voice` audio only, with macOS permission; deny other windows, frames and camera.
+Full sessions use `/v1/comma/workspaces/:workspace_id/voice/calls`:
+`POST {sdp, mode?}` → `{sdp, call_id}`; `GET /:call_id/events?after=N` → events/cursor; `DELETE /:call_id` ends.
+`POST /:call_id/context {text, attachments?}` → `session.context.append`; uploaded `{path, name, mime}` images reach Router VFS and next delegation only. Require Workspace/original user; `no-store`.
+`mode: "push_to_talk"`: hidden mic. Press unmutes; release mutes before print upload; service ends turns. Warm 90 s after speech; pending delegations retain; 10 min cap. Late reply → `ready`, click opens chat. One chat lease/account, no delegation polling.
 
-Full app sessions use the default Group at `/v1/comma/workspaces/:workspace_id/voice/calls`:
-`POST {sdp, mode?}` returns only `{sdp, call_id}`; `GET /:call_id/events?after=N` returns normalized events/cursor; `DELETE /:call_id` hangs up.
-Check Workspace authority per request and the original user on reads/say/hang up; use `no-store`.
-`mode: "read_aloud"` reads only text from `POST /:call_id/say {text}`: no profile, greeting, Router input, delegation or notice; 120 s maximum.
-
-Admission needs enabled voice and a tenant Codex AccountPool account, not an API key.
+Admission: enabled voice + tenant Codex AccountPool, no API key.
 Salix signals ChatGPT `codex/realtime/calls?intent=quicksilver&architecture=avas`, model `gpt-live-1-codex`, then controls `wss://api.openai.com/v1/live/<rtc_id>`.
-Owner-approved headers identify Codex Desktop; `:codex` `version` defaults to `0.161.0`. AccountPool owns renewal; one 401 forces renewal and one retry. Limits return a plan refusal. Never read native Codex login files or expose credentials.
-Context chunks: 500 UTF-8 bytes maximum. Final replies omit `channel`; other context uses commentary. Notes request no speech. Captions merge by turn without final repeats.
-
-Poll serially every 500 ms per caller: 200 events maximum, 512 KiB queue. Gaps are explicit.
-No reads for 60 s hangs up. Ended events expire in 60 s even with reads.
-The view keeps at most 200 turns after hang up; leaving releases media and hangs up. No durable transcript.
+Approved Codex Desktop headers; `:codex` `version` default `0.161.0`. On one 401, AccountPool renews/retries once. Plan limits refuse. Never read native Codex logins or expose credentials.
+Context ≤500 UTF-8 bytes/chunk. Final replies omit `channel`; other context: commentary. Silent notes; captions merge per turn, no final repeats.
+Poll serially/500 ms/caller: ≤200 events, 512 KiB queue, explicit gaps. No reads/60 s ends calls. Ended events expire/60 s, reads or not.
+Manual view: ≤200 turns after hangup; leaving closes media/call. No durable transcript.
 
 ### Limits, drain and billing
 

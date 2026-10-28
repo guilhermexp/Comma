@@ -22,11 +22,10 @@ defmodule SalixVoice.CallActor do
       removal, drain, and the one-active-call-per-Group rule;
     * billing and telemetry at the end.
 
-  A `:read_aloud` call (Electron push-to-talk replies) only reads the text
-  sent with `{:read_aloud, text}`: read-aloud instructions, no profile, no
-  greeting, no Router input at start or end, no delegations, no spoken
-  notices, and at most 120 s. Text sent before the session starts waits for
-  it.
+  A `:push_to_talk` call (Electron Push-to-Talk) runs a GPT-Live session with
+  concise responses, screen/tool requests delegated to the Router, no greeting,
+  no profile blocking, a 600 s ceiling, and ingests screen context and attachments
+  for the next delegation.
 
   `:pg` groups in `SalixVoice.PG`: `{:call, call_id}`, `:calls`,
   `{:group_call, group_id}` and, for a WebSocket call, `{:voice_key, key_id}`.
@@ -83,29 +82,24 @@ defmodule SalixVoice.CallActor do
   words without adding facts. Never invent results.\
   """
 
-  @read_aloud_instructions """
-  You are a text-to-speech voice. Every text you receive is to be read aloud. Read it \
-  aloud exactly as written, word for word, in the language it is written in. Do not \
-  greet, introduce yourself, translate, summarise, explain, comment, ask questions or add \
-  anything before or after it. Never delegate. Until text arrives, say nothing. After \
-  reading it, stop and say nothing. Ignore any sound you hear.\
+  @push_to_talk_instructions """
+  You are the voice of the Comma assistant on a live push-to-talk call. Keep every reply short \
+  and natural for speech. You cannot look things up, see the screen, or act on your own: for any \
+  request that involves the screen, current app, tools, or actions, delegate it, tell the caller \
+  briefly that you are checking, and wait. Never say you do not know about something before delegating \
+  the request and waiting for the result. Your own lack of knowledge is a reason to delegate, not a \
+  final answer. When commentary arrives for a delegation, say it in your own words without adding facts. \
+  Never invent results.\
   """
-  @read_aloud_max_ms 120_000
-  # One GPT-Live append; whole sentences, so the model is never cut mid-word.
-  @read_aloud_chunk_bytes 500
-  # How read-aloud text reaches GPT-Live (R10 of add-push-to-talk-agent: the
-  # live spike decides). `:commentary` is the channel the greeting and spoken
-  # notices use; `:final` omits the channel. `:read_aloud_kind` in the app
-  # env overrides it without a rebuild.
-  @read_aloud_kind :commentary
+  @push_to_talk_max_ms 600_000
 
   def start_link(args), do: GenServer.start_link(__MODULE__, args)
 
   @doc "The GPT-Live session instructions every call starts with."
   def instructions, do: @instructions
 
-  @doc "The GPT-Live session instructions of a `:read_aloud` call."
-  def read_aloud_instructions, do: @read_aloud_instructions
+  @doc "The GPT-Live session instructions of a `:push_to_talk` call."
+  def push_to_talk_instructions, do: @push_to_talk_instructions
 
   # -- Init --------------------------------------------------------------------
 
@@ -115,12 +109,12 @@ defmodule SalixVoice.CallActor do
 
     timers = Map.merge(@default_timers, Map.new(Application.get_env(:salix_voice, :timers, [])))
     settings = args.settings
-    mode = if args[:mode] == :read_aloud, do: :read_aloud, else: :conversation
+    mode = if args[:mode] == :push_to_talk, do: :push_to_talk, else: :conversation
 
     max_call_ms =
       timers.max_call_ms ||
-        if(mode == :read_aloud,
-          do: @read_aloud_max_ms,
+        if(mode == :push_to_talk,
+          do: @push_to_talk_max_ms,
           else: settings["max_call_seconds"] * 1000
         )
 
@@ -128,7 +122,7 @@ defmodule SalixVoice.CallActor do
       call_id: args.call_id,
       carrier: args.carrier,
       mode: mode,
-      read_queue: [],
+      pending_attachments: [],
       tenant_id: args.tenant_id,
       group_id: args.group_id,
       connect_id: args.connect_id,
@@ -163,7 +157,8 @@ defmodule SalixVoice.CallActor do
       model_ref: make_ref(),
       model_started_mono: nil,
       greeted: false,
-      instructions: if(mode == :read_aloud, do: @read_aloud_instructions, else: @instructions),
+      instructions:
+        if(mode == :push_to_talk, do: @push_to_talk_instructions, else: @instructions),
       greeting: greeting(nil),
       profile_task: nil,
       call_started_task: nil,
@@ -210,7 +205,7 @@ defmodule SalixVoice.CallActor do
   end
 
   @impl GenServer
-  def handle_continue(:start_profile, %{mode: :read_aloud} = state),
+  def handle_continue(:start_profile, %{mode: :push_to_talk} = state),
     do: state |> start_model() |> noreply()
 
   def handle_continue(:start_profile, state) do
@@ -339,31 +334,26 @@ defmodule SalixVoice.CallActor do
 
   def handle_call(:info, _from, state), do: {:reply, {:ok, call_info(state)}, state}
 
-  def handle_call({:read_aloud, text}, _from, %{mode: :read_aloud, phase: :live} = state) do
-    case required_text(text) do
-      {:ok, text} ->
-        chunks = Speech.chunks(text, max_bytes: @read_aloud_chunk_bytes)
-        state = flush_read_queue(%{state | read_queue: Enum.reverse(chunks, state.read_queue)})
-        {:reply, {:ok, %{queued: true, chunks: length(chunks)}}, state}
-
-      {:error, _reason} ->
-        {:reply, {:error, :invalid_input}, state}
+  def handle_call({:context, text, attachments}, _from, %{phase: :live} = state) do
+    with {:ok, valid_text} <- required_text(text) do
+      append(state, :commentary, nil, valid_text)
+      attachments = List.wrap(attachments) |> Enum.filter(&is_map/1)
+      state = %{state | pending_attachments: state.pending_attachments ++ attachments}
+      {:reply, {:ok, %{accepted: true}}, state}
+    else
+      _ -> {:reply, {:error, :invalid_input}, state}
     end
   end
 
-  def handle_call({:read_aloud, _text}, _from, %{mode: :read_aloud} = state),
+  def handle_call({:context, _text, _attachments}, _from, state),
     do: {:reply, {:error, :call_not_found}, state}
-
-  def handle_call({:read_aloud, _text}, _from, state),
-    do: {:reply, {:error, :invalid_input}, state}
 
   def handle_call({:voice_provider, op, request}, _from, state) when is_map(request) do
     cond do
       request["group_id"] != state.group_id or request["connect_id"] != state.connect_id ->
         {:reply, {:error, :forbidden}, state}
 
-      # The Router is never told about a read-aloud call and cannot speak in it.
-      state.phase != :live or state.model_pid == nil or state.mode == :read_aloud ->
+      state.phase != :live or state.model_pid == nil ->
         {:reply, {:error, :voice_call_ended}, state}
 
       true ->
@@ -645,7 +635,10 @@ defmodule SalixVoice.CallActor do
   # Wait for both ends of the audio path. Either may become ready first.
   # The carrier must keep sending input audio, including silence:
   # https://developers.openai.com/api/docs/guides/live-conversations#greet-before-the-caller-speaks
-  defp maybe_greet(%{mode: :read_aloud} = state), do: flush_read_queue(state)
+  defp maybe_greet(%{mode: :push_to_talk, phase: :live, closing: nil, greeted: false} = state)
+       when is_integer(state.model_started_mono) and is_pid(state.socket) do
+    %{state | greeted: true, call_started_task: enqueue_call_started(state)}
+  end
 
   defp maybe_greet(%{phase: :live, closing: nil, greeted: false} = state)
        when is_integer(state.model_started_mono) and is_pid(state.socket) do
@@ -654,16 +647,6 @@ defmodule SalixVoice.CallActor do
   end
 
   defp maybe_greet(state), do: state
-
-  # Sends queued read-aloud text once both ends of the audio path are ready.
-  defp flush_read_queue(%{phase: :live, closing: nil, read_queue: [_ | _]} = state)
-       when is_integer(state.model_started_mono) and is_pid(state.socket) do
-    kind = Application.get_env(:salix_voice, :read_aloud_kind, @read_aloud_kind)
-    state.read_queue |> Enum.reverse() |> Enum.each(&append(state, kind, nil, &1))
-    %{state | read_queue: []}
-  end
-
-  defp flush_read_queue(state), do: state
 
   defp model_event(state, {:started, _session_id}) do
     to_socket(state, {:voice_call, :started})
@@ -698,10 +681,6 @@ defmodule SalixVoice.CallActor do
   end
 
   # A read-aloud call has nothing to delegate to.
-  defp model_event(%{mode: :read_aloud} = state, {:delegation, _id, _offset_ms, _request}),
-    do: state
-
-  defp model_event(%{mode: :read_aloud} = state, {:delegation, _id, _offset_ms}), do: state
 
   defp model_event(state, {:delegation, id, offset_ms, request}) do
     state = model_event(state, {:delegation, id, offset_ms})
@@ -841,7 +820,6 @@ defmodule SalixVoice.CallActor do
         state = %{state | ledger: ledger}
         request = if delegation[:request] in [nil, ""], do: caller_text, else: delegation.request
         enqueue_delegation(state, id, request, last_agent)
-        state
 
       _ ->
         state
@@ -850,15 +828,43 @@ defmodule SalixVoice.CallActor do
 
   defp enqueue_delegation(state, id, caller_text, last_agent) do
     parent = self()
+    attachments = Enum.map(state.pending_attachments, &router_attachment/1)
+    state = %{state | pending_attachments: []}
 
     enqueue_router_input(
       state,
       delegation_content(state, id, caller_text, last_agent),
       delegation_metadata(state, id),
       source_message_id(state, id),
-      [trusted_source_text: caller_text],
+      [trusted_source_text: caller_text, attachments: attachments],
       &send(parent, {:delegation_enqueued, id, &1})
     )
+
+    state
+  end
+
+  defp router_attachment(attachment) do
+    path = attachment["path"]
+    name = attachment["name"]
+    mime = attachment["mime"]
+
+    %{
+      "path" => path,
+      "file_name" => name,
+      "mime" => mime,
+      "to_blob" => fn agent_id ->
+        with {:ok, ref} <- SalixIM.Ports.AgentWorkspace.file_ref(agent_id, path) do
+          {:ok,
+           %{
+             ref: ref,
+             path: path,
+             file_name: name,
+             mime_type: mime,
+             size: ref[:size] || ref["size"]
+           }}
+        end
+      end
+    }
   end
 
   # The call-start input has no message_id, so a `voice.say` that answers it
@@ -883,11 +889,22 @@ defmodule SalixVoice.CallActor do
     call_id = state.call_id
     started_task = state.call_started_task
 
+    metadata =
+      call_metadata(state)
+      |> Map.merge(%{"event_type" => "voice.call_ended", "event_id" => call_id})
+
+    metadata =
+      if state.mode == :push_to_talk do
+        ids = for {id, %{status: :pending}} <- state.delegations, do: id
+        Map.put(metadata, "voice_pending_delegation_ids", ids)
+      else
+        metadata
+      end
+
     enqueue_router_input(
       state,
-      call_ended_content(state, pending),
-      call_metadata(state)
-      |> Map.merge(%{"event_type" => "voice.call_ended", "event_id" => call_id}),
+      call_ended_content(state, pending, Map.get(metadata, "voice_pending_delegation_ids", [])),
+      metadata,
       source_message_id(state, "end"),
       [before: fn -> await_task(started_task, @call_started_wait_ms) end],
       fn
@@ -955,7 +972,15 @@ defmodule SalixVoice.CallActor do
   defp delegation_metadata(state, id) do
     state
     |> call_metadata()
-    |> Map.merge(%{"message_id" => id, "event_type" => "voice.delegation", "event_id" => id})
+    |> Map.merge(%{
+      "message_id" => id,
+      "event_type" => "voice.delegation",
+      "event_id" => id,
+      "voice_mode" => to_string(state.mode),
+      "voice_call_id" => state.call_id,
+      "voice_delegation_id" => id,
+      "voice_caller_user_id" => state.caller["value"]
+    })
   end
 
   defp call_metadata(state) do
@@ -967,7 +992,10 @@ defmodule SalixVoice.CallActor do
       "from_user_id" => state.caller["value"],
       "from_username" => state.display_name || state.caller["value"],
       "source_sent_at_ms" => System.system_time(:millisecond),
-      "source_actor_type" => "provider_user"
+      "source_actor_type" => "provider_user",
+      "voice_mode" => to_string(state.mode),
+      "voice_call_id" => state.call_id,
+      "voice_caller_user_id" => state.caller["value"]
     }
     |> Map.merge(caller_authority(state))
   end
@@ -1020,10 +1048,17 @@ defmodule SalixVoice.CallActor do
   end
 
   defp call_started_content(state) do
+    opening =
+      if state.mode == :push_to_talk do
+        "The caller connected through push-to-talk. The voice assistant is listening without a greeting."
+      else
+        "Live voice call (#{carrier_label(state.carrier)}). The caller just connected, and the " <>
+          "voice assistant is greeting them. They have not asked anything yet."
+      end
+
     Enum.join(
       [
-        "Live voice call (#{carrier_label(state.carrier)}). The caller just connected, and the " <>
-          "voice assistant is greeting them. They have not asked anything yet.",
+        opening,
         "If you have something the caller should hear now, such as a result or reminder they " <>
           "are waiting for, say it with im_api.voice.say (call_id #{state.call_id}) in short " <>
           "spoken sentences. Otherwise send nothing: the voice assistant hands you each " <>
@@ -1033,7 +1068,7 @@ defmodule SalixVoice.CallActor do
     )
   end
 
-  defp call_ended_content(state, pending) do
+  defp call_ended_content(state, pending, pending_ids) do
     seconds = ceil_seconds(state.ended_mono - state.started_mono)
 
     pending_line =
@@ -1043,6 +1078,17 @@ defmodule SalixVoice.CallActor do
         n -> ["#{n} caller requests were still unanswered."]
       end
 
+    guidance =
+      if state.mode == :push_to_talk do
+        "The caller can no longer hear you. Pending delegation IDs: " <>
+          Jason.encode!(pending_ids) <>
+          ". Finish accepted work in the Comma conversation; no new call is needed."
+      else
+        "The caller can no longer hear you. Do not use im_api.voice operations for this call. " <>
+          "If something from the call still needs action or an answer, continue it in the " <>
+          "Comma conversation. Otherwise send nothing."
+      end
+
     Enum.join(
       [
         "The live voice call (#{carrier_label(state.carrier)}, call_id #{state.call_id}) has " <>
@@ -1050,11 +1096,7 @@ defmodule SalixVoice.CallActor do
           "(reason #{state.end_reason})."
       ] ++
         pending_line ++
-        [
-          "The caller can no longer hear you. Do not use im_api.voice operations for this call. " <>
-            "If something from the call still needs action or an answer, continue it in the " <>
-            "Comma conversation. Otherwise send nothing."
-        ],
+        [guidance],
       "\n"
     )
   end
@@ -1148,8 +1190,6 @@ defmodule SalixVoice.CallActor do
   # notice audio goes quiet or `notice_max_ms`. Without audio flowing the call
   # ends at once.
   # A read-aloud call says only its text: it ends without a notice.
-  defp notice_then_end(%{phase: :live, mode: :read_aloud} = state, reason, _notice),
-    do: end_call(state, reason)
 
   defp notice_then_end(%{phase: :live} = state, reason, notice) do
     cond do
