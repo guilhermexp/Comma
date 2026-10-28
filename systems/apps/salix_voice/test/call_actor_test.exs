@@ -897,4 +897,637 @@ defmodule SalixVoice.CallActorTest do
 
     handler
   end
+
+  # -- Push-to-talk causal consumer & authority regressions --------------------
+
+  defmodule CausalTestIngress do
+    @moduledoc false
+    def enqueue_group_router_im_provider_message(group, content, metadata, source, opts) do
+      event_type = metadata["event_type"]
+      test_pid = Application.get_env(:salix_voice, :causal_test_pid)
+
+      if is_pid(test_pid) do
+        send(test_pid, {:ingress_call, event_type, metadata, source})
+      end
+
+      interceptor = Application.get_env(:salix_voice, :causal_ingress_interceptor)
+
+      result =
+        if is_function(interceptor, 2) do
+          interceptor.(event_type, fn ->
+            SalixIM.ProviderConnects.enqueue_group_router_im_provider_message(
+              group,
+              content,
+              metadata,
+              source,
+              opts
+            )
+          end)
+        else
+          SalixIM.ProviderConnects.enqueue_group_router_im_provider_message(
+            group,
+            content,
+            metadata,
+            source,
+            opts
+          )
+        end
+
+      if is_pid(test_pid) do
+        send(test_pid, {:ingress, group, content, metadata, source, opts})
+      end
+
+      result
+    end
+  end
+
+  defmodule LostNotification do
+    @moduledoc false
+    def notify_conversation(_, _), do: :ok
+  end
+
+  defp setup_causal_ptt_fixture(opts \\ %{}) do
+    alias SalixStore.{Ids, CasRecord}
+
+    case Process.whereis(SalixStore.S3.Fake) do
+      nil -> start_supervised!(SalixStore.S3.Fake)
+      _ -> :ok
+    end
+
+    SalixAgent.TestSupport.configure_control_fixtures!()
+
+    test_pid = self()
+
+    timers = [
+      delegation_settle_ms: Map.get(opts, :settle_ms, 20),
+      delegation_enqueue_wait_ms: Map.get(opts, :enqueue_wait_ms, 1_000),
+      progress_thinking_ms: 5_000,
+      progress_apology_ms: 10_000,
+      model_close_wait_ms: 300,
+      notice_max_ms: 300,
+      hangup_max_ms: 400,
+      quiet_ms: 100,
+      context_timeout_ms: 2_000
+    ]
+
+    overrides = [
+      {:salix_voice, :ingress_mod, CausalTestIngress},
+      {:salix_voice, :causal_test_pid, test_pid},
+      {:salix_voice, :causal_ingress_interceptor, Map.get(opts, :interceptor)},
+      {:salix_voice, :test_pid, test_pid},
+      {:salix_voice, :metering_mod, TestStubs.Metering},
+      {:salix_voice, :group_directory_mod, TestStubs.GroupDirectory},
+      {:salix_voice, :timers, timers},
+      {:salix_agent, :im_provider_mod, SalixIM.Provider},
+      {:salix_im, :agent_delivery_mod, LostNotification},
+      {:salix_im, :agent_workspace_mod, Salix.Bindings.IMAgentWorkspace}
+    ]
+
+    previous =
+      for {app, key, value} <- overrides do
+        old = Application.fetch_env(app, key)
+        Application.put_env(app, key, value)
+        {app, key, old}
+      end
+
+    on_exit(fn ->
+      for {app, key, old} <- previous do
+        case old do
+          {:ok, value} -> Application.put_env(app, key, value)
+          :error -> Application.delete_env(app, key)
+        end
+      end
+    end)
+
+    {:ok, _} =
+      Settings.update(%{
+        "enabled" => true,
+        "openai_api_key" => "sk-test",
+        "max_calls_per_node" => 50
+      })
+
+    tenant = Ids.new_tenant_id()
+    group = Ids.new_group_id(tenant)
+    SalixAgent.TestSupport.create_control_group!(group)
+
+    router =
+      SalixAgent.TestSupport.create_control_agent_in_group!(tenant, group, %{
+        "role" => "router",
+        "name" => "Router",
+        "runtime_config" => %{"kind" => "internal"}
+      })
+
+    {:ok, _} =
+      CasRecord.update(Keys.ctl_group(group), &Map.put(&1, "router_agent_id", router["agent_id"]))
+
+    {:ok, connect} = SalixIM.VoiceConnects.ensure_voice_im_connect(tenant, group)
+    {:ok, conversation} = SalixIM.RouterConversationInput.ensure(group)
+
+    admit_params = %{
+      carrier: :websocket,
+      mode: :push_to_talk,
+      tenant_id: tenant,
+      group_id: group,
+      connect_id: connect["connect_id"],
+      caller: %{"kind" => "comma_user", "value" => "owner"},
+      principal: "comma_user:#{tenant}:owner"
+    }
+
+    {:ok, %{call_id: call_id, token: token}} = admit(admit_params)
+
+    {:ok, call, info} =
+      if token,
+        do: SalixVoice.attach(token, self()),
+        else: SalixVoice.attach(call_id, self())
+
+    assert_receive {:fake_model, model, {:started, _}}, 1_000
+    emit(model, call, {:started, "sess_ptt"})
+    assert_receive {:ingress, ^group, _, %{"event_type" => "voice.call_started"}, _, _}, 1_000
+
+    %{
+      tenant: tenant,
+      group: group,
+      router: router,
+      connect: connect,
+      conversation: conversation,
+      call: call,
+      info: info,
+      model: model,
+      call_id: call_id
+    }
+  end
+
+  defp execute_late_voice_tool(fixture, ended_msg, delegation_id, text \\ "Done") do
+    {:ok, binding} =
+      SalixIM.ConversationSource.binding(fixture.router["agent_id"], %{
+        group_id: fixture.group,
+        conversation_id: fixture.conversation["conversation_id"],
+        participant_id: fixture.conversation["router_participant_id"]
+      })
+
+    {:ok, entry} = SalixIM.ConversationSource.entry(binding, ended_msg)
+
+    tool_ctx = %{
+      agent_id: fixture.router["agent_id"],
+      group_id: fixture.group,
+      tenant_id: fixture.tenant,
+      role: "router",
+      runtime_kind: :internal,
+      llm_tool_envelope: true,
+      visible_reply_phase: :clean,
+      source_message_id: entry.source_message_id,
+      source_message_ids: [entry.source_message_id],
+      trusted_origin: entry.payload.trusted_origin,
+      trusted_origins: [entry.payload.trusted_origin]
+    }
+
+    entries = SalixAgent.Tools.ImRouter.dynamic_disclosure_entries(tool_ctx)
+    tool_ctx = Map.put(tool_ctx, :tool_disclosure, %{"tools" => entries})
+
+    params = %{
+      "connect_id" => fixture.connect["connect_id"],
+      "delegation_id" => delegation_id,
+      "text" => text
+    }
+
+    [result] =
+      SalixAgent.Tools.execute(
+        [
+          %{
+            id: "late-voice-result",
+            name: "call",
+            args: %{"tool" => "im_api.voice.say", "params" => params}
+          }
+        ],
+        tool_ctx
+      )
+
+    result
+  end
+
+  defp get_ended_conversation_message(fixture) do
+    {:ok, messages} =
+      SalixIM.Conversations.list_group_conversation_messages(
+        fixture.group,
+        fixture.conversation["conversation_id"],
+        limit: 10
+      )
+
+    Enum.find(messages, &(get_in(&1, ["metadata", "event_type"]) == "voice.call_ended"))
+  end
+
+  @tag :ptt_causal_regressions
+  test "push_to_talk hangup while context is pending never treats delegation as accepted or authorizes late voice.say" do
+    fixture = setup_causal_ptt_fixture()
+    call = fixture.call
+    model = fixture.model
+    group = fixture.group
+
+    # Context 1 begins in pending state
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(call, {:context, %{context_id: 1, status: :pending}})
+
+    # Delegation emitted while context is pending
+    emit(model, call, {:delegation, "del_pending_ctx", 100, "[ptt-context:1] Summarize screen"})
+
+    # Caller hangs up while context is still pending
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+
+    assert_receive {:ingress, ^group, ended_content,
+                    %{"event_type" => "voice.call_ended"} = ended_meta, _, _},
+                   2_000
+
+    pending_ids = Map.get(ended_meta, "voice_pending_delegation_ids", [])
+    refute "del_pending_ctx" in pending_ids
+    refute String.contains?(ended_content, "del_pending_ctx")
+
+    # Canonical consumer authority: late voice.say must reject unaccepted pending-context delegation
+    ended_msg = get_ended_conversation_message(fixture)
+    assert ended_msg
+    result = execute_late_voice_tool(fixture, ended_msg, "del_pending_ctx")
+    assert result.error
+  end
+
+  @tag :ptt_causal_regressions
+  test "push_to_talk hangup during settle never treats unforwarded delegation as accepted or authorizes late voice.say" do
+    # 200ms settle window to reliably hang up before flush
+    fixture = setup_causal_ptt_fixture(%{settle_ms: 200})
+    call = fixture.call
+    model = fixture.model
+    group = fixture.group
+
+    # Context 2: begin pending FIRST, then complete (valid API precondition)
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(call, {:context, %{context_id: 2, status: :pending}})
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(
+               call,
+               {:context,
+                %{
+                  context_id: 2,
+                  status: :complete,
+                  text: "Active screen content",
+                  attachments: []
+                }}
+             )
+
+    # Delegation emitted into settle window
+    emit(model, call, {:delegation, "del_settle", 100, "[ptt-context:2] Summarize screen"})
+
+    # Hang up immediately during settle
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+
+    assert_receive {:ingress, ^group, ended_content,
+                    %{"event_type" => "voice.call_ended"} = ended_meta, _, _},
+                   2_000
+
+    # Never forwarded to Router, must not masquerade as accepted
+    pending_ids = Map.get(ended_meta, "voice_pending_delegation_ids", [])
+    refute "del_settle" in pending_ids
+    refute String.contains?(ended_content, "del_settle")
+
+    # Canonical consumer authority: late voice.say rejected
+    ended_msg = get_ended_conversation_message(fixture)
+    assert ended_msg
+    result = execute_late_voice_tool(fixture, ended_msg, "del_settle")
+    assert result.error
+  end
+
+  @tag :ptt_causal_regressions
+  test "push_to_talk forwarding in flight rejects un-ACKed delegation when Router enqueue fails" do
+    parent = self()
+
+    interceptor = fn
+      "voice.delegation", _proceed ->
+        send(parent, {:delegation_in_flight, self()})
+
+        receive do
+          :release_with_failure ->
+            {:error, :router_unavailable}
+        end
+
+      _other, proceed ->
+        proceed.()
+    end
+
+    fixture = setup_causal_ptt_fixture(%{settle_ms: 10, interceptor: interceptor})
+    call = fixture.call
+    model = fixture.model
+    group = fixture.group
+
+    # Context 3: begin pending, then complete
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(call, {:context, %{context_id: 3, status: :pending}})
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(
+               call,
+               {:context,
+                %{
+                  context_id: 3,
+                  status: :complete,
+                  text: "Active screen content",
+                  attachments: []
+                }}
+             )
+
+    emit(model, call, {:delegation, "del_flight_failed", 100, "[ptt-context:3] Summarize screen"})
+
+    # Wait until forwarding is in flight at the Router boundary
+    assert_receive {:delegation_in_flight, task_pid}, 1_000
+
+    # Caller hangs up while forwarding is in flight
+    send(call, {:voice_carrier, :hangup, :normal})
+    # Media close signal emitted immediately to caller socket
+    assert_receive {:voice_call, :end, :caller_hangup}, 1_000
+
+    # Release Router enqueue with failure
+    send(task_pid, :release_with_failure)
+
+    ref = Process.monitor(call)
+    assert_receive {:DOWN, ^ref, :process, ^call, :normal}, 2_000
+
+    assert_receive {:ingress, ^group, ended_content,
+                    %{"event_type" => "voice.call_ended"} = ended_meta, _, _},
+                   2_000
+
+    pending_ids = Map.get(ended_meta, "voice_pending_delegation_ids", [])
+    refute "del_flight_failed" in pending_ids
+    refute String.contains?(ended_content, "del_flight_failed")
+
+    # Canonical consumer authority: un-ACKed delegation cannot be authorized for late voice.say
+    ended_msg = get_ended_conversation_message(fixture)
+    assert ended_msg
+    result = execute_late_voice_tool(fixture, ended_msg, "del_flight_failed")
+    assert result.error
+  end
+
+  @tag :ptt_causal_regressions
+  test "push_to_talk forwarding in flight preserves accepted work upon delayed successful Router ACK with bounded termination" do
+    parent = self()
+
+    interceptor = fn
+      "voice.delegation", proceed ->
+        send(parent, {:delegation_in_flight, self()})
+
+        receive do
+          :release_with_success ->
+            proceed.()
+        end
+
+      _other, proceed ->
+        proceed.()
+    end
+
+    fixture = setup_causal_ptt_fixture(%{settle_ms: 10, interceptor: interceptor})
+    call = fixture.call
+    model = fixture.model
+    group = fixture.group
+
+    # Context 4: begin pending, then complete
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(call, {:context, %{context_id: 4, status: :pending}})
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(
+               call,
+               {:context,
+                %{
+                  context_id: 4,
+                  status: :complete,
+                  text: "Active screen content",
+                  attachments: []
+                }}
+             )
+
+    emit(model, call, {:delegation, "del_flight_ok", 100, "[ptt-context:4] Summarize screen"})
+
+    assert_receive {:delegation_in_flight, task_pid}, 1_000
+
+    # Hang up while in flight
+    send(call, {:voice_carrier, :hangup, :normal})
+    # Media close signal emitted immediately to caller socket
+    assert_receive {:voice_call, :end, :caller_hangup}, 1_000
+
+    # While Router ACK is held, assert NO premature call-ended ingress call is initiated (premature handoff defect)
+    refute_receive {:ingress_call, "voice.call_ended", _, _}, 200
+
+    # Release successful Router ACK
+    send(task_pid, :release_with_success)
+
+    # Actor reaches clean bounded termination
+    ref = Process.monitor(call)
+    assert_receive {:DOWN, ^ref, :process, ^call, :normal}, 2_000
+
+    assert_receive {:ingress, ^group, ended_content,
+                    %{"event_type" => "voice.call_ended"} = ended_meta, _, _},
+                   2_000
+
+    # Actual accepted work survives in ended handoff metadata and content
+    pending_ids = Map.get(ended_meta, "voice_pending_delegation_ids", [])
+    assert "del_flight_ok" in pending_ids
+    assert String.contains?(ended_content, "del_flight_ok")
+
+    # Canonical consumer authority: late voice.say is authorized for actual accepted work
+    ended_msg = get_ended_conversation_message(fixture)
+    assert ended_msg
+    result = execute_late_voice_tool(fixture, ended_msg, "del_flight_ok")
+    refute result.error
+  end
+
+  @tag :ptt_causal_regressions
+  test "push_to_talk in-flight forwarding bounds actor termination and never marks stalled enqueue as accepted" do
+    parent = self()
+
+    interceptor = fn
+      "voice.delegation", _proceed ->
+        send(parent, {:delegation_in_flight, self()})
+        # Stalls indefinitely
+        Process.sleep(10_000)
+        {:ok, :queued}
+
+      _other, proceed ->
+        proceed.()
+    end
+
+    fixture = setup_causal_ptt_fixture(%{settle_ms: 10, interceptor: interceptor})
+    call = fixture.call
+    model = fixture.model
+    group = fixture.group
+
+    # Context 5: begin pending, then complete
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(call, {:context, %{context_id: 5, status: :pending}})
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(
+               call,
+               {:context,
+                %{
+                  context_id: 5,
+                  status: :complete,
+                  text: "Active screen content",
+                  attachments: []
+                }}
+             )
+
+    emit(model, call, {:delegation, "del_stalled", 100, "[ptt-context:5] Summarize screen"})
+
+    assert_receive {:delegation_in_flight, _task_pid}, 1_000
+
+    # Hang up while in flight
+    send(call, {:voice_carrier, :hangup, :normal})
+    assert_receive {:voice_call, :end, :caller_hangup}, 1_000
+
+    # CallActor must terminate in a bounded timeframe (e.g. within 2.5s), NOT wait 10 seconds
+    ref = Process.monitor(call)
+    assert_receive {:DOWN, ^ref, :process, ^call, :normal}, 2_500
+
+    assert_receive {:ingress, ^group, ended_content,
+                    %{"event_type" => "voice.call_ended"} = ended_meta, _, _},
+                   2_500
+
+    # Because it stalled past bounded termination, it was never accepted before shutdown
+    pending_ids = Map.get(ended_meta, "voice_pending_delegation_ids", [])
+    refute "del_stalled" in pending_ids
+    refute String.contains?(ended_content, "del_stalled")
+
+    ended_msg = get_ended_conversation_message(fixture)
+    assert ended_msg
+    result = execute_late_voice_tool(fixture, ended_msg, "del_stalled")
+    assert result.error
+  end
+
+  @tag :ptt_causal_regressions
+  @tag timeout: 15_000
+  test "push_to_talk actor mailbox responds ended promptly to voice.say for accepted work while subsequent forwarding is held" do
+    parent = self()
+    {:ok, blocker} = Agent.start_link(fn -> false end)
+
+    interceptor = fn
+      "voice.delegation", proceed ->
+        if Agent.get(blocker, & &1) do
+          send(parent, {:second_delegation_in_flight, self()})
+
+          receive do
+            :release_second_delegation -> proceed.()
+          end
+        else
+          proceed.()
+        end
+
+      _other, proceed ->
+        proceed.()
+    end
+
+    # Enqueue wait of 6_000ms exceeds the 5_000ms VoiceProvider GenServer.call timeout
+    fixture =
+      setup_causal_ptt_fixture(%{settle_ms: 10, enqueue_wait_ms: 6_000, interceptor: interceptor})
+
+    call = fixture.call
+    model = fixture.model
+    group = fixture.group
+
+    # Gesture 1: context 1 (pending -> complete)
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(call, {:context, %{context_id: 1, status: :pending}})
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(
+               call,
+               {:context,
+                %{
+                  context_id: 1,
+                  status: :complete,
+                  text: "Screen for first request",
+                  attachments: []
+                }}
+             )
+
+    # Delegation 1 emitted -> flushes -> enqueued to Router -> ACKed immediately
+    emit(model, call, {:delegation, "del_first_acked", 100, "[ptt-context:1] First task"})
+
+    assert_receive {:ingress, ^group, _,
+                    %{"event_type" => "voice.delegation", "message_id" => "del_first_acked"}, _,
+                    _},
+                   1_000
+
+    # Retrieve canonical original voice.delegation conversation message for del_first_acked
+    {:ok, messages} =
+      SalixIM.Conversations.list_group_conversation_messages(
+        group,
+        fixture.conversation["conversation_id"],
+        limit: 10
+      )
+
+    first_delegation_msg =
+      Enum.find(messages, &(get_in(&1, ["metadata", "message_id"]) == "del_first_acked"))
+
+    assert first_delegation_msg
+
+    # Now signal interceptor to block the next delegation
+    Agent.update(blocker, fn _ -> true end)
+
+    # Gesture 2: context 2 (pending -> complete)
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(call, {:context, %{context_id: 2, status: :pending}})
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(
+               call,
+               {:context,
+                %{
+                  context_id: 2,
+                  status: :complete,
+                  text: "Screen for second request",
+                  attachments: []
+                }}
+             )
+
+    # Delegation 2 emitted -> forwarding starts and hits interceptor barrier
+    emit(model, call, {:delegation, "del_second_held", 200, "[ptt-context:2] Second task"})
+    assert_receive {:second_delegation_in_flight, second_task_pid}, 1_000
+
+    # Caller hangs up while second delegation forwarding is in flight
+    send(call, {:voice_carrier, :hangup, :normal})
+    assert_receive {:voice_call, :end, :caller_hangup}, 1_000
+
+    # Canonical consumer authority: Tools/ImRouter voice.say for the accepted first delegation
+    # while second ACK is still held must succeed without hitting the 5s provider timeout or voice_outcome_unknown
+    result =
+      execute_late_voice_tool(
+        fixture,
+        first_delegation_msg,
+        "del_first_acked",
+        "Answering first accepted task."
+      )
+
+    refute result.error
+
+    # Final text must be persisted in the conversation
+    {:ok, final_messages} =
+      SalixIM.Conversations.list_group_conversation_messages(
+        group,
+        fixture.conversation["conversation_id"],
+        limit: 20
+      )
+
+    reply_msg =
+      Enum.find(final_messages, fn msg ->
+        msg["actor_type"] == "agent" and
+          get_in(msg, ["metadata", "voice_delegation_id"]) == "del_first_acked"
+      end)
+
+    assert reply_msg
+    assert [%{"text" => "Answering first accepted task."}] = reply_msg["content"]
+
+    # Release second delegation ACK so actor finishes bounded finalization
+    send(second_task_pid, :release_second_delegation)
+
+    ref = Process.monitor(call)
+    assert_receive {:DOWN, ^ref, :process, ^call, :normal}, 2_000
+  end
 end

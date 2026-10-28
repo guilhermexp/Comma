@@ -55,6 +55,7 @@ defmodule SalixVoice.CallActor do
     model_start_ms: 15_000,
     model_close_wait_ms: 3_000,
     delegation_settle_ms: 300,
+    delegation_enqueue_wait_ms: 10_000,
     context_timeout_ms: 150_000,
     progress_thinking_ms: 20_000,
     progress_apology_ms: 90_000,
@@ -68,6 +69,7 @@ defmodule SalixVoice.CallActor do
   # A call-end input waits at most this long for the call-start input to be
   # admitted, so the Router sees them in order.
   @call_started_wait_ms 10_000
+  @delegation_enqueue_wait_ms 10_000
 
   @thinking_progress "The assistant is still working on it."
   @apology "Sorry, this is taking longer than expected. The assistant is still working on it."
@@ -165,6 +167,7 @@ defmodule SalixVoice.CallActor do
       greeting: greeting(nil),
       profile_task: nil,
       call_started_task: nil,
+      call_ended_emitted?: false,
       model_closed?: false,
       model_closed_mono: nil,
       model_transport_lost?: false,
@@ -601,7 +604,7 @@ defmodule SalixVoice.CallActor do
 
     cond do
       state.phase == :ending ->
-        state |> finalize() |> noreply()
+        state |> maybe_finish_ending() |> noreply()
 
       true ->
         Logger.warning("voice model exited call=#{state.call_id} reason=#{inspect(reason)}")
@@ -629,6 +632,16 @@ defmodule SalixVoice.CallActor do
   end
 
   defp timer(state, :model_close_wait), do: finalize(state)
+
+  defp timer(state, :delegation_enqueue_timeout) do
+    delegations =
+      Enum.reduce(state.delegations, state.delegations, fn {id, d}, acc ->
+        if is_pid(d[:task_pid]), do: Map.put(acc, id, %{d | task_pid: nil}), else: acc
+      end)
+
+    %{state | delegations: delegations}
+    |> maybe_finish_ending()
+  end
 
   defp timer(%{profile_task: {task, _started}} = state, :profile_deadline) do
     Task.shutdown(task, :brutal_kill)
@@ -761,6 +774,8 @@ defmodule SalixVoice.CallActor do
         context_id: nil,
         status: :pending,
         enqueued: false,
+        accepted: false,
+        task_pid: nil,
         waiting_for_context: false,
         timers: [
           Process.send_after(
@@ -794,7 +809,7 @@ defmodule SalixVoice.CallActor do
       |> mark_model_closed()
 
     if state.phase == :ending,
-      do: finalize(state),
+      do: maybe_finish_ending(state),
       else: end_call(state, model_close_reason(reason))
   end
 
@@ -903,16 +918,24 @@ defmodule SalixVoice.CallActor do
     parent = self()
     router_attachments = Enum.map(attachments, &router_attachment/1)
 
-    enqueue_router_input(
-      state,
-      delegation_content(state, id, caller_text, last_agent, context_text),
-      delegation_metadata(state, id),
-      source_message_id(state, id),
-      [trusted_source_text: caller_text, attachments: router_attachments],
-      &send(parent, {:delegation_enqueued, id, &1})
-    )
+    task_pid =
+      enqueue_router_input(
+        state,
+        delegation_content(state, id, caller_text, last_agent, context_text),
+        delegation_metadata(state, id),
+        source_message_id(state, id),
+        [trusted_source_text: caller_text, attachments: router_attachments],
+        &send(parent, {:delegation_enqueued, id, &1})
+      )
 
-    state
+    case state.delegations do
+      %{^id => delegation} ->
+        updated = %{delegation | task_pid: task_pid}
+        %{state | delegations: Map.put(state.delegations, id, updated)}
+
+      _ ->
+        state
+    end
   end
 
   defp router_attachment(attachment) do
@@ -957,9 +980,16 @@ defmodule SalixVoice.CallActor do
 
   # Sent only for a call whose start the Router was told about. The actor may
   # stop before the task finishes, so the task logs its own failure.
-  defp enqueue_call_ended(%{greeted: true} = state, pending) do
+  defp enqueue_call_ended(%{greeted: true} = state) do
     call_id = state.call_id
     started_task = state.call_started_task
+
+    accepted_pending_ids =
+      if state.mode == :push_to_talk do
+        for {id, %{status: :pending, accepted: true}} <- state.delegations, do: id
+      else
+        []
+      end
 
     metadata =
       call_metadata(state)
@@ -967,15 +997,25 @@ defmodule SalixVoice.CallActor do
 
     metadata =
       if state.mode == :push_to_talk do
-        ids = for {id, %{status: :pending}} <- state.delegations, do: id
-        Map.put(metadata, "voice_pending_delegation_ids", ids)
+        Map.put(metadata, "voice_pending_delegation_ids", accepted_pending_ids)
       else
         metadata
       end
 
+    pending_count =
+      if state.mode == :push_to_talk do
+        length(accepted_pending_ids)
+      else
+        Enum.count(state.delegations, fn {_id, d} -> d.status == :pending end)
+      end
+
     enqueue_router_input(
       state,
-      call_ended_content(state, pending, Map.get(metadata, "voice_pending_delegation_ids", [])),
+      call_ended_content(
+        state,
+        pending_count,
+        Map.get(metadata, "voice_pending_delegation_ids", [])
+      ),
       metadata,
       source_message_id(state, "end"),
       [before: fn -> await_task(started_task, @call_started_wait_ms) end],
@@ -991,7 +1031,7 @@ defmodule SalixVoice.CallActor do
     )
   end
 
-  defp enqueue_call_ended(_state, _pending), do: nil
+  defp enqueue_call_ended(_state), do: nil
 
   # Returns the task pid, or nil when the task could not start.
   defp enqueue_router_input(state, content, metadata, source_message_id, opts, on_result) do
@@ -1198,29 +1238,86 @@ defmodule SalixVoice.CallActor do
   defp carrier_label(:websocket), do: "voice app"
   defp carrier_label(other), do: to_string(other)
 
-  defp delegation_enqueued(state, _id, {:ok, _}), do: state
+  defp delegation_enqueued(state, id, {:ok, _}) do
+    state =
+      case state.delegations do
+        %{^id => delegation} ->
+          updated = %{delegation | accepted: true, task_pid: nil}
+          %{state | delegations: Map.put(state.delegations, id, updated)}
+
+        _ ->
+          state
+      end
+
+    if state.phase == :ending, do: maybe_finish_ending(state), else: state
+  end
 
   defp delegation_enqueued(state, id, result) do
     Logger.warning(
       "voice delegation ingress failed call=#{state.call_id} reason=#{inspect(result)}"
     )
 
-    case state.delegations do
-      %{^id => %{status: :pending}} when state.phase == :live ->
-        append(
-          state,
-          :instructions,
-          id,
-          "The assistant cannot take this request right now. Tell the caller briefly and offer to try again later."
-        )
+    state =
+      case state.delegations do
+        %{^id => %{status: :pending} = delegation} when state.phase == :live ->
+          delegation = %{delegation | accepted: false, task_pid: nil}
+          state = %{state | delegations: Map.put(state.delegations, id, delegation)}
 
-        electron_delegation(state, id, "failed")
-        finish_delegation(state, id, "failed")
+          append(
+            state,
+            :instructions,
+            id,
+            "The assistant cannot take this request right now. Tell the caller briefly and offer to try again later."
+          )
 
-      _ ->
-        state
+          electron_delegation(state, id, "failed")
+          finish_delegation(state, id, "failed")
+
+        %{^id => delegation} ->
+          updated = %{delegation | accepted: false, task_pid: nil}
+          %{state | delegations: Map.put(state.delegations, id, updated)}
+
+        _ ->
+          state
+      end
+
+    if state.phase == :ending, do: maybe_finish_ending(state), else: state
+  end
+
+  defp in_flight_delegations?(state) do
+    Enum.any?(state.delegations, fn {_id, d} -> is_pid(d[:task_pid]) end)
+  end
+
+  defp maybe_finish_ending(%{phase: :ending} = state) do
+    cond do
+      in_flight_delegations?(state) ->
+        wait_ms = state.timers[:delegation_enqueue_wait_ms] || @delegation_enqueue_wait_ms
+
+        if Map.has_key?(state.timer_refs, :delegation_enqueue_timeout) do
+          state
+        else
+          schedule(state, :delegation_enqueue_timeout, wait_ms, :delegation_enqueue_timeout)
+        end
+
+      not state.call_ended_emitted? ->
+        state = cancel(state, :delegation_enqueue_timeout)
+        state = %{state | call_ended_emitted?: true}
+        _ = enqueue_call_ended(state)
+        maybe_finish_ending(state)
+
+      state.model_pid != nil and not state.model_closed? ->
+        if Map.has_key?(state.timer_refs, :model_close_wait) do
+          state
+        else
+          schedule(state, :model_close_wait, state.timers.model_close_wait_ms, :model_close_wait)
+        end
+
+      true ->
+        finalize(state)
     end
   end
+
+  defp maybe_finish_ending(state), do: state
 
   @ptt_marker_regex ~r/\A\[ptt-context:(\d+)\]\s*(.*)\z/s
 
@@ -1618,7 +1715,6 @@ defmodule SalixVoice.CallActor do
 
   defp end_call(%{phase: :live} = state, reason) do
     state = state |> cancel_all() |> stop_profile()
-    pending = Enum.count(state.delegations, fn {_id, d} -> d.status == :pending end)
 
     Enum.each(state.delegations, fn {_id, delegation} ->
       Enum.each(delegation.timers, &Process.cancel_timer/1)
@@ -1628,16 +1724,11 @@ defmodule SalixVoice.CallActor do
     if state.group_monitor, do: :pg.demonitor(@pg, state.group_monitor)
     _ = :pg.leave(@pg, {:group_call, state.group_id}, self())
     if state.key_id, do: :pg.leave(@pg, {:voice_key, state.key_id}, self())
+    if state.model_pid && not state.model_closed?, do: close_model(state)
 
     state = %{state | phase: :ending, end_reason: reason, ended_mono: now(), closing: nil}
-    enqueue_call_ended(state, pending)
 
-    if state.model_pid && not state.model_closed? do
-      close_model(state)
-      schedule(state, :model_close_wait, state.timers.model_close_wait_ms, :model_close_wait)
-    else
-      finalize(state)
-    end
+    maybe_finish_ending(state)
   end
 
   defp end_call(state, _reason), do: state
