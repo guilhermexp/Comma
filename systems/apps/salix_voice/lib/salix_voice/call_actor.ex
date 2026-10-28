@@ -857,6 +857,15 @@ defmodule SalixVoice.CallActor do
           state.mode == :push_to_talk and delegation.waiting_for_context ->
             state
 
+          state.mode == :push_to_talk and
+              not matching_complete_ptt_context?(state.ptt_context, delegation.context_id) ->
+            fail_invalid_ptt_delegation(
+              state,
+              id,
+              delegation.context_id,
+              "The screen context for this request has expired. Ask the caller to press and hold to try again."
+            )
+
           true ->
             {caller_text, ledger} = Transcript.take_caller(state.ledger, delegation.offset_ms)
             last_agent = Transcript.last_agent_sentence(ledger)
@@ -865,23 +874,18 @@ defmodule SalixVoice.CallActor do
             request =
               if delegation[:request] in [nil, ""], do: caller_text, else: delegation.request
 
-            {attachments, state} =
+            {attachments, context_text, state} =
               if state.mode == :push_to_talk do
-                case state.ptt_context do
-                  %{id: cid, attachments: atts} when cid == delegation.context_id ->
-                    updated_context = %{state.ptt_context | attachments: []}
-                    {atts, %{state | ptt_context: updated_context}}
-
-                  _ ->
-                    {[], state}
-                end
+                %{attachments: atts, text: ctext} = state.ptt_context
+                updated_context = %{state.ptt_context | attachments: []}
+                {atts, ctext, %{state | ptt_context: updated_context}}
               else
-                {[], state}
+                {[], nil, state}
               end
 
             delegation = %{delegation | enqueued: true, waiting_for_context: false}
             state = %{state | delegations: Map.put(state.delegations, id, delegation)}
-            enqueue_delegation(state, id, request, last_agent, attachments)
+            enqueue_delegation(state, id, request, last_agent, attachments, context_text)
         end
 
       _ ->
@@ -889,13 +893,19 @@ defmodule SalixVoice.CallActor do
     end
   end
 
-  defp enqueue_delegation(state, id, caller_text, last_agent, attachments) do
+  defp matching_complete_ptt_context?(%{id: cid, status: :complete}, context_id)
+       when cid == context_id,
+       do: true
+
+  defp matching_complete_ptt_context?(_context, _context_id), do: false
+
+  defp enqueue_delegation(state, id, caller_text, last_agent, attachments, context_text) do
     parent = self()
     router_attachments = Enum.map(attachments, &router_attachment/1)
 
     enqueue_router_input(
       state,
-      delegation_content(state, id, caller_text, last_agent),
+      delegation_content(state, id, caller_text, last_agent, context_text),
       delegation_metadata(state, id),
       source_message_id(state, id),
       [trusted_source_text: caller_text, attachments: router_attachments],
@@ -1080,7 +1090,7 @@ defmodule SalixVoice.CallActor do
 
   defp caller_authority(_state), do: %{}
 
-  defp delegation_content(state, id, caller_text, last_agent) do
+  defp delegation_content(state, id, caller_text, last_agent, context_text) do
     caller_line =
       case caller_text do
         "" -> "The caller's words were not transcribed yet."
@@ -1093,6 +1103,15 @@ defmodule SalixVoice.CallActor do
         text -> ["The voice assistant last said: \"#{text}\""]
       end
 
+    context_line =
+      case context_text do
+        text when is_binary(text) and text != "" ->
+          ["Captured screen context: #{text}"]
+
+        _ ->
+          []
+      end
+
     Enum.join(
       [
         "Live voice call (#{carrier_label(state.carrier)}). The caller is on the line now, " <>
@@ -1100,6 +1119,7 @@ defmodule SalixVoice.CallActor do
       ] ++
         [caller_line] ++
         agent_line ++
+        context_line ++
         [
           "Answer with im_api.voice.say (call_id #{state.call_id}, delegation_id #{id}) in " <>
             "short spoken sentences. Use im_api.voice.note for quiet progress and " <>
@@ -1389,7 +1409,7 @@ defmodule SalixVoice.CallActor do
 
       id == state.highest_context_id ->
         case state.ptt_context do
-          %{id: ^id, status: :pending} ->
+          %{id: ^id, status: current_status} when current_status in [:pending, :complete] ->
             state = cancel(state, :context_timeout)
 
             updated_context = %{
@@ -1465,8 +1485,7 @@ defmodule SalixVoice.CallActor do
        %{
          status: :pending,
          enqueued: false,
-         context_id: ^context_id,
-         waiting_for_context: true
+         context_id: ^context_id
        }},
       acc ->
         fail_delegation(acc, id, reason_message)
@@ -1478,7 +1497,7 @@ defmodule SalixVoice.CallActor do
 
   defp invalidate_waiting_delegations(state, reason_message) do
     Enum.reduce(state.delegations, state, fn
-      {id, %{status: :pending, enqueued: false, waiting_for_context: true} = delegation}, acc ->
+      {id, %{status: :pending, enqueued: false} = delegation}, acc ->
         if delegation[:context_id] do
           to_socket(acc, {:voice_call, :context_failed, delegation.context_id})
         end

@@ -812,7 +812,6 @@ defmodule SalixVoice.Model.CodexTest do
            ] = Enum.filter(blocks, &(&1["type"] == "image"))
 
     assert {:ok, ^image} = SalixAgent.AgentWorkspace.read(router["agent_id"], path)
-
     # --- 2. Missing or malformed marker fails closed without Router ingress ---
     assert {:ok, %{accepted: true}} =
              Electron.context(answer.call_id, scope, %{context_id: 20, status: :pending})
@@ -1092,6 +1091,399 @@ defmodule SalixVoice.Model.CodexTest do
     send(server, {:push, %{"type" => "session.closed"}})
   end
 
+  test "push_to_talk regression: captured metadata included in Router ingress for waiting delegations" do
+    alias SalixVoice.Carrier.Electron
+
+    %{
+      group: group,
+      router: router,
+      path: path,
+      size: size,
+      image: image,
+      scope: scope,
+      answer: answer,
+      server: server
+    } = setup_ptt_call(%{seed_name: "ptt-meta-reg", path: "/uploads/meta-regression.png"})
+
+    # Context 10: delegation arrives before context completion with image
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{context_id: 10, status: :pending})
+
+    send(
+      server,
+      {:push,
+       %{
+         "type" => "delegation.created",
+         "item" => %{
+           "target" => "client",
+           "id" => "del_before_upload",
+           "content" => [
+             %{
+               "type" => "input_text",
+               "text" => "[ptt-context:10] Check screenshot before upload"
+             }
+           ]
+         }
+       }}
+    )
+
+    refute_receive {:ingress, ^group, _content, %{"event_type" => "voice.delegation"}, _, _}, 100
+
+    attachments = [%{"path" => path, "name" => "screen.png", "mime" => "image/png"}]
+
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{
+               context_id: 10,
+               status: :complete,
+               text: "App: Terminal",
+               attachments: attachments
+             })
+
+    assert_receive {:ingress, ^group, content_before_upload,
+                    %{"event_type" => "voice.delegation"}, _source_id, opts},
+                   2_000
+
+    assert opts[:trusted_source_text] == "Check screenshot before upload"
+    assert String.contains?(content_before_upload, "App: Terminal")
+
+    {:ok, conversation} = SalixIM.RouterConversationInput.ensure(group)
+    messages = wait_messages(group, conversation["conversation_id"], 50, "del_before_upload")
+
+    del_msg =
+      Enum.find(
+        messages,
+        &(get_in(&1, ["agent_input", "trusted_origin", "provider_context", "message_id"]) ==
+            "del_before_upload")
+      )
+
+    blocks = Jason.decode!(del_msg["agent_input"]["content"])
+
+    assert [
+             %{
+               "type" => "image",
+               "file_ref" => %{"environment_id" => "vfs", "path" => ^path},
+               "file_name" => "screen.png",
+               "mime_type" => "image/png",
+               "size" => ^size
+             }
+           ] = Enum.filter(blocks, &(&1["type"] == "image"))
+
+    assert {:ok, ^image} = SalixAgent.AgentWorkspace.read(router["agent_id"], path)
+    assert String.contains?(del_msg["agent_input"]["content"], "App: Terminal")
+
+    # Context 11: delegation arrives before complete with empty attachments
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{context_id: 11, status: :pending})
+
+    send(
+      server,
+      {:push,
+       %{
+         "type" => "delegation.created",
+         "item" => %{
+           "target" => "client",
+           "id" => "del_before_upload_no_att",
+           "content" => [
+             %{
+               "type" => "input_text",
+               "text" => "[ptt-context:11] What window is this?"
+             }
+           ]
+         }
+       }}
+    )
+
+    refute_receive {:ingress, ^group, _content, %{"event_id" => "del_before_upload_no_att"}, _,
+                    _},
+                   100
+
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{
+               context_id: 11,
+               status: :complete,
+               text: "Foreground app: Safari. Cursor: 120, 240.",
+               attachments: []
+             })
+
+    assert_receive {:ingress, ^group, no_att_content, %{"event_id" => "del_before_upload_no_att"},
+                    _source_id, _opts},
+                   2_000
+
+    assert String.contains?(no_att_content, "Foreground app: Safari. Cursor: 120, 240.")
+
+    # Clean up call
+    assert {:ok, _} = Electron.hang_up(answer.call_id, scope)
+    assert_receive {:sent, %{"type" => "session.close"}}, 2_000
+    send(server, {:push, %{"type" => "session.closed"}})
+  end
+
+  test "push_to_talk regression: ready unqueued delegations are invalidated on supersession or cancel, never enqueue sans image or steal" do
+    alias SalixVoice.Carrier.Electron
+
+    %{
+      group: group,
+      path: path,
+      size: size,
+      scope: scope,
+      connect: connect,
+      answer: answer,
+      server: server,
+      actor: actor
+    } =
+      setup_ptt_call(%{
+        settle_ms: 300,
+        seed_name: "ptt-supersede-reg",
+        path: "/uploads/supersede-regression.png"
+      })
+
+    attachments = [%{"path" => path, "name" => "screen.png", "mime" => "image/png"}]
+
+    # --- 1. Context COMPLETE + delegation awaiting settle, then new pending context before enqueue ---
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{context_id: 70, status: :pending})
+
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{
+               context_id: 70,
+               status: :complete,
+               text: "App: TextEdit",
+               attachments: attachments
+             })
+
+    send(
+      server,
+      {:push,
+       %{
+         "type" => "delegation.created",
+         "item" => %{
+           "target" => "client",
+           "id" => "del_unsettled_superseded",
+           "content" => [
+             %{
+               "type" => "input_text",
+               "text" => "[ptt-context:70] First gesture waiting settle"
+             }
+           ]
+         }
+       }}
+    )
+
+    # Bounded wait until delegate is registered pending/enqueued:false before new pending
+    wait_delegation_pending(actor, "del_unsettled_superseded")
+
+    # Immediately, before settle timer can enqueue, a new pending context arrives
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{context_id: 71, status: :pending})
+
+    # The unsettled delegation for context 70 must fail explicitly and NEVER enqueue sans image
+    assert_receive {:sent,
+                    %{
+                      "type" => "delegation.context.append",
+                      "delegation_item_id" => "del_unsettled_superseded"
+                    }},
+                   2_000
+
+    refute_receive {:ingress, ^group, _content, %{"event_id" => "del_unsettled_superseded"}, _,
+                    _},
+                   400
+
+    # New context 71 completes and enqueues; old request must never steal new image
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{
+               context_id: 71,
+               status: :complete,
+               text: "App: Terminal New",
+               attachments: attachments
+             })
+
+    send(
+      server,
+      {:push,
+       %{
+         "type" => "delegation.created",
+         "item" => %{
+           "target" => "client",
+           "id" => "del_new_gesture",
+           "content" => [
+             %{
+               "type" => "input_text",
+               "text" => "[ptt-context:71] Second gesture valid"
+             }
+           ]
+         }
+       }}
+    )
+
+    assert_receive {:ingress, ^group, _content, %{"event_id" => "del_new_gesture"}, _, _},
+                   2_000
+
+    refute_receive {:ingress, ^group, _content, %{"event_id" => "del_unsettled_superseded"}, _,
+                    _},
+                   100
+
+    {:ok, conversation} = SalixIM.RouterConversationInput.ensure(group)
+    messages = wait_messages(group, conversation["conversation_id"], 50, "del_new_gesture")
+
+    new_msg =
+      Enum.find(
+        messages,
+        &(get_in(&1, ["agent_input", "trusted_origin", "provider_context", "message_id"]) ==
+            "del_new_gesture")
+      )
+
+    blocks = Jason.decode!(new_msg["agent_input"]["content"])
+
+    assert [
+             %{
+               "type" => "image",
+               "file_ref" => %{"environment_id" => "vfs", "path" => ^path},
+               "file_name" => "screen.png",
+               "mime_type" => "image/png",
+               "size" => ^size
+             }
+           ] = Enum.filter(blocks, &(&1["type"] == "image"))
+
+    # Already admitted work remains accepted
+    assert {:ok, _} =
+             GenServer.call(
+               actor,
+               {:voice_provider, :say,
+                %{
+                  "group_id" => group,
+                  "connect_id" => connect["connect_id"],
+                  "delegation_id" => "del_new_gesture",
+                  "text" => "Gesture 71 finished."
+                }}
+             )
+
+    # --- 2. Same-context cancel while delegation is ready-but-unsettled ---
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{context_id: 80, status: :pending})
+
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{
+               context_id: 80,
+               status: :complete,
+               text: "App: Photos",
+               attachments: attachments
+             })
+
+    send(
+      server,
+      {:push,
+       %{
+         "type" => "delegation.created",
+         "item" => %{
+           "target" => "client",
+           "id" => "del_unsettled_cancelled",
+           "content" => [
+             %{
+               "type" => "input_text",
+               "text" => "[ptt-context:80] Cancelled before settle"
+             }
+           ]
+         }
+       }}
+    )
+
+    # Bounded wait until delegate is registered pending/enqueued:false before cancel
+    wait_delegation_pending(actor, "del_unsettled_cancelled")
+
+    # Context cancelled before delegation can enqueue
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{context_id: 80, status: :cancelled})
+
+    assert_receive {:sent,
+                    %{
+                      "type" => "delegation.context.append",
+                      "delegation_item_id" => "del_unsettled_cancelled"
+                    }},
+                   2_000
+
+    refute_receive {:ingress, ^group, _content, %{"event_id" => "del_unsettled_cancelled"}, _, _},
+                   400
+
+    # Clean up call
+    assert {:ok, _} = Electron.hang_up(answer.call_id, scope)
+    assert_receive {:sent, %{"type" => "session.close"}}, 2_000
+    send(server, {:push, %{"type" => "session.closed"}})
+  end
+
+  defp setup_ptt_call(opts) do
+    alias SalixVoice.Carrier.Electron
+
+    previous_timers = Application.get_env(:salix_voice, :timers)
+
+    on_exit(fn ->
+      if previous_timers,
+        do: Application.put_env(:salix_voice, :timers, previous_timers),
+        else: Application.delete_env(:salix_voice, :timers)
+    end)
+
+    timers =
+      Map.merge(Map.new(previous_timers || []), %{
+        delegation_settle_ms: Map.get(opts, :settle_ms, 10),
+        context_timeout_ms: 2_000
+      })
+
+    Application.put_env(:salix_voice, :timers, timers)
+
+    %{tenant: tenant, group: group, router: router, connect: connect} = ptt_fixture()
+
+    image =
+      Base.decode64!(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=="
+      )
+
+    path = Map.get(opts, :path, "/uploads/abcdefghijklmnopqrstuv-regression.png")
+    size = byte_size(image)
+    {:ok, write} = SalixAgent.AgentWorkspace.prepare_write(router["agent_id"], path, image)
+
+    seed_name = Map.get(opts, :seed_name, "ptt-reg-upload")
+
+    {:ok, :seeded} =
+      SalixAgent.AgentWorkspace.seed_operation(router["agent_id"], seed_name, :seeded, [
+        write
+      ])
+
+    attrs = %{
+      carrier: :electron,
+      mode: :push_to_talk,
+      tenant_id: tenant,
+      group_id: group,
+      connect_id: connect["connect_id"],
+      caller: %{"kind" => "comma_user", "value" => "owner"},
+      audio_format: :pcm16_24k,
+      sdp: "offer-sdp"
+    }
+
+    scope = {tenant, group, "owner"}
+    {:ok, answer} = Electron.start(attrs)
+    assert_receive {:offer, %{"session" => _session}}, 2_000
+    assert_receive {:socket, server}, 2_000
+
+    send(server, {:push, %{"type" => "session.started", "session" => %{"id" => "rtc_reg"}}})
+
+    assert_receive {:ingress, ^group, _content, %{"event_type" => "voice.call_started"}, _, _},
+                   2_000
+
+    [actor] = :pg.get_members(SalixVoice.PG, {:call, answer.call_id})
+
+    %{
+      tenant: tenant,
+      group: group,
+      router: router,
+      connect: connect,
+      image: image,
+      path: path,
+      size: size,
+      scope: scope,
+      answer: answer,
+      server: server,
+      actor: actor
+    }
+  end
+
   defp ptt_fixture do
     alias SalixStore.{S3, Ids, Keys, CasRecord}
     alias SalixVoice.{Settings, TestStubs}
@@ -1157,6 +1549,22 @@ defmodule SalixVoice.Model.CodexTest do
       wait_messages(group, conversation, remaining - 1, delegation_id)
     else
       messages
+    end
+  end
+
+  defp wait_delegation_pending(actor, delegation_id, remaining \\ 50) do
+    case :sys.get_state(actor).delegations[delegation_id] do
+      %{status: :pending, enqueued: false} = delegation ->
+        delegation
+
+      _ when remaining > 0 ->
+        Process.sleep(20)
+        wait_delegation_pending(actor, delegation_id, remaining - 1)
+
+      other ->
+        flunk(
+          "Timed out waiting for delegation #{delegation_id} to be registered pending: #{inspect(other)}"
+        )
     end
   end
 end
