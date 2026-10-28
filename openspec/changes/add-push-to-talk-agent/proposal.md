@@ -2,41 +2,42 @@
 
 ## Por quê
 
-Hoje, para pedir algo ao agente sobre o que está na tela, o dono precisa abrir o Comma, escrever ou colar um print e explicar onde olhar. O Comma já tem agente, sidebar sobre outros apps, transcrição (Parakeet local, Groq ou API compatível) e upload de imagem no chat. Falta o gesto que junta tudo: segurar um atalho em qualquer app, falar e o agente já saber o que é "isso aqui", como no Clicky/OpenClicky.
+Para pedir algo sobre a tela, o usuário precisa abrir o Comma e explicar onde olhar. O atalho deve iniciar uma chamada GPT Live, como "Call Comma", sem abrir janela: o modelo de voz escuta, responde e delega ao Router o trabalho que exige o agente do workspace.
 
 ## O que muda
 
 - **Falar com o agente segurando um atalho**, em qualquer app e com a janela principal fechada:
   - um atalho global próprio, padrão **`⌃⌥` sozinhos** (só modificadores), separado do atalho que abre a sidebar; também aceita tecla + modificador;
-  - enquanto o atalho está pressionado, o microfone grava; ao soltar, a gravação termina;
-  - com atalho só de modificadores, apertar qualquer outra tecla durante o gesto (ex.: `⌃⌥←`) cancela o turno, porque era outro atalho;
-  - gravações curtas demais (abaixo de 0,3 s) são descartadas sem enviar nada.
-- **"Isso aqui" vira imagem**: ao apertar o atalho, o Comma tira um print do monitor onde está o cursor e guarda a posição do cursor. Com o atalho pressionado, arrastar o mouse **desenha um traço livre** sobre a tela para marcar o que importa. Seguem junto com a pergunta o print do monitor com o traço desenhado por cima, um recorte ampliado da área do traço (ou da vizinhança do cursor), as coordenadas e o nome do app que estava em primeiro plano.
-- **Transcrição pelo mecanismo já escolhido** em Ajustes → Reunião (Local, Groq ou API compatível com OpenAI), com o mesmo fallback para o modelo local.
-- **A pergunta vai para o agente sem abrir janela**: texto transcrito + prints anexados (pelo upload de arquivos do chat que já existe) + descrição do ponto ou do traço vão para a conversa do agente do workspace, a mesma da sidebar. A sidebar não abre sozinha; a conversa fica registrada lá.
-- **Cursor companheiro**: durante o turno, um indicador ao lado do cursor mostra o nível da voz enquanto ouve, um indicador de espera enquanto o agente pensa e um balão com a frase que está sendo falada na resposta. Ele some alguns segundos depois do fim.
-- **Resposta falada**: quando o agente responde, a resposta é lida em voz alta com a voz do sistema, frase por frase, acompanhando o balão. Apertar o atalho de novo interrompe a leitura. Com a voz desligada, o balão fica na tela pelo tempo de leitura, e clicar nele abre a sidebar.
-- **Estado no notch**: o notch mostra "Ouvindo", "Transcrevendo", "Pensando" e "Falando", com nível de áudio e cor por estado; erros (sem permissão, transcrição indisponível, nada entendido) aparecem lá com a ação correspondente.
-- **Ajustes**: ligar/desligar a função, escolher o atalho (inclusive só modificadores), ligar/desligar a resposta falada, enviar ou não o print.
-- **Permissões**: Gravação de Tela pedida para o próprio Comma, só quando o envio do print está ligado; sem ela, a pergunta segue só com o texto e o app avisa. Monitoramento de Entrada pedido só quando o atalho escolhido é só de modificadores; sem ela, o atalho não funciona e o notch avisa com um botão para os Ajustes do Sistema.
+  - apertar abre ou reutiliza a sessão de voz e desmuta o microfone quando conectado; soltar muta a faixa imediatamente, sem esperar o print;
+  - com atalho só de modificadores, apertar outra tecla durante o gesto (ex.: `⌃⌥←`) cancela a captação;
+  - um toque abaixo de 0,3 s é descartado; se abriu uma sessão que ainda não teve turno, ela é encerrada. O áudio já transmitido não pode ser recolhido;
+  - o serviço decide o fim do turno. Uma pausa longa com a tecla presa pode antecipar a resposta; esse risco é aceito.
+- **"Isso aqui" vai ao Router**: no aperto, o Comma captura o monitor do cursor antes de mostrar a sobreposição. O usuário pode desenhar um traço. O Main envia o print e o recorte pelo upload existente, depois associa os arquivos e o contexto textual à chamada. O modelo de voz recebe apenas texto e deve delegar pedidos sobre a tela; os anexos acompanham a próxima delegação ao Router, uma única vez.
+- **Chamada sem saudação**: o modo `push_to_talk` não espera o perfil para começar e mantém a delegação ativa. Registra início e fim como a chamada manual. Não depende da transcrição de reuniões.
+- **Sessão quente**: depois da resposta, fica mutada e invisível por 90 s para uma réplica na mesma sessão. Uma delegação pendente mantém a chamada aberta, mas nunca além de 10 min. Uma chamada manual e o PTT se excluem: `busy` e `plan_limit` aparecem como erro, sem voz alternativa.
+- **Resposta tardia: avisa e espera**: depois do teto ou com PTT desligado, a resposta do Router permanece na conversa. Notch/companheiro mostram "Resposta pronta" com balão; clicar abre a sidebar. O app não inicia outra chamada sozinho.
+- **Cursor companheiro e notch**: mostram "Conectando", "Ouvindo" com o nível real do microfone, "Pensando" durante a espera/delegação e "Falando" com legenda frase a frase. A sessão quente fica sem UI; uma resposta tardia mostra "Resposta pronta".
+- **Ajustes**: ligar/desligar a função, escolher o atalho e enviar ou não o print. A voz é inerente à chamada; sai o ajuste de resposta falada e sua dependência de Ajustes → Reunião.
+- **Permissões**: Microfone para a janela oculta de voz, sem ampliar o acesso das outras janelas; Gravação de Tela para o próprio Comma apenas com print ligado; Monitoramento de Entrada apenas para atalho só de modificadores. Falta de permissão aparece com a ação correspondente. Sem Gravação de Tela, a chamada continua sem print.
 
-Fora do escopo: chamada de voz contínua (`VoiceCallControl`) com fim de fala e interrupção — depende do protocolo da assinatura ChatGPT, que não está documentado; o agente apontar ou desenhar na tela por conta própria; bolinhas de tarefas no canto da tela (o Comma já mostra tarefas no notch); caminho de resposta rápida sem o Router; voz de resposta por provedor pago; Windows e Linux. A função usa o agente do workspace ativo, em modo local ou remoto, sem tratamento especial para cada um além da transcrição.
+Fora do escopo: alterar a UI da chamada manual; controlar o VAD por protocolo não documentado; enviar imagem diretamente ao modelo de voz; persistir uma transcrição integral da chamada; o agente apontar ou desenhar na tela; bolinhas de tarefas; ASR separado, TTS do sistema ou por provedor pago; Windows e Linux. Helper Swift e NotchHost já implementados são preservados, sem mudanças nesta revisão.
 
 ## Capacidades
 
 ### Novas capacidades
 
-- `agent-push-to-talk`: conversa com o agente segurando um atalho global — gravação, captura do contexto da tela (print, ponto, traço), transcrição, envio à conversa do agente, cursor companheiro, estados no notch, resposta falada, permissões e ajustes.
+- `agent-push-to-talk`: chamada GPT Live por atalho global, com microfone controlado pelo gesto, contexto da tela delegado ao Router, sessão de réplica, resposta tardia, companheiro, notch, permissões e ajustes.
 
 ### Capacidades modificadas
 
-Nenhuma. A transcrição reutiliza `meeting-transcription-providers` (change `add-cloud-meeting-asr`, ainda aberta) sem mudar seus requisitos.
+Nenhuma capability adicional. A revisão altera apenas esta capability da change; não modifica as specs publicadas nem a transcrição de reuniões.
 
 ## Impacto
 
-- **Helper da sidebar** (`clients/apps/electron/native/macos/SideChatHost`): segundo atalho global com eventos de apertar e soltar e o app em primeiro plano; combinação só de modificadores por event tap de leitura, com estado da permissão de Monitoramento de Entrada; novos frames no contrato (`clients/packages/chat-contract`, Swift gerado).
-- **Notch** (`clients/apps/electron/native/macos/NotchHost`, `NotchKit`, `main/notch.ts`): cena de voz com estado, nível e cor, controlada pelo Main.
-- **Electron main**: orquestração do turno (gravação com o `MicCaptureHost`, captura com `desktopCapturer`, transcrição pelo helper local ou pela rota do backend, envio pelo coordenador de chat), janela transparente com o cursor companheiro e o traço, leitura em voz alta com `say` frase por frase, ajustes persistidos, textos de uso de Gravação de Tela e Monitoramento de Entrada.
-- **Interface** (`clients/packages/app`, `clients/packages/ui`): tela da sobreposição (companheiro, balão e traço), gravador de atalho que aceita só modificadores, seção de ajustes, textos em `en`, `pt-BR` e `zh-CN`.
-- **Backend**: nenhuma mudança; usa o upload `POST /v1/comma/groups/:group_id/files` e o chat existentes. O modelo do agente precisa aceitar imagem (ou ter um descritor de imagem configurado) para usar o print; sem isso o agente recebe o texto e a referência ao arquivo.
-- **Privacidade**: o print vai para o workspace do agente e, a partir dele, para o provedor do modelo do agente; o áudio vai para o mecanismo de transcrição escolhido. Os Ajustes deixam isso explícito.
+- **Electron main**: controlador da chamada, sinalização e eventos, ciclo de 90 s/10 min, fence de conta, captura/upload/contexto e integração com as janelas e o notch existentes. Remove os transcritores PTT, WAV, entrega de mensagem transcrita, observador de respostas e speaker do sistema, com seus testes.
+- **Janela de voz** (`push-to-talk-voice`): peer com microfone real, faixa mutada por padrão, reprodução e nível de áudio; permissão de mídia por papel no Main. Continua oculta e sem foco.
+- **Interface e API client** (`clients/packages/app`): Ajustes sem resposta falada nem dependência de Reunião; legendas e erros da chamada; contrato de início com `mode: "push_to_talk"` e envio de contexto; textos em `en`, `pt-BR` e `zh-CN`.
+- **Backend** (`systems/apps/salix_voice`, `systems/apps/comma_web`): modo `push_to_talk` e `POST /v1/comma/workspaces/:id/voice/calls/:call_id/context`, com escopo `{tenant, group, user}`. O CallActor entrega texto à sessão e anexos à próxima delegação; garante a continuação na conversa se a chamada terminar antes da resposta.
+- **BREAKING — remoção do modo de leitura**: sai `read_aloud`, a rota HTTP `say` e seu cliente. A ferramenta do Router `im_api.voice.say` da chamada normal permanece; sua resposta após o fim da chamada deve chegar à conversa.
+- **Domínio**: reutiliza chamada, Group/workspace, arquivos e delegação existentes; nenhuma entidade nova. Mutações de conversa continuam por `ConversationServer -> ConversationActor`.
+- **Privacidade e dependências**: áudio vai ao serviço GPT Live da conta ChatGPT; prints vão ao Router e ao provedor do modelo dele, que precisa aceitar imagem. "Enviar print" desligado envia apenas contexto textual, sem captura ou upload. Não há mudança no helper Swift, no NotchHost nem em serviços de reuniões.

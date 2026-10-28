@@ -2,26 +2,25 @@
 
 ## Context
 
-Motivação em `proposal.md`; comportamento em `specs/agent-push-to-talk/spec.md`. O que existe e foi conferido no código (caminhos relativos a `clients/`):
+Motivação em `proposal.md`; contrato em `specs/agent-push-to-talk/spec.md`. Esta revisão substitui o fluxo gravar → transcrever → enviar texto → ler por uma chamada GPT Live, conforme o desenho aprovado pelo dono em 2026-10-28.
 
-- **Atalho global**: `apps/electron/native/macos/SideChatHost/Comma/GlobalHotKey.swift` registra com Carbon `RegisterEventHotKey` e trata só `kEventHotKeyPressed`; `EdgeChatController.swift:192-225` liga ao `toggle()` da sidebar. Main conversa com o helper por JSONL (`apps/electron/src/main/native-side-chat.ts`, `#handleClientFrame` :909); os frames estão em `packages/chat-contract/src/index.ts` (`sideChatHostFrameSchema`, `sideChatClientFrameSchema`) e o Swift é gerado por `pnpm --dir clients generate:native-bridge`.
-- **Microfone**: `HelperMicrophoneCapture` (`apps/electron/src/main/modules/audio-capture/microphone.ts:62`) roda o `MicCaptureHost` e entrega Float32; `WavSink` (`audio-capture/wav.ts`) grava WAV 16 kHz mono; `HelperRecordingEncoder` (`encoder.ts:13`) converte para m4a.
-- **Transcrição**: no modo local, o `CommaTranscriber serve` expõe `POST /v1/audio/transcriptions` (multipart, bearer) e escolhe Local/Groq/compatível com fallback; Main já tem `transcriberUrl`/`transcriberToken` (`local-backend/service.ts:165,171`). No modo remoto, o backend tem `POST /v1/comma/me/recordings/transcribe` (m4a, resposta SSE), usado em `modules/audio-capture/transcription.ts:186`. `MeetingTranscriptionService.state()` diz se a transcrição está pronta.
-- **Chat**: o `ChatCoordinator` vive no Main (`electron-main.module.ts:~950`); `resolveWorkspaceChat()` dá a conversa da sidebar; `sendDetachedMessage(target, text)` (`SendIntents.ts:83`) envia texto sem rascunho; anexos só passam pelo rascunho (`DraftEditor.claimDraftOwner`), que falha se a sidebar tiver rascunho. O upload é `api.uploadGroupFile` → `POST /v1/comma/groups/:group_id/files` (png/jpg, ≤10 MB, ≤4096 px por lado), e o composer cita anexos no texto com `- nome (workspace file: /uploads/…)` (`components/chat/model/protocol.ts:95-98`). `onCanonicalMessagesAppended` (`hostContract.ts:43`) avisa só mensagens já confirmadas do servidor; `isRouterMessage` (`modules/message-notifications.ts:60`) reconhece a resposta do agente.
-- **Sobreposição**: `meeting-recorder-window.ts` é a referência de janela transparente sempre no topo com clique atravessando; o registro de um novo papel de janela passa por `feature-surfaces.ts`, `managed-window.ts`, `window-options.ts`, `modules/ipc/index.ts`, `preload/native-bridge.ts`, a lista de capacidades por papel em `electron-main.module.ts:~1837` e `renderComma.tsx`.
-- **Captura de tela**: não existe no app Electron. A Gravação de Tela hoje pertence ao "Comma Computer Use.app", outra identidade TCC. O texto `NSScreenCaptureUsageDescription` (`scripts/macos-info-plist-strings.ts:12`, chave `electron_macos_screen_capture_usage`) fala só de áudio.
-- **Ajustes**: `commaClientSettingsSchema` (`packages/native-bridge/src/capability-leaves.ts:1198`), persistido em `main/app-preferences.ts`; tela em `packages/app/src/components/AppSettingsRoute.tsx` (seção `keyboard.commands` com o controle `type:"shortcut"`, conflitos em `shortcuts/sideChatShortcutConflict.ts`).
+- **Base preservada**: atalho Carbon/event tap do SideChatHost, cancelamento por tecla extra, captura do monitor do cursor, traço, overlay, notch, pedidos de Monitoramento de Entrada e Gravação de Tela. Não alterar helper Swift nem NotchHost.
+- **Chamada existente**: `systems/apps/salix_voice` usa `CallActor`, carrier Electron e `Model.Codex` (`gpt-live-1-codex`), com mídia WebRTC direta entre renderer e serviço e controle por sideband. `VoiceCallControl` é a referência de microfone, SDP/ICE, reprodução e polling.
+- **Delegação existente**: o modelo de voz não tem ferramentas nem visão; o CallActor encaminha a delegação ao Router por `enqueue_group_router_im_provider_message`, que já aceita `attachments:`. O Router tem o contexto e as ferramentas do workspace.
+- **Controle existente**: início, eventos e hangup passam por `systems/apps/comma_web`; operações da chamada têm escopo `{tenant, group, user}`. Só uma chamada pode ocupar o Group.
+- **Janela existente**: `push-to-talk-voice` hospeda o peer de leitura com faixa sintética. Será convertida para microfone real; hoje a permissão de mídia do Main cobre apenas a janela principal.
+- **Sem entidade nova**: chamada, delegação e arquivos existentes representam o fluxo. O CallActor é dono do contexto pendente da chamada. Mutações de conversa permanecem por `ConversationServer -> ConversationActor`.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Um único dono do turno no Main, testável com dublês, que liga atalho → gravação → captura → transcrição → envio → leitura.
-- Reaproveitar helper, transcrição, upload e coordenador de chat existentes; nenhuma mudança no backend.
+- Um dono no Main para o gesto e a sessão: aperto → conectar/desmutar → mutar → resposta/delegação → réplica ou encerramento.
+- Reutilizar a chamada GPT Live e o upload existentes; acrescentar modo e contexto no backend sem duplicar o Router ou a autoridade da conversa.
 
 **Non-Goals:**
 
-- Streaming de transcrição enquanto o usuário fala.
+- ASR separado, WAV ou transcrição integral persistida; TTS alternativo; imagem direta no modelo de voz; inventar controle de VAD não exposto pelo protocolo.
 - Mudar o comportamento do atalho da sidebar ou do "Abrir Comma".
 - Testes Swift para o SideChatHost (o projeto não tem alvo de teste; a verificação dele é o smoke real).
 
@@ -40,11 +39,13 @@ Cada handler devolve `eventNotHandledErr` quando o `EventHotKeyID` pertence à o
 
 ### D2. `PushToTalkController` no Main, como máquina de estados
 
-Estados: `idle → recording → transcribing → sending → awaitingReply (→ speaking) → idle`, mais `error` transitório. Todas as dependências entram pelo construtor (microfone, captura, transcritor, entrega, voz, sobreposição, relógio), o que permite testar cada transição com dublês em `apps/electron/src/main/test/push-to-talk.test.ts`. Regras da spec ficam aqui: 0,3 s mínimo, 120 s máximo, um turno por vez, cancelamento em `powerMonitor` `lock-screen`/`suspend` e em reinício do helper, apagar o WAV em `finally`, espera de resposta de 180 s.
+Estados visíveis: `connecting → listening → thinking → speaking → idle`, mais `ready` para resposta tardia e `error` transitório. `connecting` dura até a faixa estar conectada; `listening` mostra o nível do microfone; `thinking` vale depois de soltar até o primeiro áudio e enquanto houver delegação. O VAD pode antecipar `speaking` com a tecla ainda presa. `idle` pode conter uma sessão quente, mutada e sem UI; não significa necessariamente chamada fechada.
 
-Ordem no aperto: (1) parar leitura em curso e ocultar imediatamente a janela anterior, inclusive durante o fade de saída; (2) capturar a tela (D3) e iniciar o microfone em paralelo; (3) mostrar a sobreposição somente depois da captura. A prontidão do microfone, não a captura, habilita a soltura e o limite de 120 s. Se a captura ainda estiver pendente, a gravação para e a transcrição segue; o envio espera o print.
+Dependências injetadas: sessão de voz, captura/upload/contexto, notch, companheiro, relógio e geração de conta. Regras: mínimo de 0,3 s, captação por aperto limitada a 120 s, réplica por 90 s após a resposta, retenção durante delegação e teto absoluto de 10 min para a sessão. Não há espera de mensagem transcrita ou remoção de WAV.
 
-O runtime inclui a geração da sessão entre os dados aplicados ao controlador. Uma mudança de geração invalida o turno em qualquer fase, cancela a espera/leitura e oculta a UI. As continuações de gravação, transcrição e envio verificam o cancelamento antes de publicar estado ou enviar dados. O `finally` da transcrição remove o WAV mesmo após a invalidação. Um envio já admitido continua sob o fence de credencial existente, sem adquirir autorização da nova conta.
+No aperto: interromper a saída falada em curso e ocultar imediatamente a sobreposição anterior, inclusive no fade; iniciar sinalização e captura em paralelo; desmutar somente se o gesto ainda estiver ativo quando a faixa conectar. Mostrar a sobreposição depois da captura. Soltar, cancelar ou atingir 120 s muta a faixa imediatamente, sem aguardar captura/upload/contexto (F2). Uma continuação atrasada não pode desmutar o microfone depois da soltura.
+
+Mudança de geração de conta encerra a chamada, invalida o turno e suas continuações, descarta contexto/anexos pendentes e oculta a UI (F1). Operações já admitidas mantêm o fence da credencial original; nenhuma continuação adquire a conta nova. Bloqueio, suspensão ou reinício do helper encerram a captação e a chamada quando a soltura não puder ser garantida. Desligar PTT encerra a chamada; resposta pendente segue a política de D16, sem reabrir o microfone.
 
 ### D3. Captura com `desktopCapturer` no Main
 
@@ -63,60 +64,25 @@ Alternativas: o daemon do Computer Use só captura o monitor principal, só quan
 
 A mesma janela transparente do monitor do cursor (`focusable: false`, nível `screen-saver`, todos os espaços e tela cheia, `showInactive()`), agora com três elementos desenhados pela tela React (rota `/push-to-talk-overlay`, componente em `packages/ui`, seguindo `~/.agents/skills/impeccable/SKILL.md`):
 
-- **Companheiro**: um marcador junto ao cursor que o acompanha; mostra barras com o nível da voz em `listening`, indicador de espera em `transcribing`/`thinking` e o balão em `speaking`. Referência visual: o triângulo azul do HeyClicky (vídeo do dono, 1:53 e 3:01).
+- **Companheiro**: marcador junto ao cursor, com barras do microfone em `listening`, espera em `connecting`/`thinking`, legenda em `speaking` e aviso em `ready`. Mantém a referência visual já implementada do HeyClicky.
 - **Traço**: durante `listening` a janela aceita o mouse (cursor em cruz) e cada arrasto desenha um traço livre, que substitui o anterior; os pontos voltam ao Main por `pushToTalk.setStroke`. O traço some com fade ~1,5 s depois de soltar.
-- **Balão**: frase em leitura (voz ligada) ou resposta inteira com rolagem (voz desligada); clicável para abrir a sidebar. Fora do balão, a janela atravessa cliques (`setIgnoreMouseEvents(true, { forward: true })`, com a região do balão interativa).
+- **Balão**: frase falada pelo modelo de voz ou "Resposta pronta" com a resposta tardia do Router; clicar abre a sidebar. Fora da região interativa, a janela deixa os cliques atravessarem.
 
-O Main acompanha o cursor (`screen.getCursorScreenPoint()` a ~60 Hz enquanto a janela está visível), move a janela para o monitor do cursor quando ele troca e envia a posição à tela. O nível vem do RMS dos quadros do microfone, ~20 Hz. Erros aparecem no notch (D9); com o notch desligado, aparecem no balão do companheiro.
+O Main acompanha o cursor a ~60 Hz somente enquanto a janela está visível. O nível vem do `AnalyserNode` do renderer de voz, enviado ao Main por IPC a ~20 Hz. Há uma única sessão e uma sobreposição ativa por app; não há timer por delegação. Erros aparecem no notch (D9) ou no companheiro quando o notch está desligado.
 
 O monitor capturado no início continua sendo o único espaço válido para o traço. Ao mover o cursor para outro monitor, o companheiro acompanha o cursor e o traço anterior é limpo, mas novos traços nesse monitor são recusados. Ao voltar ao monitor capturado, o desenho volta a ser aceito. Não se remapeiam coordenadas de B sobre o print de A: isso apontaria para conteúdo diferente do que o usuário marcou.
 
 Alternativa: `NSPanel` no helper Swift. Rejeitada pelos mesmos motivos de antes (textos traduzidos e ações já existem no app React) e porque a janela já existe.
 
-### D5. Transcrição por uma interface com duas implementações
-
-`PushToTalkTranscriber.transcribe(wavPath): Promise<{ text, fallback? }>`:
-
-- **Modo local**: multipart para o `CommaTranscriber` (`/v1/audio/transcriptions`, `response_format=json`) com o WAV direto. Um cliente novo exposto pelo `LocalBackendController`.
-- **Modo remoto**: converte para m4a com o `HelperRecordingEncoder` e chama `/v1/comma/me/recordings/transcribe`, reaproveitando o parser SSE de `transcription.ts` (extraído para função compartilhada) e removendo os prefixos `[HH:MM:SS] Speaker N:`.
-
-Antes de gravar, `MeetingTranscriptionService.state()` decide se a transcrição está pronta; se não, a pílula mostra o erro já no aperto, sem gravar. Erros `local_asr_model_not_installed` e `cloud_asr_failed` viram mensagens da pílula.
-
-### D6. Entrega com anexos sem usar o rascunho
-
-O `ChatCoordinator` resolve a conversa do workspace. O adaptador PTT usa as operações existentes `uploadGroupFile` e `sendMessage` pela API vinculada à sessão do Main, sob um único `runOwned`. O helper existente `composeMessageWithAttachments` mantém o formato do composer. O envio inclui um `client_request_id` próprio para correlacionar a confirmação e a resposta. Isso evita alterar o coordenador compartilhado, cujo `sendDetachedMessage` não expõe esse identificador. Nenhum rascunho é adquirido ou consumido. Texto enviado:
-
-```
-<transcrição>
-
-Contexto da tela (capturado quando apertei o atalho):
-- App em primeiro plano: <nome>
-- Print do monitor: <largura>×<altura> px
-- Cursor: (x, y) px  |  Área do traço: x, y, largura × altura px
-- O print leva o traço desenhado por cima; o recorte é a área do traço (ou a região em volta do cursor) em resolução total.
-```
-
-A entrega não abre a sidebar nem nenhuma janela (revisão da UX): a resposta aparece no companheiro e no notch, e a conversa fica registrada no chat do agente. Clicar no balão chama `sideChat.open()` normal (com foco, porque foi um clique do usuário). `openWithoutFocus()`, criado na integração, deixa de ser usado e é removido.
-
-Alternativas: injetar no composer da sidebar por evento — usaria o rascunho do usuário; anexar pela chamada de voz (`CallActor`) — exige backend novo e só serve à chamada contínua.
-
-### D7. Resposta lida com `say` (substituída por D12 como voz principal; `say` fica como fallback)
-
-Antes de despachar a mensagem, a entrega informa `{ conversationId, groupId, workspaceId, clientRequestId }` ao controlador. O observador é armado nesse ponto para não perder respostas que cheguem antes do retorno HTTP. A confirmação canônica da pergunta associa `clientRequestId` a `messageId`; só uma mensagem do Router com `replyToMessageId` igual a esse ID encerra a espera. Não há associação por texto, por data ou apenas pela conversa. A resposta que chega durante o envio fica em um único buffer e só é apresentada após o sucesso; uma falha ou troca de sessão a descarta.
-
-O texto passa por uma função que tira Markdown (títulos, ênfase, links → rótulo, blocos de código → "trecho de código") e é dividido em frases; cada frase vai para `/usr/bin/say` em sequência e, ao começar, vira o texto do balão (`overlay.setCaption`) e o estado `speaking` do notch. O próximo aperto mata o processo e descarta as frases restantes. Com a voz desligada, o balão mostra a resposta inteira por `clamp(palavras × 300 ms, 4 s, 20 s)`.
-
-Alternativas: `speechSynthesis` no renderer da sidebar — exige evento novo para a janela e depende dela estar viva; TTS pago — fora do escopo.
-
 ### D8. Ajustes
 
-Campos novos em `commaClientSettingsSchema` (e no patch e nos padrões): `pushToTalkEnabled` (false), `pushToTalkShortcut` (padrão `⌃⌥`, só modificadores — revisado; aceita também tecla + modificador), `pushToTalkSpeakReplies` (true), `pushToTalkSendScreen` (true). O schema do atalho aceita `key: null` com ao menos dois modificadores. O gravador de atalho dos Ajustes salva uma combinação só de modificadores quando todos os modificadores são soltos sem nenhuma tecla comum. O Main lê de `AppPreferencesService` e reage às mudanças registrando/desregistrando o atalho; o conflito é checado junto com o da sidebar e do "Abrir Comma". A seção mostra o estado do Monitoramento de Entrada quando o atalho é só de modificadores.
+Campos preservados em `commaClientSettingsSchema`, patch e padrões: `pushToTalkEnabled` (false), `pushToTalkShortcut` (`⌃⌥`) e `pushToTalkSendScreen` (true). Remover `pushToTalkSpeakReplies` e sua UI/i18n: a voz é inerente à chamada. PTT não consulta a prontidão nem o provedor de Reunião. O schema do atalho aceita `key: null` com ao menos dois modificadores; o gravador salva a combinação ao soltar todos os modificadores sem tecla comum. O Main reage às preferências registrando/desregistrando o atalho. A seção conserva os estados de Monitoramento de Entrada e Gravação de Tela e explica os destinos do áudio e dos prints.
 
 Ao religar a função, os Ajustes revalidam também a combinação salva contra os atalhos globais e os atalhos do app. Um conflito mantém a função desligada e mostra o motivo existente, em vez de persistir uma configuração que não pode ser registrada.
 
 ### D9. Estados de voz no notch
 
-`notchHostScenePayloadSchema` ganha um campo opcional controlado pelo Main, `voice`, no mesmo padrão do `airDrop`: `{ state: "listening" | "transcribing" | "thinking" | "speaking" | "busy" | "error", level?: 0..1, message?: string, action?: { id, label } }`. No `NotchHost`, a cena de voz tem prioridade sobre AirDrop e tarefas enquanto existir; o notch se expande com o texto à esquerda e, à direita, barras animadas pelo `level` na cor do estado (ouvindo verde-água, pensando roxo, falando laranja, erro vermelho — referência: vídeo do dono, 3:00–3:10). Uma ação de erro volta ao Main pelo evento `action` já existente do notch. `NotchService` ganha `setVoice(voice | null)`; `null` devolve a cena anterior. Com o notch desligado (`presentation.visible` falso), `visible()` informa o controlador, que mostra o erro no companheiro.
+Usar a cena de voz e as ações já existentes do notch, sem alterar o helper Swift/NotchHost. O Main projeta os estados de D2 em texto, nível e cores suportados: "Conectando", "Ouvindo", "Pensando", "Falando", "Resposta pronta" e erros. A cena de voz conserva sua prioridade; ao limpar, restaura a cena anterior. Com o notch desligado, o companheiro apresenta o aviso e a ação. Uma sessão quente em `idle` não mantém UI visível.
 
 ### D10. Atalho só de modificadores por event tap de leitura
 
@@ -137,32 +103,71 @@ Alternativas: `NSEvent.addGlobalMonitorForEvents(.flagsChanged)` também exige M
 
 No macOS 15+, `systemPreferences.getMediaAccessStatus("screen")` responde `denied` também quando o Comma nunca pediu a permissão (medido: um Electron com a identidade do Comma Dev responde `denied` antes de qualquer pedido). Pular a captura nesse estado deixava o Comma fora da lista de Gravação de Tela, sem como o usuário conceder. O `SideChatHost` ganha o frame `push-to-talk.request-screen-recording`, que chama `CGRequestScreenCaptureAccess()`; o TCC atribui o pedido ao Comma (processo responsável), como já acontece com o Monitoramento de Entrada. O Main pede quando: o print está ligado e o status não é `granted` — no primeiro aperto de cada execução, ao ligar "Enviar print" nos Ajustes e na ação de erro "Abrir Ajustes do Sistema" (antes de abrir o painel). Os Ajustes ganham a linha de estado "Gravação de Tela", no mesmo padrão da linha de Monitoramento de Entrada.
 
-### D12. Resposta falada pela voz GPT Live das chamadas
+### D13. Turno é uma chamada GPT Live
 
-A resposta é lida por uma sessão de voz GPT Live da assinatura ChatGPT, a mesma das chamadas (`Model.Codex`, `gpt-live-1-codex`, voz `gpt_live_voice` dos ajustes de voz), num modo novo de leitura:
+`POST /v1/comma/workspaces/:id/voice/calls` aceita `mode: "push_to_talk"`. O `VoiceCalls.start` leva esse modo ao CallActor: instruções próprias, sem saudação, sem esperar a resolução de perfil, delegação ativa e respostas do Router permitidas. Registra `voice.call_started` e `voice.call_ended` pelo caminho existente, sem depender de ter saudado. Não transforma toda fala/legenda em mensagem persistida.
 
-- **Backend.** `POST /v1/comma/workspaces/:id/voice/calls` aceita `mode: "read_aloud"`. Nesse modo o `CallActor` usa instruções de leitura (ler exatamente o texto recebido, no idioma dele, sem saudar, resumir, perguntar ou comentar; ficar em silêncio sem texto), não resolve o perfil (economiza até 2,5 s), não saúda, não envia `voice.call_started`/`voice.call_ended` ao Router e ignora delegações. Rota nova `POST …/voice/calls/:call_id/say {text}`, com o mesmo escopo `{tenant, group, user}` de `events`/`hang_up`, que enfileira o texto e o entrega ao modelo quando a sessão começa. Duração máxima curta (120 s).
-- **Desktop.** Uma janela oculta nova (`push-to-talk-voice`, sem foco, `autoplayPolicy: "no-user-gesture-required"`) hospeda o `RTCPeerConnection` com uma faixa de áudio silenciosa sintética (sem microfone e sem permissão; o modelo precisa de áudio de entrada contínuo) e o canal `oai-events`. O Main faz as chamadas HTTP com a sessão dele, faz o polling dos eventos e repassa as legendas do agente ao balão (última frase do texto acumulado). A leitura termina apenas quando as legendas finais acumuladas cobrem todas as palavras do texto pedido, na mesma ordem, seguidas de silêncio. O final de um chunk não prova o final da resposta. Fechamento ou erro após um prefixo aciona o fallback com o progresso por frases completas. Uma frase cortada no meio é lida novamente por inteiro. Então o Main desliga (`DELETE`). Um novo aperto desliga na hora.
-- **Pré-aquecimento.** A sessão abre quando a pergunta é enviada (estado `thinking`), para a voz começar perto de 1 s depois da resposta chegar; se a resposta não vier em 180 s, desliga.
-- **Fallback.** Qualquer falha ao abrir ou falar (`disabled`, `codex_account_required`, `busy`, timeout, sem áudio em 8 s) cai na leitura por `say` (D7) da mesma resposta, sem repetir o que já foi falado. `disabled` e `codex_account_required` ficam memorizados até a próxima mudança de ajustes, para não pagar a espera a cada turno.
+A mesma exclusão por Group vale para chamada manual e PTT. `busy` (409) mostra "ligação em andamento"; `plan_limit` (429) mostra o limite do plano no notch/companheiro. Sem fallback para ASR, mensagem transcrita ou voz do sistema.
 
-Alternativas: OpenAI TTS por chave de API (lê literalmente, mas cobra por uso e pede chave); vozes Premium do macOS (grátis, mas não é a voz do GPT); chamada contínua com o modelo de voz ouvindo o usuário (mais natural, mas depende de protocolo não documentado e de backend para anexos) — fora desta change.
+### D14. Microfone real na janela oculta
+
+Converter o peer de `readAloudPeer.ts` e `PushToTalkVoiceApp` para `getUserMedia({ audio: true })`, mantendo a janela `push-to-talk-voice` oculta, sem foco e com autoplay. A faixa nasce com `track.enabled = false`. `pressed` desmuta quando conectada; `released` muta na hora. O `AnalyserNode` fornece o nível para o Main; teardown para as faixas e fecha o peer.
+
+Em `security.ts`, conceder mídia áudio-apenas ao frame principal de origem permitida dos papéis já autorizados e de `push-to-talk-voice`. Não exigir uma janela principal aberta e não conceder vídeo ou mídia às outras janelas. O Main mantém o pedido de Microfone do macOS. Testar o papel autorizado e os papéis que continuam negados.
+
+### D15. Fim do turno é do serviço
+
+Soltar o atalho só muta a faixa. O protocolo da assinatura não expõe `input_audio_buffer.commit` nem `turn_detection`; não enviar comandos inventados. O VAD do serviço determina o fim e pode responder numa pausa longa com a tecla presa (R12).
+
+Toque abaixo de 0,3 s ou tecla extra muta e cancela o gesto. Se aquele aperto abriu uma sessão que ainda não teve turno, desligá-la. Não enviar seu contexto/print. Como o áudio flui ao conectar, cancelar não recolhe amostras já transmitidas nem garante apagar um turno já iniciado no serviço.
+
+### D16. Sessão quente, delegação e resposta tardia
+
+Iniciar SDP/ICE/sideband no `pressed`, em paralelo à fala e à captura. Não há buffer de gravação local para recuperar fala anterior à conexão: notch mostra "Conectando" até o áudio poder fluir e depois "Ouvindo". Após a resposta, manter a sessão mutada por 90 s; uma réplica nesse intervalo reutiliza a mesma sessão e sua memória.
+
+Delegação pendente impede o fechamento por inatividade, com "Pensando". Reutilizar a nota aos 20 s e a desculpa falada aos 90 s do CallActor, sem inventar outro timeout de resposta. O teto absoluto é 10 min: `max_call_seconds` próprio no backend e encerramento pelo Main com `DELETE`, inclusive com delegação pendente.
+
+Resposta do Router depois do teto ou com PTT desligado: "avisa e espera". Garantir que a continuação chegue à conversa pelo caminho existente do Router, inclusive quando `im_api.voice.say` encontra a chamada encerrada. O aviso pertence à chamada/delegação da conta original, não à primeira resposta arbitrária da conversa. Mostrar `ready` ("Resposta pronta") e balão; clicar abre a sidebar no texto do Router. Não iniciar ligação automática. Uma troca de conta invalida também avisos antigos.
+
+Reutilizar o poll serial de eventos da ligação (500 ms, até 200 eventos/512 KiB por página), apenas com a chamada ativa. A legenda acompanha a fala por frases; não prova leitura literal nem exige comparação de palavras. A observação da continuação tardia deve usar a identidade da delegação e a entrega existente da conversa, sem varredura de histórico ou poll por anexo.
+
+### D17. Print e contexto pela próxima delegação ao Router
+
+Captura, monitor, traço e recorte continuam em D3/D4. O Main faz upload por `uploadGroupFile` e chama `POST /v1/comma/workspaces/:id/voice/calls/:call_id/context`:
+
+```json
+{
+  "text": "App em primeiro plano, cursor, tamanho do print, área marcada e nomes dos arquivos",
+  "attachments": [
+    { "file_id": "id-do-upload", "name": "screen.png", "mime": "image/png" },
+    { "path": "/uploads/detail.png", "name": "detail.png", "mime": "image/png" }
+  ]
+}
+```
+
+A rota usa o mesmo escopo `{tenant, group, user}` de `events` e `hang_up`, sem permitir contexto em outra chamada. O CallActor envia `text` como `session.context.append` e guarda os anexos para passá-los como `attachments:` na próxima delegação por `enqueue_group_router_im_provider_message`. Depois dessa entrega, os anexos não reaparecem na delegação seguinte. Não há imagem no sideband: só `input_text`. As instruções de PTT mandam delegar tudo que envolva a tela.
+
+Com "Enviar print" desligado, não capturar, pedir Gravação de Tela ou fazer upload; enviar apenas contexto textual. Sem permissão de tela, avisar e continuar sem imagem. Contexto não usa o rascunho, não abre janela e não muda o foco. Falha de upload/contexto é visível, sem fingir que a imagem chegou. O modelo do Router precisa aceitar imagem (R1/R15).
+
+### D18. Remover o fluxo de transcrição e leitura
+
+Remover os transcritores PTT (`local-transcription/push-to-talk-transcriber.ts`, `remote-transcriber.ts`), WAV/`push-to-talk/microphone.ts`, `delivery.ts`, `reply-watcher.ts`, `speaker.ts` e o modo de leitura de `live-voice.ts`. Remover `read_aloud`, a rota HTTP `say` e `sayVoiceCall` no backend/client; preservar `im_api.voice.say` usado pelo Router na chamada. Remover `pushToTalkSpeakReplies`, UI/i18n, erros de transcrição e dependência de Ajustes → Reunião. Não remover a transcrição de reuniões.
+
+Apagar os testes exclusivos do código retirado, sem adaptá-los para manter o desenho antigo. F4 (reply-watcher) e F5 (leitura) saem com o código. Preservar F1 (troca de conta encerra a chamada), F2 (soltura muta sem esperar print), F3 (Carbon), F6 (monitor do traço), F7 (conflito ao religar) e F8 (ocultação antes do print). D13–D18 substituem D5, D6, D7 e D12.
 
 ## Risks / Trade-offs
 
-- **R1** — [O modelo do agente não aceita imagem e não há descritor configurado; `fs.read_file` da imagem falha] → a mensagem já traz texto, app e coordenadas; o aviso de privacidade/ajuda dos Ajustes explica que o print exige um modelo com visão. Sem mudança no backend nesta change.
-- **R2** — [O início do `MicCaptureHost` leva algumas centenas de ms e corta o começo da fala] → iniciar o microfone em paralelo à captura, no aperto; o notch só mostra "Ouvindo" quando o helper emitir `ready`. Medir no smoke.
-- **R3** — [Uma transcrição de reunião em andamento ocupa a fila do `CommaTranscriber`] → a pílula fica em "Transcrevendo" até a fila liberar; limite de 60 s na espera, depois erro "transcrição ocupada".
-- **R4** — [No modo de nuvem o helper exige o separador de vozes instalado (`409 cloud_asr_not_ready`)] → tratado como transcrição indisponível, com o mesmo botão para Ajustes → Reunião.
-- **R5** — [Resposta lenta: toda pergunta passa pelo Router; no HeyClicky a fala começa 2–3 s depois de soltar] → medir no smoke o tempo entre soltar e "Falando"; se passar muito disso, uma change seguinte avalia um caminho de resposta rápida.
-- **R8** — [Com só modificadores, `⌃⌥` seguido de outra tecla dispara captura e microfone por uma fração de segundo antes de cancelar] → o companheiro só aparece depois da captura e o turno cancelado não deixa rastro; o print e o WAV são descartados.
-- **R9** — [Campos de senha ativam a entrada segura do macOS e o event tap deixa de ver as teclas] → o atalho fica inativo nesse momento; aceito.
-- **R6** — [A voz padrão do sistema pode não ser pt-BR] → aceitar nesta change (segue o ajuste "Conteúdo falado" do macOS); escolha de voz fica para depois.
-- **R7** — [Print com dados sensíveis vai ao provedor do modelo] → desligável, padrão explicado nos Ajustes, nada é capturado com o print desligado.
-
-- **R10** — [O GPT Live pode reformular o texto em vez de ler literalmente, ou não falar com faixa silenciosa] → o spike da tarefa 8.2 mede: legenda final do agente comparada ao texto enviado e bytes de áudio recebidos; se não ler de forma aceitável, a change volta para decisão do dono antes de seguir.
-- **R11** — [Uma sessão de leitura ocupa a vaga de chamada do grupo] → a sessão dura só a leitura; uma chamada manual em andamento faz cair no fallback.
+- **R1** — O Router pode não ter modelo com visão. O texto conserva app/coordenadas e nomes dos arquivos, mas não substitui a imagem; explicar a exigência nos Ajustes.
+- **R2** — O início da fala pode preceder a conexão. Mostrar "Conectando", iniciar no aperto e medir o corte no smoke; não prometer áudio anterior à conexão.
+- **R5** — Respostas delegadas dependem do Router. Medir soltura → primeiro áudio; respostas simples podem vir do próprio modelo de voz, sem novo caminho paralelo.
+- **R7** — Print pode conter dados sensíveis. Manter envio desligável e aviso do destino; nada é capturado com print desligado.
+- **R8** — Um atalho com tecla extra pode começar conexão/captura antes de cancelar. Mutar, descartar contexto/print e encerrar a sessão nova sem turno; áudio já transmitido não pode ser recolhido.
+- **R9** — Entrada segura do macOS pode impedir eventos do tap. Atalho inativo nesse momento; risco aceito.
+- **R12** — VAD pode responder numa pausa com a tecla presa. Risco aceito pelo dono; medir no smoke, sem prometer commit ao soltar.
+- **R13** — Latência do primeiro turno (SDP/ICE/sideband) ainda não medida. Medir aperto → conexão/primeiro áudio e comparar réplica na sessão quente.
+- **R14** — Sessão aberta e espera de delegação consomem quota. Aplicar 90 s sem pendência e teto de 10 min; mostrar `plan_limit`, sem fallback nem reconexão automática.
+- **R15** — Anexo na delegação depende de visão no Router (mesma fronteira de R1). Verificar os arquivos na próxima delegação, e somente nela; o modelo de voz não vê imagens.
 
 ## Migration Plan
 
-Função nova e desligada por padrão; não migra dados. Os campos novos dos ajustes têm padrão, então preferências antigas continuam válidas. Reverter é desligar nos Ajustes ou reverter o commit.
+Função desligada por padrão; sem migração de dados de conversa ou nova entidade. Remover a preferência obsoleta de resposta falada e seus consumidores; manter as demais preferências. Atualizar backend e cliente para `push_to_talk`/`context`, sem compatibilidade com o modo de leitura retirado. Desligar PTT encerra a chamada; trabalho delegado já aceito continua na conversa, sem retorno automático de voz. Não implantar a branch: integração e rollout seguem o fluxo mainline aprovado do projeto.
