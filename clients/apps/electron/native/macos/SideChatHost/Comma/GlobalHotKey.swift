@@ -85,7 +85,8 @@ final class GlobalHotKey {
         )
 
         guard status == noErr, eventHotKeyID.signature == fourCharacterCode("OSCP"), eventHotKeyID.id == id else {
-            return noErr
+            // Let the other hotkey's handler on this application target run.
+            return OSStatus(eventNotHandledErr)
         }
 
         if GetEventKind(event) == UInt32(kEventHotKeyReleased) {
