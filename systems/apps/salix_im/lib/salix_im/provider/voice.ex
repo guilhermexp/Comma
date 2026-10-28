@@ -153,6 +153,7 @@ defmodule SalixIM.Provider.Voice do
           "kind" => "message",
           "actor_type" => "agent",
           "agent_id" => request["agent_id"],
+          "client_request_id" => "voice_ptt_reply:#{call_id}:#{delegation_id}",
           "content" => [%{"type" => "text", "text" => request["text"]}],
           "delivery_filter" => %{"participant_ids" => []},
           "metadata" => %{

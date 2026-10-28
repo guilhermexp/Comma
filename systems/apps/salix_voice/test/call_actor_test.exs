@@ -445,7 +445,12 @@ defmodule SalixVoice.CallActorTest do
     Fake.emit(model, {:input_transcript, "Also book", true, 3_000})
     Fake.emit(model, {:delegation, "dlg_1", 2_000})
 
-    assert_receive {:ingress, group_id, content, metadata, source_id, opts}, 1_000
+    expected_call_id = info.call_id
+
+    assert_receive {:ingress, group_id, content, %{"chat_id" => ^expected_call_id} = metadata,
+                    source_id, opts},
+                   1_000
+
     assert group_id == info.group_id
     assert source_id == "im_provider:voice:conn_voice:#{info.call_id}:dlg_1"
     assert opts[:trusted_source_text] == "What's the weather in Paris?"

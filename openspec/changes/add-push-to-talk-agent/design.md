@@ -39,11 +39,11 @@ Cada handler devolve `eventNotHandledErr` quando o `EventHotKeyID` pertence à o
 
 ### D2. `PushToTalkController` no Main, como máquina de estados
 
-Estados visíveis: `connecting → listening → thinking → speaking → idle`, mais `ready` para resposta tardia e `error` transitório. `connecting` dura até a faixa estar conectada; `listening` mostra o nível do microfone; `thinking` vale depois de soltar até o primeiro áudio e enquanto houver delegação. O VAD pode antecipar `speaking` com a tecla ainda presa. `idle` pode conter uma sessão quente, mutada e sem UI; não significa necessariamente chamada fechada.
+Estados visíveis: `connecting → listening → thinking → speaking → idle`, mais `ready` para resposta tardia e `error` transitório. `connecting` dura até a faixa conectar e o controle admitir o contexto do gesto; não espera captura ou upload. `listening` mostra o nível do microfone; `thinking` vale depois de soltar até o primeiro áudio e enquanto houver delegação. O VAD pode antecipar `speaking` com a tecla ainda presa. `idle` pode conter uma sessão quente, mutada e sem UI; não significa necessariamente chamada fechada.
 
 Dependências injetadas: sessão de voz, captura/upload/contexto, notch, companheiro, relógio e geração de conta. Regras: mínimo de 0,3 s, captação por aperto limitada a 120 s, réplica por 90 s após a resposta, retenção durante delegação e teto absoluto de 10 min para a sessão. Não há espera de mensagem transcrita ou remoção de WAV.
 
-No aperto: interromper a saída falada em curso e ocultar imediatamente a sobreposição anterior, inclusive no fade; iniciar sinalização e captura em paralelo; desmutar somente se o gesto ainda estiver ativo quando a faixa conectar. Mostrar a sobreposição depois da captura. Soltar, cancelar ou atingir 120 s muta a faixa imediatamente, sem aguardar captura/upload/contexto (F2). Uma continuação atrasada não pode desmutar o microfone depois da soltura.
+No aperto: interromper a saída falada em curso e ocultar imediatamente a sobreposição anterior, inclusive no fade; iniciar sinalização, admissão do contexto do gesto e captura em paralelo. A intenção de desmutar é imediata; a mídia só flui com faixa conectada, contexto admitido e gesto ainda ativo. Esse ACK de controle não espera captura/upload. Mostrar a sobreposição depois da captura e restaurar a última legenda recebida enquanto estava oculta. Soltar, cancelar ou atingir 120 s muta imediatamente, sem aguardar captura/upload/contexto (F2). Uma continuação ou ACK atrasado não pode desmutar depois da soltura.
 
 Mudança de geração de conta encerra a chamada, invalida o turno e suas continuações, descarta contexto/anexos pendentes e oculta a UI (F1). Operações já admitidas mantêm o fence da credencial original; nenhuma continuação adquire a conta nova. Bloqueio, suspensão ou reinício do helper encerram a captação e a chamada quando a soltura não puder ser garantida. Desligar PTT encerra a chamada; resposta pendente segue a política de D16, sem reabrir o microfone.
 
@@ -125,20 +125,32 @@ Toque abaixo de 0,3 s ou tecla extra muta e cancela o gesto. Se aquele aperto ab
 
 Iniciar SDP/ICE/sideband no `pressed`, em paralelo à fala e à captura. Não há buffer de gravação local para recuperar fala anterior à conexão: notch mostra "Conectando" até o áudio poder fluir e depois "Ouvindo". Após a resposta, manter a sessão mutada por 90 s; uma réplica nesse intervalo reutiliza a mesma sessão e sua memória.
 
+Um gesto solto sem fala/turno reconhecido pelo serviço tem limpeza limitada pela janela de 90 s. A chegada de um turno do chamador cancela essa limpeza: ela não é um novo timeout para uma resposta em processamento. Áudio e legendas atualizam a apresentação mesmo após interrupção local; guardar o estado audível remoto enquanto a reprodução estiver mutada.
+
 Delegação pendente impede o fechamento por inatividade, com "Pensando". Reutilizar a nota aos 20 s e a desculpa falada aos 90 s do CallActor, sem inventar outro timeout de resposta. O teto absoluto é 10 min: `max_call_seconds` próprio no backend e encerramento pelo Main com `DELETE`, inclusive com delegação pendente.
 
 Resposta do Router depois do teto ou com PTT desligado: "avisa e espera". Garantir que a continuação chegue à conversa pelo caminho existente do Router, inclusive quando `im_api.voice.say` encontra a chamada encerrada. O aviso pertence à chamada/delegação da conta original, não à primeira resposta arbitrária da conversa. Mostrar `ready` ("Resposta pronta") e balão; clicar abre a sidebar no texto do Router. Não iniciar ligação automática. Uma troca de conta invalida também avisos antigos.
 
 A autorização tardia usa a origem fornecida pelo runtime, nunca metadados passados pelo modelo. A origem da delegação conserva `voice_mode`. Se a origem corrente já é `voice.call_ended`, o CallActor publica `voice_pending_delegation_ids` somente das entradas `pending` que ele aceitou; a projeção acompanha o evento existente e seus IDs ficam visíveis no texto ao Router. `voice.say` aceita somente um desses IDs: um argumento explícito inválido não escolhe outro, e a omissão só é aceita com um único pendente. Com vários, retorna erro que pede `delegation_id`. A mutação continua em `ConversationServer -> ConversationActor`, como mensagem do Router sem redelivery para agentes/provedores. Isso conserva a autorização existente, sem nova entidade, índice, sessão ou busca de histórico. Chamadas manuais, `note` e `hang_up` não recebem esse caminho.
 
+A resposta final tardia usa a identidade de request já suportada pela conversa, derivada de chamada e delegação. Repetir o mesmo texto pela origem original ou pelo evento final retorna a mesma mensagem; texto conflitante é recusado pelo ConversationActor. Não há outro recibo ou dono de deduplicação.
+
 Reutilizar o poll serial de eventos da ligação (500 ms, até 200 eventos/512 KiB por página), apenas com a chamada ativa. A legenda acompanha a fala por frases; não prova leitura literal nem exige comparação de palavras. A observação da continuação tardia deve usar a identidade da delegação e a entrega existente da conversa, sem varredura de histórico ou poll por anexo.
 
-### D17. Print e contexto pela próxima delegação ao Router
+### D17. Print associado ao mesmo pedido delegado
 
-Captura, monitor, traço e recorte continuam em D3/D4. O Main faz upload por `uploadGroupFile` e chama `POST /v1/comma/workspaces/:id/voice/calls/:call_id/context`:
+Captura, monitor, traço e recorte continuam em D3/D4. Correção aprovada pelo dono: o print nunca pode ser consumido por um pedido posterior por causa da ordem de upload. O Main atribui a cada gesto um `context_id` inteiro positivo, crescente no escopo da chamada. É correlação transitória, não identidade de arquivo ou entidade de domínio.
+
+`POST /v1/comma/workspaces/:id/voice/calls/:call_id/context` usa o mesmo escopo `{tenant, group, user}` de `events` e `hang_up`, e quatro estados:
+
+- `{"context_id": 1, "status": "pending"}` admite o gesto e invalida contextos anteriores ainda não entregues.
+- `complete` entrega o texto e os arquivos desse contexto, como no exemplo abaixo.
+- `{"context_id": 1, "status": "failed"}` ou `cancelled` invalida o contexto e termina a espera com erro explícito.
 
 ```json
 {
+  "context_id": 1,
+  "status": "complete",
   "text": "App em primeiro plano, cursor, tamanho do print, área marcada e nomes dos arquivos",
   "attachments": [
     { "path": "/uploads/abcdefghijklmnopqrstuv-screen.png", "name": "screen.png", "mime": "image/png" },
@@ -147,11 +159,21 @@ Captura, monitor, traço e recorte continuam em D3/D4. O Main faz upload por `up
 }
 ```
 
-A rota aceita somente o `path` devolvido por `uploadGroupFile`, junto com `name` e `mime`, e usa o mesmo escopo `{tenant, group, user}` de `events` e `hang_up`, sem permitir contexto em outra chamada. Não há identidade ou mapeamento paralelo de upload. O CallActor envia `text` como `session.context.append` e guarda os anexos para passá-los como `attachments:` na próxima delegação por `enqueue_group_router_im_provider_message`. Cada referência usa o formato de anexo consumido pelo VFS do Router, com resolução do blob existente; mapas crus não bastam. Depois dessa entrega, os anexos não reaparecem na delegação seguinte. Não há imagem no sideband: só `input_text`. As instruções de PTT mandam delegar tudo que envolva a tela.
+O único localizador é o `path` devolvido por `uploadGroupFile`, com `name` e `mime`; não há identidade ou mapeamento paralelo de upload. O CallActor mantém apenas o contexto corrente e seu prazo. Contextos antigos e transições inválidas são recusados. Cancelamento recebido antes do `pending` não pode ser revertido por uma requisição atrasada.
 
-Com "Enviar print" desligado, não capturar, pedir Gravação de Tela ou fazer upload; enviar apenas contexto textual. Sem permissão de tela, avisar e continuar sem imagem. Contexto não usa o rascunho, não abre janela e não muda o foco. Falha de upload/contexto é visível, sem fingir que a imagem chegou. O modelo do Router precisa aceitar imagem (R1/R15).
+O microfone não espera captura/upload. Antes de habilitar a mídia de um novo gesto, o transporte confirma somente a admissão do seu controle `pending`; soltura sempre muta imediatamente. Isso impede falar contra o contexto de um gesto anterior. Captura e admissão ocorrem em paralelo, com fence da conta original.
 
-Limite de execução, não de turnos: até duas operações de contexto reservadas antes da captura, com até quatro uploads simultâneos. A reserva fica ocupada até a operação terminar, inclusive após cancelamento ou troca de conta. Se as duas estão ocupadas, um novo aperto ainda interrompe/desmuta a voz, mas seu contexto falha de forma visível (`context_failed`), sem reutilizar print anterior ou criar fila ilimitada. A barreira de apresentação espera somente as capturas, não uploads; a entrega continua vinculada à sessão original.
+O CallActor manda o texto como contexto silencioso (`:thinking` → `session.context.append`), nunca comentário para falar. O contexto admitido instrui o modelo a começar cada pedido delegado com `[ptt-context:N]`. O evento nativo não fornece identidade de gesto: por isso o CallActor exige, extrai e remove esse marcador, vincula o ID à delegação quando ela chega e não procura “o último print” ao despachar. Marcador ausente, inválido ou antigo causa erro explícito, sem executar silenciosamente um pedido de tela sem seu contexto.
+
+Se a delegação chegar antes do upload, fica retida para aquele ID. `complete` libera os anexos uma única vez por `enqueue_group_router_im_provider_message`, no formato VFS do Router, com resolução do blob existente. Outra delegação não reutiliza as imagens. Falha, cancelamento ou novo gesto encerra a espera anterior sem transferir anexos; trabalho já admitido pelo Router permanece aceito. Troca de conta e fim da chamada invalidam todas as continuações locais.
+
+A espera do contexto tem teto de 150 s desde `pending` (120 s de gesto + 30 s de margem). Terminadas a captura e a admissão, o transporte limita upload/envio a 30 s; esse timer não prolonga o prazo global do contexto.
+
+Prazo expirado, falha de captura/upload e cancelamento produzem falha visível e término da espera; nada de retenção indefinida ou fallback silencioso. Um timer antigo não afeta contexto novo.
+
+Com “Enviar print” desligado, completar só com texto e anexos vazios, sem captura, permissão ou upload. Com print solicitado e captura negada/falha, informar a falha; não fingir entrega nem completar silenciosamente como texto puro. Contexto não usa o rascunho, não abre janela e não muda foco. O modelo do Router precisa aceitar imagem (R1/R15).
+
+Até duas operações de captura são reservadas antes de começar; canceladas continuam ocupando a reserva até terminarem. Não criar fila ilimitada. Se não há reserva, a voz continua sem esperar captura, mas o contexto falha visivelmente e não reutiliza print anterior. A barreira de apresentação espera somente capturas, não uploads, e restaura a legenda retida.
 
 ### D18. Remover o fluxo de transcrição e leitura
 
@@ -168,9 +190,9 @@ Apagar os testes exclusivos do código retirado, sem adaptá-los para manter o d
 - **R8** — Um atalho com tecla extra pode começar conexão/captura antes de cancelar. Mutar, descartar contexto/print e encerrar a sessão nova sem turno; áudio já transmitido não pode ser recolhido.
 - **R9** — Entrada segura do macOS pode impedir eventos do tap. Atalho inativo nesse momento; risco aceito.
 - **R12** — VAD pode responder numa pausa com a tecla presa. Risco aceito pelo dono; medir no smoke, sem prometer commit ao soltar.
-- **R13** — Latência do primeiro turno (SDP/ICE/sideband) ainda não medida. Medir aperto → conexão/primeiro áudio e comparar réplica na sessão quente.
+- **R13** — Latência de conexão e admissão do contexto ainda não medida. Medir aperto → mídia/primeiro áudio, inclusive ACK de controle na réplica quente; nenhuma dessas etapas espera captura/upload.
 - **R14** — Sessão aberta e espera de delegação consomem quota. Aplicar 90 s sem pendência e teto de 10 min; mostrar `plan_limit`, sem fallback nem reconexão automática.
-- **R15** — Anexo na delegação depende de visão no Router (mesma fronteira de R1). Verificar os arquivos na próxima delegação, e somente nela; o modelo de voz não vê imagens.
+- **R15** — O Router precisa de visão (R1). Verificar print no mesmo pedido, inclusive com delegação antes do upload; marcador de contexto ausente/antigo deve falhar explicitamente. O modelo de voz não vê imagens. Medir no smoke real se o serviço respeita a correlação instruída; não inferir isso de fixtures.
 
 ## Migration Plan
 

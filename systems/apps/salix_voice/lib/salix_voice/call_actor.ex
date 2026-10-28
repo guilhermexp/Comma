@@ -55,6 +55,7 @@ defmodule SalixVoice.CallActor do
     model_start_ms: 15_000,
     model_close_wait_ms: 3_000,
     delegation_settle_ms: 300,
+    context_timeout_ms: 150_000,
     progress_thinking_ms: 20_000,
     progress_apology_ms: 90_000,
     notice_max_ms: 5_000,
@@ -86,10 +87,11 @@ defmodule SalixVoice.CallActor do
   You are the voice of the Comma assistant on a live push-to-talk call. Keep every reply short \
   and natural for speech. You cannot look things up, see the screen, or act on your own: for any \
   request that involves the screen, current app, tools, or actions, delegate it, tell the caller \
-  briefly that you are checking, and wait. Never say you do not know about something before delegating \
-  the request and waiting for the result. Your own lack of knowledge is a reason to delegate, not a \
-  final answer. When commentary arrives for a delegation, say it in your own words without adding facts. \
-  Never invent results.\
+  briefly that you are checking, and wait. When a gesture context is active, every delegation \
+  request must begin with its exact [ptt-context:N] marker. Never say you do not know about \
+  something before delegating the request and waiting for the result. Your own lack of knowledge is \
+  a reason to delegate, not a final answer. When commentary arrives for a delegation, say it in \
+  your own words without adding facts. Never invent results.\
   """
   @push_to_talk_max_ms 600_000
 
@@ -122,7 +124,8 @@ defmodule SalixVoice.CallActor do
       call_id: args.call_id,
       carrier: args.carrier,
       mode: mode,
-      pending_attachments: [],
+      highest_context_id: 0,
+      ptt_context: nil,
       tenant_id: args.tenant_id,
       group_id: args.group_id,
       connect_id: args.connect_id,
@@ -334,18 +337,20 @@ defmodule SalixVoice.CallActor do
 
   def handle_call(:info, _from, state), do: {:reply, {:ok, call_info(state)}, state}
 
-  def handle_call({:context, text, attachments}, _from, %{phase: :live} = state) do
-    with {:ok, valid_text} <- required_text(text) do
-      append(state, :commentary, nil, valid_text)
-      attachments = List.wrap(attachments) |> Enum.filter(&is_map/1)
-      state = %{state | pending_attachments: state.pending_attachments ++ attachments}
-      {:reply, {:ok, %{accepted: true}}, state}
-    else
-      _ -> {:reply, {:error, :invalid_input}, state}
+  def handle_call({:context, payload}, _from, %{phase: :live, mode: :push_to_talk} = state) do
+    case apply_ptt_context(state, payload) do
+      {:ok, reply, next_state} ->
+        {:reply, {:ok, reply}, next_state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
-  def handle_call({:context, _text, _attachments}, _from, state),
+  def handle_call({:context, _payload}, _from, %{phase: :live} = state),
+    do: {:reply, {:error, :invalid_input}, state}
+
+  def handle_call({:context, _payload}, _from, state),
     do: {:reply, {:error, :call_not_found}, state}
 
   def handle_call({:voice_provider, op, request}, _from, state) when is_map(request) do
@@ -630,6 +635,27 @@ defmodule SalixVoice.CallActor do
     profile_done(state, {:error, "timeout"})
   end
 
+  defp timer(state, {:context_timeout, id}) do
+    case state.ptt_context do
+      %{id: ^id, status: :pending} = context ->
+        updated_context = %{context | status: :failed, attachments: []}
+        state = %{state | ptt_context: updated_context}
+
+        state =
+          fail_waiting_delegations(
+            state,
+            id,
+            "The screen context could not be captured. Tell the caller briefly and ask them to try again."
+          )
+
+        to_socket(state, {:voice_call, :context_failed, id})
+        state
+
+      _ ->
+        state
+    end
+  end
+
   defp timer(state, _event), do: state
 
   # Wait for both ends of the audio path. Either may become ready first.
@@ -687,10 +713,14 @@ defmodule SalixVoice.CallActor do
 
     case state.delegations do
       %{^id => delegation} ->
-        %{
-          state
-          | delegations: Map.put(state.delegations, id, Map.put(delegation, :request, request))
-        }
+        if state.mode == :push_to_talk do
+          handle_ptt_delegation_request(state, id, delegation, request)
+        else
+          %{
+            state
+            | delegations: Map.put(state.delegations, id, Map.put(delegation, :request, request))
+          }
+        end
 
       _ ->
         state
@@ -724,9 +754,14 @@ defmodule SalixVoice.CallActor do
       state
     else
       delegation = %{
+        id: id,
         offset_ms: offset_ms,
         created_mono: now(),
+        request: nil,
+        context_id: nil,
         status: :pending,
+        enqueued: false,
+        waiting_for_context: false,
         timers: [
           Process.send_after(
             self(),
@@ -814,29 +849,56 @@ defmodule SalixVoice.CallActor do
 
   defp flush_delegation(state, id) do
     case state.delegations do
-      %{^id => %{status: :pending} = delegation} when state.phase == :live ->
-        {caller_text, ledger} = Transcript.take_caller(state.ledger, delegation.offset_ms)
-        last_agent = Transcript.last_agent_sentence(ledger)
-        state = %{state | ledger: ledger}
-        request = if delegation[:request] in [nil, ""], do: caller_text, else: delegation.request
-        enqueue_delegation(state, id, request, last_agent)
+      %{^id => %{status: :pending, enqueued: false} = delegation} when state.phase == :live ->
+        cond do
+          state.mode == :push_to_talk and delegation[:context_id] == nil ->
+            fail_missing_marker_ptt_delegation(state, id)
+
+          state.mode == :push_to_talk and delegation.waiting_for_context ->
+            state
+
+          true ->
+            {caller_text, ledger} = Transcript.take_caller(state.ledger, delegation.offset_ms)
+            last_agent = Transcript.last_agent_sentence(ledger)
+            state = %{state | ledger: ledger}
+
+            request =
+              if delegation[:request] in [nil, ""], do: caller_text, else: delegation.request
+
+            {attachments, state} =
+              if state.mode == :push_to_talk do
+                case state.ptt_context do
+                  %{id: cid, attachments: atts} when cid == delegation.context_id ->
+                    updated_context = %{state.ptt_context | attachments: []}
+                    {atts, %{state | ptt_context: updated_context}}
+
+                  _ ->
+                    {[], state}
+                end
+              else
+                {[], state}
+              end
+
+            delegation = %{delegation | enqueued: true, waiting_for_context: false}
+            state = %{state | delegations: Map.put(state.delegations, id, delegation)}
+            enqueue_delegation(state, id, request, last_agent, attachments)
+        end
 
       _ ->
         state
     end
   end
 
-  defp enqueue_delegation(state, id, caller_text, last_agent) do
+  defp enqueue_delegation(state, id, caller_text, last_agent, attachments) do
     parent = self()
-    attachments = Enum.map(state.pending_attachments, &router_attachment/1)
-    state = %{state | pending_attachments: []}
+    router_attachments = Enum.map(attachments, &router_attachment/1)
 
     enqueue_router_input(
       state,
       delegation_content(state, id, caller_text, last_agent),
       delegation_metadata(state, id),
       source_message_id(state, id),
-      [trusted_source_text: caller_text, attachments: attachments],
+      [trusted_source_text: caller_text, attachments: router_attachments],
       &send(parent, {:delegation_enqueued, id, &1})
     )
 
@@ -1132,11 +1194,334 @@ defmodule SalixVoice.CallActor do
           "The assistant cannot take this request right now. Tell the caller briefly and offer to try again later."
         )
 
+        electron_delegation(state, id, "failed")
         finish_delegation(state, id, "failed")
 
       _ ->
         state
     end
+  end
+
+  @ptt_marker_regex ~r/\A\[ptt-context:(\d+)\]\s*(.*)\z/s
+
+  defp parse_ptt_context_marker(request) when is_binary(request) do
+    case Regex.run(@ptt_marker_regex, String.trim_leading(request)) do
+      [_, digits, rest] ->
+        case Integer.parse(digits) do
+          {context_id, ""} when context_id in 1..9_007_199_254_740_991 ->
+            {:ok, context_id, String.trim_leading(rest)}
+
+          _ ->
+            :error
+        end
+
+      _ ->
+        :error
+    end
+  end
+
+  defp parse_ptt_context_marker(_), do: :error
+
+  defp handle_ptt_delegation_request(state, id, delegation, request) do
+    case parse_ptt_context_marker(request) do
+      {:ok, context_id, stripped_request} ->
+        cond do
+          state.ptt_context == nil or state.ptt_context.id != context_id or
+              state.ptt_context.status in [:failed, :cancelled] ->
+            fail_invalid_ptt_delegation(
+              state,
+              id,
+              context_id,
+              "The screen context for this request has expired. Ask the caller to press and hold to try again."
+            )
+
+          state.ptt_context.id == context_id and state.ptt_context.status == :pending ->
+            updated = %{
+              delegation
+              | request: stripped_request,
+                context_id: context_id,
+                waiting_for_context: true
+            }
+
+            %{state | delegations: Map.put(state.delegations, id, updated)}
+
+          state.ptt_context.id == context_id and state.ptt_context.status == :complete ->
+            updated = %{
+              delegation
+              | request: stripped_request,
+                context_id: context_id,
+                waiting_for_context: false
+            }
+
+            %{state | delegations: Map.put(state.delegations, id, updated)}
+        end
+
+      :error ->
+        fail_missing_marker_ptt_delegation(state, id)
+    end
+  end
+
+  defp apply_ptt_context(state, payload) when is_map(payload) do
+    with {:ok, norm} <- normalize_ptt_payload(payload) do
+      transition_ptt_context(state, norm)
+    end
+  end
+
+  defp apply_ptt_context(_state, _), do: {:error, :invalid_input}
+
+  defp normalize_ptt_payload(payload) do
+    id = Map.get(payload, :context_id) || Map.get(payload, "context_id")
+    status = Map.get(payload, :status) || Map.get(payload, "status")
+
+    if is_integer(id) and id in 1..9_007_199_254_740_991 do
+      case status do
+        s when s in [:pending, "pending"] ->
+          {:ok, %{context_id: id, status: :pending}}
+
+        s when s in [:complete, "complete"] ->
+          text = Map.get(payload, :text) || Map.get(payload, "text")
+          attachments = Map.get(payload, :attachments) || Map.get(payload, "attachments") || []
+
+          if is_binary(text) and byte_size(text) in 1..20_000 and String.valid?(text) and
+               String.trim(text) != "" and is_list(attachments) and
+               Enum.all?(attachments, &is_map/1) do
+            {:ok, %{context_id: id, status: :complete, text: text, attachments: attachments}}
+          else
+            {:error, :invalid_input}
+          end
+
+        s when s in [:failed, "failed"] ->
+          {:ok, %{context_id: id, status: :failed}}
+
+        s when s in [:cancelled, "cancelled"] ->
+          {:ok, %{context_id: id, status: :cancelled}}
+
+        _ ->
+          {:error, :invalid_input}
+      end
+    else
+      {:error, :invalid_input}
+    end
+  end
+
+  defp transition_ptt_context(state, %{status: :pending, context_id: id}) do
+    cond do
+      id < state.highest_context_id ->
+        {:error, :invalid_input}
+
+      id == state.highest_context_id ->
+        case state.ptt_context do
+          %{id: ^id, status: :pending} ->
+            {:ok, %{accepted: true}, state}
+
+          _ ->
+            {:error, :invalid_input}
+        end
+
+      true ->
+        state = cancel(state, :context_timeout)
+
+        state =
+          invalidate_waiting_delegations(
+            state,
+            "The screen context for this request was superseded. Ask the caller to try again."
+          )
+
+        state =
+          schedule(
+            state,
+            :context_timeout,
+            state.timers.context_timeout_ms,
+            {:context_timeout, id}
+          )
+
+        context = %{
+          id: id,
+          status: :pending,
+          text: nil,
+          attachments: []
+        }
+
+        append(
+          state,
+          :thinking,
+          nil,
+          "[ptt-context:#{id}] Active push-to-talk gesture. Any delegation for this gesture must start its request text with [ptt-context:#{id}]. Do not speak screen metadata."
+        )
+
+        next_state = %{state | highest_context_id: id, ptt_context: context}
+        {:ok, %{accepted: true}, next_state}
+    end
+  end
+
+  defp transition_ptt_context(state, %{
+         status: :complete,
+         context_id: id,
+         text: text,
+         attachments: attachments
+       }) do
+    case state.ptt_context do
+      %{id: ^id, status: :pending} = context ->
+        state = cancel(state, :context_timeout)
+        append(state, :thinking, nil, text)
+
+        updated_context = %{
+          context
+          | status: :complete,
+            text: text,
+            attachments: attachments
+        }
+
+        state = %{state | ptt_context: updated_context}
+        state = flush_waiting_delegations(state, id)
+        {:ok, %{accepted: true}, state}
+
+      _ ->
+        {:error, :invalid_input}
+    end
+  end
+
+  defp transition_ptt_context(state, %{status: status, context_id: id})
+       when status in [:failed, :cancelled] do
+    cond do
+      id < state.highest_context_id ->
+        {:error, :invalid_input}
+
+      id == state.highest_context_id ->
+        case state.ptt_context do
+          %{id: ^id, status: :pending} ->
+            state = cancel(state, :context_timeout)
+
+            updated_context = %{
+              state.ptt_context
+              | status: status,
+                attachments: []
+            }
+
+            state = %{state | ptt_context: updated_context}
+
+            state =
+              fail_waiting_delegations(
+                state,
+                id,
+                "The screen context could not be captured. Tell the caller briefly and ask them to try again."
+              )
+
+            to_socket(state, {:voice_call, :context_failed, id})
+            {:ok, %{accepted: true}, state}
+
+          %{id: ^id, status: ^status} ->
+            {:ok, %{accepted: true}, state}
+
+          _ ->
+            {:error, :invalid_input}
+        end
+
+      true ->
+        state = cancel(state, :context_timeout)
+
+        state =
+          invalidate_waiting_delegations(
+            state,
+            "The screen context for this request was superseded. Ask the caller to try again."
+          )
+
+        state =
+          fail_waiting_delegations(
+            state,
+            id,
+            "The screen context could not be captured. Tell the caller briefly and ask them to try again."
+          )
+
+        to_socket(state, {:voice_call, :context_failed, id})
+        tombstone = %{id: id, status: status, text: nil, attachments: []}
+        next_state = %{state | highest_context_id: id, ptt_context: tombstone}
+        {:ok, %{accepted: true}, next_state}
+    end
+  end
+
+  defp flush_waiting_delegations(state, context_id) do
+    Enum.reduce(state.delegations, state, fn
+      {id,
+       %{
+         status: :pending,
+         enqueued: false,
+         context_id: ^context_id,
+         waiting_for_context: true
+       }},
+      acc ->
+        delegation = %{Map.fetch!(acc.delegations, id) | waiting_for_context: false}
+        acc = %{acc | delegations: Map.put(acc.delegations, id, delegation)}
+        flush_delegation(acc, id)
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  defp fail_waiting_delegations(state, context_id, reason_message) do
+    Enum.reduce(state.delegations, state, fn
+      {id,
+       %{
+         status: :pending,
+         enqueued: false,
+         context_id: ^context_id,
+         waiting_for_context: true
+       }},
+      acc ->
+        fail_delegation(acc, id, reason_message)
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  defp invalidate_waiting_delegations(state, reason_message) do
+    Enum.reduce(state.delegations, state, fn
+      {id, %{status: :pending, enqueued: false, waiting_for_context: true} = delegation}, acc ->
+        if delegation[:context_id] do
+          to_socket(acc, {:voice_call, :context_failed, delegation.context_id})
+        end
+
+        fail_delegation(acc, id, reason_message)
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  defp fail_delegation(state, id, reason_message) do
+    case state.delegations do
+      %{^id => %{status: :pending}} when state.phase == :live ->
+        append(
+          state,
+          if(state.mode == :push_to_talk, do: :final, else: :instructions),
+          id,
+          reason_message ||
+            "The assistant cannot take this request right now. Tell the caller briefly and offer to try again later."
+        )
+
+        electron_delegation(state, id, "failed")
+        finish_delegation(state, id, "failed")
+
+      _ ->
+        state
+    end
+  end
+
+  defp fail_missing_marker_ptt_delegation(state, id) do
+    msg =
+      "The screen context marker for this request is missing or invalid. Ask the caller to press and hold to try again."
+
+    if state.ptt_context,
+      do: to_socket(state, {:voice_call, :context_failed, state.ptt_context.id})
+
+    fail_delegation(state, id, msg)
+  end
+
+  defp fail_invalid_ptt_delegation(state, id, context_id, msg) do
+    to_socket(state, {:voice_call, :context_failed, context_id})
+    fail_delegation(state, id, msg)
   end
 
   defp progress(state, id, stage) do

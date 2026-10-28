@@ -23,9 +23,9 @@ defmodule SalixVoice.Carrier.Electron do
   def events(id, scope, after_cursor), do: request(id, {:events, scope, after_cursor})
   def hang_up(id, scope), do: request(id, {:hang_up, scope})
 
-  @doc "Appends text context to the GPT-Live session and stages attachments for the next Router delegation."
-  def context(id, scope, text, attachments),
-    do: request(id, {:context, scope, text, attachments})
+  @doc "Dispatches scoped push-to-talk context transition to the live CallActor."
+  def context(id, scope, payload),
+    do: request(id, {:context, scope, payload})
 
   defp request(id, message) do
     case :pg.get_members(@pg, {:electron_voice, id}) do
@@ -91,14 +91,14 @@ defmodule SalixVoice.Carrier.Electron do
   end
 
   def handle_call(
-        {:context, scope, text, attachments},
+        {:context, scope, payload},
         _from,
         %{scope: scope, closed: false, call: call} = state
       )
       when is_pid(call) do
     reply =
       try do
-        GenServer.call(call, {:context, text, attachments})
+        GenServer.call(call, {:context, payload})
       catch
         :exit, _ -> {:error, :call_not_found}
       end
@@ -122,6 +122,9 @@ defmodule SalixVoice.Carrier.Electron do
 
   def handle_info({:voice_call, :delegation, id, status}, state),
     do: {:noreply, emit(state, %{type: "delegation", id: id, status: status})}
+
+  def handle_info({:voice_call, :context_failed, context_id}, state),
+    do: {:noreply, emit(state, %{type: "context_failed", context_id: context_id})}
 
   def handle_info({:voice_call, :error, code}, state) do
     state = if state.answer, do: state, else: finish_answer(state, {:error, code})

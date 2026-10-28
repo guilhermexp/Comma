@@ -67,23 +67,52 @@ defmodule CommaWeb.VoiceCallsTest do
 
     for body <- [
           %{},
-          %{"text" => "  "},
-          %{"text" => 42},
-          %{"text" => String.duplicate("x", 20_001)},
-          %{"text" => "Screen", "attachments" => "not-a-list"},
+          %{"context_id" => "bad", "status" => "pending"},
+          %{"context_id" => 0, "status" => "pending"},
+          %{"context_id" => -1, "status" => "pending"},
+          %{"context_id" => 9_007_199_254_740_992, "status" => "pending"},
+          %{"context_id" => 1, "status" => "unknown"},
+          %{"context_id" => 1, "status" => "complete", "text" => "  "},
+          %{"context_id" => 1, "status" => "complete", "text" => 42},
+          %{"context_id" => 1, "status" => "complete", "text" => String.duplicate("x", 20_001)},
           %{
+            "context_id" => 1,
+            "status" => "complete",
+            "text" => "Screen",
+            "attachments" => "not-a-list"
+          },
+          %{
+            "context_id" => 1,
+            "status" => "complete",
             "text" => "Screen",
             "attachments" => [
               %{"path" => "/etc/passwd", "name" => "screen.png", "mime" => "image/png"}
             ]
           },
           %{
+            "context_id" => 1,
+            "status" => "complete",
             "text" => "Screen",
             "attachments" => [%{"path" => "/uploads/screen.png", "mime" => "image/png"}]
           },
           %{
+            "context_id" => 1,
+            "status" => "complete",
             "text" => "Screen",
             "attachments" => [%{"path" => 42, "name" => "screen.png", "mime" => "image/png"}]
+          },
+          %{
+            "context_id" => 1,
+            "status" => "complete",
+            "text" => "Screen",
+            "attachments" => [
+              %{
+                "path" => "/uploads/abcdefghijklmnopqrstuv-screen.png",
+                "name" => "screen.png",
+                "mime" => "image/png",
+                "file_id" => "bad_id"
+              }
+            ]
           }
         ] do
       response = request(:post, base <> "/vc_missing/context", c.token, body)
@@ -92,8 +121,11 @@ defmodule CommaWeb.VoiceCallsTest do
     end
 
     for body <- [
-          %{"text" => "App: Editor; cursor: 20,30"},
+          %{"context_id" => 1, "status" => "pending"},
+          %{"context_id" => 1, "status" => "complete", "text" => "App: Editor; cursor: 20,30"},
           %{
+            "context_id" => 1,
+            "status" => "complete",
             "text" => "Print: screen.png",
             "attachments" => [
               %{
@@ -102,7 +134,9 @@ defmodule CommaWeb.VoiceCallsTest do
                 "mime" => "image/png"
               }
             ]
-          }
+          },
+          %{"context_id" => 1, "status" => "failed"},
+          %{"context_id" => 1, "status" => "cancelled"}
         ] do
       missing = request(:post, base <> "/vc_missing/context", c.token, body)
       assert missing.status == 404

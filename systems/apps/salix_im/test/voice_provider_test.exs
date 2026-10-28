@@ -408,6 +408,8 @@ defmodule SalixIM.VoiceProviderTest do
     test "a real ended source retains the sole pending answer through Tools and ImRouter", ctx do
       use_real_voice_tools()
       source = late_ptt_source(ctx)
+      original = source
+
       source = ended_ptt_source(ctx, source, [source.delegation_id])
       group_id = ctx.group_id
       conversation_id = source.conversation["conversation_id"]
@@ -419,6 +421,13 @@ defmodule SalixIM.VoiceProviderTest do
                  self()
                )
 
+      assert {:ok, %{"message_id" => first_message_id}} =
+               Provider.call_api(ctx.router_id, "voice", "voice.say", %{
+                 "connect_id" => original.connect["connect_id"],
+                 "params" => %{"text" => "The accepted work is finished."},
+                 "tool_context" => original.context
+               })
+
       for id <- ["unaccepted", ""] do
         failed =
           execute_voice_tool(ctx, source, %{"text" => "Must not be saved.", "delegation_id" => id})
@@ -429,12 +438,18 @@ defmodule SalixIM.VoiceProviderTest do
       result = execute_voice_tool(ctx, source, %{"text" => "The accepted work is finished."})
       refute result.error
 
+      conflict =
+        execute_voice_tool(ctx, source, %{"text" => "A conflicting final answer."})
+
+      assert conflict.error
+
       assert {:ok, messages} =
                SalixIM.Conversations.list_group_conversation_messages(group_id, conversation_id,
                  limit: 10
                )
 
-      message = Enum.find(messages, &(&1["actor_type"] == "agent"))
+      [message] = Enum.filter(messages, &(&1["actor_type"] == "agent"))
+      assert message["message_id"] == first_message_id
 
       assert message["content"] == [
                %{"type" => "text", "text" => "The accepted work is finished."}

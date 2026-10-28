@@ -79,7 +79,7 @@ Um atalho só de modificadores MUST depender da permissão de Monitoramento de E
 
 ### Requirement: Captação durante o gesto
 
-O app MUST usar microfone real na janela de voz oculta, com a faixa mutada por padrão. MUST desmutar somente com o gesto ativo e a faixa conectada. Um toque menor que 0,3 s MUST mutar, descartar contexto/print e encerrar uma sessão aberta por ele que ainda não teve turno. A captação por aperto MUST parar em 120 s, como na soltura. Soltar ou atingir esse limite MUST NOT esperar captura ou upload.
+O app MUST usar microfone real na janela oculta, mutado por padrão, e desmutar só com gesto ativo, mídia conectada e controle de contexto admitido. Toque <0,3 s MUST mutar, descartar contexto e fechar uma sessão nova sem turno. A captação MUST parar em 120 s. A soltura/limite MUST mutar sem esperar captura, upload ou ACK. ACK atrasado MUST NOT desmutar. Admissão MUST ocorrer em paralelo à captura, sem esperar captura/upload.
 
 #### Scenario: Toque acidental
 
@@ -218,7 +218,16 @@ Soltar MUST apenas mutar a entrada de áudio. O serviço MUST decidir o fim do t
 
 ### Requirement: Contexto da chamada e delegação ao agente
 
-O modelo de voz MUST delegar ao Router pedidos sobre a tela ou ferramentas. O app MUST enviar contexto com app e cursor e, com print, tamanho, área e nomes; o texto MUST chegar como `session.context.append`. Os anexos MUST chegar ao VFS do Router no formato consumido por ele, acompanhar apenas a próxima delegação e não ser descartados silenciosamente. O modelo de voz não recebe imagem.
+O modelo de voz MUST delegar ao Router pedidos sobre a tela ou ferramentas. O app MUST enviar app e cursor e, com print, tamanho, área e nomes; o texto MUST chegar como contexto silencioso por `session.context.append`. O modelo de voz não recebe imagem.
+
+#### Scenario: Contexto textual silencioso
+
+- **WHEN** o contexto do gesto é concluído com app, cursor e, se houver print, tamanho, área e nomes
+- **THEN** o texto chega como contexto silencioso à chamada e pedidos que exigem tela ou ferramentas são delegados ao Router
+
+### Requirement: Associação do print ao pedido
+
+Cada gesto MUST ter `context_id` crescente por chamada e estado `pending/complete/failed/cancelled`. A delegação MUST trazer `[ptt-context:N]` e ser vinculada ao ID na chegada. O CallActor MUST esperar o contexto exato e entregar seus anexos VFS uma única vez. MUST NOT transferir print atrasado a outro pedido; associação ausente/antiga MUST falhar explicitamente.
 
 #### Scenario: Referência do upload
 
@@ -227,13 +236,38 @@ O modelo de voz MUST delegar ao Router pedidos sobre a tela ou ferramentas. O ap
 
 #### Scenario: Pergunta com print
 
-- **WHEN** o print e o recorte são enviados e associados à chamada antes da próxima delegação
-- **THEN** o modelo recebe o contexto textual e o Router recebe os dois anexos nessa delegação
+- **WHEN** a delegação do gesto chega antes de terminar o upload do print e recorte
+- **THEN** não há envio prematuro ao Router; a delegação espera o `complete` do mesmo `context_id` e recebe os dois anexos VFS com os bytes enviados
 
 #### Scenario: Anexos consumidos
 
 - **WHEN** uma segunda delegação acontece sem novo envio de anexos
 - **THEN** ela não recebe os anexos da delegação anterior
+
+#### Scenario: Contexto cancelado ou substituído
+
+- **WHEN** cancelamento, novo gesto ou troca de conta invalida um contexto e depois chega sua conclusão atrasada
+- **THEN** a conclusão é recusada/descartada, a espera anterior termina sem anexos transferidos e o próximo pedido não recebe imagens do contexto invalidado
+
+#### Scenario: Falha ou prazo do contexto
+
+- **WHEN** captura/upload falha, o upload excede 30 s após captura e admissão, ou o contexto atinge 150 s desde `pending`
+- **THEN** o contexto falha explicitamente, a espera termina e o app informa o erro sem fallback silencioso, retenção indefinida ou uso de print anterior
+
+#### Scenario: Delegação sem associação válida
+
+- **WHEN** o pedido de delegação não tem marcador válido do contexto admitido ou aponta a contexto antigo
+- **THEN** a chamada dá erro limitado e acionável para repetir o pedido; não executa silenciosamente um pedido de tela sem os anexos correspondentes
+
+#### Scenario: Soltura antes do ACK de controle
+
+- **WHEN** o usuário solta enquanto a admissão `pending` ainda não respondeu
+- **THEN** a faixa é mutada imediatamente; nem esse ACK nem conclusão de captura/upload pode desmutar depois
+
+#### Scenario: Cancelamento antes da admissão
+
+- **WHEN** o servidor recebe `cancelled` antes de um `pending` atrasado do mesmo ID
+- **THEN** o cancelamento permanece válido e o contexto não pode ser reativado
 
 #### Scenario: Contexto fora do escopo
 

@@ -4,6 +4,7 @@ defmodule CommaWeb.VoiceCalls do
 
   @max_context_bytes 20_000
   @max_context_attachments 2
+  @safe_max_context_id 9_007_199_254_740_991
   @upload_path ~r|\A/uploads/[A-Za-z0-9_-]{22}-[A-Za-z0-9._-]+\z|
 
   @doc "Starts an Electron conversation or a push-to-talk call."
@@ -50,17 +51,47 @@ defmodule CommaWeb.VoiceCalls do
 
   def hang_up(workspace, user, id), do: Electron.hang_up(id, scope(workspace, user))
 
-  @doc "Adds text to the call and image references to its next Router delegation."
-  def context(workspace, user, id, %{"text" => text} = params)
-      when is_binary(text) and byte_size(text) <= @max_context_bytes do
-    attachments = Map.get(params, "attachments", [])
+  @doc "Dispatches scoped push-to-talk context transitions to the live call."
+  def context(workspace, user, id, params) when is_map(params) do
+    context_id = Map.get(params, "context_id", Map.get(params, :context_id))
+    status = Map.get(params, "status", Map.get(params, :status))
 
-    if String.valid?(text) and String.trim(text) != "" and valid_attachments?(attachments),
-      do: Electron.context(id, scope(workspace, user), text, attachments),
-      else: {:error, :invalid_input}
+    if is_integer(context_id) and context_id in 1..@safe_max_context_id do
+      with {:ok, payload} <- validate_context_payload(status, context_id, params) do
+        Electron.context(id, scope(workspace, user), payload)
+      end
+    else
+      {:error, :invalid_input}
+    end
   end
 
   def context(_, _, _, _), do: {:error, :invalid_input}
+
+  defp validate_context_payload(status, context_id, _params)
+       when status in ["pending", :pending],
+       do: {:ok, %{context_id: context_id, status: :pending}}
+
+  defp validate_context_payload(status, context_id, params)
+       when status in ["complete", :complete] do
+    text = Map.get(params, "text", Map.get(params, :text))
+    attachments = Map.get(params, "attachments", Map.get(params, :attachments, []))
+
+    if valid_string?(text, @max_context_bytes) and valid_attachments?(attachments) do
+      {:ok, %{context_id: context_id, status: :complete, text: text, attachments: attachments}}
+    else
+      {:error, :invalid_input}
+    end
+  end
+
+  defp validate_context_payload(status, context_id, _params)
+       when status in ["failed", :failed],
+       do: {:ok, %{context_id: context_id, status: :failed}}
+
+  defp validate_context_payload(status, context_id, _params)
+       when status in ["cancelled", :cancelled],
+       do: {:ok, %{context_id: context_id, status: :cancelled}}
+
+  defp validate_context_payload(_, _, _), do: {:error, :invalid_input}
 
   defp valid_attachments?(attachments) when is_list(attachments) do
     length(attachments) <= @max_context_attachments and
@@ -69,8 +100,14 @@ defmodule CommaWeb.VoiceCalls do
 
   defp valid_attachments?(_), do: false
 
-  defp valid_attachment?(%{"path" => path, "name" => name, "mime" => mime}) do
-    valid_string?(name, 255) and mime in ["image/png", "image/jpeg"] and
+  defp valid_attachment?(%{} = att) do
+    path = Map.get(att, "path", Map.get(att, :path))
+    name = Map.get(att, "name", Map.get(att, :name))
+    mime = Map.get(att, "mime", Map.get(att, :mime))
+    has_file_id? = Map.has_key?(att, "file_id") or Map.has_key?(att, :file_id)
+
+    not has_file_id? and
+      valid_string?(name, 255) and mime in ["image/png", "image/jpeg"] and
       valid_string?(path, 4_096) and Regex.match?(@upload_path, path)
   end
 
