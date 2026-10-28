@@ -1355,9 +1355,10 @@ export async function createElectronMainContext(
           clientSettings: preferences.clientSettings,
           sideChatEnabled: preferences.sideChatEnabled,
           signedIn: session.state().phase === "signed_in",
+          sessionGeneration: session.state().generation,
         };
       },
-      createController: (settings) =>
+      createController: (settings, sessionGeneration) =>
         new PushToTalkController({
           hotkey,
           companion: pushToTalkDeps.companion,
@@ -1378,12 +1379,14 @@ export async function createElectronMainContext(
           transcriber,
           delivery: createPushToTalkDelivery({
             chat: appRuntime.chat,
+            api: () => createCurrentMainSessionApiBinding({ session }).api,
             runOwned: async (handler) => sessionAdmissionGuard.runOwned(handler),
           }),
           replies: pushToTalkReplies,
           clock: systemClock,
           removeFile: (path) => rm(path, { force: true }),
           settings,
+          sessionGeneration,
           codeBlockLabel: () =>
             messages.electron_push_to_talk_code_block(
               {},

@@ -18,6 +18,7 @@ import { supportedLocales, type CommaLocale } from "@comma/i18n";
 import {
   getNativeBridge,
   notchSideWidthRange,
+  type CommaClientSettingsPatch,
   type PushToTalkShortcut,
   type SideChatShortcut,
 } from "@comma/native-bridge";
@@ -429,18 +430,29 @@ export function AppSettingsRoute({
   const [pushToTalkShortcutConflict, setPushToTalkShortcutConflict] = useState<
     GlobalShortcutId | "app"
   >();
+  const checkPushToTalkConflict = (shortcut: PushToTalkShortcut | null) =>
+    findGlobalShortcutConflict(shortcut, {
+      "open-comma": clientSettings.settings.openCommaShortcut,
+      "side-chat": sideChatShortcut,
+    }) ??
+    (findAppShortcutConflictForSideChat(appShortcutBindings, shortcut)
+      ? "app"
+      : undefined);
   const setPushToTalkShortcut = (shortcut: PushToTalkShortcut | null) => {
-    const conflict =
-      findGlobalShortcutConflict(shortcut, {
-        "open-comma": clientSettings.settings.openCommaShortcut,
-        "side-chat": sideChatShortcut,
-      }) ??
-      (findAppShortcutConflictForSideChat(appShortcutBindings, shortcut)
-        ? "app"
-        : undefined);
+    const conflict = checkPushToTalkConflict(shortcut);
     setPushToTalkShortcutConflict(conflict);
     if (conflict) return;
     void clientSettings.update({ pushToTalkShortcut: shortcut });
+  };
+  const updatePushToTalkSettings = (patch: CommaClientSettingsPatch) => {
+    if (patch.pushToTalkEnabled) {
+      const conflict = checkPushToTalkConflict(
+        clientSettings.settings.pushToTalkShortcut
+      );
+      setPushToTalkShortcutConflict(conflict);
+      if (conflict) return;
+    }
+    void clientSettings.update(patch);
   };
   const pushToTalkConflictMessage = (conflict: GlobalShortcutId | "app") =>
     conflict === "app"
@@ -579,7 +591,7 @@ export function AppSettingsRoute({
     onOpenInputMonitoringSettings: () => void openInputMonitoringSettings(),
     onOpenScreenRecordingSettings: () => void openScreenRecordingSettings(),
     onShortcutChange: setPushToTalkShortcut,
-    onUpdate: (patch) => void clientSettings.update(patch),
+    onUpdate: updatePushToTalkSettings,
     pending: clientSettingsPending,
     preferencesLoaded: Boolean(appPreferences),
     settings: clientSettings.settings,

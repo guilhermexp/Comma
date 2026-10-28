@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { CommaConversation } from "@comma/app/api";
+import type { CommaConversation, VoiceCallEvents } from "@comma/app/api";
 import type { ChatMessage, ChatTarget } from "@comma/chat-contract";
+import { defaultCommaClientSettings } from "@comma/native-bridge";
+import { PushToTalkRuntime } from "../push-to-talk/runtime";
 import { MicrophoneDeniedError } from "../modules/audio-capture/microphone";
 import {
   busyVisibleMs,
@@ -9,11 +11,14 @@ import {
   maxRecordingMs,
   PushToTalkController,
   type PushToTalkControllerDeps,
+  type PushToTalkDelivery,
   type PushToTalkRecording,
 } from "../push-to-talk/controller";
-import type {
-  PushToTalkLiveVoice,
-  PushToTalkVoiceResult,
+import {
+  GptLiveVoice,
+  liveVoicePollMs,
+  type PushToTalkLiveVoice,
+  type PushToTalkVoiceResult,
 } from "../push-to-talk/live-voice";
 import { PushToTalkReplyWatcher, replyWaitMs } from "../push-to-talk/reply-watcher";
 import type {
@@ -44,7 +49,12 @@ const settings: PushToTalkSettings = {
   sendScreen: true,
 };
 const safari: PushToTalkFrontmostApp = { name: "Safari", bundleId: "com.apple.Safari" };
-const target = { conversationId: "cnv_home", groupId: "grp_1", workspaceId: "wsp_1" };
+const target = {
+  conversationId: "cnv_home",
+  groupId: "grp_1",
+  workspaceId: "wsp_1",
+  messageId: "msg_ptt",
+};
 const location: PushToTalkCursorLocation = {
   displayId: 2,
   cursor: { x: 2000, y: 500 },
@@ -134,7 +144,8 @@ class FakeCompanion implements PushToTalkCompanion {
     this.captions.push(text);
     this.log.push(`companion.caption ${text}`);
   }
-  hide() {
+  hide(_options?: { immediate?: boolean }) {
+    if (!this.visible) return;
     this.visible = false;
     this.caption = null;
     this.log.push("companion.hide");
@@ -287,11 +298,12 @@ const conversation = {
   group_id: "grp_1",
 } as CommaConversation;
 
-function agentMessage(text: string) {
+function agentMessage(text: string, replyToMessageId = target.messageId) {
   return {
     attachments: [],
     delivery: "sent",
     messageId: `msg_${text.length}`,
+    replyToMessageId,
     refs: [],
     role: "assistant",
     source: "server",
@@ -307,8 +319,9 @@ function setup(
     microphone?: () => Promise<PushToTalkRecording>;
     transcript?: () => Promise<{ text: string }>;
     ready?: boolean;
-    send?: () => Promise<typeof target>;
+    send?: (input: Parameters<PushToTalkDelivery["send"]>[0]) => Promise<typeof target>;
     liveVoice?: boolean;
+    voice?: (clock: FakeClock) => PushToTalkLiveVoice;
     /** `getMediaAccessStatus("screen")`; macOS 15+ says `denied` before any request. */
     screenAccess?: string;
   } = {}
@@ -320,6 +333,7 @@ function setup(
   const status = new FakeStatus(log, options.notchVisible ?? true);
   const speaker = new FakeSpeaker(log);
   const voice = new FakeLiveVoice(log);
+  const injectedVoice = options.voice?.(clock);
   const powerMonitor = new FakePowerMonitor();
   const replies = new PushToTalkReplyWatcher({ clock });
   const finalize = vi.fn((stroke: PushToTalkStroke | null) => ({
@@ -374,13 +388,13 @@ function setup(
       }),
     },
     delivery: {
-      send: vi.fn(() => {
+      send: vi.fn((input: Parameters<PushToTalkDelivery["send"]>[0]) => {
         log.push("delivery.send");
-        return options.send?.() ?? Promise.resolve(target);
+        return options.send?.(input) ?? Promise.resolve(target);
       }),
     },
     speaker,
-    ...(options.liveVoice ? { voice } : {}),
+    ...(injectedVoice ? { voice: injectedVoice } : options.liveVoice ? { voice } : {}),
     replies,
     openSideChat: vi.fn(() => void log.push("sideChat.open")),
     removeFile: vi.fn(async (path: string) => void log.push(`rm ${path}`)),
@@ -606,6 +620,22 @@ describe("PushToTalkController", () => {
     expect(status.last()).toBeNull();
   });
 
+  it("hides an exiting companion immediately before a new capture within its 320 ms fade", async () => {
+    const { deps, companion, hotkey, clock, hold } = setup();
+    const hide = vi.spyOn(companion, "hide");
+    await hold(200);
+    expect(hide).toHaveBeenLastCalledWith();
+    hide.mockClear();
+    deps.screen.capture.mockClear();
+    clock.advance(100);
+    hotkey.press();
+    expect(hide).toHaveBeenCalledWith({ immediate: true });
+    expect(hide.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.screen.capture.mock.invocationCallOrder[0]!
+    );
+    await flush();
+  });
+
   // Outro atalho com os mesmos modificadores
   it("drops a turn whose modifier-only chord was joined by another key, silently", async () => {
     const { deps, hotkey, companion, status, clock, log } = setup();
@@ -677,6 +707,35 @@ describe("PushToTalkController", () => {
     expect(deps.delivery.send).toHaveBeenCalledOnce();
   });
 
+  it.each(["release", "120 s limit"] as const)(
+    "stops a ready microphone on %s while the screenshot is still pending",
+    async (ending) => {
+      const capture = deferred<PushToTalkScreenCaptureResult>();
+      const stop = vi.fn(async () => "/tmp/pending-screen.wav");
+      const { deps, hotkey, clock, finalize, companion, status } = setup({
+        capture: () => capture.promise,
+        microphone: async () => ({ stop }),
+      });
+      hotkey.press();
+      await flush();
+      clock.advance(ending === "release" ? 1_000 : maxRecordingMs);
+      if (ending === "release") hotkey.release();
+      await flush();
+      expect(stop).toHaveBeenCalledOnce();
+      expect(deps.transcriber.transcribe).toHaveBeenCalledWith(
+        "/tmp/pending-screen.wav"
+      );
+      expect(deps.delivery.send).not.toHaveBeenCalled();
+      expect(deps.removeFile).toHaveBeenCalledWith("/tmp/pending-screen.wav");
+      expect(companion.shown).toEqual([]);
+      expect(status.states).toEqual([]);
+      capture.resolve({ status: "captured", finalize });
+      await flush();
+      expect(deps.delivery.send).toHaveBeenCalledOnce();
+      expect(finalize).toHaveBeenCalledWith(null);
+    }
+  );
+
   // Aperto durante a transcrição
   it("ignores a press while the previous turn transcribes and asks to wait in the notch", async () => {
     const transcript = deferred<{ text: string }>();
@@ -693,6 +752,86 @@ describe("PushToTalkController", () => {
     transcript.resolve({ text: "First" });
     await flush();
     expect(deps.delivery.send).toHaveBeenCalledOnce();
+  });
+
+  it("discards an account A transcription after the session changes to account B", async () => {
+    const transcript = deferred<{ text: string }>();
+    const { controller, deps, companion, status, hold } = setup({
+      transcript: () => transcript.promise,
+    });
+    await hold(1_000);
+    expect(status.last()).toEqual({ kind: "transcribing" });
+    controller.update(settings, 2);
+    transcript.resolve({ text: "Private account A screen" });
+    await flush();
+    expect(deps.delivery.send).not.toHaveBeenCalled();
+    expect(deps.removeFile).toHaveBeenCalledWith("/tmp/ptt-1.wav");
+    expect(companion.visible).toBe(false);
+    expect(status.last()).toBeNull();
+  });
+
+  it("does not restore an old session's reply wait after a pending send completes", async () => {
+    const sent = deferred<typeof target>();
+    const { controller, companion, status, hold, reply, speaker } = setup({
+      send: () => sent.promise,
+    });
+    await hold(1_000);
+    controller.update(settings, 2);
+    sent.resolve(target);
+    await flush();
+    await reply("Account A response.");
+    expect(speaker.spoken).toEqual([]);
+    expect(companion.visible).toBe(false);
+    expect(status.last()).toBeNull();
+  });
+
+  it("does not show a stale transcription error in a new session", async () => {
+    const transcript = deferred<{ text: string }>();
+    const { controller, deps, companion, status, hold } = setup({
+      transcript: () => transcript.promise,
+    });
+    await hold(1_000);
+    controller.update(settings, 2);
+    transcript.reject(new Error("Old session failed"));
+    await flush();
+    expect(deps.delivery.send).not.toHaveBeenCalled();
+    expect(deps.removeFile).toHaveBeenCalledWith("/tmp/ptt-1.wav");
+    expect(companion.visible).toBe(false);
+    expect(status.last()).toBeNull();
+  });
+
+  it("fences a turn when runtime observes a new signed-in session with unchanged preferences", async () => {
+    const transcript = deferred<{ text: string }>();
+    const { controller, deps, companion, status, hold } = setup({
+      transcript: () => transcript.promise,
+    });
+    controller.dispose();
+    let sessionGeneration = 1;
+    const runtime = new PushToTalkRuntime({
+      read: () => ({
+        clientSettings: { ...defaultCommaClientSettings, pushToTalkEnabled: true },
+        sideChatEnabled: true,
+        signedIn: true,
+        sessionGeneration,
+      }),
+      createController: (effective, generation) =>
+        new PushToTalkController({
+          ...deps,
+          settings: effective,
+          sessionGeneration: generation,
+        }),
+    });
+    runtime.start();
+    await hold(1_000);
+    sessionGeneration = 2;
+    runtime.refresh();
+    transcript.resolve({ text: "Account A private question" });
+    await flush();
+    expect(deps.delivery.send).not.toHaveBeenCalled();
+    expect(deps.removeFile).toHaveBeenCalledWith("/tmp/ptt-1.wav");
+    expect(companion.visible).toBe(false);
+    expect(status.last()).toBeNull();
+    runtime.dispose();
   });
 
   // Mac bloqueado durante a gravação (and suspend, helper restart)
@@ -985,6 +1124,48 @@ describe("PushToTalkController", () => {
     expect(speaker.spoken).toEqual(["Second sentence.", "Third sentence."]);
   });
 
+  it("uses say only for the remainder when live voice closes after the first final chunk", async () => {
+    const batches: VoiceCallEvents["events"][] = [];
+    let live!: GptLiveVoice;
+    const { hold, reply, speaker, finishSentence, clock } = setup({
+      voice: (sharedClock) => {
+        live = new GptLiveVoice({
+          api: () => ({
+            startVoiceCall: async () => ({ call_id: "vc_1", sdp: "answer-sdp" }),
+            sayVoiceCall: async () => ({ queued: true, chunks: 2 }),
+            voiceCallEvents: async () => ({
+              events: batches.shift() ?? [],
+              cursor: 0,
+              truncated: false,
+            }),
+            endVoiceCall: async () => ({ ending: true }),
+          }),
+          runOwned: (handler) => handler(),
+          host: { open: async () => undefined, publish: () => undefined },
+          clock: sharedClock,
+        });
+        return live;
+      },
+    });
+    await hold(1_000);
+    const { generation } = live.voiceSession();
+    await live.voiceOffer({ generation, sdp: "offer-sdp" });
+    const firstChunk = `${"A".repeat(480)}.`;
+    await reply(`${firstChunk} Second sentence. Third sentence.`);
+    live.voiceReport({ generation, event: "audible" });
+    batches.push([
+      { kind: "caption", role: "agent", turn: 1, text: firstChunk, final: true },
+      { kind: "closed", reason: "chunk_drop" },
+    ]);
+    clock.advance(liveVoicePollMs);
+    await flush();
+    expect(speaker.speaking()).toBe("Second sentence.");
+    await finishSentence();
+    expect(speaker.speaking()).toBe("Third sentence.");
+    await finishSentence();
+    expect(speaker.spoken).toEqual(["Second sentence.", "Third sentence."]);
+  });
+
   // Interromper a leitura
   it("stops the GPT Live voice at once on the next press", async () => {
     const { voice, speaker, companion, status, hotkey, hold, reply } = setup({
@@ -1077,6 +1258,41 @@ describe("PushToTalkController", () => {
     await reply("Other chat.", { ...target, conversationId: "cnv_other" });
     expect(speaker.speak).not.toHaveBeenCalled();
     expect(companion.captions).toEqual([]);
+  });
+
+  it("ignores a typed message's reply in the shared conversation while waiting for PTT", async () => {
+    const { deps, speaker, companion, hold, reply } = setup();
+    await hold(1_000);
+    deps.replies.handleAppended({
+      conversation,
+      messages: [agentMessage("Answer to a typed question.", "msg_typed_before")],
+      target,
+    });
+    await flush();
+    expect(speaker.spoken).toEqual([]);
+    expect(companion.caption).toBeNull();
+    await reply("Answer to PTT.");
+    expect(speaker.speaking()).toBe("Answer to PTT.");
+  });
+
+  it("keeps a causal reply that arrives before the send request resolves", async () => {
+    const sent = deferred<typeof target>();
+    const state = setup({
+      send: ({ onSending }) => {
+        onSending?.(target);
+        state.deps.replies.handleAppended({
+          conversation,
+          messages: [agentMessage("Fast PTT answer.")],
+          target,
+        });
+        return sent.promise;
+      },
+    });
+    await state.hold(1_000);
+    expect(state.speaker.spoken).toEqual([]);
+    sent.resolve(target);
+    await flush();
+    expect(state.speaker.speaking()).toBe("Fast PTT answer.");
   });
 
   // Fora de um turno

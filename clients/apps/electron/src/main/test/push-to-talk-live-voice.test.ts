@@ -200,6 +200,99 @@ describe("GptLiveVoice", () => {
       result: { status: "unavailable", reason: "closed", spokenSentences: 1 },
     });
   });
+  it("falls back to system voice when a call closes or fails after a final partial chunk", async () => {
+    const { connect, poll, speak, voice } = setup();
+    const { generation } = await connect();
+    const result = speak("Primeira frase. Segunda frase. Terceira frase.");
+    await flush();
+    voice.voiceReport({ generation, event: "audible" });
+    // Turn 1 is final, but only covers the first sentence of a 3-sentence reply.
+    await poll(agent(1, "Primeira frase.", true), {
+      kind: "closed",
+      reason: "chunk_drop",
+    });
+    expect(await settled(result)).toEqual({
+      result: { status: "unavailable", reason: "closed", spokenSentences: 1 },
+    });
+
+    // Same with an error event after the first final chunk
+    const second = setup();
+    const secondConn = await second.connect();
+    const secondResult = second.speak("Primeira frase. Segunda frase. Terceira frase.");
+    await flush();
+    second.voice.voiceReport({ generation: secondConn.generation, event: "audible" });
+    await second.poll(agent(1, "Primeira frase.", true), {
+      kind: "error",
+      code: "chunk_drop",
+    });
+    expect(await settled(secondResult)).toEqual({
+      result: { status: "unavailable", reason: "error", spokenSentences: 1 },
+    });
+
+    // A single long sentence split across chunks that drops before the tail
+    const third = setup();
+    const thirdConn = await third.connect();
+    const thirdResult = third.speak(
+      "Esta é uma resposta única longa sem pontuação no meio e parte final."
+    );
+    await flush();
+    third.voice.voiceReport({ generation: thirdConn.generation, event: "audible" });
+    await third.poll(agent(1, "Esta é uma resposta única longa sem pontuação", true), {
+      kind: "closed",
+      reason: "model_error",
+    });
+    expect(await settled(thirdResult)).toEqual({
+      result: { status: "unavailable", reason: "closed", spokenSentences: 0 },
+    });
+  });
+
+  it("does not conclude during interchunk silence until the entire reply is read", async () => {
+    const { clock, connect, poll, speak, voice } = setup();
+    const { generation } = await connect();
+    const result = speak("Primeira frase. Segunda frase. Terceira frase.");
+    await flush();
+    voice.voiceReport({ generation, event: "audible" });
+    await poll(agent(1, "Primeira frase.", true));
+
+    // Silence after the first final chunk must NOT imply the full reply is done.
+    voice.voiceReport({ generation, event: "silent" });
+    clock.advance(liveVoiceQuietMs * 2);
+    await flush();
+    expect(await settled(result)).toBeUndefined();
+
+    // The subsequent chunk arrives and plays to completion.
+    voice.voiceReport({ generation, event: "audible" });
+    await poll(agent(2, "Segunda frase. Terceira frase.", true));
+    voice.voiceReport({ generation, event: "silent" });
+    clock.advance(liveVoiceQuietMs);
+    await flush();
+
+    expect(await settled(result)).toEqual({ result: { status: "done" } });
+  });
+
+  it("does not conclude early when text contains repeated identical sentences", async () => {
+    const { clock, connect, poll, speak, voice } = setup();
+    const { generation } = await connect();
+    const result = speak("Wait for it. Wait for it.");
+    await flush();
+    voice.voiceReport({ generation, event: "audible" });
+
+    // Chunk 1 matches the first sentence exactly and is final.
+    await poll(agent(1, "Wait for it.", true));
+    voice.voiceReport({ generation, event: "silent" });
+    clock.advance(liveVoiceQuietMs * 2);
+    await flush();
+    expect(await settled(result)).toBeUndefined();
+
+    // Chunk 2 arrives with the second sentence.
+    voice.voiceReport({ generation, event: "audible" });
+    await poll(agent(2, "Wait for it.", true));
+    voice.voiceReport({ generation, event: "silent" });
+    clock.advance(liveVoiceQuietMs);
+    await flush();
+
+    expect(await settled(result)).toEqual({ result: { status: "done" } });
+  });
 
   it("stops at once: the window drops its peer and the call hangs up", async () => {
     const { api, connect, host, speak, voice } = setup();

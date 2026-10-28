@@ -12,9 +12,16 @@ export type PushToTalkReplyHandlers = {
   onTimeout: () => void;
 };
 
+export type PushToTalkReplyTarget = ChatTarget & {
+  /** The client request ID minted for the sent turn. */
+  clientRequestId?: string;
+  /** The canonical message ID of the push-to-talk user message, if already known. */
+  messageId?: string;
+};
+
 export interface PushToTalkReplies {
-  /** Waits for the first agent reply in `target`, replacing any earlier wait. */
-  arm(target: ChatTarget, handlers: PushToTalkReplyHandlers): void;
+  /** Waits for the agent reply in `target` tied to the sent turn, replacing any earlier wait. */
+  arm(target: PushToTalkReplyTarget, handlers: PushToTalkReplyHandlers): void;
   cancel(): void;
 }
 
@@ -29,7 +36,12 @@ export class PushToTalkReplyWatcher implements PushToTalkReplies {
   readonly #clock: PushToTalkClock;
   readonly #timeoutMs: number;
   #waiting:
-    | { target: ChatTarget; handlers: PushToTalkReplyHandlers; cancelTimer: () => void }
+    | {
+        target: PushToTalkReplyTarget;
+        handlers: PushToTalkReplyHandlers;
+        cancelTimer: () => void;
+        boundMessageId: string | undefined;
+      }
     | undefined;
 
   constructor(options: { clock: PushToTalkClock; timeoutMs?: number }) {
@@ -37,14 +49,19 @@ export class PushToTalkReplyWatcher implements PushToTalkReplies {
     this.#timeoutMs = options.timeoutMs ?? replyWaitMs;
   }
 
-  arm(target: ChatTarget, handlers: PushToTalkReplyHandlers) {
+  arm(target: PushToTalkReplyTarget, handlers: PushToTalkReplyHandlers) {
     this.cancel();
     const cancelTimer = this.#clock.setTimeout(() => {
       if (this.#waiting?.handlers !== handlers) return;
       this.#waiting = undefined;
       handlers.onTimeout();
     }, this.#timeoutMs);
-    this.#waiting = { target, handlers, cancelTimer };
+    this.#waiting = {
+      target,
+      handlers,
+      cancelTimer,
+      boundMessageId: target.messageId,
+    };
   }
 
   cancel() {
@@ -64,8 +81,27 @@ export class PushToTalkReplyWatcher implements PushToTalkReplies {
       input.target.groupId !== waiting.target.groupId
     )
       return;
-    const reply = input.messages.find((message) =>
-      isRouterMessage(message, input.conversation)
+
+    // 1. If boundMessageId is not yet known, bind it from our user message via clientRequestId
+    if (
+      waiting.boundMessageId === undefined &&
+      waiting.target.clientRequestId !== undefined
+    ) {
+      const userMessage = input.messages.find(
+        (m) => m.role === "user" && m.clientRequestId === waiting.target.clientRequestId
+      );
+      if (userMessage) {
+        waiting.boundMessageId = userMessage.messageId;
+      }
+    }
+
+    // 2. Correlate agent reply strictly by replyToMessageId === boundMessageId
+    if (waiting.boundMessageId === undefined) return;
+
+    const reply = input.messages.find(
+      (message) =>
+        isRouterMessage(message, input.conversation) &&
+        message.replyToMessageId === waiting.boundMessageId
     );
     if (!reply) return;
     this.cancel();

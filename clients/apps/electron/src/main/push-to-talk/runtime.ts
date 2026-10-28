@@ -15,6 +15,7 @@ export type PushToTalkRuntimeInputs = {
   clientSettings: CommaClientSettings | undefined;
   sideChatEnabled: boolean;
   signedIn: boolean;
+  sessionGeneration: number;
 };
 
 /** Talk to agent needs its own switch, Side Chat on and an open session. */
@@ -40,7 +41,8 @@ export function effectivePushToTalkSettings({
 export class PushToTalkRuntime {
   readonly #read: () => PushToTalkRuntimeInputs;
   readonly #createController: (
-    settings: PushToTalkSettings
+    settings: PushToTalkSettings,
+    sessionGeneration: number
   ) => Pick<PushToTalkController, "dispose" | "start" | "update">;
   #controller: Pick<PushToTalkController, "dispose" | "start" | "update"> | undefined;
   #applied: string | undefined;
@@ -48,7 +50,8 @@ export class PushToTalkRuntime {
   constructor(options: {
     read: () => PushToTalkRuntimeInputs;
     createController: (
-      settings: PushToTalkSettings
+      settings: PushToTalkSettings,
+      sessionGeneration: number
     ) => Pick<PushToTalkController, "dispose" | "start" | "update">;
   }) {
     this.#read = options.read;
@@ -57,19 +60,21 @@ export class PushToTalkRuntime {
 
   start() {
     if (this.#controller) return;
-    const settings = effectivePushToTalkSettings(this.#read());
-    this.#applied = JSON.stringify(settings);
-    this.#controller = this.#createController(settings);
+    const inputs = this.#read();
+    const settings = effectivePushToTalkSettings(inputs);
+    this.#applied = JSON.stringify([settings, inputs.sessionGeneration]);
+    this.#controller = this.#createController(settings, inputs.sessionGeneration);
     this.#controller.start();
   }
 
   refresh() {
     if (!this.#controller) return;
-    const settings = effectivePushToTalkSettings(this.#read());
-    const applied = JSON.stringify(settings);
+    const inputs = this.#read();
+    const settings = effectivePushToTalkSettings(inputs);
+    const applied = JSON.stringify([settings, inputs.sessionGeneration]);
     if (applied === this.#applied) return;
     this.#applied = applied;
-    this.#controller.update(settings);
+    this.#controller.update(settings, inputs.sessionGeneration);
   }
 
   dispose() {

@@ -210,15 +210,20 @@ describe("PushToTalkOverlayWindow", () => {
     overlay.setStroke({ points: [{ x: 1, y: 1 }], surface });
     expect(strokes.at(-1)).toBeNull();
 
-    // Another display is another surface: its stroke would not match the capture.
+    // Another display is another surface: strokes on display B must be rejected,
+    // preserving the captured display A association. Moving back to A allows strokes again.
     overlay.setStroke({ points: circle, surface });
-    moveCursor({ x: 300, y: 300 });
+    moveCursor({ x: 300, y: 300 }); // moves to primary (display 1) while capture was on secondary (display 2)
     expect(strokes.at(-1)).toBeNull();
-    overlay.setStroke({ points: circle, surface });
+    // Attempting to draw on display B's new surface is rejected.
+    overlay.setStroke({ points: circle, surface: latest().surface });
     expect(strokes.at(-1)).toBeNull();
+    // Moving cursor back to display A (secondary) restores the ability to stroke on A.
+    moveCursor({ x: 2_000, y: 100 });
+    overlay.setStroke({ points: circle, surface: latest().surface });
+    expect(strokes.at(-1)).toEqual(circle);
 
     // Once the shortcut is released the stroke is final.
-    overlay.setStroke({ points: circle, surface: latest().surface });
     overlay.setState({ kind: "transcribing" });
     overlay.setStroke({
       points: [
@@ -228,11 +233,31 @@ describe("PushToTalkOverlayWindow", () => {
       surface: latest().surface,
     });
     expect(strokes.at(-1)).toEqual(circle);
-
     // The next turn starts without a stroke.
     overlay.hide();
     await showListening(setup, { x: 1, y: 1 });
     expect(strokes.at(-1)).toBeNull();
+  });
+
+  it("rejects strokes on the fallback display when the captured monitor is no longer available", async () => {
+    const { overlay, latest, window } = createOverlay();
+    const strokes: unknown[] = [];
+    overlay.onStroke((stroke) => strokes.push(stroke));
+    overlay.show({
+      displayId: 99,
+      cursor: { x: 100, y: 100 },
+      state: { kind: "listening" },
+    });
+    await settle();
+    expect(window().bounds).toEqual(primary.bounds);
+    overlay.setStroke({
+      points: [
+        { x: 10, y: 20 },
+        { x: 50, y: 60 },
+      ],
+      surface: latest().surface,
+    });
+    expect(strokes).toEqual([]);
   });
 
   it("shows the level only while listening and the caption until it is removed", async () => {

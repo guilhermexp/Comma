@@ -343,7 +343,7 @@ export class GptLiveVoice implements PushToTalkLiveVoice, PushToTalkVoiceProvide
     }
     if (event.kind === "closed" || event.kind === "error") {
       call.callId = undefined;
-      if (reading?.heard && allFinal(reading)) this.#close(call, { status: "done" });
+      if (reading?.heard && allRead(reading)) this.#close(call, { status: "done" });
       else if (reading) this.#fail(call, event.kind);
       // A pre-warmed call that ended by itself is simply opened again.
       else this.#close(call);
@@ -354,7 +354,7 @@ export class GptLiveVoice implements PushToTalkLiveVoice, PushToTalkVoiceProvide
   #checkDone(call: Call, reading: Reading) {
     reading.stopQuiet?.();
     reading.stopQuiet = undefined;
-    if (!reading.heard || reading.audible || !allFinal(reading)) return;
+    if (!reading.heard || reading.audible || !allRead(reading)) return;
     reading.stopQuiet = this.#clock.setTimeout(() => {
       if (this.#call === call && call.reading === reading)
         this.#close(call, { status: "done" });
@@ -434,16 +434,43 @@ function allFinal(reading: Reading) {
     reading.turns.size > 0 && [...reading.turns.values()].every((turn) => turn.final)
   );
 }
+function words(text: string): string[] {
+  return text.toLowerCase().match(/\p{L}+|\p{N}+/gu) ?? [];
+}
+
+function isTerminal(text: string, expectedText: string): boolean {
+  if (/[.!?…。！？]["'”’)\]]*$/u.test(text)) return true;
+  const expectedWords = words(expectedText);
+  const lastWord = expectedWords.at(-1);
+  if (!lastWord) return true;
+  const heard = words(text);
+  return heard.at(-1) === lastWord;
+}
+
+/** Done only when all received turns are final and the whole reply was heard word for word. */
+function allRead(reading: Reading) {
+  if (!allFinal(reading)) return false;
+  const expectedSentences = splitSentences(reading.text);
+  if (expectedSentences.length === 0) return true;
+  if (heardSentences(reading) < expectedSentences.length) return false;
+  const expectedWords = words(reading.text);
+  const heardWords = words(heardText(reading));
+  if (expectedWords.length === 0) return true;
+  if (expectedWords.length !== heardWords.length) return false;
+  for (let index = 0; index < expectedWords.length; index++) {
+    if (expectedWords[index] !== heardWords[index]) return false;
+  }
+  return true;
+}
 
 /** Whole sentences already heard; a sentence cut off is read again. */
 function heardSentences(reading: Reading) {
   if (!reading.heard) return 0;
   const text = heardText(reading);
   const sentences = splitSentences(text);
-  const complete =
-    allFinal(reading) || /[.!?…。！？]["'”’)\]]*$/u.test(text)
-      ? sentences.length
-      : sentences.length - 1;
+  const complete = isTerminal(text, reading.text)
+    ? sentences.length
+    : sentences.length - 1;
   return Math.max(0, Math.min(complete, splitSentences(reading.text).length));
 }
 

@@ -62,6 +62,17 @@ Comandos de referência (de `clients/`): `pnpm ci:static`, `pnpm test:unit --max
 - [ ] 9.2 Smoke dos caminhos de erro: Monitoramento de Entrada negado e concedido depois, `⌃⌥←` em outro app (cancela e o app recebe a tecla), Gravação de Tela nunca pedida (o Comma aparece na lista após o pedido) e negada, voz GPT Live indisponível (cai na voz do sistema sem repetir), transcrição indisponível, toque de 0,2 s, bloqueio da tela durante a gravação, rascunho da sidebar preservado. Verificar: prints de cada caso em `.tmp/push-to-talk/`.
 - [ ] 9.3 Medir no smoke o corte do início da fala (R2) e o tempo entre soltar e "Falando" (R5); registrar no `design.md`. Verificar: seção de riscos atualizada.
 
+## 10. Correções da revisão de código
+
+- [x] 10.1 F1: invalidar o turno em todas as fases quando a geração da sessão muda; descartar continuações antigas e remover o WAV.
+- [x] 10.2 F2: parar o microfone na soltura e em 120 s mesmo com a captura pendente; aguardar o print apenas na apresentação e no envio.
+- [x] 10.3 F3: continuar o despacho Carbon para IDs de outras instâncias; verificar os dois apertos e a soltura com eventos sintéticos e compilar o helper.
+- [x] 10.4 F4: correlacionar a pergunta e a resposta pelos IDs canônicos existentes; ignorar respostas a mensagens digitadas e preservar uma resposta que chegue antes da confirmação HTTP.
+- [x] 10.5 F5: exigir cobertura do texto inteiro antes de concluir a voz; cair em `say` a partir da próxima frase completa, sem concluir entre chunks.
+- [x] 10.6 F6: aceitar traços somente no monitor capturado, inclusive se a janela precisar usar outro monitor após uma desconexão.
+- [x] 10.7 F7: recusar a reativação do PTT se o atalho salvo conflita com outro atalho, mostrando o motivo nos Ajustes.
+- [x] 10.8 F8: ocultar imediatamente a janela que ainda está em fade antes da próxima captura.
+
 ## Workflow follow-up
 
 - Revisão com `/requesting-code-review`, depois `/openspec-archive-change`, `/sync` e `/cleanup`.

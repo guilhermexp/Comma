@@ -90,6 +90,7 @@ export class PushToTalkOverlayWindow
   readonly #options: PushToTalkOverlayOptions;
   readonly #captionListeners = new Set<() => void>();
   readonly #strokeListeners = new Set<(stroke: PushToTalkStroke | null) => void>();
+  #capturedDisplayId: number | undefined;
   #display: Display | undefined;
   #follow: ReturnType<typeof setInterval> | undefined;
   #hideTimer: ReturnType<typeof setTimeout> | undefined;
@@ -125,6 +126,7 @@ export class PushToTalkOverlayWindow
     }
     clearTimeout(this.#hideTimer);
     this.#hideTimer = undefined;
+    this.#capturedDisplayId = input.displayId;
     this.#display = display;
     this.#interactive = false;
     this.#setStroke(null);
@@ -233,8 +235,9 @@ export class PushToTalkOverlayWindow
     points: ReadonlyArray<PushToTalkOverlayPoint> | null;
     surface: number;
   }) {
-    // Drawing happens only while the shortcut is held, on the current surface.
+    // Drawing happens only while the shortcut is held, on the captured display's surface.
     if (
+      this.#display?.id !== this.#capturedDisplayId ||
       surface !== this.#state.surface ||
       !this.#shown() ||
       this.#state.companion?.kind !== "listening"

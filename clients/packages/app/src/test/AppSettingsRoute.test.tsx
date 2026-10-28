@@ -1879,6 +1879,51 @@ describe("AppSettingsRoute", () => {
         screen.getByRole("button", { name: "Open Side Chat: Ctrl + Z" })
       ).toBeInTheDocument();
     });
+    it("revalidates conflicts and refuses reenabling when saved shortcut conflicts with another shortcut", async () => {
+      installTalkToAgentMac(true);
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+      const enabled = section.getByRole("switch", { name: "Talk to agent" });
+      await waitFor(() => expect(enabled).toBeEnabled());
+      await userEvent.click(enabled);
+
+      // Change PTT shortcut to Ctrl+Alt+Space
+      await userEvent.click(
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt" })
+      );
+      await userEvent.keyboard("{Control>}{Alt>} {/Alt}{/Control}");
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkShortcut).toEqual({
+          key: "space",
+          modifiers: { alt: true, control: true, meta: false, shift: false },
+        })
+      );
+
+      // Turn PTT off
+      await userEvent.click(enabled);
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkEnabled).toBe(false)
+      );
+
+      // Assign Ctrl+Alt+Space to Open Side Chat while PTT is disabled
+      await userEvent.click(
+        screen.getByRole("button", { name: "Open Side Chat: Ctrl + Z" })
+      );
+      await userEvent.keyboard("{Control>}{Alt>} {/Alt}{/Control}");
+      await waitFor(() =>
+        expect(readStoredClientSettings().sideChatShortcut).toEqual({
+          key: "space",
+          modifiers: { alt: true, control: true, meta: false, shift: false },
+        })
+      );
+
+      // Try to reenable PTT: should be refused and show conflict error
+      await userEvent.click(enabled);
+      expect(
+        await section.findByText("Already used by Open Side Chat.")
+      ).toBeInTheDocument();
+      expect(readStoredClientSettings().pushToTalkEnabled).toBe(false);
+    });
   });
 
   it("keeps unavailable settings controls disabled", async () => {

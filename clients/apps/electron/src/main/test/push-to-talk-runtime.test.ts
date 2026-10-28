@@ -44,6 +44,7 @@ function setup(initial: Partial<PushToTalkRuntimeInputs> = {}) {
     clientSettings: defaultCommaClientSettings,
     sideChatEnabled: true,
     signedIn: true,
+    sessionGeneration: 1,
     ...initial,
   };
   const hotkey = {
@@ -58,7 +59,7 @@ function setup(initial: Partial<PushToTalkRuntimeInputs> = {}) {
   } satisfies PushToTalkHotkey;
   const runtime = new PushToTalkRuntime({
     read: () => inputs,
-    createController: (settings) =>
+    createController: (settings, sessionGeneration) =>
       new PushToTalkController({
         hotkey,
         companion: {
@@ -83,6 +84,7 @@ function setup(initial: Partial<PushToTalkRuntimeInputs> = {}) {
         powerMonitor: { on: () => undefined, removeListener: () => undefined },
         removeFile: async () => undefined,
         settings,
+        sessionGeneration,
       }),
   });
   const change = async (patch: Partial<PushToTalkRuntimeInputs>) => {

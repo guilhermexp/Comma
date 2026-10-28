@@ -36,11 +36,15 @@ Motivação em `proposal.md`; comportamento em `specs/agent-push-to-talk/spec.md
 
 Alternativas: `globalShortcut` do Electron não tem evento de soltar. Carbon não pede permissão e já está no helper; continua sendo o caminho para atalhos com tecla comum. Atalhos só de modificadores usam o event tap de D10.
 
+Cada handler devolve `eventNotHandledErr` quando o `EventHotKeyID` pertence à outra instância. Carbon continua o despacho no mesmo target até encontrar o dono do ID; só esse handler executa a ação e devolve `noErr`. O smoke com eventos Carbon sintéticos cobre os dois apertos e a soltura do PTT. Teclas físicas e TCC continuam dependendo do smoke no app.
+
 ### D2. `PushToTalkController` no Main, como máquina de estados
 
 Estados: `idle → recording → transcribing → sending → awaitingReply (→ speaking) → idle`, mais `error` transitório. Todas as dependências entram pelo construtor (microfone, captura, transcritor, entrega, voz, sobreposição, relógio), o que permite testar cada transição com dublês em `apps/electron/src/main/test/push-to-talk.test.ts`. Regras da spec ficam aqui: 0,3 s mínimo, 120 s máximo, um turno por vez, cancelamento em `powerMonitor` `lock-screen`/`suspend` e em reinício do helper, apagar o WAV em `finally`, espera de resposta de 180 s.
 
-Ordem no aperto: (1) parar leitura em curso; (2) capturar a tela (D3) e iniciar o microfone em paralelo; (3) só depois que a captura terminou, mostrar a sobreposição. Assim a pílula nunca sai no print e a fala não espera a captura.
+Ordem no aperto: (1) parar leitura em curso e ocultar imediatamente a janela anterior, inclusive durante o fade de saída; (2) capturar a tela (D3) e iniciar o microfone em paralelo; (3) mostrar a sobreposição somente depois da captura. A prontidão do microfone, não a captura, habilita a soltura e o limite de 120 s. Se a captura ainda estiver pendente, a gravação para e a transcrição segue; o envio espera o print.
+
+O runtime inclui a geração da sessão entre os dados aplicados ao controlador. Uma mudança de geração invalida o turno em qualquer fase, cancela a espera/leitura e oculta a UI. As continuações de gravação, transcrição e envio verificam o cancelamento antes de publicar estado ou enviar dados. O `finally` da transcrição remove o WAV mesmo após a invalidação. Um envio já admitido continua sob o fence de credencial existente, sem adquirir autorização da nova conta.
 
 ### D3. Captura com `desktopCapturer` no Main
 
@@ -65,6 +69,8 @@ A mesma janela transparente do monitor do cursor (`focusable: false`, nível `sc
 
 O Main acompanha o cursor (`screen.getCursorScreenPoint()` a ~60 Hz enquanto a janela está visível), move a janela para o monitor do cursor quando ele troca e envia a posição à tela. O nível vem do RMS dos quadros do microfone, ~20 Hz. Erros aparecem no notch (D9); com o notch desligado, aparecem no balão do companheiro.
 
+O monitor capturado no início continua sendo o único espaço válido para o traço. Ao mover o cursor para outro monitor, o companheiro acompanha o cursor e o traço anterior é limpo, mas novos traços nesse monitor são recusados. Ao voltar ao monitor capturado, o desenho volta a ser aceito. Não se remapeiam coordenadas de B sobre o print de A: isso apontaria para conteúdo diferente do que o usuário marcou.
+
 Alternativa: `NSPanel` no helper Swift. Rejeitada pelos mesmos motivos de antes (textos traduzidos e ações já existem no app React) e porque a janela já existe.
 
 ### D5. Transcrição por uma interface com duas implementações
@@ -76,9 +82,9 @@ Alternativa: `NSPanel` no helper Swift. Rejeitada pelos mesmos motivos de antes 
 
 Antes de gravar, `MeetingTranscriptionService.state()` decide se a transcrição está pronta; se não, a pílula mostra o erro já no aperto, sem gravar. Erros `local_asr_model_not_installed` e `cloud_asr_failed` viram mensagens da pílula.
 
-### D6. Entrega: novo envio com anexos que não usa o rascunho
+### D6. Entrega com anexos sem usar o rascunho
 
-`ChatCoordinator` ganha `sendDetachedMessage(target, text, attachments)`: faz `uploadGroupFile` de cada imagem e envia o texto com a seção `Attached files in your workspace:` no formato do composer, sem `claimDraftOwner`. Texto enviado:
+O `ChatCoordinator` resolve a conversa do workspace. O adaptador PTT usa as operações existentes `uploadGroupFile` e `sendMessage` pela API vinculada à sessão do Main, sob um único `runOwned`. O helper existente `composeMessageWithAttachments` mantém o formato do composer. O envio inclui um `client_request_id` próprio para correlacionar a confirmação e a resposta. Isso evita alterar o coordenador compartilhado, cujo `sendDetachedMessage` não expõe esse identificador. Nenhum rascunho é adquirido ou consumido. Texto enviado:
 
 ```
 <transcrição>
@@ -96,13 +102,17 @@ Alternativas: injetar no composer da sidebar por evento — usaria o rascunho do
 
 ### D7. Resposta lida com `say` (substituída por D12 como voz principal; `say` fica como fallback)
 
-Ao enviar, o controlador guarda `{ conversationId, enviadoEm }`. O gancho `onCanonicalMessagesAppended` (já ligado às notificações) também chama o controlador; a primeira mensagem que passa em `isRouterMessage` nessa conversa e é posterior ao envio encerra a espera. O texto passa por uma função que tira Markdown (títulos, ênfase, links → rótulo, blocos de código → "trecho de código") e é dividido em frases; cada frase vai para `/usr/bin/say` em sequência e, ao começar, vira o texto do balão (`overlay.setCaption`) e o estado `speaking` do notch. O próximo aperto mata o processo e descarta as frases restantes. Com a voz desligada, o balão mostra a resposta inteira por `clamp(palavras × 300 ms, 4 s, 20 s)`.
+Antes de despachar a mensagem, a entrega informa `{ conversationId, groupId, workspaceId, clientRequestId }` ao controlador. O observador é armado nesse ponto para não perder respostas que cheguem antes do retorno HTTP. A confirmação canônica da pergunta associa `clientRequestId` a `messageId`; só uma mensagem do Router com `replyToMessageId` igual a esse ID encerra a espera. Não há associação por texto, por data ou apenas pela conversa. A resposta que chega durante o envio fica em um único buffer e só é apresentada após o sucesso; uma falha ou troca de sessão a descarta.
+
+O texto passa por uma função que tira Markdown (títulos, ênfase, links → rótulo, blocos de código → "trecho de código") e é dividido em frases; cada frase vai para `/usr/bin/say` em sequência e, ao começar, vira o texto do balão (`overlay.setCaption`) e o estado `speaking` do notch. O próximo aperto mata o processo e descarta as frases restantes. Com a voz desligada, o balão mostra a resposta inteira por `clamp(palavras × 300 ms, 4 s, 20 s)`.
 
 Alternativas: `speechSynthesis` no renderer da sidebar — exige evento novo para a janela e depende dela estar viva; TTS pago — fora do escopo.
 
 ### D8. Ajustes
 
 Campos novos em `commaClientSettingsSchema` (e no patch e nos padrões): `pushToTalkEnabled` (false), `pushToTalkShortcut` (padrão `⌃⌥`, só modificadores — revisado; aceita também tecla + modificador), `pushToTalkSpeakReplies` (true), `pushToTalkSendScreen` (true). O schema do atalho aceita `key: null` com ao menos dois modificadores. O gravador de atalho dos Ajustes salva uma combinação só de modificadores quando todos os modificadores são soltos sem nenhuma tecla comum. O Main lê de `AppPreferencesService` e reage às mudanças registrando/desregistrando o atalho; o conflito é checado junto com o da sidebar e do "Abrir Comma". A seção mostra o estado do Monitoramento de Entrada quando o atalho é só de modificadores.
+
+Ao religar a função, os Ajustes revalidam também a combinação salva contra os atalhos globais e os atalhos do app. Um conflito mantém a função desligada e mostra o motivo existente, em vez de persistir uma configuração que não pode ser registrada.
 
 ### D9. Estados de voz no notch
 
@@ -132,7 +142,7 @@ No macOS 15+, `systemPreferences.getMediaAccessStatus("screen")` responde `denie
 A resposta é lida por uma sessão de voz GPT Live da assinatura ChatGPT, a mesma das chamadas (`Model.Codex`, `gpt-live-1-codex`, voz `gpt_live_voice` dos ajustes de voz), num modo novo de leitura:
 
 - **Backend.** `POST /v1/comma/workspaces/:id/voice/calls` aceita `mode: "read_aloud"`. Nesse modo o `CallActor` usa instruções de leitura (ler exatamente o texto recebido, no idioma dele, sem saudar, resumir, perguntar ou comentar; ficar em silêncio sem texto), não resolve o perfil (economiza até 2,5 s), não saúda, não envia `voice.call_started`/`voice.call_ended` ao Router e ignora delegações. Rota nova `POST …/voice/calls/:call_id/say {text}`, com o mesmo escopo `{tenant, group, user}` de `events`/`hang_up`, que enfileira o texto e o entrega ao modelo quando a sessão começa. Duração máxima curta (120 s).
-- **Desktop.** Uma janela oculta nova (`push-to-talk-voice`, sem foco, `autoplayPolicy: "no-user-gesture-required"`) hospeda o `RTCPeerConnection` com uma faixa de áudio silenciosa sintética (sem microfone e sem permissão; o modelo precisa de áudio de entrada contínuo) e o canal `oai-events`. O Main faz as chamadas HTTP com a sessão dele, faz o polling dos eventos e repassa as legendas do agente ao balão (última frase do texto acumulado). O fim da fala é a legenda final do agente seguida de silêncio no áudio recebido; então o Main desliga (`DELETE`). Um novo aperto desliga na hora.
+- **Desktop.** Uma janela oculta nova (`push-to-talk-voice`, sem foco, `autoplayPolicy: "no-user-gesture-required"`) hospeda o `RTCPeerConnection` com uma faixa de áudio silenciosa sintética (sem microfone e sem permissão; o modelo precisa de áudio de entrada contínuo) e o canal `oai-events`. O Main faz as chamadas HTTP com a sessão dele, faz o polling dos eventos e repassa as legendas do agente ao balão (última frase do texto acumulado). A leitura termina apenas quando as legendas finais acumuladas cobrem todas as palavras do texto pedido, na mesma ordem, seguidas de silêncio. O final de um chunk não prova o final da resposta. Fechamento ou erro após um prefixo aciona o fallback com o progresso por frases completas. Uma frase cortada no meio é lida novamente por inteiro. Então o Main desliga (`DELETE`). Um novo aperto desliga na hora.
 - **Pré-aquecimento.** A sessão abre quando a pergunta é enviada (estado `thinking`), para a voz começar perto de 1 s depois da resposta chegar; se a resposta não vier em 180 s, desliga.
 - **Fallback.** Qualquer falha ao abrir ou falar (`disabled`, `codex_account_required`, `busy`, timeout, sem áudio em 8 s) cai na leitura por `say` (D7) da mesma resposta, sem repetir o que já foi falado. `disabled` e `codex_account_required` ficam memorizados até a próxima mudança de ajustes, para não pagar a espera a cada turno.
 
