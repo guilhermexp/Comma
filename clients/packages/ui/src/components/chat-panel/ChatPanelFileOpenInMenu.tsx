@@ -22,6 +22,7 @@ export interface ChatPanelFileApplication {
 
 /** Application-owned actions for one immutable file source. */
 export interface ChatPanelFileOpenInAction {
+  openDefault?: (signal?: AbortSignal) => Promise<void>;
   listApplications: (
     signal?: AbortSignal
   ) => Promise<readonly ChatPanelFileApplication[]>;

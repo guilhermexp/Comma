@@ -51,11 +51,13 @@ afterEach(() => {
 
 describe("selected file preview ownership", () => {
   it("opens an unsupported attachment in the default app and offers a named download", async () => {
-    const saveDownload = vi.fn(async () => ({
-      status: "saved" as const,
-      fileName: "sources.zip",
-      downloadRef: `dnl1_${"a".repeat(43)}`,
-    }));
+    const saveDownload = vi.fn(
+      async (_request: { fileName: string; content: Uint8Array }) => ({
+        status: "saved" as const,
+        fileName: "sources.zip",
+        downloadRef: `dnl1_${"a".repeat(43)}`,
+      })
+    );
     const openDownload = vi.fn(async () => ({ status: "opened" as const }));
     installNativeBridgeMock({
       platform: "electron",
@@ -80,11 +82,11 @@ describe("selected file preview ownership", () => {
         downloadRef: `dnl1_${"a".repeat(43)}`,
       })
     );
-    expect(saveDownload).toHaveBeenCalledWith({
-      fileName: "sources.zip",
-      content: new TextEncoder().encode("archive bytes"),
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Download", exact: true }));
+    expect(saveDownload.mock.calls[0]![0].fileName).toBe("sources.zip");
+    expect(Array.from(saveDownload.mock.calls[0]![0].content)).toEqual(
+      Array.from(new TextEncoder().encode("archive bytes"))
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
     await waitFor(() => expect(saveDownload).toHaveBeenCalledTimes(2));
   });
 

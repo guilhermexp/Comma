@@ -1543,6 +1543,7 @@
   "settings_shared_tasks": "Shared tasks",
   "settings_archived_empty": "No archived tasks",
   "ui_file_download": "Download",
+  "file_preview_open_default": "Open in default app",
   "ui_file_open_in": "Open in",
   "ui_file_open": "Open",
   "ui_file_open_with": "Open with {application}",

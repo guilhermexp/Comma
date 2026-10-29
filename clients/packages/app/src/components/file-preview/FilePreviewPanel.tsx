@@ -14,6 +14,7 @@ import { useCommaMessages } from "@comma/i18n/react";
 import { useId, type ReactNode } from "react";
 import { ShellIconButtonControl } from "../ShellIconButton";
 import { DriveFileName } from "../drive/DriveFileName";
+import { UnsupportedFilePreview } from "./UnsupportedFilePreview";
 import { FilePreviewContent, filePreviewKind } from "./FilePreviewContent";
 
 /** Drive's existing filename and shell controls, shared by both preview entries. */
@@ -168,14 +169,18 @@ export function FilePreviewPanel({
               );
             }}
           >
-            <FilePreviewContent
-              fileName={fileName}
-              mimeType={mimeType}
-              blob={blob}
-              error={error}
-              placeholder={placeholder}
-              onOpenBrowser={onOpenBrowser}
-            />
+            {blob && !error && kind === "unknown" ? (
+              <UnsupportedFilePreview download={download} openIn={openIn} />
+            ) : (
+              <FilePreviewContent
+                fileName={fileName}
+                mimeType={mimeType}
+                blob={blob}
+                error={error}
+                placeholder={placeholder}
+                onOpenBrowser={onOpenBrowser}
+              />
+            )}
           </div>
           {children}
         </div>

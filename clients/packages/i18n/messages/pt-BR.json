@@ -1543,6 +1543,7 @@
   "settings_shared_tasks": "Tarefas compartilhadas",
   "settings_archived_empty": "Nenhuma tarefa arquivada",
   "ui_file_download": "Baixar",
+  "file_preview_open_default": "Abrir no app padrão",
   "ui_file_open_in": "Abrir em",
   "ui_file_open": "Abrir",
   "ui_file_open_with": "Abrir com {application}",

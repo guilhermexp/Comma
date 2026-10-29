@@ -114,9 +114,15 @@ defmodule CommaWeb.CommaMessageResourceTest do
     assert user_req(outsider["token"], :get, resource_url).status in [403, 404]
   end
 
-  setup do
+  setup tags do
     unless Process.whereis(BillingCore.Repo), do: start_supervised!(BillingCore.Repo)
-    billing_owner = Ecto.Adapters.SQL.Sandbox.start_owner!(BillingCore.Repo, shared: true)
+
+    billing_owner =
+      Ecto.Adapters.SQL.Sandbox.start_owner!(BillingCore.Repo,
+        shared: true,
+        ownership_timeout: if(tags[:long_history], do: 300_000, else: 120_000)
+      )
+
     on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(billing_owner) end)
     ensure_fake_s3!()
     SalixAgent.TestSupport.stop_all_agents()
@@ -148,30 +154,69 @@ defmodule CommaWeb.CommaMessageResourceTest do
     :ok
   end
 
-  @tag timeout: 180_000
+  @tag timeout: 300_000, sandbox: false, long_history: true
   test "downloads an Agent file older than the recent message window in Home" do
+    # Appending through the real Conversation owner can exceed the sandbox's
+    # default lease on a busy development machine.
+    owner =
+      Ecto.Adapters.SQL.Sandbox.start_owner!(Comma.Repo, shared: true, ownership_timeout: 300_000)
+
+    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(owner) end)
+
     %{workspace: workspace, session: session} =
       create_workspace_session("old-file@example.com", "Old file")
+
     conversation = create_conversation(session, workspace)
     group_id = workspace["default_group_id"]
     agent_id = workspace["router_agent_id"]
     seed_agent_vfs!(agent_id, %{"/artifacts/x.csv" => "shift,count\nfirst,231"})
-    assert {:ok, content} = SalixIM.ConversationAttachments.bind_sender_files(agent_id, [
-      %{"type" => "file", "title" => "Comparison of two shifts", "path" => "/artifacts/x.csv"}
-    ])
+
+    assert {:ok, content} =
+             SalixIM.ConversationAttachments.bind_sender_files(agent_id, [
+               %{
+                 "type" => "file",
+                 "title" => "Comparison of two shifts",
+                 "path" => "/artifacts/x.csv"
+               }
+             ])
+
     assert {:ok, %{"message_id" => message_id}} =
-      SalixIM.ConversationServer.append_group_conversation_agent_message(group_id, conversation["id"], agent_id,
-        %{"client_request_id" => "old-file", "content" => content})
+             SalixIM.ConversationServer.append_group_conversation_agent_message(
+               group_id,
+               conversation["id"],
+               agent_id,
+               %{"client_request_id" => "old-file", "content" => content}
+             )
+
     for index <- 1..1001 do
-      assert {:ok, _} = SalixIM.ConversationServer.append_group_conversation_agent_message(
-        group_id, conversation["id"], agent_id,
-        %{"client_request_id" => "later-#{index}", "content" => [%{"type" => "text", "text" => "Later message"}]})
+      assert {:ok, _} =
+               SalixIM.ConversationServer.append_group_conversation_agent_message(
+                 group_id,
+                 conversation["id"],
+                 agent_id,
+                 %{
+                   "client_request_id" => "later-#{index}",
+                   "content" => [%{"type" => "text", "text" => "Later message"}]
+                 }
+               )
     end
-    url = "/v1/comma/groups/#{group_id}/conversations/#{conversation["id"]}/messages/#{message_id}/attachments/0"
+
+    url =
+      "/v1/comma/groups/#{group_id}/conversations/#{conversation["id"]}/messages/#{message_id}/attachments/0"
+
     download = user_req(session["token"], :get, url, decode_body: false)
     assert download.status == 200, "old attachment HTTP status: #{download.status}"
     assert download.body == "shift,count\nfirst,231"
-    assert Req.Response.get_header(download, "content-disposition") == ["attachment; filename*=UTF-8''x.csv"]
+
+    assert Req.Response.get_header(download, "content-disposition") == [
+             "attachment; filename*=UTF-8''x.csv"
+           ]
+
+    for missing_id <- ["not-a-message-id", SalixStore.Ids.new_message_id()] do
+      missing_url = String.replace(url, message_id, missing_id)
+      assert user_req(session["token"], :get, missing_url).status == 404
+    end
+
     %{session: outsider} = create_workspace_session("old-file-outsider@example.com", "Other")
     assert user_req(outsider["token"], :get, url).status in [403, 404]
   end
@@ -319,7 +364,11 @@ defmodule CommaWeb.CommaMessageResourceTest do
     end
 
     detail =
-      user_req(session["token"], :get, "/v1/comma/groups/#{group_id}/conversations/#{conversation_id}")
+      user_req(
+        session["token"],
+        :get,
+        "/v1/comma/groups/#{group_id}/conversations/#{conversation_id}"
+      )
       |> expect_status(200)
 
     assert detail.body["messages"] == []
@@ -334,7 +383,11 @@ defmodule CommaWeb.CommaMessageResourceTest do
     seed_agent_vfs!(agent_id, %{path => "changed after send"})
 
     detail =
-      user_req(session["token"], :get, "/v1/comma/groups/#{group_id}/conversations/#{conversation_id}")
+      user_req(
+        session["token"],
+        :get,
+        "/v1/comma/groups/#{group_id}/conversations/#{conversation_id}"
+      )
       |> expect_status(200)
 
     assert [message] = detail.body["messages"]

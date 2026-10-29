@@ -157,10 +157,12 @@ export function MessageAttachments({
       {fileAttachments.length > 0 ? (
         <div className="comma-chat-file-card-column">
           {fileAttachments.map(({ attachment, position }) => {
-            const label = attachmentLabel(attachment, messagesApi);
+            const label =
+              attachment.title?.trim() || attachmentLabel(attachment, messagesApi);
             return (
               <ChatPanelFile
-                fileName={label}
+                fileName={attachment.fileName ?? label}
+                displayName={label}
                 {...(fileActions.get(position)?.onPreview
                   ? { onPreview: fileActions.get(position)!.onPreview! }
                   : {})}
