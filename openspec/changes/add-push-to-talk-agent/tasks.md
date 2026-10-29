@@ -139,7 +139,7 @@ Decisão explícita do dono: manter GPT Live por baixo sem aparência de ligaç�
   - Par `turn-gesture/review-pair/2`: ambos completos, Gitleaks limpo, exit 6; `dump.rdb` excluído somente no processo Git da revisão, sem mudança no arquivo/configuração persistente.
   - R2/OpenQodex, novo aperto corta áudio antigo: refutado pelo contrato, sem enfraquecê-lo. Spec “Entrada invalidada” (107–108), D14 e D17 (165/181/191) exigem descartar fontes ainda não enviadas ao trocar contexto. ACK de `pending`/`qualified` não é ACK de enqueue no Router. Drenar áudio antigo sob contexto novo poderia contaminar o pedido. A regressão “new contextId or cancellation discards pending buffer without leaking to next gesture” envia só `[4,5]`, nunca `[9,9]`; os testes canônicos preservam trabalho já enfileirado. Não criar fila entre contextos.
   - R2/CodeRabbit, conexão apaga erro: dois vermelhos válidos mostraram `thinking` no lugar de `screen_denied`, com e sem notch. Remover a projeção de apresentação do evento `connected`; gesto/erro já possuem o estado. Regressões e demais dirigidos: 143/143 verdes. Repetir o par antes do commit final.
-- [ ] 11.8 Criar commits convencionais sem push e entregar `.tmp/verify/add-push-to-talk-agent/turn-gesture/delivery.md` com arquivos, SHAs, comandos/saídas, vermelho→verde e `summary.md` do gate.
+- [x] 11.8 Implementação em `2a24e259` e registro final em commit de docs, sem push. Relatório entregue em `.tmp/verify/add-push-to-talk-agent/turn-gesture/delivery.md`, com arquivos, SHAs, comandos/saídas, vermelhos válidos/verdes, disposições e `summary.md` do par 3. Smokes reais de 8.2/9.1–9.3 permanecem reservados ao dono.
 
 
 ## Workflow follow-up
