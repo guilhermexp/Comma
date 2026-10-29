@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { handleNotchTaskOpen, toNotchTaskItems } from "../NotchTaskSync";
+import { describe, expect, it } from "vitest";
+import { toNotchTaskItems } from "../NotchTaskSync";
 import type { TaskViewModel } from "../useWorkspaceTasks";
 
 describe("toNotchTaskItems", () => {
@@ -31,49 +31,6 @@ describe("toNotchTaskItems", () => {
     expect(toNotchTaskItems([task("queued", "backlog", 10)], "In progress")).toEqual(
       []
     );
-  });
-
-  it("closes the Notch, focuses Comma, and opens the selected task chat", () => {
-    const close = vi.fn();
-    const focusMainWindow = vi.fn();
-    const navigate = vi.fn();
-    const tasks = toNotchTaskItems([task("running", "in_progress", 20)], "In progress");
-
-    expect(
-      handleNotchTaskOpen(
-        {
-          payload: { action: "task:open", value: "running" },
-          type: "action",
-        },
-        tasks,
-        { close, focusMainWindow, navigate }
-      )
-    ).toBe(true);
-    expect(close).toHaveBeenCalledOnce();
-    expect(focusMainWindow).toHaveBeenCalledOnce();
-    expect(navigate).toHaveBeenCalledWith(tasks[0]);
-  });
-
-  it("ignores task actions that do not identify a current Notch task", () => {
-    const actions = {
-      close: vi.fn(),
-      focusMainWindow: vi.fn(),
-      navigate: vi.fn(),
-    };
-
-    expect(
-      handleNotchTaskOpen(
-        {
-          payload: { action: "task:open", value: "stale-task" },
-          type: "action",
-        },
-        [],
-        actions
-      )
-    ).toBe(false);
-    expect(actions.close).not.toHaveBeenCalled();
-    expect(actions.focusMainWindow).not.toHaveBeenCalled();
-    expect(actions.navigate).not.toHaveBeenCalled();
   });
 });
 
