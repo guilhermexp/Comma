@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NotchService } from "../notch";
+import { openOrCreateMainWindow } from "../open-main-window";
 
 const replacementFixturePath = fileURLToPath(
   new URL("../../../test/fixtures/notch-host-replacement.cjs", import.meta.url)
@@ -168,6 +169,123 @@ describe("NotchService host boundary", () => {
       }
     }
   }, 10_000);
+});
+
+describe("Notch task conversation opening", () => {
+  const task = {
+    conversationId: "conversation/1",
+    groupId: "group 1",
+    id: "task-1",
+    status: "in_progress" as const,
+    title: "Ship the Notch",
+    subtitle: "In progress",
+    updatedAt: 1_787_563_200,
+    workspaceId: "workspace-1",
+  };
+
+  it.each(["open", "hidden", "minimized", "closed"] as const)(
+    "opens the retained task conversation with the main window %s and no renderer listener",
+    async (state) => {
+      let visible = state === "open";
+      let minimized = state === "minimized";
+      let focused = false;
+      let route: string | undefined;
+      const window = {
+        focus: () => {
+          focused = true;
+        },
+        isDestroyed: () => state === "closed",
+        isMinimized: () => minimized,
+        restore: () => {
+          minimized = false;
+        },
+        show: () => {
+          visible = true;
+        },
+        showInactive: () => {
+          visible = true;
+        },
+      };
+      const host = new FakeNotchHost();
+      const service = new NotchService({
+        isSupportedPlatform: () => true,
+        pathExists: () => true,
+        resolveHostPath: () => "/comma/NotchHost",
+        spawnHost: () => host as unknown as ChildProcessWithoutNullStreams,
+        onOpenMainAppRoute: (nextRoute: string) => {
+          void openOrCreateMainWindow({
+            createWindow: async () => {
+              visible = true;
+              focused = true;
+            },
+            window,
+          }).then(() => {
+            route = nextRoute;
+          });
+        },
+      });
+      try {
+        const update = service.update({ tasks: [task] });
+        const configure = await host.nextRequest();
+        host.respond({ id: configure.id, type: "ack" });
+        const request = await host.nextRequest();
+        host.respond({ id: request.id, type: "ack" });
+        await update;
+
+        host.respond({
+          type: "action",
+          payload: { action: "task:open", value: task.id },
+        });
+        await vi.waitFor(() => {
+          expect({ focused, minimized, route, visible }).toEqual({
+            focused: true,
+            minimized: false,
+            route: "/inbox/workspace-1/group%201/conversation%2F1",
+            visible: true,
+          });
+        });
+      } finally {
+        service.dispose();
+      }
+    }
+  );
+
+  it("ignores an unknown task and a task removed from the retained scene", async () => {
+    const routes: string[] = [];
+    const host = new FakeNotchHost();
+    const service = new NotchService({
+      isSupportedPlatform: () => true,
+      pathExists: () => true,
+      resolveHostPath: () => "/comma/NotchHost",
+      spawnHost: () => host as unknown as ChildProcessWithoutNullStreams,
+      onOpenMainAppRoute: (route: string) => {
+        routes.push(route);
+      },
+    });
+    try {
+      const update = service.update({ tasks: [task] });
+      const configure = await host.nextRequest();
+      host.respond({ id: configure.id, type: "ack" });
+      const request = await host.nextRequest();
+      host.respond({ id: request.id, type: "ack" });
+      await update;
+      host.respond({
+        type: "action",
+        payload: { action: "task:open", value: "unknown" },
+      });
+      const clear = service.update({ tasks: [] });
+      const clearRequest = await host.nextRequest();
+      host.respond({ id: clearRequest.id, type: "ack" });
+      await clear;
+      host.respond({
+        type: "action",
+        payload: { action: "task:open", value: task.id },
+      });
+      expect(routes).toEqual([]);
+    } finally {
+      service.dispose();
+    }
+  });
 });
 
 describe("NotchService presentation settings", () => {
