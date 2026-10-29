@@ -1316,11 +1316,11 @@ defmodule SalixVoice.CallActorTest do
     # While Router ACK is held, assert NO premature call-ended ingress call is initiated (premature handoff defect)
     refute_receive {:ingress_call, "voice.call_ended", _, _}, 200
 
+    ref = Process.monitor(call)
+
     # Release successful Router ACK
     send(task_pid, :release_with_success)
 
-    # Actor reaches clean bounded termination
-    ref = Process.monitor(call)
     assert_receive {:DOWN, ^ref, :process, ^call, :normal}, 2_000
 
     assert_receive {:ingress, ^group, ended_content,
@@ -1525,10 +1525,11 @@ defmodule SalixVoice.CallActorTest do
     assert reply_msg
     assert [%{"text" => "Answering first accepted task."}] = reply_msg["content"]
 
+    ref = Process.monitor(call)
+
     # Release second delegation ACK so actor finishes bounded finalization
     send(second_task_pid, :release_second_delegation)
 
-    ref = Process.monitor(call)
     assert_receive {:DOWN, ^ref, :process, ^call, :normal}, 2_000
   end
 

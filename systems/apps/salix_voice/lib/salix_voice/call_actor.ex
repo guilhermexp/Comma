@@ -928,20 +928,26 @@ defmodule SalixVoice.CallActor do
         &send(parent, {:delegation_enqueued, id, &1})
       )
 
-    case state.delegations do
-      %{^id => delegation} ->
-        updated = %{delegation | task_pid: task_pid}
-        %{state | delegations: Map.put(state.delegations, id, updated)}
+    case task_pid do
+      pid when is_pid(pid) ->
+        case state.delegations do
+          %{^id => delegation} ->
+            updated = %{delegation | task_pid: pid}
+            %{state | delegations: Map.put(state.delegations, id, updated)}
 
-      _ ->
-        state
+          _ ->
+            state
+        end
+
+      nil ->
+        delegation_enqueued(state, id, {:error, :task_start_failed})
     end
   end
 
   defp router_attachment(attachment) do
-    path = attachment["path"]
-    name = attachment["name"]
-    mime = attachment["mime"]
+    path = attachment["path"] || attachment[:path]
+    name = attachment["name"] || attachment[:name]
+    mime = attachment["mime"] || attachment[:mime]
 
     %{
       "path" => path,

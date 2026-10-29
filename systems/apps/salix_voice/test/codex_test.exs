@@ -507,7 +507,7 @@ defmodule SalixVoice.Model.CodexTest do
     context_text = "Foreground app: Safari. Cursor: 100, 200."
 
     attachments = [
-      %{"path" => path, "name" => "screen.png", "mime" => "image/png"}
+      %{path: path, name: "screen.png", mime: "image/png"}
     ]
 
     # Unauthorized scope requests fail and do not send context
