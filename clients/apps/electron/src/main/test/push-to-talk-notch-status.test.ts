@@ -49,7 +49,6 @@ describe("NotchPushToTalkStatus", () => {
   it("projects live call states and gives the Notch back when idle", () => {
     const { notch, status } = createStatus("pt-BR");
 
-    status.set({ kind: "connecting" });
     status.set({ kind: "listening" });
     status.set({ kind: "thinking" });
     status.set({ kind: "speaking" });
@@ -57,7 +56,6 @@ describe("NotchPushToTalkStatus", () => {
     status.set(null);
 
     expect(notch.writes.map((turn) => turn?.state ?? null)).toEqual([
-      "thinking",
       "listening",
       "thinking",
       "speaking",

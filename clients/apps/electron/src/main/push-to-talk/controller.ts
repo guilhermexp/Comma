@@ -58,7 +58,6 @@ export type PushToTalkControllerDeps = {
 };
 type Turn = {
   contextId: number;
-  contextAdmitted: boolean;
   pressedAt: number;
   releasedAt?: number;
   cancelled: boolean;
@@ -75,7 +74,6 @@ type Turn = {
 };
 type Session = {
   opening: Promise<ChatTarget>;
-  connected: boolean;
   hadTurn: boolean;
   pending: Set<string>;
   audible: boolean;
@@ -222,7 +220,6 @@ export class PushToTalkController {
     const requestedScreen = this.#settings.sendScreen && hasContextSlot;
     const turn: Turn = {
       contextId,
-      contextAdmitted: false,
       pressedAt: this.#deps.clock.now(),
       cancelled: false,
       frontmostApp,
@@ -265,7 +262,6 @@ export class PushToTalkController {
       const opening = this.#deps.voice.open();
       session = {
         opening,
-        connected: false,
         hadTurn: false,
         pending: new Set(),
         audible: false,
@@ -301,7 +297,7 @@ export class PushToTalkController {
     }
     const activeSession = session;
     void this.#deps.voice
-      .beginContext(turn.contextId)
+      .beginContext(turn.contextId, turn.pressedAt + minGestureMs)
       .then(() => {
         if (
           this.#session !== activeSession ||
@@ -309,18 +305,14 @@ export class PushToTalkController {
           turn.cancelled
         )
           return;
-        turn.contextAdmitted = true;
-        if (this.#turn === turn)
-          this.#present({
-            kind: activeSession.connected ? "listening" : "connecting",
-          });
+        if (this.#turn === turn) this.#present({ kind: "listening" });
       })
       .catch(() => {
         if (this.#session === activeSession)
           this.#failContext(turn.contextId, "context_failed");
       });
     this.#deps.voice.setListening(true);
-    this.#present({ kind: "connecting" });
+    this.#present({ kind: "listening" });
     turn.stopMax = this.#deps.clock.setTimeout(() => {
       if (this.#turn === turn) this.#release(false);
     }, maxGestureMs);
@@ -460,16 +452,8 @@ export class PushToTalkController {
     const session = this.#session;
     if (!session) return;
     if (event.kind === "connected") {
-      session.connected = true;
       const held = this.#turn?.releasedAt === undefined && this.#turn !== undefined;
       this.#deps.voice.setListening(held);
-      this.#present({
-        kind: held
-          ? this.#turn?.contextAdmitted
-            ? "listening"
-            : "connecting"
-          : "thinking",
-      });
     } else if (event.kind === "level") {
       if (this.#turn && this.#turn.releasedAt === undefined) {
         this.#deps.status.setLevel(event.level);
@@ -617,13 +601,7 @@ export class PushToTalkController {
       this.#stopError = undefined;
       const session = this.#session;
       if (session) {
-        if (this.#turn)
-          this.#present({
-            kind:
-              session.connected && this.#turn.contextAdmitted
-                ? "listening"
-                : "connecting",
-          });
+        if (this.#turn) this.#present({ kind: "listening" });
         else if (!this.#quiet(session))
           this.#present({ kind: session.audible ? "speaking" : "thinking" });
       } else if (this.#ready && !this.#disposed) {

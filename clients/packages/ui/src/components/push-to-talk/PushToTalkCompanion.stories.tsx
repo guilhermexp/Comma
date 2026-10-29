@@ -98,8 +98,6 @@ export const DrawingAStroke: Story = {
   },
 };
 
-export const Connecting: Story = { args: { state: { kind: "connecting" } } };
-
 export const Thinking: Story = { args: { state: { kind: "thinking" } } };
 export const Speaking: Story = {
   args: {

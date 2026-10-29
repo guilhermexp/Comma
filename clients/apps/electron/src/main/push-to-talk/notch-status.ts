@@ -125,12 +125,6 @@ export class NotchPushToTalkStatus implements PushToTalkStatus {
   #project(state: PushToTalkTurnState): NotchVoiceTurn {
     const locale = { locale: readMainLocale(this.#locale) };
     switch (state.kind) {
-      case "connecting":
-        // The unchanged Swift Notch renders "thinking" with dots animation.
-        return {
-          message: messages.push_to_talk_connecting({}, locale),
-          state: "thinking",
-        };
       case "listening":
         return {
           level: 0,

@@ -341,22 +341,25 @@ describe("push-to-talk live call controller", () => {
     h.controller.dispose();
   });
 
-  it("shows connecting until media and context control are ready, then sends real mic levels", async () => {
+  it("shows listening from a cold press without waiting for media or admission", async () => {
     const admitted = Promise.withResolvers<void>();
-    const h = setup();
+    const h = setup({ sendScreen: false });
     h.voice.beginContext.mockReturnValueOnce(admitted.promise);
     h.press();
+    expect(h.status()?.kind).toBe("listening");
+    expect(h.companionState()?.kind).toBe("listening");
     await flush();
     expect(h.voice.active).toBe(true);
-    expect(h.status()?.kind).toBe("connecting");
+    h.voice.emit({ kind: "level", level: 0.4 });
+    expect(h.levels).toEqual([0.4, 0.4]);
     h.voice.emit({ kind: "connected" });
-    expect(h.status()?.kind).toBe("connecting");
+    expect(h.status()?.kind).toBe("listening");
     admitted.resolve();
     await flush();
     h.voice.emit({ kind: "level", level: 0.6 });
     expect(h.voice.listening).toBe(true);
     expect(h.status()?.kind).toBe("listening");
-    expect(h.levels).toEqual([0.6, 0.6]);
+    expect(h.levels).toEqual([0.4, 0.4, 0.6, 0.6]);
     h.controller.dispose();
   });
   it("mutes on release without waiting for the screenshot and appends its images later", async () => {
@@ -680,6 +683,23 @@ describe("push-to-talk live call controller", () => {
     expect(h.caption()).toBe("The Router finished.");
     h.controller.dispose();
   });
+  it.each([true, false])(
+    "keeps a denied screen capture visible when the cold peer connects (notch=%s)",
+    async (notch) => {
+      const h = setup({ notch, capture: async () => ({ status: "denied" }) });
+      h.press();
+      await flush();
+      const visibleState = notch ? h.status : h.companionState;
+      expect(visibleState()).toEqual({ kind: "error", code: "screen_denied" });
+      h.voice.emit({ kind: "connected" });
+      expect(visibleState()).toEqual({ kind: "error", code: "screen_denied" });
+      h.clock.advance(3999);
+      expect(visibleState()).toEqual({ kind: "error", code: "screen_denied" });
+      expect(h.voice.listening).toBe(false);
+      h.controller.dispose();
+    }
+  );
+
   it("reports failed admission immediately even while capture and failure notification are pending", async () => {
     const capture = Promise.withResolvers<PushToTalkScreenCaptureResult>();
     const failureNotice = Promise.withResolvers<void>();
@@ -938,7 +958,7 @@ describe("push-to-talk live call controller", () => {
     const h = setup({ capture: () => gate.promise });
     h.press();
     await flush();
-    expect(h.voice.beginContext).toHaveBeenCalledWith(1);
+    expect(h.voice.beginContext).toHaveBeenCalledWith(1, h.clock.now() + 300);
     h.clock.advance(400);
     h.release();
     gate.resolve({ status: "unavailable" });
@@ -952,13 +972,13 @@ describe("push-to-talk live call controller", () => {
     const h = setup();
     h.press();
     await flush();
-    expect(h.voice.beginContext).toHaveBeenCalledWith(1);
+    expect(h.voice.beginContext).toHaveBeenCalledWith(1, h.clock.now() + 300);
     h.release(true);
     await flush();
     expect(h.voice.cancelContext).toHaveBeenCalledWith(1);
     h.press();
     await flush();
-    expect(h.voice.beginContext).toHaveBeenCalledWith(2);
+    expect(h.voice.beginContext).toHaveBeenCalledWith(2, h.clock.now() + 300);
     h.clock.advance(100);
     h.release();
     await flush();
@@ -1190,7 +1210,10 @@ describe("push-to-talk live call controller", () => {
         api.appendVoiceCallContext.mockImplementationOnce(() => admission.promise);
         h.press();
         await flush();
-        expect(realVoice.voiceSession().listening).toBe(false);
+        expect(realVoice.voiceSession()).toMatchObject({
+          listening: true,
+          admitted: false,
+        });
         h.clock.advance(mode === "short" ? 100 : 400);
         h.release(mode === "cancelled");
         expect(realVoice.voiceSession().listening).toBe(false);

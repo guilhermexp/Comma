@@ -53,7 +53,7 @@ export type PushToTalkCallEvent =
 export interface PushToTalkLiveCall {
   open(): Promise<ChatTarget>;
   setListening(listening: boolean): void;
-  beginContext(contextId: number): Promise<void>;
+  beginContext(contextId: number, qualifiesAt: number): Promise<void>;
   appendContext(input: {
     contextId: number;
     text: string;
@@ -88,7 +88,6 @@ type Call = {
   pollController?: AbortController;
   stopPoll?: () => void;
   activeContext?: ActiveContext;
-  admittedContextId?: number;
   pendingControls: Set<() => void>;
 };
 
@@ -112,6 +111,8 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
   #openingPromise: Promise<Call> | undefined;
   #desiredListening = false;
   #currentContextId: number | undefined;
+  #qualifiesAt: number | null = null;
+  #stopQualification: (() => void) | undefined;
   constructor(options: GptLiveVoiceOptions) {
     this.#options = options;
   }
@@ -125,6 +126,7 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
 
   async open(): Promise<ChatTarget> {
     const opening = ++this.#opening;
+    const generation = this.#session.generation + 1;
     const openingPromise = Promise.resolve(
       this.#options.runOwned(async () => {
         const boundApi = this.#options.api();
@@ -151,7 +153,7 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
       });
       void ready.catch(() => undefined);
       const call: Call = {
-        generation: this.#session.generation + 1,
+        generation,
         api,
         target,
         ready,
@@ -166,19 +168,33 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
       this.#publish({
         generation: call.generation,
         active: true,
-        listening: false,
+        listening: this.#desiredListening,
+        contextId: this.#currentContextId ?? null,
+        admitted: false,
       });
       return call;
     });
 
     this.#openingPromise = openingPromise;
+    // Local capture must not wait for the Workspace Chat lookup.
+    if (!this.#call) {
+      this.#publish({
+        generation,
+        active: true,
+        listening: this.#desiredListening,
+        contextId: this.#currentContextId ?? null,
+        admitted: false,
+      });
+    }
 
     let call: Call | undefined;
     try {
-      call = await openingPromise;
-      await this.#options.host.open();
+      [call] = await Promise.all([openingPromise, this.#options.host.open()]);
     } catch (error) {
-      if (call) this.#fail(call, "window");
+      if (opening === this.#opening) {
+        if (this.#call) this.#fail(this.#call, "window");
+        else this.close();
+      }
       throw error;
     } finally {
       if (this.#openingPromise === openingPromise) {
@@ -192,28 +208,34 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
 
   setListening(listening: boolean) {
     this.#desiredListening = listening;
-    if (!listening) {
-      if (this.#session.listening) {
-        this.#publish({ listening: false });
-      }
-      return;
-    }
-    const call = this.#call;
-    const canUnmute =
-      call !== undefined &&
-      call.callId !== undefined &&
-      this.#currentContextId !== undefined &&
-      call.admittedContextId === this.#currentContextId;
-    if (canUnmute && !this.#session.listening) {
-      this.#publish({ listening: true });
+    if (this.#session.active && this.#session.listening !== listening) {
+      this.#publish({
+        listening,
+        qualified:
+          this.#qualifiesAt !== null && this.#options.clock.now() >= this.#qualifiesAt,
+      });
     }
   }
 
-  async beginContext(contextId: number): Promise<void> {
+  async beginContext(contextId: number, qualifiesAt: number): Promise<void> {
     this.#currentContextId = contextId;
-    if (this.#session.listening) {
-      this.#publish({ listening: false });
-    }
+    this.#stopQualification?.();
+    this.#qualifiesAt = qualifiesAt;
+    if (this.#session.active)
+      this.#publish({ contextId, qualified: false, admitted: false });
+    this.#stopQualification = this.#options.clock.setTimeout(
+      () => {
+        this.#stopQualification = undefined;
+        if (
+          this.#currentContextId === contextId &&
+          this.#desiredListening &&
+          this.#session.active
+        ) {
+          this.#publish({ qualified: true });
+        }
+      },
+      Math.max(0, qualifiesAt - this.#options.clock.now())
+    );
 
     let call = this.#call;
     if (!call && this.#openingPromise) {
@@ -292,16 +314,8 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
       throw new Error("Context was cancelled.");
     }
 
-    call.admittedContextId = contextId;
     resolveAdmission();
-
-    if (
-      this.#call === call &&
-      this.#currentContextId === contextId &&
-      this.#desiredListening
-    ) {
-      this.#publish({ listening: true });
-    }
+    this.#publish({ contextId, admitted: true });
   }
 
   cancelContext(contextId: number): void {
@@ -311,10 +325,14 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
     }
     if (this.#currentContextId === contextId) {
       this.#currentContextId = undefined;
+      this.#clearQualification();
       this.#desiredListening = false;
-      if (this.#session.listening) {
-        this.#publish({ listening: false });
-      }
+      this.#publish({
+        listening: false,
+        contextId: null,
+        qualified: false,
+        admitted: false,
+      });
     }
     if (!call) return;
     this.#sendBestEffortControl(call, contextId, "cancelled");
@@ -327,13 +345,23 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
     }
     if (this.#currentContextId === contextId) {
       this.#currentContextId = undefined;
+      this.#clearQualification();
       this.#desiredListening = false;
-      if (this.#session.listening) {
-        this.#publish({ listening: false });
-      }
+      this.#publish({
+        listening: false,
+        contextId: null,
+        qualified: false,
+        admitted: false,
+      });
     }
     if (!call) return;
     this.#sendBestEffortControl(call, contextId, "failed");
+  }
+
+  #clearQualification() {
+    this.#qualifiesAt = null;
+    this.#stopQualification?.();
+    this.#stopQualification = undefined;
   }
 
   #sendBestEffortControl(
@@ -492,6 +520,18 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
   close() {
     ++this.#opening;
     if (this.#call) this.#teardown(this.#call);
+    else {
+      this.#desiredListening = false;
+      this.#currentContextId = undefined;
+      this.#clearQualification();
+      this.#publish({
+        active: false,
+        listening: false,
+        contextId: null,
+        qualified: false,
+        admitted: false,
+      });
+    }
   }
 
   voiceSession(): PushToTalkVoiceSession {
@@ -499,7 +539,18 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
   }
 
   async voiceOffer(input: { generation: number; sdp: string }) {
-    const call = this.#call;
+    let call = this.#call;
+    if (
+      !call &&
+      this.#openingPromise &&
+      input.generation === this.#session.generation
+    ) {
+      try {
+        call = await this.#openingPromise;
+      } catch {
+        return null;
+      }
+    }
     if (!call || call.generation !== input.generation || !call.offering) return null;
     call.offering = false;
 
@@ -544,11 +595,16 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
     event: PushToTalkVoiceReport;
   }) {
     const call = this.#call;
-    if (!call || call.generation !== generation) return;
+    if (!this.#session.active || this.#session.generation !== generation) return;
     if (typeof event !== "string") {
       if (this.#session.listening) this.#emit({ kind: "level", level: event.level });
     } else if (event === "failed" || event === "microphone_denied") {
-      this.#fail(call, event === "failed" ? "connection" : event);
+      const code = event === "failed" ? "connection" : event;
+      if (call) this.#fail(call, code);
+      else {
+        this.close();
+        this.#emit({ kind: "error", code });
+      }
     } else {
       this.#emit({ kind: event });
     }
@@ -654,12 +710,18 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
       cancel();
     }
     call.pendingControls.clear();
-    delete call.admittedContextId;
     this.#currentContextId = undefined;
+    this.#clearQualification();
     this.#desiredListening = false;
     if (this.#call === call) {
       this.#call = undefined;
-      this.#publish({ active: false, listening: false });
+      this.#publish({
+        active: false,
+        listening: false,
+        contextId: null,
+        qualified: false,
+        admitted: false,
+      });
     }
     if (call.callId) void this.#hangup(call, call.callId);
   }

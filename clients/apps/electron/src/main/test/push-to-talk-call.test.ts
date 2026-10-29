@@ -104,6 +104,104 @@ async function createVoiceHttpServer(
 }
 
 describe("push-to-talk live session transport", () => {
+  it("reports microphone denial and local levels while cold target resolution is still pending", async () => {
+    const targetGate = Promise.withResolvers<typeof target>();
+    const { voice, events, api } = setup(() => targetGate.promise);
+    const opening = voice.open();
+    void opening.catch(() => undefined);
+    voice.setListening(true);
+    const { generation } = voice.voiceSession();
+    voice.voiceReport({ generation, event: { kind: "level", level: 0.6 } });
+    expect(events).toContainEqual({ kind: "level", level: 0.6 });
+    voice.voiceReport({ generation, event: "microphone_denied" });
+    expect(events).toContainEqual({ kind: "error", code: "microphone_denied" });
+    expect(voice.voiceSession()).toMatchObject({ active: false, listening: false });
+    targetGate.resolve(target);
+    await expect(opening).rejects.toThrow();
+    expect(api.startVoiceCall).not.toHaveBeenCalled();
+  });
+
+  it("starts local capture before resolving the cold workspace target and closes it on cancellation", async () => {
+    const targetGate = Promise.withResolvers<typeof target>();
+    const { voice, api } = setup(() => targetGate.promise);
+    const opening = voice.open();
+    void opening.catch(() => undefined);
+    const admission = voice.beginContext(1, 300);
+    void admission.catch(() => undefined);
+    voice.setListening(true);
+    await flush();
+    expect(voice.voiceSession()).toMatchObject({
+      active: true,
+      listening: true,
+      contextId: 1,
+      admitted: false,
+    });
+    voice.close();
+    expect(voice.voiceSession()).toMatchObject({ active: false, listening: false });
+    targetGate.resolve(target);
+    await expect(opening).rejects.toThrow();
+    await expect(admission).rejects.toThrow();
+    expect(api.startVoiceCall).not.toHaveBeenCalled();
+  });
+
+  it("qualifies input on Main's hold deadline and revokes a short gesture before a delayed renderer can send it", async () => {
+    const { voice, clock, open } = setup();
+    await open();
+    await voice.beginContext(1, clock.now() + 300);
+    voice.setListening(true);
+    clock.advance(299);
+    expect(voice.voiceSession().qualified).toBe(false);
+    clock.advance(1);
+    expect(voice.voiceSession().qualified).toBe(true);
+    voice.setListening(false);
+    await voice.beginContext(2, clock.now() + 300);
+    voice.setListening(true);
+    clock.advance(299);
+    voice.setListening(false);
+    expect(voice.voiceSession().qualified).toBe(false);
+    voice.cancelContext(2);
+    clock.advance(1);
+    expect(voice.voiceSession()).toMatchObject({ contextId: null, qualified: false });
+    voice.close();
+    await flush();
+    expect(clock.pending()).toBe(0);
+  });
+
+  it("publishes capture intent before admission and admits a released buffer without reopening the mic", async () => {
+    const { voice, api, clock } = setup();
+    const gate = Promise.withResolvers<{ accepted: true }>();
+    api.appendVoiceCallContext.mockReturnValueOnce(gate.promise);
+    const opening = voice.open();
+    const admission = voice.beginContext(1, 300);
+    voice.setListening(true);
+    await opening;
+    expect(voice.voiceSession()).toMatchObject({
+      active: true,
+      listening: true,
+      contextId: 1,
+      admitted: false,
+    });
+    const { generation } = voice.voiceSession();
+    await voice.voiceOffer({ generation, sdp: "offer" });
+    clock.advance(400);
+    voice.setListening(false);
+    gate.resolve({ accepted: true });
+    await admission;
+    expect(voice.voiceSession()).toMatchObject({
+      listening: false,
+      contextId: 1,
+      admitted: true,
+      qualified: true,
+    });
+    voice.cancelContext(1);
+    expect(voice.voiceSession()).toMatchObject({
+      listening: false,
+      contextId: null,
+      admitted: false,
+    });
+    voice.close();
+  });
+
   it("keeps the new account call alive when an old opening rejects after target resolution", async () => {
     const pendingTarget = Promise.withResolvers<typeof target>();
     let attempts = 0;
@@ -217,7 +315,7 @@ describe("push-to-talk live session transport", () => {
   it("uploads actual image bytes before appending scoped context without re-enabling the microphone", async () => {
     const { voice, api, open } = setup();
     await open();
-    await voice.beginContext(1);
+    await voice.beginContext(1, 300);
     expect(api.appendVoiceCallContext).toHaveBeenCalledWith(
       "wsp_1",
       "vc_1",
@@ -285,17 +383,17 @@ describe("push-to-talk live session transport", () => {
     }
   );
 
-  it("gates microphone unmuting on pending-context control admission", async () => {
+  it("gates transmission on admission while capturing the start locally", async () => {
     const { voice, api, open } = setup();
     await open();
     const pendingGate = Promise.withResolvers<{ accepted: true }>();
     api.appendVoiceCallContext.mockReturnValueOnce(pendingGate.promise);
     voice.setListening(true);
-    const admitting = voice.beginContext(1);
-    expect(voice.voiceSession().listening).toBe(false);
+    const admitting = voice.beginContext(1, 300);
+    expect(voice.voiceSession()).toMatchObject({ listening: true, admitted: false });
     pendingGate.resolve({ accepted: true });
     await admitting;
-    expect(voice.voiceSession().listening).toBe(true);
+    expect(voice.voiceSession()).toMatchObject({ listening: true, admitted: true });
     voice.setListening(false);
     expect(voice.voiceSession().listening).toBe(false);
     voice.close();
@@ -306,8 +404,8 @@ describe("push-to-talk live session transport", () => {
     const pendingGate = Promise.withResolvers<{ accepted: true }>();
     api.appendVoiceCallContext.mockReturnValueOnce(pendingGate.promise);
     voice.setListening(true);
-    const admitting = voice.beginContext(1);
-    expect(voice.voiceSession().listening).toBe(false);
+    const admitting = voice.beginContext(1, 300);
+    expect(voice.voiceSession()).toMatchObject({ listening: true, admitted: false });
     voice.setListening(false);
     expect(voice.voiceSession().listening).toBe(false);
     pendingGate.resolve({ accepted: true });
@@ -315,7 +413,7 @@ describe("push-to-talk live session transport", () => {
     expect(voice.voiceSession().listening).toBe(false);
     voice.close();
   });
-  it("newer gesture cancels previous context and stale older ACK does not unmute", async () => {
+  it("newer gesture cancels previous context and stale older ACK cannot authorize its input", async () => {
     const { voice, api, open } = setup();
     await open();
     const gate1 = Promise.withResolvers<{ accepted: true }>();
@@ -324,25 +422,25 @@ describe("push-to-talk live session transport", () => {
       .mockReturnValueOnce(gate1.promise)
       .mockReturnValueOnce(gate2.promise);
     voice.setListening(true);
-    const admitting1 = voice.beginContext(1);
+    const admitting1 = voice.beginContext(1, 300);
     const obsoleteAdmission = expect(admitting1).rejects.toThrow();
     await flush();
-    expect(voice.voiceSession().listening).toBe(false);
-    const admitting2 = voice.beginContext(2);
-    expect(voice.voiceSession().listening).toBe(false);
+    expect(voice.voiceSession().admitted).toBe(false);
+    const admitting2 = voice.beginContext(2, 300);
+    expect(voice.voiceSession()).toMatchObject({ contextId: 2, admitted: false });
     gate1.resolve({ accepted: true });
     await flush();
     await obsoleteAdmission;
-    expect(voice.voiceSession().listening).toBe(false);
+    expect(voice.voiceSession()).toMatchObject({ contextId: 2, admitted: false });
     gate2.resolve({ accepted: true });
     await admitting2;
-    expect(voice.voiceSession().listening).toBe(true);
+    expect(voice.voiceSession()).toMatchObject({ contextId: 2, admitted: true });
     voice.close();
   });
   it("aborts upload and rejects context when 30s upload budget expires with no late completion", async () => {
     const { voice, api, clock, open } = setup();
     await open();
-    await voice.beginContext(1);
+    await voice.beginContext(1, 300);
     const uploadGate = Promise.withResolvers<{
       path: string;
       name: string;
@@ -361,7 +459,7 @@ describe("push-to-talk live session transport", () => {
     clock.advance(30_000);
     await rejected;
     expect(api.uploadGroupFile.mock.calls[0]?.[1].signal?.aborted).toBe(true);
-    await voice.beginContext(2);
+    await voice.beginContext(2, 300);
     await voice.appendContext({ contextId: 2, text: "New request", attachments: [] });
     uploadGate.resolve({
       path: "/uploads/late-screen.png",
@@ -429,7 +527,7 @@ describe("push-to-talk live session transport", () => {
         generation: voice.voiceSession().generation,
         sdp: "offer",
       });
-      await voice.beginContext(1);
+      await voice.beginContext(1, 300);
       const completed = voice.appendContext({
         contextId: 1,
         text: "Screen",
@@ -448,30 +546,30 @@ describe("push-to-talk live session transport", () => {
     }
   });
 
-  it("rejects and aborts stalled admission before call.ready with bounded deadline, keeping mic muted with no late ACK revival", async () => {
+  it("bounds stalled admission before call.ready and never authorizes input from a late ACK", async () => {
     const { voice, clock } = setup();
     await voice.open();
     // call.ready is pending because voiceOffer has not completed
     voice.setListening(true);
-    const admitting = voice.beginContext(1);
+    const admitting = voice.beginContext(1, 300);
     const rejected = expect(admitting).rejects.toThrow();
     await flush();
-    expect(voice.voiceSession().listening).toBe(false);
+    expect(voice.voiceSession().admitted).toBe(false);
 
     // Advance 30s admission budget
     clock.advance(30_000);
     await rejected;
-    expect(voice.voiceSession().listening).toBe(false);
+    expect(voice.voiceSession().admitted).toBe(false);
 
-    // Stale/late ready resolution and ACK must not revive admission or unmute microphone
+    // A late readiness result must not authorize the failed context's buffered audio.
     const { generation } = voice.voiceSession();
     await voice.voiceOffer({ generation, sdp: "offer" });
     await flush();
-    expect(voice.voiceSession().listening).toBe(false);
+    expect(voice.voiceSession().admitted).toBe(false);
 
     // Newer context on the same call succeeds without damage
-    await voice.beginContext(2);
-    expect(voice.voiceSession().listening).toBe(true);
+    await voice.beginContext(2, 300);
+    expect(voice.voiceSession()).toMatchObject({ contextId: 2, admitted: true });
     voice.close();
   });
 
@@ -482,25 +580,25 @@ describe("push-to-talk live session transport", () => {
     api.appendVoiceCallContext.mockReturnValueOnce(stalledAdmission.promise);
 
     voice.setListening(true);
-    const admitting = voice.beginContext(1);
+    const admitting = voice.beginContext(1, 300);
     const rejected = expect(admitting).rejects.toThrow();
     await flush();
-    expect(voice.voiceSession().listening).toBe(false);
+    expect(voice.voiceSession().admitted).toBe(false);
 
     // 30s admission deadline expires
     clock.advance(30_000);
     await rejected;
     expect(api.appendVoiceCallContext.mock.calls[0]?.[3]?.signal?.aborted).toBe(true);
-    expect(voice.voiceSession().listening).toBe(false);
+    expect(voice.voiceSession().admitted).toBe(false);
 
-    // Late ACK resolving later does not revive muted microphone
+    // A late ACK must not authorize the failed context's buffered audio.
     stalledAdmission.resolve({ accepted: true });
     await flush();
-    expect(voice.voiceSession().listening).toBe(false);
+    expect(voice.voiceSession().admitted).toBe(false);
 
     // Newer context succeeds normally
-    await voice.beginContext(2);
-    expect(voice.voiceSession().listening).toBe(true);
+    await voice.beginContext(2, 300);
+    expect(voice.voiceSession()).toMatchObject({ contextId: 2, admitted: true });
     voice.close();
   });
 

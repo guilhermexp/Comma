@@ -40,7 +40,6 @@ export type PushToTalkErrorCode =
 
 /** State of the turn, shown by the notch and by the cursor companion. */
 export type PushToTalkTurnState =
-  | { kind: "connecting" }
   | { kind: "listening" }
   | { kind: "thinking" }
   | { kind: "speaking" }

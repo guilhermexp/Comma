@@ -1333,7 +1333,6 @@
   "settings_talk_to_agent_privacy": "Para onde vai sua pergunta",
   "settings_talk_to_agent_privacy_description": "O áudio vai para o OpenAI GPT Live. Os prints são delegados para o Router do workspace e o modelo com visão dele.",
   "push_to_talk_listening": "Ouvindo",
-  "push_to_talk_connecting": "Conectando",
   "push_to_talk_thinking": "Pensando",
   "push_to_talk_speaking": "Falando",
   "push_to_talk_ready": "Resposta pronta",

@@ -86,7 +86,7 @@ defmodule SalixVoice.CallActor do
   """
 
   @push_to_talk_instructions """
-  You are the voice of the Comma assistant on a live push-to-talk call. Keep every reply short \
+  You are the voice of the Comma assistant for shortcut speech turns. Keep every reply short \
   and natural for speech. You cannot look things up, see the screen, or act on your own: for any \
   request that involves the screen, current app, tools, or actions, delegate it, tell the caller \
   briefly that you are checking, and wait. When a gesture context is active, every delegation \
@@ -681,7 +681,7 @@ defmodule SalixVoice.CallActor do
   # https://developers.openai.com/api/docs/guides/live-conversations#greet-before-the-caller-speaks
   defp maybe_greet(%{mode: :push_to_talk, phase: :live, closing: nil, greeted: false} = state)
        when is_integer(state.model_started_mono) and is_pid(state.socket) do
-    %{state | greeted: true, call_started_task: enqueue_call_started(state)}
+    %{state | greeted: true}
   end
 
   defp maybe_greet(%{phase: :live, closing: nil, greeted: false} = state)
@@ -989,45 +989,63 @@ defmodule SalixVoice.CallActor do
     )
   end
 
-  # Sent only for a call whose start the Router was told about. The actor may
-  # stop before the task finishes, so the task logs its own failure.
+  # Manual calls record their end; PTT hands off only accepted pending work.
+  # The task logs its own failure if the actor stops before it finishes.
+  defp enqueue_call_ended(%{mode: :push_to_talk, greeted: true} = state) do
+    accepted_pending_ids =
+      for {id, %{status: :pending, accepted: true}} <- state.delegations, do: id
+
+    if accepted_pending_ids == [] do
+      nil
+    else
+      call_id = state.call_id
+      owner = self()
+
+      metadata =
+        call_metadata(state)
+        |> Map.merge(%{
+          "event_type" => "voice.delegation_handoff",
+          "event_id" => call_id,
+          "voice_pending_delegation_ids" => accepted_pending_ids
+        })
+
+      enqueue_router_input(
+        state,
+        delegation_handoff_content(accepted_pending_ids),
+        metadata,
+        source_message_id(state, "end"),
+        [],
+        fn result ->
+          case result do
+            {:ok, _} ->
+              :ok
+
+            _ ->
+              Logger.warning(
+                "voice delegation handoff ingress failed call=#{call_id} reason=#{inspect(result)}"
+              )
+          end
+
+          send(owner, {:call_ended_enqueued, result})
+        end
+      )
+    end
+  end
+
   defp enqueue_call_ended(%{greeted: true} = state) do
     call_id = state.call_id
     owner = self()
     started_task = state.call_started_task
 
-    accepted_pending_ids =
-      if state.mode == :push_to_talk do
-        for {id, %{status: :pending, accepted: true}} <- state.delegations, do: id
-      else
-        []
-      end
-
     metadata =
       call_metadata(state)
       |> Map.merge(%{"event_type" => "voice.call_ended", "event_id" => call_id})
 
-    metadata =
-      if state.mode == :push_to_talk do
-        Map.put(metadata, "voice_pending_delegation_ids", accepted_pending_ids)
-      else
-        metadata
-      end
-
-    pending_count =
-      if state.mode == :push_to_talk do
-        length(accepted_pending_ids)
-      else
-        Enum.count(state.delegations, fn {_id, d} -> d.status == :pending end)
-      end
+    pending_count = Enum.count(state.delegations, fn {_id, d} -> d.status == :pending end)
 
     enqueue_router_input(
       state,
-      call_ended_content(
-        state,
-        pending_count,
-        Map.get(metadata, "voice_pending_delegation_ids", [])
-      ),
+      call_ended_content(state, pending_count),
       metadata,
       source_message_id(state, "end"),
       [before: fn -> await_task(started_task, @call_started_wait_ms) end],
@@ -1189,12 +1207,8 @@ defmodule SalixVoice.CallActor do
 
   defp call_started_content(state) do
     opening =
-      if state.mode == :push_to_talk do
-        "The caller connected through push-to-talk. The voice assistant is listening without a greeting."
-      else
-        "Live voice call (#{carrier_label(state.carrier)}). The caller just connected, and the " <>
-          "voice assistant is greeting them. They have not asked anything yet."
-      end
+      "Live voice call (#{carrier_label(state.carrier)}). The caller just connected, and the " <>
+        "voice assistant is greeting them. They have not asked anything yet."
 
     Enum.join(
       [
@@ -1208,7 +1222,13 @@ defmodule SalixVoice.CallActor do
     )
   end
 
-  defp call_ended_content(state, pending, pending_ids) do
+  defp delegation_handoff_content(pending_ids) do
+    "Shortcut speech turn ended with accepted requests still pending: " <>
+      Jason.encode!(pending_ids) <>
+      ". Finish accepted work in the Comma conversation; no new call is needed."
+  end
+
+  defp call_ended_content(state, pending) do
     seconds = ceil_seconds(state.ended_mono - state.started_mono)
 
     pending_line =
@@ -1219,15 +1239,9 @@ defmodule SalixVoice.CallActor do
       end
 
     guidance =
-      if state.mode == :push_to_talk do
-        "The caller can no longer hear you. Known accepted pending delegation IDs at shutdown: " <>
-          Jason.encode!(pending_ids) <>
-          ". Finish accepted work in the Comma conversation; no new call is needed."
-      else
-        "The caller can no longer hear you. Do not use im_api.voice operations for this call. " <>
-          "If something from the call still needs action or an answer, continue it in the " <>
-          "Comma conversation. Otherwise send nothing."
-      end
+      "The caller can no longer hear you. Do not use im_api.voice operations for this call. " <>
+        "If something from the call still needs action or an answer, continue it in the " <>
+        "Comma conversation. Otherwise send nothing."
 
     Enum.join(
       [
@@ -1345,7 +1359,7 @@ defmodule SalixVoice.CallActor do
   defp emit_call_ended(%{phase: :ending, call_ended_attempted?: false} = state) do
     task = enqueue_call_ended(state)
 
-    if state.greeted and not is_pid(task),
+    if call_ended_required?(state) and not is_pid(task),
       do: Logger.warning("voice call end ingress could not start call=#{state.call_id}")
 
     %{state | call_ended_attempted?: true, call_ended_task: task}
@@ -1353,6 +1367,12 @@ defmodule SalixVoice.CallActor do
 
   defp emit_call_ended(state), do: state
 
+  defp call_ended_required?(%{mode: :push_to_talk} = state) do
+    Enum.any?(state.delegations, fn {_id, d} -> d.status == :pending and d.accepted end)
+  end
+
+  defp call_ended_required?(%{greeted: true}), do: true
+  defp call_ended_required?(_state), do: false
   @ptt_marker_regex ~r/\A\[ptt-context:(\d+)\]\s*(.*)\z/s
 
   defp parse_ptt_context_marker(request) when is_binary(request) do

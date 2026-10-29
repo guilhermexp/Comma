@@ -150,12 +150,7 @@ describe("PushToTalkOverlayApp", () => {
     render(<PushToTalkOverlayApp />);
     await screen.findByText("Listening");
 
-    publish({ companion: { kind: "connecting" }, drawingEnabled: false });
-    expect(screen.getByRole("status")).toHaveTextContent("Connecting");
-    expect(screen.getByTestId("push-to-talk-waiting")).toBeInTheDocument();
-    expect(screen.queryByTestId("push-to-talk-level")).toBeNull();
-
-    publish({ companion: { kind: "thinking" } });
+    publish({ companion: { kind: "thinking" }, drawingEnabled: false });
     expect(screen.getByRole("status")).toHaveTextContent("Thinking");
     expect(screen.getByTestId("push-to-talk-waiting")).toBeInTheDocument();
 

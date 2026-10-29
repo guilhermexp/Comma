@@ -23,11 +23,19 @@ export type OpenPushToTalkPeerOptions = {
   offer: (sdp: string) => Promise<{ sdp: string } | null>;
   report: (event: PushToTalkVoiceReport) => void;
   listening?: boolean;
+  admitted?: boolean;
+  contextId?: number | null;
+  qualified: boolean;
 };
 
 export type PushToTalkPeer = {
   close: () => void;
-  update: (input: { listening?: boolean }) => void;
+  update: (input: {
+    listening?: boolean;
+    admitted?: boolean;
+    contextId?: number | null;
+    qualified?: boolean;
+  }) => void;
 };
 
 /** RMS of the received audio above which the voice counts as audible. */
@@ -36,6 +44,7 @@ const audibleLevel = 0.01;
 const quietAfterMs = 300;
 const levelIntervalMs = 50;
 const iceGatherMs = 5_000;
+const maxBufferSeconds = 120;
 
 // This signaling transport has no trickle endpoint. Use the gathered local SDP.
 function gatherIce(pc: RTCPeerConnection, signal: AbortSignal): Promise<void> {
@@ -58,8 +67,8 @@ function gatherIce(pc: RTCPeerConnection, signal: AbortSignal): Promise<void> {
 }
 
 /**
- * The media half of a Talk to agent call (D12-D14 of add-push-to-talk-agent).
- * Captures microphone audio muted by default until connected AND listening.
+ * The media half of Talk to agent (D12-D16 of add-push-to-talk-agent).
+ * Captures locally during the gesture and sends after connection/admission.
  * Reports microphone levels at 20 Hz, connection, and incoming speech state.
  */
 export function openPushToTalkPeer({
@@ -67,6 +76,9 @@ export function openPushToTalkPeer({
   offer,
   report,
   listening: initialListening = false,
+  admitted: initialAdmitted = false,
+  contextId: initialContextId = null,
+  qualified: initialQualified,
 }: OpenPushToTalkPeerOptions): PushToTalkPeer {
   const abort = new AbortController();
   const pc = deps.createPeer();
@@ -74,21 +86,110 @@ export function openPushToTalkPeer({
   const audio = deps.createAudio();
 
   let listening = initialListening;
+  let admitted = initialAdmitted;
+  let currentContextId: number | null = initialContextId;
 
   let connected = false;
   let failed = false;
   let micStream: MediaStream | undefined;
+  let processor: ScriptProcessorNode | undefined;
   let inputLevelTimer: ReturnType<typeof setInterval> | undefined;
   let remoteLevelTimer: ReturnType<typeof setInterval> | undefined;
 
+  let isGestureQualified = initialQualified;
+  let isGestureDisqualified = false;
+  let drainInputOnRelease = false;
+
+  // Single chronological send queue
+  const pendingChunks: Float32Array<ArrayBuffer>[] = [];
+  const activeSources = new Set<AudioBufferSourceNode>();
+  let playbackTime = 0;
+  let totalCapturedSamplesInGesture = 0;
+
+  const sampleRate = context.sampleRate || 48000;
+  const maxSamples = sampleRate * maxBufferSeconds;
+
   const channel = pc.createDataChannel("oai-events");
 
-  const applyTrackEnabled = () => {
-    const shouldEnable = connected && listening;
+  const destination = context.createMediaStreamDestination();
+  const [destinationTrack] = destination.stream.getAudioTracks();
+  if (destinationTrack) {
+    destinationTrack.enabled = false;
+    pc.addTrack(destinationTrack, destination.stream);
+  }
+
+  // Audio output element immediately mutes on listening press, restores on release
+  audio.muted = listening;
+  void context.resume().catch(() => undefined);
+
+  const applyPhysicalMicEnabled = () => {
+    const shouldEnable =
+      listening && currentContextId !== null && !abort.signal.aborted;
     if (micStream) {
       for (const track of micStream.getAudioTracks()) {
         track.enabled = shouldEnable;
       }
+    }
+  };
+
+  const discardBuffer = () => {
+    drainInputOnRelease = false;
+    for (const source of activeSources) {
+      try {
+        source.stop();
+      } catch {}
+      try {
+        source.disconnect();
+      } catch {}
+    }
+    activeSources.clear();
+    pendingChunks.length = 0;
+    playbackTime = 0;
+    if (destinationTrack) destinationTrack.enabled = false;
+  };
+
+  const schedulePendingAudio = () => {
+    if (abort.signal.aborted || currentContextId === null) return;
+    if (isGestureDisqualified) return;
+
+    if (!isGestureQualified) return;
+    if (!connected || !admitted) return;
+
+    if (pendingChunks.length === 0) return;
+
+    if (destinationTrack) destinationTrack.enabled = true;
+
+    const currentTime = context.currentTime;
+    if (playbackTime < currentTime) {
+      playbackTime = currentTime;
+    }
+
+    while (pendingChunks.length > 0) {
+      const chunk = pendingChunks.shift()!;
+      const audioBuffer = context.createBuffer(1, chunk.length, sampleRate);
+      audioBuffer.copyToChannel(chunk, 0);
+
+      const source = context.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(destination);
+      activeSources.add(source);
+
+      const chunkDuration = chunk.length / sampleRate;
+      const startTime = playbackTime;
+      playbackTime += chunkDuration;
+
+      source.addEventListener(
+        "ended",
+        () => {
+          activeSources.delete(source);
+          if (activeSources.size === 0 && pendingChunks.length === 0 && !listening) {
+            if (destinationTrack) destinationTrack.enabled = false;
+          }
+        },
+        { once: true }
+      );
+
+      source.start(startTime);
     }
   };
 
@@ -102,11 +203,22 @@ export function openPushToTalkPeer({
     abort.abort();
     clearInterval(inputLevelTimer);
     clearInterval(remoteLevelTimer);
+    discardBuffer();
+    if (processor) {
+      try {
+        processor.disconnect();
+      } catch {}
+      processor.onaudioprocess = null;
+    }
     if (micStream) {
       for (const track of micStream.getAudioTracks()) {
         track.removeEventListener("ended", onTrackEnded);
+        track.enabled = false;
         track.stop();
       }
+    }
+    if (destinationTrack) {
+      destinationTrack.stop();
     }
     try {
       channel.close();
@@ -186,6 +298,7 @@ export function openPushToTalkPeer({
   pc.ontrack = (event) => {
     const stream = event.streams[0] ?? new MediaStream([event.track]);
     audio.srcObject = stream;
+    audio.muted = listening;
     audio.play().catch(fail);
     void context.resume().catch(() => undefined);
     watchRemoteLevel(stream);
@@ -196,29 +309,59 @@ export function openPushToTalkPeer({
       if (!connected) {
         connected = true;
         report("connected");
-        applyTrackEnabled();
+        schedulePendingAudio();
       }
     } else if (pc.connectionState === "failed") {
       fail();
     }
   };
 
-  // The initial SDP must include the muted microphone track.
+  // The initial SDP must include the destination track.
   const microphoneReady = (async () => {
     try {
+      void context.resume().catch(() => undefined);
       const stream = await deps.getUserMedia({ audio: true });
       if (abort.signal.aborted) {
         for (const track of stream.getAudioTracks()) track.stop();
         return;
       }
       micStream = stream;
-      // Must be muted before addTrack!
       for (const track of stream.getAudioTracks()) {
-        track.enabled = false;
-        pc.addTrack(track, stream);
         track.addEventListener("ended", onTrackEnded);
       }
-      applyTrackEnabled();
+      applyPhysicalMicEnabled();
+
+      const micSource = context.createMediaStreamSource(stream);
+
+      // Create processor to buffer and stream PCM audio chronologically
+      processor = context.createScriptProcessor(4096, 1, 1);
+      micSource.connect(processor);
+      const silentGain = context.createGain();
+      silentGain.gain.value = 0;
+      processor.connect(silentGain);
+      try {
+        silentGain.connect(context.destination);
+      } catch {}
+      processor.onaudioprocess = (e) => {
+        if (abort.signal.aborted) return;
+        if (
+          (!listening && !drainInputOnRelease) ||
+          currentContextId === null ||
+          isGestureDisqualified
+        )
+          return;
+        // The track is already muted on release. Drain only its in-flight block,
+        // which WebAudio delivers after the gesture's final captured samples.
+        drainInputOnRelease = false;
+        const channelData = e.inputBuffer.getChannelData(0);
+        if (totalCapturedSamplesInGesture + channelData.length <= maxSamples) {
+          totalCapturedSamplesInGesture += channelData.length;
+          const copy = new Float32Array(channelData);
+          pendingChunks.push(copy);
+          schedulePendingAudio();
+        }
+      };
+
       watchInputLevel(stream);
       return true;
     } catch (error) {
@@ -260,12 +403,61 @@ export function openPushToTalkPeer({
     }
   })();
 
-  const update = (input: { listening?: boolean }) => {
+  const update = (input: {
+    listening?: boolean;
+    admitted?: boolean;
+    contextId?: number | null;
+    qualified?: boolean;
+  }) => {
     if (abort.signal.aborted) return;
-    if (input.listening !== undefined) {
-      listening = input.listening;
-      applyTrackEnabled();
+
+    let contextChanged = false;
+    if (input.contextId !== undefined && input.contextId !== currentContextId) {
+      discardBuffer();
+      currentContextId = input.contextId;
+      isGestureQualified = false;
+      isGestureDisqualified = false;
+      totalCapturedSamplesInGesture = 0;
+      contextChanged = true;
     }
+
+    if (input.qualified !== undefined) isGestureQualified = input.qualified;
+
+    let listeningChanged = false;
+    if (input.listening !== undefined && input.listening !== listening) {
+      listening = input.listening;
+      audio.muted = listening;
+      listeningChanged = true;
+    }
+
+    if (input.admitted !== undefined && input.admitted !== admitted) {
+      admitted = input.admitted;
+      if (!admitted) {
+        discardBuffer();
+      }
+    }
+
+    // Reconcile gesture state after atomic updates
+    if (contextChanged || listeningChanged) {
+      if (currentContextId !== null && listening) {
+        void context.resume().catch(() => undefined);
+        drainInputOnRelease = false;
+        isGestureDisqualified = false;
+      } else if (!listening) {
+        if (!isGestureQualified) {
+          isGestureDisqualified = true;
+          discardBuffer();
+        } else {
+          drainInputOnRelease = true;
+          if (activeSources.size === 0 && pendingChunks.length === 0) {
+            if (destinationTrack) destinationTrack.enabled = false;
+          }
+        }
+      }
+    }
+
+    applyPhysicalMicEnabled();
+    schedulePendingAudio();
   };
 
   return { close, update };

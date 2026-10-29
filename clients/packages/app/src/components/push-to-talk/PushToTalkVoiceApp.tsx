@@ -17,7 +17,12 @@ export function PushToTalkVoiceApp({ deps }: { deps?: PushToTalkPeerDeps }) {
       | {
           generation: number;
           close: () => void;
-          update: (input: { listening?: boolean }) => void;
+          update: (input: {
+            listening?: boolean;
+            admitted?: boolean;
+            contextId?: number | null;
+            qualified?: boolean;
+          }) => void;
         }
       | undefined;
 
@@ -43,6 +48,9 @@ export function PushToTalkVoiceApp({ deps }: { deps?: PushToTalkPeerDeps }) {
       if (isSameGeneration) {
         peer!.update({
           listening: session.listening,
+          admitted: session.admitted,
+          contextId: session.contextId,
+          qualified: session.qualified,
         });
         return;
       }
@@ -56,6 +64,9 @@ export function PushToTalkVoiceApp({ deps }: { deps?: PushToTalkPeerDeps }) {
       const currentPeer = openPushToTalkPeer({
         ...(deps ? { deps } : {}),
         listening: session.listening,
+        admitted: session.admitted,
+        contextId: session.contextId,
+        qualified: session.qualified,
         offer: (sdp) => bridge.pushToTalkVoice.offer({ generation, sdp }),
         report: (event) => void bridge.pushToTalkVoice.report({ event, generation }),
       });

@@ -1333,7 +1333,6 @@
   "settings_talk_to_agent_privacy": "Where your question goes",
   "settings_talk_to_agent_privacy_description": "Audio goes to OpenAI GPT Live. Screenshots are delegated to the workspace Router and its vision model.",
   "push_to_talk_listening": "Listening",
-  "push_to_talk_connecting": "Connecting",
   "push_to_talk_thinking": "Thinking",
   "push_to_talk_speaking": "Speaking",
   "push_to_talk_ready": "Reply ready",

@@ -1333,7 +1333,6 @@
   "settings_talk_to_agent_privacy": "你的问题会发送到哪里",
   "settings_talk_to_agent_privacy_description": "音频发送至 OpenAI GPT Live。截图将委派给工作区 Router 及其视觉模型。",
   "push_to_talk_listening": "正在聆听",
-  "push_to_talk_connecting": "正在连接",
   "push_to_talk_thinking": "正在思考",
   "push_to_talk_speaking": "正在回答",
   "push_to_talk_ready": "回复已就绪",

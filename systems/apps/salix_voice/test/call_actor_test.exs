@@ -392,6 +392,38 @@ defmodule SalixVoice.CallActorTest do
     refute_receive {:ingress, _, _, _, _, _}, 100
   end
 
+  test "push_to_talk does not emit voice.call_started or greeting to Router ingress while preserving manual conversation lifecycle" do
+    {:ok, %{call_id: call_id}} = admit(%{mode: :push_to_talk})
+    {:ok, call, _info} = SalixVoice.attach(call_id, self())
+
+    assert_receive {:fake_model, model, {:started, _opts}}
+    emit(model, call, {:started, "sess_ptt_nostart"})
+
+    refute_received {:fake_model, ^model, {:append, :instructions, nil, _greeting}}
+    refute_receive {:ingress, _, _, %{"event_type" => "voice.call_started"}, _, _}, 500
+  end
+
+  test "push_to_talk without pending accepted work emits no call_started or terminal event to Router while preserving metering" do
+    {:ok, %{call_id: call_id}} = admit(%{mode: :push_to_talk})
+    {:ok, call, info} = SalixVoice.attach(call_id, self())
+
+    assert_receive {:fake_model, model, {:started, _opts}}
+    emit(model, call, {:started, "sess_ptt_empty"})
+
+    refute_received {:fake_model, ^model, {:append, :instructions, nil, _greeting}}
+    refute_receive {:ingress, _, _, %{"event_type" => "voice.call_started"}, _, _}, 300
+
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+
+    refute_receive {:ingress, _, _, %{"event_type" => "voice.call_ended"}, _, _}, 300
+    refute_receive {:ingress, _, _, %{"event_type" => "voice.delegation_handoff"}, _, _}, 300
+
+    source_key = "voice:websocket:#{info.call_id}"
+    assert_receive {:metered, %{source_key: ^source_key} = attrs}, 1_000
+    assert attrs.group_id == info.group_id
+  end
+
   test "a failed call-start input leaves the call live" do
     Application.put_env(:salix_voice, :test_ingress_result, {:error, :router_unavailable})
     on_exit(fn -> Application.delete_env(:salix_voice, :test_ingress_result) end)
@@ -1045,7 +1077,7 @@ defmodule SalixVoice.CallActorTest do
 
     assert_receive {:fake_model, model, {:started, _}}, 1_000
     emit(model, call, {:started, "sess_ptt"})
-    assert_receive {:ingress, ^group, _, %{"event_type" => "voice.call_started"}, _, _}, 1_000
+    refute_receive {:ingress, ^group, _, %{"event_type" => "voice.call_started"}, _, _}, 100
 
     %{
       tenant: tenant,
@@ -1116,7 +1148,94 @@ defmodule SalixVoice.CallActorTest do
         limit: 10
       )
 
-    Enum.find(messages, &(get_in(&1, ["metadata", "event_type"]) == "voice.call_ended"))
+    Enum.find(messages, &(get_in(&1, ["metadata", "event_type"]) == "voice.delegation_handoff"))
+  end
+
+  @tag :ptt_causal_regressions
+  test "push_to_talk empty session has no call_started or terminal event in persisted Router conversation" do
+    fixture = setup_causal_ptt_fixture()
+    call = fixture.call
+    group = fixture.group
+
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+
+    refute_receive {:ingress, ^group, _, %{"event_type" => "voice.call_ended"}, _, _}, 300
+    refute_receive {:ingress, ^group, _, %{"event_type" => "voice.delegation_handoff"}, _, _}, 300
+
+    {:ok, messages} =
+      SalixIM.Conversations.list_group_conversation_messages(
+        group,
+        fixture.conversation["conversation_id"],
+        limit: 10
+      )
+
+    refute Enum.any?(
+             messages,
+             &(get_in(&1, ["metadata", "event_type"]) in [
+                 "voice.call_started",
+                 "voice.call_ended",
+                 "voice.delegation_handoff"
+               ])
+           )
+  end
+
+  @tag :ptt_causal_regressions
+  test "push_to_talk with accepted pending delegation emits voice.delegation_handoff without visible text and authorizes late reply idempotently" do
+    fixture = setup_causal_ptt_fixture(%{settle_ms: 10})
+    call = fixture.call
+    model = fixture.model
+    group = fixture.group
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(call, {:context, %{context_id: 1, status: :pending}})
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(
+               call,
+               {:context,
+                %{
+                  context_id: 1,
+                  status: :complete,
+                  text: "Active screen content",
+                  attachments: []
+                }}
+             )
+
+    emit(model, call, {:delegation, "del_pending_handoff", 100, "[ptt-context:1] Work on screen"})
+
+    assert_receive {:ingress, ^group, _,
+                    %{"event_type" => "voice.delegation", "message_id" => "del_pending_handoff"},
+                    _, _},
+                   1_000
+
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+
+    assert_receive {:ingress, ^group, _handoff_content,
+                    %{"event_type" => "voice.delegation_handoff"} = handoff_meta, _, _},
+                   2_000
+
+    assert Map.get(handoff_meta, "voice_pending_delegation_ids") == ["del_pending_handoff"]
+
+    handoff_msg = get_ended_conversation_message(fixture)
+    assert handoff_msg
+    assert SalixIM.ConversationMessage.visible_text(handoff_msg) == ""
+
+    result =
+      execute_late_voice_tool(fixture, handoff_msg, "del_pending_handoff", "Handoff result.")
+
+    refute result.error
+
+    retry_result =
+      execute_late_voice_tool(fixture, handoff_msg, "del_pending_handoff", "Handoff result.")
+
+    refute retry_result.error
+
+    conflict =
+      execute_late_voice_tool(fixture, handoff_msg, "del_pending_handoff", "Different result.")
+
+    assert conflict.error
   end
 
   @tag :ptt_causal_regressions
@@ -1137,19 +1256,9 @@ defmodule SalixVoice.CallActorTest do
     send(call, {:voice_carrier, :hangup, :normal})
     await_end(call, :caller_hangup)
 
-    assert_receive {:ingress, ^group, ended_content,
-                    %{"event_type" => "voice.call_ended"} = ended_meta, _, _},
-                   2_000
-
-    pending_ids = Map.get(ended_meta, "voice_pending_delegation_ids", [])
-    refute "del_pending_ctx" in pending_ids
-    refute String.contains?(ended_content, "del_pending_ctx")
-
-    # Canonical consumer authority: late voice.say must reject unaccepted pending-context delegation
-    ended_msg = get_ended_conversation_message(fixture)
-    assert ended_msg
-    result = execute_late_voice_tool(fixture, ended_msg, "del_pending_ctx")
-    assert result.error
+    refute_receive {:ingress, ^group, _, %{"event_type" => "voice.call_ended"}, _, _}, 300
+    refute_receive {:ingress, ^group, _, %{"event_type" => "voice.delegation_handoff"}, _, _}, 300
+    assert nil == get_ended_conversation_message(fixture)
   end
 
   @tag :ptt_causal_regressions
@@ -1183,20 +1292,9 @@ defmodule SalixVoice.CallActorTest do
     send(call, {:voice_carrier, :hangup, :normal})
     await_end(call, :caller_hangup)
 
-    assert_receive {:ingress, ^group, ended_content,
-                    %{"event_type" => "voice.call_ended"} = ended_meta, _, _},
-                   2_000
-
-    # Never forwarded to Router, must not masquerade as accepted
-    pending_ids = Map.get(ended_meta, "voice_pending_delegation_ids", [])
-    refute "del_settle" in pending_ids
-    refute String.contains?(ended_content, "del_settle")
-
-    # Canonical consumer authority: late voice.say rejected
-    ended_msg = get_ended_conversation_message(fixture)
-    assert ended_msg
-    result = execute_late_voice_tool(fixture, ended_msg, "del_settle")
-    assert result.error
+    refute_receive {:ingress, ^group, _, %{"event_type" => "voice.call_ended"}, _, _}, 300
+    refute_receive {:ingress, ^group, _, %{"event_type" => "voice.delegation_handoff"}, _, _}, 300
+    assert nil == get_ended_conversation_message(fixture)
   end
 
   @tag :ptt_causal_regressions
@@ -1281,19 +1379,9 @@ defmodule SalixVoice.CallActorTest do
 
     assert_receive {:DOWN, ^ref, :process, ^call, :normal}, 2_000
 
-    assert_receive {:ingress, ^group, ended_content,
-                    %{"event_type" => "voice.call_ended"} = ended_meta, _, _},
-                   2_000
-
-    pending_ids = Map.get(ended_meta, "voice_pending_delegation_ids", [])
-    refute "del_flight_failed" in pending_ids
-    refute String.contains?(ended_content, "del_flight_failed")
-
-    # Canonical consumer authority: un-ACKed delegation cannot be authorized for late voice.say
-    ended_msg = get_ended_conversation_message(fixture)
-    assert ended_msg
-    result = execute_late_voice_tool(fixture, ended_msg, "del_flight_failed")
-    assert result.error
+    refute_receive {:ingress, ^group, _, %{"event_type" => "voice.call_ended"}, _, _}, 300
+    refute_receive {:ingress, ^group, _, %{"event_type" => "voice.delegation_handoff"}, _, _}, 300
+    assert nil == get_ended_conversation_message(fixture)
   end
 
   @tag :ptt_causal_regressions
@@ -1344,7 +1432,7 @@ defmodule SalixVoice.CallActorTest do
     assert_receive {:voice_call, :end, :caller_hangup}, 1_000
 
     # While Router ACK is held, assert NO premature call-ended ingress call is initiated (premature handoff defect)
-    refute_receive {:ingress_call, "voice.call_ended", _, _}, 200
+    refute_receive {:ingress_call, "voice.delegation_handoff", _, _}, 200
 
     ref = Process.monitor(call)
 
@@ -1354,7 +1442,7 @@ defmodule SalixVoice.CallActorTest do
     assert_receive {:DOWN, ^ref, :process, ^call, :normal}, 2_000
 
     assert_receive {:ingress, ^group, ended_content,
-                    %{"event_type" => "voice.call_ended"} = ended_meta, _, _},
+                    %{"event_type" => "voice.delegation_handoff"} = ended_meta, _, _},
                    2_000
 
     # Actual accepted work survives in ended handoff metadata and content
@@ -1417,19 +1505,9 @@ defmodule SalixVoice.CallActorTest do
     ref = Process.monitor(call)
     assert_receive {:DOWN, ^ref, :process, ^call, :normal}, 2_500
 
-    assert_receive {:ingress, ^group, ended_content,
-                    %{"event_type" => "voice.call_ended"} = ended_meta, _, _},
-                   2_500
-
-    # Because it stalled past bounded termination, it was never accepted before shutdown
-    pending_ids = Map.get(ended_meta, "voice_pending_delegation_ids", [])
-    refute "del_stalled" in pending_ids
-    refute String.contains?(ended_content, "del_stalled")
-
-    ended_msg = get_ended_conversation_message(fixture)
-    assert ended_msg
-    result = execute_late_voice_tool(fixture, ended_msg, "del_stalled")
-    assert result.error
+    refute_receive {:ingress, ^group, _, %{"event_type" => "voice.call_ended"}, _, _}, 300
+    refute_receive {:ingress, ^group, _, %{"event_type" => "voice.delegation_handoff"}, _, _}, 300
+    assert nil == get_ended_conversation_message(fixture)
   end
 
   @tag :ptt_causal_regressions
@@ -1614,20 +1692,9 @@ defmodule SalixVoice.CallActorTest do
     ref = Process.monitor(call)
     assert_receive {:DOWN, ^ref, :process, ^call, :normal}, 2_000
 
-    # Final handoff emitted: omitted from voice_pending_delegation_ids because not ACKed before shutdown
-    assert_receive {:ingress, ^group, ended_content,
-                    %{"event_type" => "voice.call_ended"} = ended_meta, _, _},
-                   2_000
-
-    pending_ids = Map.get(ended_meta, "voice_pending_delegation_ids", [])
-    refute "del_post_budget" in pending_ids
-    refute String.contains?(ended_content, "del_post_budget")
-
-    # Canonical final context correctly denies omitted/unconfirmed ID
-    ended_msg = get_ended_conversation_message(fixture)
-    assert ended_msg
-    denied_result = execute_late_voice_tool(fixture, ended_msg, "del_post_budget")
-    assert denied_result.error
+    refute_receive {:ingress, ^group, _, %{"event_type" => "voice.call_ended"}, _, _}, 300
+    refute_receive {:ingress, ^group, _, %{"event_type" => "voice.delegation_handoff"}, _, _}, 300
+    assert nil == get_ended_conversation_message(fixture)
 
     # Now release actual ingress post-budget
     send(task_pid, :release_delegation)
@@ -1735,24 +1802,9 @@ defmodule SalixVoice.CallActorTest do
     send(call, {:voice_carrier, :hangup, :normal})
     await_end(call, :caller_hangup)
 
-    # Final handoff emitted: excludes del_live_delivered because status is :done
-    assert_receive {:ingress, ^group, ended_content,
-                    %{"event_type" => "voice.call_ended"} = ended_meta, _, _},
-                   2_000
-
-    pending_ids = Map.get(ended_meta, "voice_pending_delegation_ids", [])
-    refute "del_live_delivered" in pending_ids
-    refute String.contains?(ended_content, "del_live_delivered")
-
-    # Attempt via call_ended final context is denied (omitted ID)
-    ended_msg = get_ended_conversation_message(fixture)
-    assert ended_msg
-
-    ended_result =
-      execute_late_voice_tool(fixture, ended_msg, "del_live_delivered", "Ended attempt")
-
-    assert ended_result.error
-
+    refute_receive {:ingress, ^group, _, %{"event_type" => "voice.call_ended"}, _, _}, 300
+    refute_receive {:ingress, ^group, _, %{"event_type" => "voice.delegation_handoff"}, _, _}, 300
+    assert nil == get_ended_conversation_message(fixture)
     # Second say from ORIGINAL context after hangup persists once / idempotently
     late_result =
       execute_late_voice_tool(
@@ -1819,11 +1871,14 @@ defmodule SalixVoice.CallActorTest do
     assert_receive {:DOWN, ^monitor, :process, ^call, :shutdown}, 1_000
 
     assert_receive {:ingress, ^group, _content,
-                    %{"event_type" => "voice.call_ended", "voice_pending_delegation_ids" => []},
-                    _source, _opts},
+                    %{
+                      "event_type" => "voice.delegation_handoff",
+                      "voice_pending_delegation_ids" => ["del_accepted"]
+                    }, _source, _opts},
                    1_000
 
     ended = get_ended_conversation_message(fixture)
+    refute execute_late_voice_tool(fixture, ended, "del_accepted").error
     assert execute_late_voice_tool(fixture, ended, "del_forced").error
   end
 
@@ -1840,11 +1895,14 @@ defmodule SalixVoice.CallActorTest do
     assert_receive {:DOWN, ^monitor, :process, ^call, :normal}, 1_000
 
     assert_receive {:ingress, ^group, _content,
-                    %{"event_type" => "voice.call_ended", "voice_pending_delegation_ids" => []},
-                    _source, _opts},
+                    %{
+                      "event_type" => "voice.delegation_handoff",
+                      "voice_pending_delegation_ids" => ["del_accepted"]
+                    }, _source, _opts},
                    1_000
 
     ended = get_ended_conversation_message(fixture)
+    refute execute_late_voice_tool(fixture, ended, "del_accepted").error
     assert execute_late_voice_tool(fixture, ended, "del_forced").error
   end
 
@@ -1860,16 +1918,19 @@ defmodule SalixVoice.CallActorTest do
     on_exit(fn -> send(handoff, :release_handoff) end)
     assert :ok = Task.await(shutdown, 4_000)
     assert_receive {:DOWN, ^monitor, :process, ^call, :shutdown}, 1_000
-    refute_received {:ingress, ^group, _, %{"event_type" => "voice.call_ended"}, _, _}
+    refute_received {:ingress, ^group, _, %{"event_type" => "voice.delegation_handoff"}, _, _}
 
     send(handoff, :release_handoff)
 
     assert_receive {:ingress, ^group, _,
-                    %{"event_type" => "voice.call_ended", "voice_pending_delegation_ids" => []},
-                    _, _},
+                    %{
+                      "event_type" => "voice.delegation_handoff",
+                      "voice_pending_delegation_ids" => ["del_accepted"]
+                    }, _, _},
                    1_000
 
     ended = get_ended_conversation_message(fixture)
+    refute execute_late_voice_tool(fixture, ended, "del_accepted").error
     assert execute_late_voice_tool(fixture, ended, "del_forced").error
   end
 
@@ -1877,14 +1938,14 @@ defmodule SalixVoice.CallActorTest do
     parent = self()
 
     interceptor = fn
-      "voice.delegation", _proceed ->
+      "voice.delegation", proceed ->
         send(parent, {:shutdown_forwarding, self()})
 
         receive do
-          :release -> {:error, :router_unavailable}
+          :release -> proceed.()
         end
 
-      "voice.call_ended", proceed ->
+      "voice.delegation_handoff", proceed ->
         send(parent, {:shutdown_handoff, self()})
 
         receive do
@@ -1900,16 +1961,41 @@ defmodule SalixVoice.CallActorTest do
 
     %{call: call, model: model} = fixture
 
+    group = fixture.group
+
+    # 1. Accepted pending delegation
     assert {:ok, %{accepted: true}} =
              GenServer.call(call, {:context, %{context_id: 1, status: :pending}})
 
     assert {:ok, %{accepted: true}} =
              GenServer.call(
                call,
-               {:context, %{context_id: 1, status: :complete, text: "Screen", attachments: []}}
+               {:context, %{context_id: 1, status: :complete, text: "Screen 1", attachments: []}}
              )
 
-    emit(model, call, {:delegation, "del_forced", 100, "[ptt-context:1] Inspect screen"})
+    emit(model, call, {:delegation, "del_accepted", 50, "[ptt-context:1] First task"})
+    assert_receive {:shutdown_forwarding, first_task}, 1_000
+    first_monitor = Process.monitor(first_task)
+    send(first_task, :release)
+
+    assert_receive {:ingress, ^group, _,
+                    %{"event_type" => "voice.delegation", "message_id" => "del_accepted"}, _, _},
+                   1_000
+
+    assert_receive {:DOWN, ^first_monitor, :process, ^first_task, :normal}, 1_000
+    assert %{delegations: %{"del_accepted" => %{accepted: true}}} = :sys.get_state(call)
+
+    # 2. In-flight delegation whose Router ACK is still pending
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(call, {:context, %{context_id: 2, status: :pending}})
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(
+               call,
+               {:context, %{context_id: 2, status: :complete, text: "Screen 2", attachments: []}}
+             )
+
+    emit(model, call, {:delegation, "del_forced", 100, "[ptt-context:2] Second task"})
     assert_receive {:shutdown_forwarding, task}, 1_000
     on_exit(fn -> send(task, :release) end)
     fixture

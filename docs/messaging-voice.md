@@ -79,18 +79,18 @@ User-sent locations, prior answers, internal host location unchanged. Native but
 
 ## Voice calls
 
-`CallActor` owns Twilio/WebSocket/Electron calls. Manual greets; PTT skips profile/greeting; both emit `voice.call_started/ended` (reason/open delegations).
+`CallActor` owns Twilio/WebSocket/Electron. Manual greets/records `voice.call_started/ended`. PTT skips greeting/profile wait and lifecycle rows/cards; metering remains.
 Delegations settle/300 ms: caller text/last agent sentence via `ConversationServer -> ConversationActor`; Codex request/API offsets. `provider/chat_id/message_id=voice/call/delegation`; source `im_provider:voice:<connect>:<call>:<delegation>`.
 `im_api.voice.say`/`voice.note`/`voice.hang_up`: speak/quiet/end ≤10 s (optional farewell). Text ≤16000 B, chunks ≤1800 chars. IDs default to source; match Group/connect.
 Ended PTT `say`: original-chat text, canonical caller/connect/call/delegation; Actor dedupes call/delegation, rejects changed text. No Agent/provider wakeup/redial; other ended ops: `voice_call_ended`, no retry.
-PTT closes media immediately; forwarding/handoff share ≤10 s; mailbox responsive. Only ACKed pending IDs enter final context; unknown work is never cancelled/replayed. Enqueue refusal is final. Force/terminate flush the same handoff within the existing 2 s force budget; timeout logs unconfirmed, not accepted. Pending: quiet/20 s, spoken apology/90 s. Caller: phone/WebSocket key creator/Electron user.
+PTT media closes now; forwarding/handoff ≤10 s, mailbox responsive. ACKed pending IDs → internal `voice.delegation_handoff`; no IDs, no terminal input. Never cancel/replay unknown work. Refusal is final. Force/terminate: existing 2 s, timeout unconfirmed. Pending: quiet/20 s, apology/90 s. Caller: phone/WebSocket key creator/Electron user.
 
 ### Electron subscription calls
 
-Native-only call UI. WebRTC audio: main/`push-to-talk-voice` (remote audio live; macOS permission); deny other windows/frames/camera.
+WebRTC: main/hidden `push-to-talk-voice`; macOS audio permission. Deny other windows/frames/camera.
 `/v1/comma/workspaces/:workspace_id/voice/calls`: `POST {sdp,mode?}` → `{sdp,call_id}`, `GET /:call_id/events?after=N`, `DELETE /:call_id`.
 `POST /:call_id/context {context_id,status,text?,attachments?}`: Workspace/caller scope, `no-store`; increasing IDs/call; `pending/complete/failed/cancelled`. Quiet `session.context.append`; text + one-shot VFS `{path,name,mime}` via `[ptt-context:N]`. Pending ≤150 s. Cancel/failure/new gesture fail unqueued work/settle; never substitute.
-`push_to_talk`: hidden peer, mic muted initially; mic needs connection/control ACK, not capture/upload. Key clears caption; release mutes mic. Service owns barge-in on recognized speech; old tail may continue until recognition. Fresh audio never waits captions. Captions/turn counters/RMS are not audio identity. Service ends turns (may answer while held). Warm 90 s after reply; pending retains; cap 10 min. Late → `ready`/click for chat. One chat lease/account; no delegation polling.
+PTT: hidden shortcut turns. Press clears caption/captures mic/mutes remote; release mutes mic/restores remote, no caption gate. WebAudio ≤120 s; send in order after connection/ACK/Main's ≥300 ms. Short tap: no input; valid release retains input. Cancel/failure/new context/account drops unsent input. Listening from press, never Connecting; capture before overlay. Service owns VAD/barge-in; output consumed while held: caption-only, no replay/invented commit/VAD. Warm 90 s; pending retains; cap 10 min. Late → `ready`/click chat. One lease/account; no delegation poll.
 Admission: voice enabled, tenant Codex AccountPool, no API key. ChatGPT `codex/realtime/calls?intent=quicksilver&architecture=avas`, `gpt-live-1-codex`; control `wss://api.openai.com/v1/live/<rtc_id>`. Approved Codex Desktop headers. One 401 renew/retry; plan limits refuse. Never read native Codex logins/expose credentials.
 Context ≤500 UTF-8 bytes/chunk; finals omit `channel`, others commentary. Notes/screen stay quiet; captions merge/turn without final repeats.
 Serial poll 500 ms/caller: ≤200 events/512 KiB queue, explicit gaps. No reads/60 s ends call; ended events expire/60 s even if read. Manual: ≤200 post-hangup turns, no durable transcript; exit closes media/call.

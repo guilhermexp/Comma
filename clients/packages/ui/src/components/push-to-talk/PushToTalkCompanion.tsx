@@ -21,7 +21,6 @@ export type PushToTalkErrorCode =
   | "call_failed";
 
 export type PushToTalkCompanionState =
-  | { kind: "connecting" }
   | { kind: "listening" }
   | { kind: "thinking" }
   | { kind: "speaking" }
@@ -168,7 +167,7 @@ export const PushToTalkCompanion = ({
   if (!state) return null;
   const flipX = anchor.x > window.innerWidth - BALLOON_ROOM.x;
   const flipY = anchor.y > window.innerHeight - BALLOON_ROOM.y;
-  const waiting = state.kind === "connecting" || state.kind === "thinking";
+  const waiting = state.kind === "thinking";
 
   return (
     <div
@@ -239,7 +238,6 @@ export const PushToTalkCompanion = ({
             <output className="sr-only">
               {
                 {
-                  connecting: m.push_to_talk_connecting(),
                   listening: m.push_to_talk_listening(),
                   speaking: m.push_to_talk_speaking(),
                   thinking: m.push_to_talk_thinking(),

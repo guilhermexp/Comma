@@ -499,9 +499,9 @@ defmodule SalixVoice.Model.CodexTest do
     send(server, {:push, %{"type" => "session.started", "session" => %{"id" => "rtc_fixture"}}})
     refute_received {:profile_decide, _, _, _}
 
-    # Emits voice.call_started to the Router
-    assert_receive {:ingress, ^group, _content, %{"event_type" => "voice.call_started"}, _, _},
-                   2_000
+    # Push-to-talk does not emit voice.call_started to the Router
+    refute_receive {:ingress, ^group, _content, %{"event_type" => "voice.call_started"}, _, _},
+                   100
 
     # Context can be ingested during the call
     context_text = "Foreground app: Safari. Cursor: 100, 200."
@@ -664,13 +664,13 @@ defmodule SalixVoice.Model.CodexTest do
                     }},
                    2_000
 
-    # End call emits voice.call_ended
+    # End call emits voice.delegation_handoff for pending delegation
     assert {:ok, _} = Electron.hang_up(answer.call_id, scope)
     assert_receive {:sent, %{"type" => "session.close"}}, 2_000
     send(server, {:push, %{"type" => "session.closed"}})
 
-    assert_receive {:ingress, ^group, _content, %{"event_type" => "voice.call_ended"} = ended, _,
-                    _},
+    assert_receive {:ingress, ^group, _content,
+                    %{"event_type" => "voice.delegation_handoff"} = ended, _, _},
                    2_000
 
     assert ended["voice_mode"] == "push_to_talk"
@@ -731,8 +731,8 @@ defmodule SalixVoice.Model.CodexTest do
 
     send(server, {:push, %{"type" => "session.started", "session" => %{"id" => "rtc_reg"}}})
 
-    assert_receive {:ingress, ^group, _content, %{"event_type" => "voice.call_started"}, _, _},
-                   2_000
+    refute_receive {:ingress, ^group, _content, %{"event_type" => "voice.call_started"}, _, _},
+                   100
 
     [actor] = :pg.get_members(SalixVoice.PG, {:call, answer.call_id})
 
@@ -1464,8 +1464,8 @@ defmodule SalixVoice.Model.CodexTest do
 
     send(server, {:push, %{"type" => "session.started", "session" => %{"id" => "rtc_reg"}}})
 
-    assert_receive {:ingress, ^group, _content, %{"event_type" => "voice.call_started"}, _, _},
-                   2_000
+    refute_receive {:ingress, ^group, _content, %{"event_type" => "voice.call_started"}, _, _},
+                   100
 
     [actor] = :pg.get_members(SalixVoice.PG, {:call, answer.call_id})
 

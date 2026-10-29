@@ -7699,7 +7699,6 @@ export const pushToTalkErrorCodeSchema = z.enum([
 export const pushToTalkStrokeColor = "#2F80FF";
 export const pushToTalkCompanionStateSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("listening") }).strict(),
-  z.object({ kind: z.literal("connecting") }).strict(),
   z.object({ kind: z.literal("thinking") }).strict(),
   z.object({ kind: z.literal("speaking") }).strict(),
   z.object({ kind: z.literal("ready") }).strict(),
@@ -7867,6 +7866,12 @@ export const pushToTalkVoiceSessionSchema = z
     /** Monotonic within a generation, including mute changes. */
     revision: z.number().int().nonnegative(),
     listening: z.boolean(),
+    /** Current gesture context; null revokes buffered input. */
+    contextId: z.number().int().positive().nullable(),
+    /** Main has accepted the minimum hold duration for this gesture. */
+    qualified: z.boolean(),
+    /** Sending input requires the ACK of this context, independently of capture. */
+    admitted: z.boolean(),
     active: z.boolean(),
   })
   .strict();
@@ -7876,6 +7881,9 @@ export const idlePushToTalkVoiceSession: PushToTalkVoiceSession = {
   generation: 0,
   revision: 0,
   listening: false,
+  contextId: null,
+  qualified: false,
+  admitted: false,
 };
 export const pushToTalkVoiceReportSchema = z.union([
   z.enum(["connected", "audible", "silent", "microphone_denied", "failed"]),

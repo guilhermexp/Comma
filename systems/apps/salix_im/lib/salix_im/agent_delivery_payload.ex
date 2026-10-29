@@ -524,8 +524,7 @@ defmodule SalixIM.AgentDeliveryPayload do
     do: ProviderRouterGuidance.feishu(metadata)
 
   defp provider_reply_help_hint("voice", %{
-         "event_type" => "voice.call_ended",
-         "voice_mode" => "push_to_talk"
+         "event_type" => "voice.delegation_handoff"
        }),
        do:
          "The push-to-talk call has ended; do not redial or claim that the caller can hear you. " <>

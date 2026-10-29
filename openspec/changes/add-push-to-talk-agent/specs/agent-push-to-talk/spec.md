@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Permitir uma chamada GPT Live pelo atalho global em qualquer app do Mac, sem abrir janela: o modelo de voz escuta enquanto o gesto está ativo, responde e delega ao Router o trabalho do agente, com contexto da tela, sessão de réplica, companheiro, notch, permissões e ajustes.
+Permitir turnos de fala ao agente pelo atalho global em qualquer app do Mac, sem abrir janela nem parecer uma ligação. O GPT Live continua como transporte/modelo de voz e delega ao Router o trabalho do agente, com contexto da tela, sessão de réplica, companheiro, notch, permissões e ajustes.
 
 ## ADDED Requirements
 
@@ -18,7 +18,7 @@ A função "Falar com o agente" MUST existir só no app desktop para macOS e MUS
 #### Scenario: Janela principal fechada
 
 - **WHEN** a função está ligada, a janela principal está fechada e o usuário segura o atalho em outro app
-- **THEN** a chamada começa sem abrir janela, o notch mostra "Conectando" até o microfone conectar e depois "Ouvindo" com o companheiro
+- **THEN** a sessão começa oculta, sem cartão/evento de chamada na conversa; notch e companheiro mostram "Ouvindo" desde o aperto, nunca "Conectando", após a barreira de captura da tela
 
 #### Scenario: Sidebar desligada
 
@@ -27,12 +27,12 @@ A função "Falar com o agente" MUST existir só no app desktop para macOS e MUS
 
 ### Requirement: Atalho de segurar para falar
 
-O atalho MUST ser escolhido pelo usuário entre uma combinação só de modificadores (ao menos dois) ou uma tecla comum com ao menos um modificador; o padrão MUST ser `⌃⌥`. Ele MUST ser distinto do atalho da sidebar e do atalho de abrir o Comma; os Ajustes MUST recusar um atalho que conflite com eles, inclusive ao religar a função. Apertar MUST iniciar ou reutilizar a sessão e habilitar a entrada de áudio quando conectada; soltar qualquer tecla da combinação MUST mutar o microfone imediatamente.
+O atalho MUST aceitar só modificadores (ao menos dois) ou tecla com modificador; padrão `⌃⌥`. MUST ser distinto dos atalhos da sidebar e de abrir Comma; Ajustes MUST recusar conflitos, inclusive ao religar. Apertar MUST iniciar/reutilizar a sessão, silenciar a reprodução remota e captar localmente. Soltar qualquer tecla da combinação MUST mutar o microfone e restaurar a reprodução imediatamente, sem esperar legenda.
 
 #### Scenario: Atalho padrão
 
 - **WHEN** o usuário segura `⌃⌥` por 4 segundos falando e solta
-- **THEN** o microfone transmite somente enquanto o gesto está ativo e a faixa conectada; soltar muta sem esperar o print, e o serviço decide quando responder
+- **THEN** a fala é captada desde o aperto; o início anterior à conexão é enviado depois dela, com contexto admitido e gesto confirmado; soltar muta o microfone e restaura a reprodução sem esperar o print, e o serviço decide o fim do turno
 
 #### Scenario: Gravar só modificadores nos Ajustes
 
@@ -85,12 +85,12 @@ Um atalho só de modificadores MUST depender da permissão de Monitoramento de E
 
 ### Requirement: Captação durante o gesto
 
-O app MUST usar microfone real na janela oculta, mutado por padrão, e desmutar só com gesto ativo, mídia conectada e controle de contexto admitido. Toque <0,3 s MUST mutar, descartar contexto e fechar uma sessão nova sem turno. A captação MUST parar em 120 s. A soltura/limite MUST mutar sem esperar captura, upload ou ACK. ACK atrasado MUST NOT desmutar. Admissão MUST ocorrer em paralelo à captura, sem esperar captura/upload.
+O microfone real da janela oculta MUST captar desde o aperto e mutar na soltura. O buffer local MUST preservar a fala anterior à conexão/ACK; o envio MUST aguardar ambos e gesto ≥0,3 s, em ordem antes da fala ao vivo. Gesto menor MUST descartar tudo sem envio. Captação/buffer MUST ter limite de 120 s. Soltura MUST NOT esperar captura/upload/ACK; ACK tardio MUST NOT reabrir captação. Admissão e captura MUST ocorrer em paralelo.
 
 #### Scenario: Toque acidental
 
 - **WHEN** o usuário aperta e solta o atalho em 0,2 s e a sessão nova ainda não teve turno
-- **THEN** o microfone é mutado, a chamada é encerrada e nenhum contexto/print é enviado
+- **THEN** o microfone é mutado, todo o buffer é descartado sem enviar áudio ao serviço, a sessão nova é encerrada e nenhum contexto/print é enviado
 
 #### Scenario: Limite de captação
 
@@ -100,7 +100,12 @@ O app MUST usar microfone real na janela oculta, mutado por padrão, e desmutar 
 #### Scenario: Soltura durante a conexão
 
 - **WHEN** o usuário solta o atalho antes de o áudio conectar
-- **THEN** a conexão tardia não desmuta o microfone
+- **THEN** a conexão tardia não desmuta o microfone; se o gesto durou ao menos 0,3 s e não foi cancelado, envia somente a fala já captada, após o ACK do contexto
+
+#### Scenario: Entrada invalidada
+
+- **WHEN** cancelamento, falha, troca de conta ou contexto novo invalida a entrada retida
+- **THEN** o buffer e as fontes de entrada ainda não enviadas são descartados, sem contaminar o próximo gesto
 
 ### Requirement: Um gesto por vez e cancelamento
 
@@ -163,7 +168,7 @@ Enquanto o atalho estiver pressionado, o usuário MUST poder arrastar o mouse pa
 #### Scenario: Serviço responde antes da soltura
 
 - **WHEN** o VAD inicia uma resposta enquanto o usuário ainda mantém o atalho pressionado
-- **THEN** o estado pode mostrar fala, mas o desenho no monitor capturado continua disponível até a soltura
+- **THEN** a resposta fica inaudível enquanto o gesto está ativo; a legenda pode chegar e o desenho no monitor capturado continua disponível até a soltura
 
 #### Scenario: Traço some
 
@@ -196,12 +201,23 @@ O print MUST depender da permissão de Gravação de Tela do próprio Comma. Sem
 
 ### Requirement: Conexão da chamada GPT Live
 
-O aperto MUST abrir ou reutilizar uma chamada GPT Live do Workspace Chat nativo da Sidebar, com a mesma voz configurada para "Call Comma", sem saudação ou espera de perfil. A delegação ao Router MUST estar ativa e o início/fim MUST ser registrados como na chamada manual. O PTT MUST NOT depender de transcrição de reuniões nem gravar WAV. A mídia só flui após conexão e admissão do contexto; o app MUST distinguir "Conectando" de "Ouvindo".
+O aperto MUST abrir/reutilizar GPT Live oculto no Workspace Chat da Sidebar, com a voz do Call Comma, sem saudação/perfil bloqueante e com Router ativo. PTT MUST NOT registrar início/fim como evento/cartão de chamada na conversa; manual MUST continuar registrando. Uso/minutos, ingresso, handoff e resposta tardia MUST ser preservados. PTT MUST NOT depender de transcrição de reuniões nem gravar WAV. A UI MUST NOT mostrar "Conectando".
 
 #### Scenario: Primeira conexão
 
 - **WHEN** o usuário aperta o atalho sem sessão quente
-- **THEN** a sinalização começa no aperto, em paralelo à captura, sem saudação ou espera de perfil; o notch muda de "Conectando" para "Ouvindo" quando o áudio conecta e o controle admite o contexto
+- **THEN** sinalização, captação local, admissão e captura começam em paralelo, sem saudação ou espera de perfil; notch/companheiro mostram "Ouvindo", e a fala retida é enviada após conexão/admissão e confirmação de 0,3 s
+
+#### Scenario: Encerrar sem trabalho pendente aceito
+
+- **WHEN** a sessão PTT termina sem delegações pendentes aceitas pelo Router
+- **THEN** não registra evento de início ou fim de chamada na conversa nem cria ingresso terminal
+
+#### Scenario: Handoff de trabalho pendente sem cartão de chamada
+
+- **WHEN** a sessão PTT termina com delegações pendentes com ACK conhecido
+- **THEN** o ingresso durável canônico preserva os IDs em `voice.delegation_handoff`, interno e invisível na timeline humana, sem `voice.call_started` ou `voice.call_ended` PTT
+- **AND** a resposta tardia segue autorizada e idempotente na conversa; a chamada manual conserva seus eventos de início/fim
 
 #### Scenario: Reunião não configurada
 
@@ -220,17 +236,22 @@ O aperto MUST abrir ou reutilizar uma chamada GPT Live do Workspace Chat nativo 
 
 ### Requirement: Fim de turno pelo serviço
 
-Soltar MUST apenas mutar a entrada de áudio. O serviço MUST decidir o fim do turno; o app MUST NOT representar a soltura como um commit de áudio não suportado. Uma pausa longa com a tecla presa pode produzir resposta antecipada; esse risco é aceito.
+Soltar MUST mutar a captação e restaurar a reprodução remota. O serviço MUST decidir o fim do turno pelo silêncio; o app MUST NOT enviar `input_audio_buffer.commit`, `turn_detection` ou outro controle não suportado. Uma resposta iniciada com a tecla presa MUST permanecer inaudível no renderer. Fala seguinte pode interrompê-la pelo barge-in do serviço. Áudio consumido enquanto o gesto estava ativo MUST NOT ser guardado para replay na soltura.
 
 #### Scenario: Soltura
 
 - **WHEN** o usuário solta o atalho após falar
-- **THEN** o microfone é mutado imediatamente e a resposta aguarda a decisão do serviço, não o fim do upload
+- **THEN** o microfone é mutado imediatamente e a reprodução remota é restaurada sem esperar legenda; a decisão de responder pertence ao serviço, não ao fim do upload
 
 #### Scenario: Pausa com atalho preso
 
 - **WHEN** o usuário faz uma pausa longa sem soltar o atalho
-- **THEN** o modelo pode responder antes da soltura, sem promessa de controle manual do VAD
+- **THEN** o modelo pode iniciar uma resposta, mas ela fica inaudível enquanto a tecla está presa; se o usuário voltar a falar, o serviço faz barge-in
+
+#### Scenario: Resposta consumida durante o gesto
+
+- **WHEN** uma resposta começa e termina com a tecla presa e o usuário solta sem voltar a falar
+- **THEN** ela fica somente na legenda, sem replay de áudio na soltura
 
 ### Requirement: Contexto da chamada e delegação ao agente
 
@@ -316,7 +337,7 @@ Conectar, enviar contexto e delegar MUST NOT usar ou apagar o rascunho da sideba
 
 ### Requirement: Resposta por voz e legenda
 
-O modelo GPT Live MUST responder por voz na própria chamada e MUST poder receber a resposta delegada do Router. O balão MUST acompanhar as legendas frase a frase. O áudio remoto recebido pelo peer MUST permanecer ao vivo e não ser bloqueado ou silenciado localmente à espera de legendas. Não existe ajuste para desligar apenas a voz da resposta nem fallback para voz do sistema; não é uma leitura literal de mensagem do chat.
+O modelo GPT Live MUST responder por voz na sessão e MUST poder receber a resposta delegada do Router. O balão MUST acompanhar as legendas frase a frase. O renderer MUST silenciar a reprodução enquanto o gesto está ativo e restaurá-la na soltura, sem esperar legendas. Fora do gesto, áudio recebido MUST tocar sem bloqueio por captions. Não existe ajuste para desligar apenas a voz da resposta nem fallback para voz do sistema; não é leitura literal de mensagem do chat.
 
 #### Scenario: Resposta direta
 
@@ -330,13 +351,13 @@ O modelo GPT Live MUST responder por voz na própria chamada e MUST poder recebe
 
 #### Scenario: Áudio novo não aguarda legenda
 
-- **WHEN** o serviço transmite áudio novo de resposta com o atalho pressionado ou recém-solto antes da chegada da legenda
-- **THEN** o áudio recebido é reproduzido imediatamente pelo peer sem bloqueio local ou espera de legenda
+- **WHEN** o serviço transmite áudio de resposta depois da soltura, antes da chegada da legenda
+- **THEN** o peer reproduz imediatamente, sem esperar legenda
 
 #### Scenario: Fala contínua durante novo gesto
 
-- **WHEN** o usuário aperta e solta novamente enquanto a mídia continua audível, sem evento de silêncio
-- **THEN** o gesto não inventa silêncio; uma legenda final não oculta o companheiro nem inicia a inatividade até a mídia ficar silenciosa
+- **WHEN** o usuário aperta e solta novamente durante uma resposta
+- **THEN** o aperto silencia a reprodução imediatamente e a soltura restaura a mídia corrente; não há replay da parte consumida enquanto mutada nem espera por caption
 
 
 #### Scenario: Abrir a conversa pelo balão
@@ -423,23 +444,23 @@ Respostas a mensagens digitadas que não pertencem à delegação da chamada MUS
 - **WHEN** o usuário desliga PTT com delegação pendente e a resposta chega na mesma conta
 - **THEN** o app mostra "Resposta pronta" com balão, sem reativar o atalho nem a chamada
 
-### Requirement: Interrupção de resposta pelo serviço e nova captação
+### Requirement: Reprodução controlada pelo gesto e nova captação
 
-Apertar o atalho durante uma resposta MUST limpar a legenda na UI e habilitar o microfone na mesma sessão após conexão e admissão do contexto. O serviço GPT Live MUST controlar a interrupção ao reconhecer fala, como no Call Comma. O aperto sem fala não garante cancelamento local definitivo; a cauda anterior MAY continuar até o reconhecimento. Áudio novo MUST NOT esperar legendas nem soltura.
+Apertar durante uma resposta MUST limpar a legenda anterior na UI, silenciar imediatamente a reprodução remota no renderer e abrir o microfone para captação local na mesma sessão. O envio da entrada MUST respeitar conexão, admissão e mínimo de 0,3 s. Soltar MUST mutar o microfone e restaurar a reprodução sem depender de legendas. O serviço continua dono do barge-in ao reconhecer fala; o cliente MUST NOT inventar cancelamento remoto.
 
-#### Scenario: Interrupção pelo serviço com fala reconhecida
+#### Scenario: Novo aperto durante resposta
 
-- **WHEN** o modelo está falando e o usuário aperta o atalho e volta a falar
-- **THEN** a legenda anterior fecha imediatamente na UI, o microfone é habilitado na mesma sessão após conexão/admissão, e o serviço interrompe a saída ao reconhecer a nova fala
+- **WHEN** o modelo está falando e o usuário aperta o atalho
+- **THEN** a reprodução é silenciada imediatamente, a legenda anterior fecha e a captação começa, mesmo sem nova fala reconhecida pelo serviço
 
-#### Scenario: Aperto sem fala reconhecida
+#### Scenario: Soltura sem legenda
 
-- **WHEN** o usuário aperta o atalho durante uma resposta, mas o serviço ainda não reconheceu nova fala
-- **THEN** a legenda anterior fecha na UI, mas o app não promete corte definitivo da saída; a cauda pode continuar até o reconhecimento
+- **WHEN** o usuário solta e nenhuma legenda nova chegou
+- **THEN** o microfone fica mutado e a reprodução remota é restaurada imediatamente; legenda não autoriza nem bloqueia áudio
 
 ### Requirement: Cursor companheiro
 
-Durante o turno, o app MUST mostrar o companheiro junto ao cursor: conexão, nível do microfone enquanto ouve, espera enquanto o modelo/Router pensa e legenda enquanto fala. Após a resposta, ele MUST sumir; a sessão quente fica invisível. Resposta tardia MUST mostrar o aviso "Resposta pronta" e seu balão. O companheiro e o traço MUST NOT tirar o foco nem bloquear cliques fora do gesto ou do balão.
+O companheiro MUST mostrar "Ouvindo" desde o aperto com nível real, espera pelo modelo/Router e legenda da resposta; MUST NOT mostrar "Conectando". A barreira de captura antes da sobreposição MUST permanecer. Após a resposta, MUST sumir; sessão quente fica invisível. Resposta tardia MUST mostrar "Resposta pronta" e balão. Companheiro/traço MUST NOT tirar foco nem bloquear cliques fora do gesto/balão.
 
 #### Scenario: Ciclo normal
 
@@ -453,12 +474,12 @@ Durante o turno, o app MUST mostrar o companheiro junto ao cursor: conexão, ní
 
 ### Requirement: Estado no notch
 
-Com o notch ligado, o app MUST mostrar "Conectando" até a faixa conectar, "Ouvindo" com nível, "Pensando" após soltar e durante delegação, "Falando" com a resposta e "Resposta pronta" para resposta tardia. Erros MUST aparecer com a ação correspondente. Em `idle`, o notch MUST restaurar a cena anterior mesmo com a sessão quente. Com o notch desligado, o companheiro MUST mostrar os avisos.
+Com o notch ligado, o app MUST mostrar "Ouvindo" desde o aperto com nível, nunca "Conectando"; depois "Pensando" após soltar e durante delegação, "Falando" com a resposta e "Resposta pronta" para resposta tardia. Erros MUST aparecer com a ação correspondente. Em `idle`, o notch MUST restaurar a cena anterior mesmo com sessão quente. Com o notch desligado, o companheiro MUST mostrar os avisos.
 
 #### Scenario: Estados em sequência
 
 - **WHEN** o usuário segura, fala, solta e o agente responde
-- **THEN** o notch mostra "Conectando", se necessário, "Ouvindo", "Pensando", "Falando" e volta ao normal com a sessão quente
+- **THEN** o notch mostra "Ouvindo", "Pensando", "Falando" e volta ao normal com a sessão quente, sem estado visível de conexão
 
 #### Scenario: Notch desligado
 

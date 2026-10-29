@@ -239,7 +239,7 @@ defmodule SalixIM.Provider.Voice do
         %{"event_type" => "voice.delegation", "message_id" => id} ->
           [id]
 
-        %{"event_type" => "voice.call_ended", "voice_pending_delegation_ids" => ids}
+        %{"event_type" => "voice.delegation_handoff", "voice_pending_delegation_ids" => ids}
         when is_list(ids) ->
           ids
 

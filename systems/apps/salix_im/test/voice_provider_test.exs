@@ -135,7 +135,7 @@ defmodule SalixIM.VoiceProviderTest do
       "connect_id" => source.connect["connect_id"],
       "chat_id" => source.call_id,
       "chat_type" => "private",
-      "event_type" => "voice.call_ended",
+      "event_type" => "voice.delegation_handoff",
       "event_id" => source.call_id,
       "from_user_id" => source.caller_id,
       "source_actor_type" => "user"
@@ -144,7 +144,7 @@ defmodule SalixIM.VoiceProviderTest do
     assert {:ok, :queued} =
              ProviderConnects.enqueue_group_router_im_provider_message(
                ctx.group_id,
-               "The voice call ended with accepted work still pending.",
+               "Shortcut speech turn ended with accepted requests still pending.",
                metadata,
                source_id,
                session_name: "Voice call"
@@ -157,7 +157,8 @@ defmodule SalixIM.VoiceProviderTest do
         limit: 2
       )
 
-    ended = Enum.find(messages, &(get_in(&1, ["metadata", "event_type"]) == "voice.call_ended"))
+    ended =
+      Enum.find(messages, &(get_in(&1, ["metadata", "event_type"]) == "voice.delegation_handoff"))
 
     {:ok, binding} =
       SalixIM.ConversationSource.binding(ctx.router_id, %{
