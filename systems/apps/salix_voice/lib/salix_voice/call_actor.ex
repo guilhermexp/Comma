@@ -1202,7 +1202,7 @@ defmodule SalixVoice.CallActor do
 
     guidance =
       if state.mode == :push_to_talk do
-        "The caller can no longer hear you. Pending delegation IDs: " <>
+        "The caller can no longer hear you. Known accepted pending delegation IDs at shutdown: " <>
           Jason.encode!(pending_ids) <>
           ". Finish accepted work in the Comma conversation; no new call is needed."
       else

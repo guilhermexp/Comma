@@ -135,6 +135,10 @@ A autorização tardia usa a origem fornecida pelo runtime, nunca metadados pass
 
 A resposta final tardia usa a identidade de request já suportada pela conversa, derivada de chamada e delegação. Repetir o mesmo texto pela origem original ou pelo evento final retorna a mesma mensagem; texto conflitante é recusado pelo ConversationActor. Não há outro recibo ou dono de deduplicação.
 
+A confirmação de fala ao vivo pertence ao CallActor e não cria recibo de append na conversa. A identidade acima deduplica a mensagem final tardia; não estabelece um limite global de `say` entre entrega ao vivo e entrega após o encerramento. Uma resposta explicitamente enviada depois do fim pela origem canônica da delegação continua no contrato de preservação.
+
+O evento final projeta somente os ACKs conhecidos até o fim da espera limitada, não um inventário de aceitações futuras. Sem ACK no prazo, o resultado do forwarding é desconhecido: não autorizar esse ID pela origem final nem apagar, cancelar ou repetir o trabalho. Se o ingresso real aceitar depois, sua origem canônica original permite responder na conversa. Isso não exige outro recibo, snapshot ou dono de completude.
+
 Reutilizar o poll serial de eventos da ligação (500 ms, até 200 eventos/512 KiB por página), apenas com a chamada ativa. A legenda acompanha a fala por frases; não prova leitura literal nem exige comparação de palavras. A observação da continuação tardia deve usar a identidade da delegação e a entrega existente da conversa, sem varredura de histórico ou poll por anexo.
 
 ### D17. Print associado ao mesmo pedido delegado
@@ -163,17 +167,24 @@ O único localizador é o `path` devolvido por `uploadGroupFile`, com `name` e `
 
 O microfone não espera captura/upload. Antes de habilitar a mídia de um novo gesto, o transporte confirma somente a admissão do seu controle `pending`; soltura sempre muta imediatamente. Isso impede falar contra o contexto de um gesto anterior. Captura e admissão ocorrem em paralelo, com fence da conta original.
 
+A admissão tem prazo de 30 s, inclusive antes de `call.ready`; controles de falha/cancelamento também são limitados a 30 s. Rejeição, timeout ou falha de codificação invalida o gesto e informa o erro imediatamente, sem aguardar captura, soltura ou confirmação de `failed`. O controlador decide a falha; o transporte possui o aborto e o prazo.
+
 O CallActor manda o texto como contexto silencioso (`:thinking` → `session.context.append`), nunca comentário para falar. O contexto admitido instrui o modelo a começar cada pedido delegado com `[ptt-context:N]`. O evento nativo não fornece identidade de gesto: por isso o CallActor exige, extrai e remove esse marcador, vincula o ID à delegação quando ela chega e não procura “o último print” ao despachar. Marcador ausente, inválido ou antigo causa erro explícito, sem executar silenciosamente um pedido de tela sem seu contexto.
 
-Se a delegação chegar antes do upload, fica retida para aquele ID. `complete` libera os anexos uma única vez por `enqueue_group_router_im_provider_message`, no formato VFS do Router, com resolução do blob existente. Outra delegação não reutiliza as imagens. Falha, cancelamento ou novo gesto encerra a espera anterior sem transferir anexos; trabalho já admitido pelo Router permanece aceito. Troca de conta e fim da chamada invalidam todas as continuações locais.
+Se a delegação chegar antes do upload, fica retida para aquele ID. No dispatch correspondente, o texto capturado também entra no pedido do Router, mesmo sem imagens. `complete` libera os anexos uma única vez por `enqueue_group_router_im_provider_message`, no formato VFS, com resolução do blob existente. Outra delegação não reutiliza as imagens.
+
+O enqueue no Router é a fronteira de aceitação. Falha, cancelamento ou novo gesto invalida todo pedido ainda não enfileirado, inclusive contexto completo no settle de 300 ms; nunca envia esse pedido com anexos vazios por perda do contexto. Trabalho já enfileirado permanece aceito. Troca de conta e fim da chamada invalidam todas as continuações locais.
 
 A espera do contexto tem teto de 150 s desde `pending` (120 s de gesto + 30 s de margem). Terminadas a captura e a admissão, o transporte limita upload/envio a 30 s; esse timer não prolonga o prazo global do contexto.
 
-Prazo expirado, falha de captura/upload e cancelamento produzem falha visível e término da espera; nada de retenção indefinida ou fallback silencioso. Um timer antigo não afeta contexto novo.
+Prazo expirado e falha de captura/upload produzem falha visível e término da espera; nada de retenção indefinida ou fallback silencioso. Cancelamento termina a espera como cancelada e descarta o contexto, sem transformar a rejeição técnica da admissão cancelada em novo erro de envio. Um timer antigo não afeta contexto novo.
 
 Com “Enviar print” desligado, completar só com texto e anexos vazios, sem captura, permissão ou upload. Com print solicitado e captura negada/falha, informar a falha; não fingir entrega nem completar silenciosamente como texto puro. Contexto não usa o rascunho, não abre janela e não muda foco. O modelo do Router precisa aceitar imagem (R1/R15).
 
 Até duas operações de captura são reservadas antes de começar; canceladas continuam ocupando a reserva até terminarem. Não criar fila ilimitada. Se não há reserva, a voz continua sem esperar captura, mas o contexto falha visivelmente e não reutiliza print anterior. A barreira de apresentação espera somente capturas, não uploads, e restaura a legenda retida.
+
+**Decisão do dono após a terceira rodada de revisão:** o dono escolheu explicitamente “Consolidar transições existentes” no `ask` desta sessão e confirmou a autorização. Reutilizar uma transição terminal por dono em cancelamento, falha e encerramento. Aceitação e handoff dependem do ACK real do enqueue no Router, nunca do flag anterior ao despacho. Requisições PTT, inclusive poll de eventos, têm prazo e aborto vinculados à chamada; não criar política global nova na API. Preservar o contrato externo e as garantias, sem nova entidade, fila durável, snapshots paralelos ou fallback. Primeiro reproduzir causalmente os três limites (admissão cancelada quente, HTTP de eventos travado e encerramento antes/durante forwarding); depois consolidar autoridade/transições, repetir provas, rebuild assinado e par de revisão completo. A alternativa de redesenhar fases internas não foi escolhida.
+
 
 ### D18. Remover o fluxo de transcrição e leitura
 

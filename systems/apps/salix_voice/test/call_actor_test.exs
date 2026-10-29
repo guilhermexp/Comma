@@ -1244,10 +1244,11 @@ defmodule SalixVoice.CallActorTest do
     # Media close signal emitted immediately to caller socket
     assert_receive {:voice_call, :end, :caller_hangup}, 1_000
 
+    ref = Process.monitor(call)
+
     # Release Router enqueue with failure
     send(task_pid, :release_with_failure)
 
-    ref = Process.monitor(call)
     assert_receive {:DOWN, ^ref, :process, ^call, :normal}, 2_000
 
     assert_receive {:ingress, ^group, ended_content,
@@ -1529,5 +1530,245 @@ defmodule SalixVoice.CallActorTest do
 
     ref = Process.monitor(call)
     assert_receive {:DOWN, ^ref, :process, ^call, :normal}, 2_000
+  end
+
+  @tag :ptt_causal_regressions
+  @tag timeout: 15_000
+  test "push_to_talk ingress held beyond ending budget terminates boundedly and preserves post-budget original-context say while call_ended denies unconfirmed ID" do
+    parent = self()
+
+    interceptor = fn
+      "voice.delegation", proceed ->
+        send(parent, {:delegation_in_flight, self()})
+
+        receive do
+          :release_delegation -> proceed.()
+        end
+
+      _other, proceed ->
+        proceed.()
+    end
+
+    # Short enqueue_wait_ms so ending timeout fires promptly
+    fixture =
+      setup_causal_ptt_fixture(%{settle_ms: 10, enqueue_wait_ms: 100, interceptor: interceptor})
+
+    call = fixture.call
+    model = fixture.model
+    group = fixture.group
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(call, {:context, %{context_id: 1, status: :pending}})
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(
+               call,
+               {:context,
+                %{
+                  context_id: 1,
+                  status: :complete,
+                  text: "Active screen content",
+                  attachments: []
+                }}
+             )
+
+    emit(model, call, {:delegation, "del_post_budget", 100, "[ptt-context:1] Post budget task"})
+    assert_receive {:delegation_in_flight, task_pid}, 1_000
+
+    # Caller hangs up while delegation enqueue is in flight
+    send(call, {:voice_carrier, :hangup, :normal})
+    assert_receive {:voice_call, :end, :caller_hangup}, 1_000
+
+    # CallActor terminates within bounded budget without waiting indefinitely for ingress task
+    ref = Process.monitor(call)
+    assert_receive {:DOWN, ^ref, :process, ^call, :normal}, 2_000
+
+    # Final handoff emitted: omitted from voice_pending_delegation_ids because not ACKed before shutdown
+    assert_receive {:ingress, ^group, ended_content,
+                    %{"event_type" => "voice.call_ended"} = ended_meta, _, _},
+                   2_000
+
+    pending_ids = Map.get(ended_meta, "voice_pending_delegation_ids", [])
+    refute "del_post_budget" in pending_ids
+    refute String.contains?(ended_content, "del_post_budget")
+
+    # Canonical final context correctly denies omitted/unconfirmed ID
+    ended_msg = get_ended_conversation_message(fixture)
+    assert ended_msg
+    denied_result = execute_late_voice_tool(fixture, ended_msg, "del_post_budget")
+    assert denied_result.error
+
+    # Now release actual ingress post-budget
+    send(task_pid, :release_delegation)
+
+    # Actual ingress accepts and message reaches Router conversation
+    assert_receive {:ingress, ^group, _,
+                    %{"event_type" => "voice.delegation", "message_id" => "del_post_budget"}, _,
+                    _},
+                   2_000
+
+    # Retrieve canonical original voice.delegation conversation message
+    {:ok, messages} =
+      SalixIM.Conversations.list_group_conversation_messages(
+        group,
+        fixture.conversation["conversation_id"],
+        limit: 20
+      )
+
+    original_msg =
+      Enum.find(messages, &(get_in(&1, ["metadata", "message_id"]) == "del_post_budget"))
+
+    assert original_msg
+
+    # Tools.voice.say from ORIGINAL canonical context is NOT lost and preserves text
+    late_result =
+      execute_late_voice_tool(
+        fixture,
+        original_msg,
+        "del_post_budget",
+        "Post-budget answer preserved."
+      )
+
+    refute late_result.error
+
+    # Verify reply text is committed to the conversation
+    {:ok, final_messages} =
+      SalixIM.Conversations.list_group_conversation_messages(
+        group,
+        fixture.conversation["conversation_id"],
+        limit: 20
+      )
+
+    reply_msg =
+      Enum.find(final_messages, fn msg ->
+        msg["actor_type"] == "agent" and
+          get_in(msg, ["metadata", "voice_delegation_id"]) == "del_post_budget"
+      end)
+
+    assert reply_msg
+    assert [%{"text" => "Post-budget answer preserved."}] = reply_msg["content"]
+  end
+
+  @tag :ptt_causal_regressions
+  @tag timeout: 15_000
+  test "push_to_talk live delivered reply excludes delegation from call_ended handoff while second say from original context records idempotent final late reply" do
+    fixture = setup_causal_ptt_fixture(%{settle_ms: 10})
+    call = fixture.call
+    model = fixture.model
+    group = fixture.group
+    info = fixture.info
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(call, {:context, %{context_id: 1, status: :pending}})
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(
+               call,
+               {:context,
+                %{
+                  context_id: 1,
+                  status: :complete,
+                  text: "Active screen content",
+                  attachments: []
+                }}
+             )
+
+    # Delegation emitted and ACKed by Router
+    emit(model, call, {:delegation, "del_live_delivered", 100, "[ptt-context:1] Live task"})
+
+    assert_receive {:ingress, ^group, _,
+                    %{"event_type" => "voice.delegation", "message_id" => "del_live_delivered"},
+                    _, _},
+                   1_000
+
+    {:ok, messages} =
+      SalixIM.Conversations.list_group_conversation_messages(
+        group,
+        fixture.conversation["conversation_id"],
+        limit: 10
+      )
+
+    original_msg =
+      Enum.find(messages, &(get_in(&1, ["metadata", "message_id"]) == "del_live_delivered"))
+
+    assert original_msg
+
+    # Live delivery while call is live
+    assert {:ok, %{"delivered" => true, "delegation_id" => "del_live_delivered"}} =
+             provider(call, :say, info, %{
+               "text" => "Spoken live over audio.",
+               "delegation_id" => "del_live_delivered"
+             })
+
+    # Caller hangs up
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+
+    # Final handoff emitted: excludes del_live_delivered because status is :done
+    assert_receive {:ingress, ^group, ended_content,
+                    %{"event_type" => "voice.call_ended"} = ended_meta, _, _},
+                   2_000
+
+    pending_ids = Map.get(ended_meta, "voice_pending_delegation_ids", [])
+    refute "del_live_delivered" in pending_ids
+    refute String.contains?(ended_content, "del_live_delivered")
+
+    # Attempt via call_ended final context is denied (omitted ID)
+    ended_msg = get_ended_conversation_message(fixture)
+    assert ended_msg
+
+    ended_result =
+      execute_late_voice_tool(fixture, ended_msg, "del_live_delivered", "Ended attempt")
+
+    assert ended_result.error
+
+    # Second say from ORIGINAL context after hangup persists once / idempotently
+    late_result =
+      execute_late_voice_tool(
+        fixture,
+        original_msg,
+        "del_live_delivered",
+        "Chat text for original delegation."
+      )
+
+    refute late_result.error
+
+    {:ok, after_messages} =
+      SalixIM.Conversations.list_group_conversation_messages(
+        group,
+        fixture.conversation["conversation_id"],
+        limit: 20
+      )
+
+    late_reply =
+      Enum.find(after_messages, fn msg ->
+        msg["actor_type"] == "agent" and
+          get_in(msg, ["metadata", "voice_delegation_id"]) == "del_live_delivered"
+      end)
+
+    assert late_reply
+    assert [%{"text" => "Chat text for original delegation."}] = late_reply["content"]
+
+    # Same text repeats idempotently (ConversationActor committed retry)
+    retry_result =
+      execute_late_voice_tool(
+        fixture,
+        original_msg,
+        "del_live_delivered",
+        "Chat text for original delegation."
+      )
+
+    refute retry_result.error
+
+    # Conflicting text is rejected by ConversationActor
+    conflict_result =
+      execute_late_voice_tool(
+        fixture,
+        original_msg,
+        "del_live_delivered",
+        "Conflicting text must fail."
+      )
+
+    assert conflict_result.error
   end
 end

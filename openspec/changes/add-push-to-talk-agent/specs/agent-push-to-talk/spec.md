@@ -53,6 +53,12 @@ Com um atalho só de modificadores, o app MUST apenas observar o teclado, sem im
 - **WHEN** o usuário aperta `⌃⌥←` em outro app
 - **THEN** o outro app recebe `⌃⌥←`, o microfone é mutado, o contexto/print é descartado e o que tiver aparecido some
 
+#### Scenario: Cancelamento de uma réplica com admissão em voo
+
+- **WHEN** uma chamada quente já respondeu e o usuário cancela ou solta um gesto curto antes do ACK de admissão desse novo contexto
+- **THEN** a entrada é mutada, o contexto é invalidado e a apresentação some, sem encerrar a chamada quente
+- **AND** a rejeição técnica da admissão cancelada não publica um novo erro de envio nem afeta a réplica seguinte
+
 #### Scenario: Modificador a mais
 
 - **WHEN** o usuário segura `⌃⌥⇧`
@@ -154,14 +160,24 @@ Enquanto o atalho estiver pressionado, o usuário MUST poder arrastar o mouse pa
 - **WHEN** o usuário, com o atalho pressionado, circula um gráfico com o mouse
 - **THEN** a pergunta enviada leva o print com o círculo desenhado, o recorte da área do círculo e os limites dessa área
 
+#### Scenario: Serviço responde antes da soltura
+
+- **WHEN** o VAD inicia uma resposta enquanto o usuário ainda mantém o atalho pressionado
+- **THEN** o estado pode mostrar fala, mas o desenho no monitor capturado continua disponível até a soltura
+
 #### Scenario: Traço some
 
 - **WHEN** o usuário solta o atalho depois de desenhar
 - **THEN** o traço some da tela em poucos segundos
 
+#### Scenario: Cursor em outro monitor
+
+- **WHEN** o cursor passa a um monitor que não é o capturado durante o gesto
+- **THEN** o companheiro continua visível, mas não pinta traço nem intercepta arrasto; ao voltar ao monitor capturado, o desenho volta a ficar disponível
+
 ### Requirement: Permissão de Gravação de Tela
 
-O print MUST depender da permissão de Gravação de Tela do próprio Comma. Sem ela, o turno MUST seguir sem print e o notch MUST avisar, com um botão para os Ajustes do Sistema. Com o print ligado e a permissão não concedida, o app MUST pedir a permissão ao macOS em nome do Comma, para que ele apareça na lista de Gravação de Tela. Com o print desligado, o app MUST NOT capturar nem pedir. O texto de uso MUST mencionar o print enviado ao agente.
+O print MUST depender da permissão de Gravação de Tela do próprio Comma. Sem ela, o contexto solicitado MUST falhar explicitamente, sem envio automático do pedido sem print; o notch MUST avisar e oferecer os Ajustes do Sistema. Com print ligado e permissão não concedida, o app MUST pedir a permissão em nome do Comma. Com print desligado, MUST NOT capturar nem pedir. O texto de uso MUST mencionar o print enviado ao agente.
 
 #### Scenario: Primeira vez
 
@@ -171,7 +187,7 @@ O print MUST depender da permissão de Gravação de Tela do próprio Comma. Sem
 #### Scenario: Permissão negada
 
 - **WHEN** a Gravação de Tela está negada para o Comma e o usuário faz uma pergunta
-- **THEN** a pergunta é enviada sem print e o notch avisa que o print não foi incluído
+- **THEN** o contexto falha e o notch pede a permissão, sem afirmar que enviou o pedido; desligar “Enviar print” permite um novo gesto só com voz e texto
 
 #### Scenario: Print desligado
 
@@ -180,12 +196,12 @@ O print MUST depender da permissão de Gravação de Tela do próprio Comma. Sem
 
 ### Requirement: Conexão da chamada GPT Live
 
-O aperto MUST abrir ou reutilizar uma chamada GPT Live do workspace ativo, com a mesma voz configurada para "Call Comma", sem saudação e sem esperar perfil para começar. A delegação ao Router MUST estar ativa e o início/fim MUST ser registrados como na chamada manual. O PTT MUST NOT depender da transcrição de reuniões nem gravar WAV para transcrever. A mídia só flui após conexão; o app MUST distinguir "Conectando" de "Ouvindo".
+O aperto MUST abrir ou reutilizar uma chamada GPT Live do Workspace Chat nativo da Sidebar, com a mesma voz configurada para "Call Comma", sem saudação ou espera de perfil. A delegação ao Router MUST estar ativa e o início/fim MUST ser registrados como na chamada manual. O PTT MUST NOT depender de transcrição de reuniões nem gravar WAV. A mídia só flui após conexão e admissão do contexto; o app MUST distinguir "Conectando" de "Ouvindo".
 
 #### Scenario: Primeira conexão
 
 - **WHEN** o usuário aperta o atalho sem sessão quente
-- **THEN** a sinalização começa no aperto, em paralelo à captura, sem saudação ou espera de perfil; o notch muda de "Conectando" para "Ouvindo" quando o áudio conecta
+- **THEN** a sinalização começa no aperto, em paralelo à captura, sem saudação ou espera de perfil; o notch muda de "Conectando" para "Ouvindo" quando o áudio conecta e o controle admite o contexto
 
 #### Scenario: Reunião não configurada
 
@@ -223,7 +239,7 @@ O modelo de voz MUST delegar ao Router pedidos sobre a tela ou ferramentas. O ap
 #### Scenario: Contexto textual silencioso
 
 - **WHEN** o contexto do gesto é concluído com app, cursor e, se houver print, tamanho, área e nomes
-- **THEN** o texto chega como contexto silencioso à chamada e pedidos que exigem tela ou ferramentas são delegados ao Router
+- **THEN** o texto chega como contexto silencioso à chamada e, se houver delegação, o Router recebe o texto capturado do mesmo contexto, inclusive com print desligado
 
 ### Requirement: Associação do print ao pedido
 
@@ -249,6 +265,11 @@ Cada gesto MUST ter `context_id` crescente por chamada e estado `pending/complet
 - **WHEN** cancelamento, novo gesto ou troca de conta invalida um contexto e depois chega sua conclusão atrasada
 - **THEN** a conclusão é recusada/descartada, a espera anterior termina sem anexos transferidos e o próximo pedido não recebe imagens do contexto invalidado
 
+#### Scenario: Substituição durante o settle
+
+- **WHEN** um contexto completo tem delegação no settle de 300 ms, mas ainda não enfileirada, e novo gesto ou cancelamento o invalida
+- **THEN** o pedido antigo falha explicitamente, sem envio com anexos vazios nem consumo das imagens do novo gesto; trabalho já enfileirado permanece aceito
+
 #### Scenario: Falha ou prazo do contexto
 
 - **WHEN** captura/upload falha, o upload excede 30 s após captura e admissão, ou o contexto atinge 150 s desde `pending`
@@ -263,6 +284,11 @@ Cada gesto MUST ter `context_id` crescente por chamada e estado `pending/complet
 
 - **WHEN** o usuário solta enquanto a admissão `pending` ainda não respondeu
 - **THEN** a faixa é mutada imediatamente; nem esse ACK nem conclusão de captura/upload pode desmutar depois
+
+#### Scenario: Admissão rejeitada ou sem resposta
+
+- **WHEN** a admissão falha ou excede 30 s, inclusive com `call.ready` pendente ou captura ainda em curso
+- **THEN** a faixa fica mutada, o gesto é invalidado e o erro aparece sem aguardar soltura, captura ou confirmação do controle de falha; ACK antigo não reativa o gesto
 
 #### Scenario: Cancelamento antes da admissão
 
@@ -333,7 +359,25 @@ Uma delegação pendente MUST manter a sessão aberta e o estado "Pensando", com
 #### Scenario: Teto com trabalho pendente
 
 - **WHEN** a chamada atinge 10 min com uma delegação pendente
-- **THEN** a chamada encerra, mas o Router continua o trabalho na conversa
+- **THEN** a chamada encerra, mas o Router continua o trabalho já aceito
+
+#### Scenario: Encerramento antes do encaminhamento
+
+- **WHEN** a chamada encerra com uma delegação ainda esperando contexto ou no settle
+- **THEN** a espera termina sem anunciar esse pedido como aceito pelo Router nem autorizar resposta tardia por esse ID no evento final
+
+#### Scenario: Encerramento durante encaminhamento
+
+- **WHEN** a chamada encerra enquanto o enqueue no Router ainda não respondeu
+- **THEN** a mídia fecha imediatamente e a resolução do encaminhamento tem espera limitada
+- **AND** somente um ACK real de sucesso permite incluir o pedido entre as delegações aceitas do handoff; erro ou falta de ACK não pode ser substituído por um flag pré-despacho
+- **AND** nenhum trabalho que já chegou ao Router é apagado, cancelado ou reenviado por falta de confirmação local
+
+#### Scenario: Ingresso aceito após o prazo de encerramento
+
+- **WHEN** o encaminhamento não tem ACK no fim da espera limitada e o ingresso real aceita o pedido depois
+- **THEN** a chamada já terminou sem incluir esse ID entre os confirmados do evento final
+- **AND** a resposta pela origem canônica original permanece na conversa; a origem final não autoriza um ID sem confirmação
 
 ### Requirement: Só respostas vinculadas à chamada e aviso tardio
 
