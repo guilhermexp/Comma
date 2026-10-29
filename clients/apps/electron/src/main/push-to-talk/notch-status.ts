@@ -20,17 +20,15 @@ export interface PushToTalkNotch {
   onEvent(listener: (event: NotchHostEvent) => void): () => void;
 }
 
-/** The error's own context its action needs (the words to copy). */
-export type PushToTalkErrorActionContext = { transcript: string | undefined };
-
 const errorActions = {
   microphone_denied: "open-microphone-settings",
   screen_denied: "open-screen-recording-settings",
-  transcription_unavailable: "open-meeting-settings",
-  send_failed: "copy-transcript",
 } as const satisfies Partial<Record<PushToTalkErrorCode, PushToTalkErrorAction>>;
 
-const knownActions = new Set<string>(Object.values(errorActions));
+const knownActions = new Set<string>([
+  ...Object.values(errorActions),
+  "open-side-chat",
+]);
 
 /**
  * The push-to-talk turn in the Comma Notch: the state's text and the
@@ -41,23 +39,16 @@ export class NotchPushToTalkStatus implements PushToTalkStatus {
   readonly #notch: PushToTalkNotch;
   readonly #clock: PushToTalkClock;
   readonly #locale: MainLocaleSource;
-  readonly #onAction: (
-    action: PushToTalkErrorAction,
-    context: PushToTalkErrorActionContext
-  ) => void;
+  readonly #onAction: (action: PushToTalkErrorAction) => void;
   readonly #unsubscribe: () => void;
   #turn: NotchVoiceTurn | null = null;
-  #transcript: string | undefined;
   #level = 0;
   #levelSentAt = Number.NEGATIVE_INFINITY;
   #cancelLevel: (() => void) | undefined;
 
   constructor(options: {
     notch: PushToTalkNotch;
-    onAction: (
-      action: PushToTalkErrorAction,
-      context: PushToTalkErrorActionContext
-    ) => void;
+    onAction: (action: PushToTalkErrorAction) => void;
     clock?: PushToTalkClock | undefined;
     locale?: MainLocaleSource | undefined;
   }) {
@@ -72,9 +63,7 @@ export class NotchPushToTalkStatus implements PushToTalkStatus {
       if (!action || !knownActions.has(action) || this.#turn?.action?.id !== action) {
         return;
       }
-      this.#onAction(action as PushToTalkErrorAction, {
-        transcript: this.#transcript,
-      });
+      this.#onAction(action as PushToTalkErrorAction);
     });
   }
 
@@ -85,7 +74,6 @@ export class NotchPushToTalkStatus implements PushToTalkStatus {
   set(state: PushToTalkTurnState | null) {
     this.#cancelPendingLevel();
     this.#level = 0;
-    this.#transcript = state?.kind === "error" ? state.transcript : undefined;
     this.#turn = state ? this.#project(state) : null;
     this.#write(this.#turn);
   }
@@ -137,16 +125,17 @@ export class NotchPushToTalkStatus implements PushToTalkStatus {
   #project(state: PushToTalkTurnState): NotchVoiceTurn {
     const locale = { locale: readMainLocale(this.#locale) };
     switch (state.kind) {
+      case "connecting":
+        // The unchanged Swift Notch renders "thinking" with dots animation.
+        return {
+          message: messages.push_to_talk_connecting({}, locale),
+          state: "thinking",
+        };
       case "listening":
         return {
           level: 0,
           message: messages.push_to_talk_listening({}, locale),
           state: "listening",
-        };
-      case "transcribing":
-        return {
-          message: messages.push_to_talk_transcribing({}, locale),
-          state: "transcribing",
         };
       case "thinking":
         return {
@@ -158,29 +147,28 @@ export class NotchPushToTalkStatus implements PushToTalkStatus {
           message: messages.push_to_talk_speaking({}, locale),
           state: "speaking",
         };
-      case "busy":
-        return { message: messages.push_to_talk_busy({}, locale), state: "busy" };
+      case "ready":
+        // Ready projects to the existing "busy" wire state with open-side-chat action.
+        return {
+          action: {
+            id: "open-side-chat",
+            label: messages.push_to_talk_open_side_chat({}, locale),
+          },
+          message: messages.push_to_talk_ready({}, locale),
+          state: "busy",
+        };
       case "error": {
         const message = {
+          busy: messages.push_to_talk_call_busy,
+          call_failed: messages.push_to_talk_call_failed,
+          context_failed: messages.push_to_talk_context_failed,
           microphone_denied: messages.push_to_talk_microphone_denied,
-          nothing_heard: messages.push_to_talk_nothing_heard,
+          plan_limit: messages.push_to_talk_plan_limit,
           screen_denied: messages.push_to_talk_screen_denied,
-          send_failed: messages.push_to_talk_send_failed,
-          transcription_busy: messages.push_to_talk_transcription_busy,
-          transcription_failed: messages.push_to_talk_transcription_failed,
-          transcription_unavailable: messages.push_to_talk_transcription_unavailable,
         }[state.code]({}, locale);
-        const action =
-          state.code === "send_failed" && !state.transcript
-            ? undefined
-            : errorActions[state.code as keyof typeof errorActions];
+        const action = errorActions[state.code as keyof typeof errorActions];
         if (!action) return { message, state: "error" };
-        const label =
-          action === "copy-transcript"
-            ? messages.push_to_talk_copy_transcript({}, locale)
-            : action === "open-meeting-settings"
-              ? messages.push_to_talk_open_meeting_settings({}, locale)
-              : messages.push_to_talk_open_system_settings({}, locale);
+        const label = messages.push_to_talk_open_system_settings({}, locale);
         return { action: { id: action, label }, message, state: "error" };
       }
     }

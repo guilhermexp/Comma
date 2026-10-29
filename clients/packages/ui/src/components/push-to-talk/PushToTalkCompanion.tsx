@@ -8,35 +8,27 @@ import {
   type PointerEvent,
 } from "react";
 import { Button } from "../Button";
-import {
-  CircleCheckIcon,
-  ClockIcon,
-  CopyIcon,
-  ExclamationTriangleIcon,
-} from "../icons";
+import { ClockIcon, ExclamationTriangleIcon } from "../icons";
 import { ScrollArea } from "../scroll-area";
 import { cx } from "../utils";
 
 export type PushToTalkErrorCode =
   | "microphone_denied"
   | "screen_denied"
-  | "transcription_unavailable"
-  | "transcription_busy"
-  | "transcription_failed"
-  | "nothing_heard"
-  | "send_failed";
+  | "busy"
+  | "plan_limit"
+  | "context_failed"
+  | "call_failed";
 
 export type PushToTalkCompanionState =
+  | { kind: "connecting" }
   | { kind: "listening" }
-  | { kind: "transcribing" }
   | { kind: "thinking" }
   | { kind: "speaking" }
-  | { kind: "busy" }
-  | { kind: "error"; code: PushToTalkErrorCode; transcriptAvailable: boolean };
+  | { kind: "ready" }
+  | { kind: "error"; code: PushToTalkErrorCode };
 
 export type PushToTalkCompanionAction =
-  | "copy-transcript"
-  | "open-meeting-settings"
   | "open-microphone-settings"
   | "open-screen-recording-settings";
 
@@ -53,6 +45,8 @@ export interface PushToTalkCompanionProps {
   cursor: PushToTalkPoint;
   /** Seeds the stroke, e.g. for a story. Remount to start a new surface. */
   defaultStroke?: ReadonlyArray<PushToTalkPoint> | null;
+  /** Whether drawing freehand annotations is enabled on the current display. */
+  drawingEnabled: boolean;
   /** Fading out where it is, before the window hides. */
   hiding?: boolean;
   /** Microphone level 0..1 while listening. */
@@ -82,8 +76,6 @@ const BAR_WEIGHTS = [0.5, 0.8, 1, 0.75, 0.45];
 const errorAction: Partial<Record<PushToTalkErrorCode, PushToTalkCompanionAction>> = {
   microphone_denied: "open-microphone-settings",
   screen_denied: "open-screen-recording-settings",
-  transcription_unavailable: "open-meeting-settings",
-  send_failed: "copy-transcript",
 };
 
 /**
@@ -97,6 +89,7 @@ export const PushToTalkCompanion = ({
   color,
   cursor,
   defaultStroke = null,
+  drawingEnabled,
   hiding = false,
   level,
   onAction,
@@ -116,8 +109,7 @@ export const PushToTalkCompanion = ({
   }>(undefined);
   const balloonRef = useRef<HTMLDivElement>(null);
   const [anchor, setAnchor] = useState(cursor);
-  const listening = state?.kind === "listening" && !hiding;
-
+  const canDraw = drawingEnabled && !hiding;
   // The companion follows the pointer, except on its way into the balloon,
   // which then waits to be clicked. Fading out, it stays where it is.
   useLayoutEffect(() => {
@@ -138,8 +130,12 @@ export const PushToTalkCompanion = ({
 
   const report = (points: PushToTalkPoint[] | null) => onStrokeChange?.(points);
   const begin = (event: PointerEvent<HTMLDivElement>) => {
-    if (!listening || event.button !== 0) return;
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    if (!canDraw || event.button !== 0) return;
+    if (
+      event.target instanceof Element &&
+      event.target.closest("[data-push-to-talk-interactive]")
+    )
+      return;
     const points = [{ x: event.clientX, y: event.clientY }];
     drawing.current = { lastReport: 0, pointerId: event.pointerId, points };
     // A new drag replaces the previous stroke.
@@ -172,13 +168,13 @@ export const PushToTalkCompanion = ({
   if (!state) return null;
   const flipX = anchor.x > window.innerWidth - BALLOON_ROOM.x;
   const flipY = anchor.y > window.innerHeight - BALLOON_ROOM.y;
-  const waiting = state.kind === "transcribing" || state.kind === "thinking";
+  const waiting = state.kind === "connecting" || state.kind === "thinking";
 
   return (
     <div
       className={cx("comma-push-to-talk-overlay", className)}
       data-hiding={hiding || undefined}
-      data-listening={listening || undefined}
+      data-listening={canDraw || undefined}
       data-testid={testId}
       onPointerCancel={() => {
         drawing.current = undefined;
@@ -192,7 +188,7 @@ export const PushToTalkCompanion = ({
         <svg
           aria-label={m.push_to_talk_stroke()}
           className="comma-push-to-talk-stroke"
-          data-fading={(!listening && !hiding) || undefined}
+          data-fading={(!canDraw && !hiding) || undefined}
           // A drawn line over live pixels: there is no element to swap in.
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
           role="img"
@@ -231,24 +227,22 @@ export const PushToTalkCompanion = ({
         </div>
         {state.kind === "error" ? (
           <ErrorBalloon balloonRef={balloonRef} onAction={onAction} state={state} />
-        ) : state.kind === "busy" ? (
-          <div
-            className="comma-push-to-talk-balloon"
-            data-tone="neutral"
-            ref={balloonRef}
-          >
-            <ClockIcon aria-hidden className="comma-push-to-talk-balloon-icon size-4" />
-            <output>{m.push_to_talk_busy()}</output>
-          </div>
+        ) : state.kind === "ready" ? (
+          <CaptionBalloon
+            balloonRef={balloonRef}
+            caption={caption ?? ""}
+            kind="ready"
+            onClick={onCaptionClick}
+          />
         ) : (
           <>
             <output className="sr-only">
               {
                 {
+                  connecting: m.push_to_talk_connecting(),
                   listening: m.push_to_talk_listening(),
                   speaking: m.push_to_talk_speaking(),
                   thinking: m.push_to_talk_thinking(),
-                  transcribing: m.push_to_talk_transcribing(),
                 }[state.kind]
               }
             </output>
@@ -256,6 +250,7 @@ export const PushToTalkCompanion = ({
               <CaptionBalloon
                 balloonRef={balloonRef}
                 caption={caption}
+                kind="speech"
                 onClick={onCaptionClick}
               />
             ) : null}
@@ -289,10 +284,12 @@ const LevelBars = ({ level }: { level: number }) => (
 const CaptionBalloon = ({
   balloonRef,
   caption,
+  kind,
   onClick,
 }: {
   balloonRef: React.RefObject<HTMLDivElement | null>;
   caption: string;
+  kind: "ready" | "speech";
   onClick: (() => void) | undefined;
 }) => {
   const m = useCommaMessages();
@@ -302,7 +299,7 @@ const CaptionBalloon = ({
       className="comma-push-to-talk-balloon"
       data-push-to-talk-balloon=""
       data-push-to-talk-interactive=""
-      data-tone="brand"
+      data-tone={kind === "ready" ? "neutral" : "brand"}
       ref={balloonRef}
     >
       <ScrollArea
@@ -319,6 +316,16 @@ const CaptionBalloon = ({
           onClick={onClick}
           type="button"
         >
+          {kind === "ready" ? (
+            <>
+              <ClockIcon
+                aria-hidden
+                className="comma-push-to-talk-balloon-icon size-4"
+              />
+              <output>{m.push_to_talk_ready()}</output>
+              <br />
+            </>
+          ) : null}
           {caption}
         </button>
       </ScrollArea>
@@ -339,20 +346,15 @@ const ErrorBalloon = ({
   state: Extract<PushToTalkCompanionState, { kind: "error" }>;
 }) => {
   const m = useCommaMessages();
-  const [copied, setCopied] = useState(false);
   const message = {
+    busy: m.push_to_talk_call_busy(),
+    call_failed: m.push_to_talk_call_failed(),
+    context_failed: m.push_to_talk_context_failed(),
     microphone_denied: m.push_to_talk_microphone_denied(),
-    nothing_heard: m.push_to_talk_nothing_heard(),
+    plan_limit: m.push_to_talk_plan_limit(),
     screen_denied: m.push_to_talk_screen_denied(),
-    send_failed: m.push_to_talk_send_failed(),
-    transcription_busy: m.push_to_talk_transcription_busy(),
-    transcription_failed: m.push_to_talk_transcription_failed(),
-    transcription_unavailable: m.push_to_talk_transcription_unavailable(),
   }[state.code];
-  const action =
-    state.code === "send_failed" && !state.transcriptAvailable
-      ? undefined
-      : errorAction[state.code];
+  const action = errorAction[state.code];
 
   return (
     <div
@@ -372,29 +374,12 @@ const ErrorBalloon = ({
         <span className="comma-push-to-talk-action" data-push-to-talk-interactive="">
           <Button
             hierarchy="secondary-gray"
-            {...(action === "copy-transcript"
-              ? {
-                  iconLeading: copied ? (
-                    <CircleCheckIcon aria-hidden className="size-4" />
-                  ) : (
-                    <CopyIcon aria-hidden className="size-4" />
-                  ),
-                }
-              : {})}
             onPress={() => {
-              void Promise.resolve(onAction?.(action)).then(() => {
-                if (action === "copy-transcript") setCopied(true);
-              });
+              void onAction?.(action);
             }}
             size="xs"
           >
-            {action === "copy-transcript"
-              ? copied
-                ? m.push_to_talk_copied()
-                : m.push_to_talk_copy_transcript()
-              : action === "open-meeting-settings"
-                ? m.push_to_talk_open_meeting_settings()
-                : m.push_to_talk_open_system_settings()}
+            {m.push_to_talk_open_system_settings()}
           </Button>
         </span>
       ) : null}

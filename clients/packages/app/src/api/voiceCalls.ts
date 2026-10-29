@@ -4,12 +4,36 @@ export const voiceCallAnswerSchema = z.object({
   call_id: z.string(),
   sdp: z.string(),
 });
-/** `read_aloud`: the voice reads only the text it is sent, then stays silent. */
-export type VoiceCallMode = "read_aloud";
-export const voiceCallSaySchema = z.object({
-  queued: z.literal(true),
-  chunks: z.number().int(),
+/** Opens without a greeting and delegates screen/tool requests to the Router. */
+export type VoiceCallMode = "push_to_talk";
+export const voiceCallAttachmentSchema = z.object({
+  path: z.string(),
+  name: z.string(),
+  mime: z.enum(["image/png", "image/jpeg"]),
 });
+export type VoiceCallAttachment = z.infer<typeof voiceCallAttachmentSchema>;
+export const voiceCallContextSchema = z.discriminatedUnion("status", [
+  z.object({
+    context_id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    status: z.literal("pending"),
+  }),
+  z.object({
+    context_id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    status: z.literal("complete"),
+    text: z.string(),
+    attachments: z.array(voiceCallAttachmentSchema),
+  }),
+  z.object({
+    context_id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    status: z.literal("failed"),
+  }),
+  z.object({
+    context_id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    status: z.literal("cancelled"),
+  }),
+]);
+export type VoiceCallContext = z.infer<typeof voiceCallContextSchema>;
+export const voiceCallContextAcceptedSchema = z.object({ accepted: z.literal(true) });
 const callEventSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("started") }),
   z.object({
@@ -27,7 +51,11 @@ export const voiceCallEventSchema = z.union([
   z.object({
     type: z.literal("delegation"),
     id: z.string(),
-    status: z.enum(["pending", "answered"]),
+    status: z.enum(["pending", "answered", "failed"]),
+  }),
+  z.object({
+    type: z.literal("context_failed"),
+    context_id: z.number().int().positive(),
   }),
 ]);
 export const voiceCallEventsSchema = z.object({
@@ -38,4 +66,4 @@ export const voiceCallEventsSchema = z.object({
 export type VoiceCallAnswer = z.infer<typeof voiceCallAnswerSchema>;
 export type VoiceCallEvents = z.infer<typeof voiceCallEventsSchema>;
 export type VoiceCallEvent = z.infer<typeof voiceCallEventSchema>;
-export type VoiceCallSay = z.infer<typeof voiceCallSaySchema>;
+export type VoiceCallContextAccepted = z.infer<typeof voiceCallContextAcceptedSchema>;

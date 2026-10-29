@@ -809,7 +809,7 @@ function sampleCommandInput(id: string) {
     case "pushToTalk.setInteractive":
       return { interactive: true };
     case "pushToTalk.overlayAction":
-      return { action: "copy-transcript" };
+      return { action: "caption-click" };
     case "pushToTalkVoice.offer":
       return { generation: 1, sdp: "v=0" };
     case "pushToTalkVoice.report":

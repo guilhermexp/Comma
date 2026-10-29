@@ -21,8 +21,6 @@ function createOverlay() {
   const requestScreenRecording = vi.fn(
     async () => void calls.push("request screen recording")
   );
-  const openMeetingSettings = vi.fn();
-  const writeClipboard = vi.fn();
   let cursor = { x: 0, y: 0 };
   const cursorPoint = vi.fn(() => cursor);
   const overlay = new PushToTalkOverlayWindow({
@@ -36,10 +34,8 @@ function createOverlay() {
     displays: () => [primary, secondary],
     logger: { error: vi.fn(), warn: vi.fn() },
     openExternal,
-    openMeetingSettings,
     publish: (state) => published.push(state),
     requestScreenRecording,
-    writeClipboard,
   });
   return {
     calls,
@@ -50,13 +46,11 @@ function createOverlay() {
       vi.advanceTimersByTime(PUSH_TO_TALK_FOLLOW_INTERVAL_MS);
     },
     openExternal,
-    openMeetingSettings,
     overlay,
     published,
     requestScreenRecording,
     window: () => windows[0]!,
     windows,
-    writeClipboard,
   };
 }
 
@@ -68,6 +62,7 @@ async function showListening(
   cursor = { x: 2_000, y: 100 }
 ) {
   setup.moveCursor(cursor);
+  setup.overlay.setDrawing(true);
   setup.overlay.show({
     cursor,
     displayId: cursor.x >= secondary.bounds.x ? 2 : 1,
@@ -80,7 +75,7 @@ describe("PushToTalkOverlayWindow", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("covers the cursor's display without focus, above full-screen apps, and takes drags only while listening", async () => {
+  it("covers the cursor's display without focus and takes drags only while the gesture is held", async () => {
     const setup = createOverlay();
     const { latest, overlay, window, windows } = setup;
     await showListening(setup);
@@ -106,6 +101,7 @@ describe("PushToTalkOverlayWindow", () => {
       hiding: false,
     });
 
+    overlay.setDrawing(false);
     overlay.setState({ kind: "thinking" });
     expect(window().ignoringMouse).toBe(true);
     expect(latest().companion).toEqual({ kind: "thinking" });
@@ -116,6 +112,21 @@ describe("PushToTalkOverlayWindow", () => {
     await showListening(setup, { x: 10, y: 10 });
     expect(windows).toHaveLength(1);
     expect(window().bounds).toEqual(primary.bounds);
+  });
+
+  it("accepts the held gesture's stroke even when VAD starts speaking before release", async () => {
+    const setup = createOverlay();
+    await showListening(setup);
+    const onStroke = vi.fn();
+    setup.overlay.onStroke(onStroke);
+    setup.overlay.setState({ kind: "speaking" });
+    const points = [
+      { x: 10, y: 20 },
+      { x: 30, y: 40 },
+    ];
+    setup.overlay.setStroke({ points, surface: setup.latest().surface });
+    expect(onStroke).toHaveBeenLastCalledWith(points);
+    expect(setup.window().ignoringMouse).toBe(false);
   });
 
   it("follows the cursor only while shown and moves to the cursor's display", async () => {
@@ -150,7 +161,7 @@ describe("PushToTalkOverlayWindow", () => {
     expect(cursorPoint).not.toHaveBeenCalled();
   });
 
-  it("is click-through outside listening except while the pointer is over the balloon", async () => {
+  it("is click-through after release except while the pointer is over the balloon", async () => {
     const setup = createOverlay();
     const { overlay, window } = setup;
     await showListening(setup);
@@ -158,6 +169,7 @@ describe("PushToTalkOverlayWindow", () => {
     overlay.setInteractive({ interactive: false });
     expect(window().ignoringMouse).toBe(false);
 
+    overlay.setDrawing(false);
     overlay.setState({ kind: "speaking" });
     overlay.setCaption("The chart peaks in March.");
     expect(window().ignoringMouse).toBe(true);
@@ -224,7 +236,8 @@ describe("PushToTalkOverlayWindow", () => {
     expect(strokes.at(-1)).toEqual(circle);
 
     // Once the shortcut is released the stroke is final.
-    overlay.setState({ kind: "transcribing" });
+    overlay.setDrawing(false);
+    overlay.setState({ kind: "thinking" });
     overlay.setStroke({
       points: [
         { x: 0, y: 0 },
@@ -258,6 +271,42 @@ describe("PushToTalkOverlayWindow", () => {
       surface: latest().surface,
     });
     expect(strokes).toEqual([]);
+  });
+
+  it("makes foreign display click-through, rejecting strokes, then restores drawing and hit-testing on captured display", async () => {
+    const setup = createOverlay();
+    const { latest, moveCursor, overlay, window } = setup;
+    const strokes: unknown[] = [];
+    overlay.onStroke((stroke) => strokes.push(stroke));
+    await showListening(setup); // Secondary display (id: 2, captured)
+
+    expect(window().ignoringMouse).toBe(false);
+
+    // Move cursor to primary display (id: 1), which is not the captured display
+    moveCursor({ x: 300, y: 300 });
+    // On foreign display: hit-testing is click-through to allow underlying app interaction
+    expect(window().ignoringMouse).toBe(true);
+    // Attempting to draw on foreign display is rejected
+    overlay.setStroke({
+      points: [
+        { x: 10, y: 10 },
+        { x: 50, y: 50 },
+      ],
+      surface: latest().surface,
+    });
+    expect(strokes).toEqual([]);
+
+    // Move cursor back to secondary display (captured display)
+    moveCursor({ x: 2_000, y: 100 });
+    // Hit-testing is restored to take drags on the captured display
+    expect(window().ignoringMouse).toBe(false);
+    // Drawing is re-enabled and accepted on captured display
+    const circle = [
+      { x: 10, y: 20 },
+      { x: 60, y: 25 },
+    ];
+    overlay.setStroke({ points: circle, surface: latest().surface });
+    expect(strokes.at(-1)).toEqual(circle);
   });
 
   it("shows the level only while listening and the caption until it is removed", async () => {
@@ -331,13 +380,13 @@ describe("PushToTalkOverlayWindow", () => {
     expect(window().visible).toBe(true);
     expect(window().ignoringMouse).toBe(true);
     // A late state of the finished turn does not bring it back.
-    overlay.setState({ kind: "busy" });
+    overlay.setState({ kind: "ready" });
     expect(latest().companion).toEqual({ kind: "speaking" });
 
     vi.advanceTimersByTime(PUSH_TO_TALK_HIDE_FADE_MS);
     expect(window().visible).toBe(false);
     expect(latest()).toMatchObject({ caption: null, companion: null, hiding: false });
-    overlay.setState({ kind: "busy" });
+    overlay.setState({ kind: "ready" });
     expect(latest().companion).toBeNull();
     expect(window().visible).toBe(false);
   });
@@ -353,66 +402,52 @@ describe("PushToTalkOverlayWindow", () => {
     expect(latest()).toMatchObject({ companion: { kind: "listening" }, hiding: false });
   });
 
-  it("runs the error actions and copies only the failed turn's transcript", async () => {
+  it("runs the error actions and ignores unknown actions", async () => {
     const setup = createOverlay();
-    const { latest, openExternal, openMeetingSettings, overlay, writeClipboard } =
-      setup;
+    const { latest, openExternal, overlay } = setup;
     overlay.show({
       cursor: { x: 5, y: 5 },
       displayId: 1,
-      state: { code: "send_failed", kind: "error", transcript: "what is this?" },
+      state: { code: "screen_denied", kind: "error" },
     });
     await settle();
     expect(latest().companion).toEqual({
-      code: "send_failed",
+      code: "screen_denied",
       kind: "error",
-      transcriptAvailable: true,
     });
-    // The transcript itself never reaches the overlay renderer.
-    expect(JSON.stringify(latest())).not.toContain("what is this?");
 
-    await overlay.overlayAction({ action: "copy-transcript" });
-    expect(writeClipboard).toHaveBeenCalledWith("what is this?");
     await overlay.overlayAction({ action: "open-microphone-settings" });
     await overlay.overlayAction({ action: "open-screen-recording-settings" });
     expect(openExternal.mock.calls).toEqual([
       ["x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"],
       ["x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"],
     ]);
-    await overlay.overlayAction({ action: "open-meeting-settings" });
-    expect(openMeetingSettings).toHaveBeenCalledOnce();
-
-    overlay.setState({ code: "nothing_heard", kind: "error" });
-    await overlay.overlayAction({ action: "copy-transcript" });
-    expect(writeClipboard).toHaveBeenCalledOnce();
   });
 
   // Errors shown in the Notch reuse the same actions, Input Monitoring included.
-  it("runs a Notch error's action with that error's transcript", async () => {
-    const { openExternal, overlay, writeClipboard } = createOverlay();
-    await overlay.runAction("open-input-monitoring-settings", undefined);
+  it("runs a Notch error's action", async () => {
+    const { openExternal, overlay } = createOverlay();
+    await overlay.runAction("open-input-monitoring-settings");
     expect(openExternal).toHaveBeenCalledWith(
       "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
     );
-    await overlay.runAction("copy-transcript", "from the notch");
-    expect(writeClipboard).toHaveBeenCalledWith("from the notch");
   });
 
   // Gravação de Tela: the request puts Comma in the list the pane shows.
   it("asks for Screen Recording before opening its pane, and opens it if the request fails", async () => {
     const { calls, overlay, requestScreenRecording } = createOverlay();
-    await overlay.runAction("open-screen-recording-settings", undefined);
+    await overlay.runAction("open-screen-recording-settings");
     expect(calls).toEqual([
       "request screen recording",
       "open x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
     ]);
 
     requestScreenRecording.mockRejectedValueOnce(new Error("helper lost"));
-    await overlay.runAction("open-screen-recording-settings", undefined);
+    await overlay.runAction("open-screen-recording-settings");
     expect(calls.at(-1)).toBe(
       "open x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
     );
-    await overlay.runAction("open-microphone-settings", undefined);
+    await overlay.runAction("open-microphone-settings");
     expect(requestScreenRecording).toHaveBeenCalledTimes(2);
   });
 

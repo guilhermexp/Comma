@@ -67,6 +67,7 @@ const meta = {
     caption: null,
     color: companionBlue,
     cursor: { x: 640, y: 330 },
+    drawingEnabled: false,
     level: 0.55,
     onAction: fn(),
     onCaptionClick: fn(),
@@ -85,21 +86,21 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Listening: Story = {};
+export const Listening: Story = { args: { drawingEnabled: true } };
 
 /** The user circles March while asking about it. */
 export const DrawingAStroke: Story = {
   args: {
     cursor: marchLoop.at(-1)!,
     defaultStroke: marchLoop,
+    drawingEnabled: true,
     level: 0.8,
   },
 };
 
-export const Transcribing: Story = { args: { state: { kind: "transcribing" } } };
+export const Connecting: Story = { args: { state: { kind: "connecting" } } };
 
 export const Thinking: Story = { args: { state: { kind: "thinking" } } };
-
 export const Speaking: Story = {
   args: {
     caption:
@@ -117,22 +118,23 @@ export const WholeReply: Story = {
   },
 };
 
-export const Busy: Story = { args: { state: { kind: "busy" } } };
+export const Ready: Story = { args: { state: { kind: "ready" } } };
 
 export const MicrophoneDenied: Story = {
   args: {
-    state: { code: "microphone_denied", kind: "error", transcriptAvailable: false },
+    state: { code: "microphone_denied", kind: "error" },
   },
 };
 
-export const SendFailed: Story = {
-  args: { state: { code: "send_failed", kind: "error", transcriptAvailable: true } },
+export const ScreenDenied: Story = {
+  args: {
+    state: { code: "screen_denied", kind: "error" },
+  },
 };
 
-export const NothingHeard: Story = {
-  args: { state: { code: "nothing_heard", kind: "error", transcriptAvailable: false } },
+export const PlanLimit: Story = {
+  args: { state: { code: "plan_limit", kind: "error" } },
 };
-
 /** Near the display's bottom-right corner the balloon flips to stay on screen. */
 export const NearTheEdge: Story = {
   args: {

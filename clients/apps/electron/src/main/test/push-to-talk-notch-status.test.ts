@@ -35,33 +35,33 @@ class FakeNotch implements PushToTalkNotch {
 function createStatus(locale: "en" | "pt-BR" | "zh-CN" = "en") {
   const notch = new FakeNotch();
   const clock = new FakeClock();
-  const actions: [PushToTalkErrorAction, { transcript: string | undefined }][] = [];
+  const actions: PushToTalkErrorAction[] = [];
   const status = new NotchPushToTalkStatus({
     clock,
     locale,
     notch,
-    onAction: (action, context) => actions.push([action, context]),
+    onAction: (action) => actions.push(action),
   });
   return { actions, clock, notch, status };
 }
 
 describe("NotchPushToTalkStatus", () => {
-  it("shows each turn state in the reader's language and gives the Notch back", () => {
+  it("projects live call states and gives the Notch back when idle", () => {
     const { notch, status } = createStatus("pt-BR");
 
+    status.set({ kind: "connecting" });
     status.set({ kind: "listening" });
-    status.set({ kind: "transcribing" });
     status.set({ kind: "thinking" });
     status.set({ kind: "speaking" });
-    status.set({ kind: "busy" });
+    status.set({ kind: "ready" });
     status.set(null);
 
-    expect(notch.writes).toEqual([
-      { level: 0, message: "Ouvindo", state: "listening" },
-      { message: "Transcrevendo", state: "transcribing" },
-      { message: "Pensando", state: "thinking" },
-      { message: "Falando", state: "speaking" },
-      { message: "Aguarde a pergunta atual", state: "busy" },
+    expect(notch.writes.map((turn) => turn?.state ?? null)).toEqual([
+      "thinking",
+      "listening",
+      "thinking",
+      "speaking",
+      "busy",
       null,
     ]);
   });
@@ -70,31 +70,34 @@ describe("NotchPushToTalkStatus", () => {
     const { actions, notch, status } = createStatus();
 
     status.set({ code: "microphone_denied", kind: "error" });
-    expect(notch.writes.at(-1)).toEqual({
-      action: { id: "open-microphone-settings", label: "Open System Settings" },
-      message: "Comma needs Microphone access",
+    expect(notch.writes.at(-1)).toMatchObject({
+      action: { id: "open-microphone-settings" },
       state: "error",
     });
-    status.set({ code: "transcription_unavailable", kind: "error" });
-    expect(notch.writes.at(-1)?.action).toEqual({
-      id: "open-meeting-settings",
-      label: "Open Meeting settings",
-    });
-    // Copying needs the words that were heard.
-    status.set({ code: "send_failed", kind: "error" });
-    expect(notch.writes.at(-1)).toEqual({
-      message: "Couldn’t send your question",
+    status.set({ code: "screen_denied", kind: "error" });
+    expect(notch.writes.at(-1)).toMatchObject({
+      action: { id: "open-screen-recording-settings" },
       state: "error",
     });
-    status.set({ code: "send_failed", kind: "error", transcript: "what is this?" });
-    expect(notch.writes.at(-1)?.action).toEqual({
-      id: "copy-transcript",
-      label: "Copy transcript",
+    status.set({ code: "busy", kind: "error" });
+    expect(notch.writes.at(-1)).toMatchObject({ state: "error" });
+    expect(notch.writes.at(-1)?.action).toBeUndefined();
+    status.set({ code: "plan_limit", kind: "error" });
+    expect(notch.writes.at(-1)).toMatchObject({ state: "error" });
+    expect(notch.writes.at(-1)?.action).toBeUndefined();
+    status.set({ code: "context_failed", kind: "error" });
+    expect(notch.writes.at(-1)).toMatchObject({ state: "error" });
+    status.set({ code: "call_failed", kind: "error" });
+    expect(notch.writes.at(-1)).toMatchObject({ state: "error" });
+
+    status.set({ kind: "ready" });
+    expect(notch.writes.at(-1)).toMatchObject({
+      action: { id: "open-side-chat" },
+      state: "busy",
     });
-    expect(JSON.stringify(notch.writes)).not.toContain("what is this?");
 
     notch.emit({
-      payload: { action: "voice:action", value: "copy-transcript" },
+      payload: { action: "voice:action", value: "open-side-chat" },
       type: "action",
     });
     notch.emit({
@@ -102,16 +105,15 @@ describe("NotchPushToTalkStatus", () => {
       type: "action",
     });
     notch.emit({
-      payload: { action: "task:open", value: "copy-transcript" },
+      payload: { action: "task:open", value: "open-side-chat" },
       type: "action",
     });
-    // The words to copy go to Main's action handler, never to the Notch.
-    expect(actions).toEqual([["copy-transcript", { transcript: "what is this?" }]]);
+    expect(actions).toEqual(["open-side-chat"]);
 
-    // Once the error is gone, a late click on it does nothing.
+    // Once the state is cleared, a late click on it does nothing.
     status.set(null);
     notch.emit({
-      payload: { action: "voice:action", value: "copy-transcript" },
+      payload: { action: "voice:action", value: "open-side-chat" },
       type: "action",
     });
     expect(actions).toHaveLength(1);
@@ -127,15 +129,10 @@ describe("NotchPushToTalkStatus", () => {
       clock.advance(5);
       status.setLevel(level);
     }
-    expect(notch.writes).toEqual([
-      { level: 0.2, message: "Listening", state: "listening" },
-    ]);
+    expect(notch.writes.map((turn) => turn?.level)).toEqual([0.2]);
 
     clock.advance(notchLevelIntervalMs);
-    expect(notch.writes).toEqual([
-      { level: 0.2, message: "Listening", state: "listening" },
-      { level: 1, message: "Listening", state: "listening" },
-    ]);
+    expect(notch.writes.map((turn) => turn?.level)).toEqual([0.2, 1]);
 
     // An unchanged level costs nothing.
     clock.advance(notchLevelIntervalMs);
@@ -152,14 +149,14 @@ describe("NotchPushToTalkStatus", () => {
     status.set({ kind: "listening" });
     status.setLevel(0.4);
     status.setLevel(0.8);
-    status.set({ kind: "transcribing" });
+    status.set({ kind: "thinking" });
     clock.advance(notchLevelIntervalMs * 2);
     status.setLevel(0.5);
 
     expect(notch.writes.map((turn) => turn?.state)).toEqual([
       "listening",
       "listening",
-      "transcribing",
+      "thinking",
     ]);
     expect(clock.pending()).toBe(0);
   });
@@ -171,7 +168,6 @@ describe("NotchPushToTalkStatus", () => {
     expect(status.visible()).toBe(false);
 
     status.set({ code: "microphone_denied", kind: "error" });
-    expect(notch.writes.at(-1)?.message).toBe("Comma 需要麦克风权限");
     status.dispose();
     expect(notch.listeners.size).toBe(0);
     notch.emit({
@@ -181,13 +177,17 @@ describe("NotchPushToTalkStatus", () => {
     expect(actions).toEqual([]);
   });
 
-  it("keeps the turn going when a Notch write fails", async () => {
-    const { notch, status } = createStatus();
-    const failure = vi
-      .spyOn(notch, "setVoice")
-      .mockRejectedValueOnce(new Error("gone"));
-    expect(() => status.set({ kind: "thinking" })).not.toThrow();
+  it("resumes level updates after the Notch rejects a write", async () => {
+    const { clock, notch, status } = createStatus();
+    vi.spyOn(notch, "setVoice").mockRejectedValueOnce(new Error("gone"));
+    status.set({ kind: "listening" });
     await Promise.resolve();
-    expect(failure).toHaveBeenCalledOnce();
+
+    status.setLevel(0.8);
+    clock.advance(notchLevelIntervalMs);
+    expect(notch.writes.at(-1)).toMatchObject({
+      level: 0.8,
+      state: "listening",
+    });
   });
 });

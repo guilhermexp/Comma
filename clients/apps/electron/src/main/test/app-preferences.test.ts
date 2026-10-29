@@ -59,7 +59,6 @@ describe("AppPreferencesService", () => {
     const {
       pushToTalkEnabled: _enabled,
       pushToTalkShortcut: _shortcut,
-      pushToTalkSpeakReplies: _speak,
       pushToTalkSendScreen: _screen,
       ...legacy
     } = defaultCommaClientSettings;
@@ -75,7 +74,6 @@ describe("AppPreferencesService", () => {
         key: null,
         modifiers: { alt: true, control: true, meta: false, shift: false },
       },
-      pushToTalkSpeakReplies: true,
     });
     const commandK = {
       key: "k",
@@ -86,7 +84,6 @@ describe("AppPreferencesService", () => {
       clientSettings: {
         pushToTalkSendScreen: false,
         pushToTalkShortcut: commandK,
-        pushToTalkSpeakReplies: false,
       },
     });
     await service.close();
@@ -98,12 +95,54 @@ describe("AppPreferencesService", () => {
       pushToTalkEnabled: true,
       pushToTalkSendScreen: false,
       pushToTalkShortcut: commandK,
-      pushToTalkSpeakReplies: false,
     });
     await reopened.update({ clientSettings: { pushToTalkShortcut: null } });
     expect(reopened.state().clientSettings).toMatchObject({
       pushToTalkEnabled: true,
       pushToTalkShortcut: null,
+    });
+    await reopened.close();
+  });
+  it("preserves all other preferences when loading the retired voice-response setting", async () => {
+    const filePath = await temporaryPreferencesPath();
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        ...defaultAppPreferences,
+        showInDock: false,
+        clientSettings: {
+          ...defaultCommaClientSettings,
+          localePreference: "en",
+          pushToTalkEnabled: true,
+          pushToTalkSendScreen: false,
+          pushToTalkSpeakReplies: false,
+        },
+      })
+    );
+    const service = await AppPreferencesService.open({
+      filePath,
+      platform: createPlatform(),
+    });
+    expect(service.state()).toMatchObject({
+      showInDock: false,
+      clientSettings: {
+        localePreference: "en",
+        pushToTalkEnabled: true,
+        pushToTalkSendScreen: false,
+      },
+    });
+    await service.close();
+    const reopened = await AppPreferencesService.open({
+      filePath,
+      platform: createPlatform(),
+    });
+    expect(reopened.state()).toMatchObject({
+      showInDock: false,
+      clientSettings: {
+        localePreference: "en",
+        pushToTalkEnabled: true,
+        pushToTalkSendScreen: false,
+      },
     });
     await reopened.close();
   });

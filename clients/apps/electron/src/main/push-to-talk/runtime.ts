@@ -3,7 +3,6 @@ import {
   type CommaClientSettings,
 } from "@comma/native-bridge";
 import type { PushToTalkController } from "./controller";
-import type { PushToTalkTranscriber } from "./transcriber";
 import type {
   PushToTalkHotkey,
   PushToTalkInputMonitoring,
@@ -28,7 +27,6 @@ export function effectivePushToTalkSettings({
   return {
     enabled: settings.pushToTalkEnabled && sideChatEnabled && signedIn,
     shortcut: settings.pushToTalkShortcut,
-    speakReplies: settings.pushToTalkSpeakReplies,
     sendScreen: settings.pushToTalkSendScreen,
   };
 }
@@ -104,26 +102,4 @@ export function reportPushToTalkInputMonitoring(
     onInputMonitoring: (listener) => hotkey.onInputMonitoring(listener),
     onHelperRestarted: (listener) => hotkey.onHelperRestarted(listener),
   };
-}
-
-const unavailableTranscriber: PushToTalkTranscriber = {
-  ready: async () => false,
-  transcribe: () => Promise.reject(new Error("Transcription is unavailable.")),
-};
-
-/**
- * Local mode transcribes with this Mac's CommaTranscriber (the meeting
- * engine); remote mode with the server's recording transcription (D5).
- */
-export function choosePushToTalkTranscriber({
-  localBackend,
-  remote,
-}: {
-  localBackend:
-    | { pushToTalkTranscriber: PushToTalkTranscriber | undefined }
-    | undefined;
-  remote: () => PushToTalkTranscriber;
-}): PushToTalkTranscriber {
-  if (localBackend) return localBackend.pushToTalkTranscriber ?? unavailableTranscriber;
-  return remote();
 }

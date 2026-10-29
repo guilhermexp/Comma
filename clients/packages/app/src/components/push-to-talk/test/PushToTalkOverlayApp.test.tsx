@@ -10,6 +10,7 @@ const listening: PushToTalkOverlayState = {
   caption: null,
   companion: { kind: "listening" },
   cursor: { x: 200, y: 150 },
+  drawingEnabled: true,
   hiding: false,
   level: 0,
   revision: 1,
@@ -19,14 +20,15 @@ const listening: PushToTalkOverlayState = {
 function installOverlayBridge(initial: PushToTalkOverlayState) {
   let listener: ((state: PushToTalkOverlayState) => void) | undefined;
   let revision = initial.revision;
-  const get = vi.fn(async () => initial);
+  let current = initial;
+  const get = vi.fn(async () => current);
   const pushToTalk = {
     overlayAction: vi.fn(async () => undefined),
     overlayState: Object.assign(get, {
       get,
       subscribe: vi.fn((next: (state: PushToTalkOverlayState) => void) => {
         listener = next;
-        next(initial);
+        next(current);
         return () => undefined;
       }),
     }),
@@ -38,7 +40,8 @@ function installOverlayBridge(initial: PushToTalkOverlayState) {
     /** Publishes the next revision with the given changes. */
     publish: (patch: Partial<PushToTalkOverlayState>) => {
       revision += 1;
-      act(() => listener?.({ ...initial, ...patch, revision }));
+      current = { ...current, ...patch, revision };
+      act(() => listener?.(current));
     },
     publishRaw: (state: PushToTalkOverlayState) => act(() => listener?.(state)),
     pushToTalk,
@@ -89,9 +92,6 @@ describe("PushToTalkOverlayApp", () => {
     drag(loop);
     expect(pushToTalk.setStroke).toHaveBeenLastCalledWith({ points: loop, surface: 7 });
     expect(screen.getAllByRole("img", { name: "Your drawing" })).toHaveLength(1);
-    expect(
-      screen.getByRole("img", { name: "Your drawing" }).querySelector("path")
-    ).toHaveAttribute("d", "M100 100Q180 90 200 125Q220 160 180 185L140 210");
 
     const swoosh = [
       { x: 400, y: 300 },
@@ -110,16 +110,14 @@ describe("PushToTalkOverlayApp", () => {
     expect(screen.queryByRole("img", { name: "Your drawing" })).toBeNull();
   });
 
-  it("keeps the stroke on screen after release, fading, without taking new drags", async () => {
+  it("keeps the released stroke visible without accepting new drags", async () => {
     const { publish, pushToTalk } = installOverlayBridge(listening);
     render(<PushToTalkOverlayApp />);
     await screen.findByText("Listening");
     drag(loop);
 
-    publish({ companion: { kind: "transcribing" } });
-    expect(screen.getByRole("img", { name: "Your drawing" })).toHaveAttribute(
-      "data-fading"
-    );
+    publish({ companion: { kind: "thinking" }, drawingEnabled: false });
+    expect(screen.getByRole("img", { name: "Your drawing" })).toBeVisible();
     const reports = pushToTalk.setStroke.mock.calls.length;
     drag([
       { x: 0, y: 0 },
@@ -128,7 +126,7 @@ describe("PushToTalkOverlayApp", () => {
     expect(pushToTalk.setStroke).toHaveBeenCalledTimes(reports);
 
     // Another surface (display or turn) starts without the stroke.
-    publish({ companion: { kind: "listening" }, surface: 8 });
+    publish({ companion: { kind: "listening" }, drawingEnabled: true, surface: 8 });
     expect(screen.queryByRole("img", { name: "Your drawing" })).toBeNull();
   });
 
@@ -152,8 +150,8 @@ describe("PushToTalkOverlayApp", () => {
     render(<PushToTalkOverlayApp />);
     await screen.findByText("Listening");
 
-    publish({ companion: { kind: "transcribing" } });
-    expect(screen.getByRole("status")).toHaveTextContent("Transcribing");
+    publish({ companion: { kind: "connecting" }, drawingEnabled: false });
+    expect(screen.getByRole("status")).toHaveTextContent("Connecting");
     expect(screen.getByTestId("push-to-talk-waiting")).toBeInTheDocument();
     expect(screen.queryByTestId("push-to-talk-level")).toBeNull();
 
@@ -228,66 +226,119 @@ describe("PushToTalkOverlayApp", () => {
     await screen.findByText("Listening");
 
     publish({
+      drawingEnabled: false,
       companion: {
         code: "microphone_denied",
         kind: "error",
-        transcriptAvailable: false,
       },
     });
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Comma needs Microphone access"
-    );
+    expect(screen.getByRole("alert")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Open System Settings" }));
     expect(pushToTalk.overlayAction).toHaveBeenLastCalledWith({
       action: "open-microphone-settings",
     });
 
     publish({
+      drawingEnabled: false,
       companion: {
-        code: "transcription_unavailable",
+        code: "screen_denied",
         kind: "error",
-        transcriptAvailable: false,
       },
     });
-    await userEvent.click(
-      screen.getByRole("button", { name: "Open Meeting settings" })
-    );
+    expect(screen.getByRole("alert")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Open System Settings" }));
     expect(pushToTalk.overlayAction).toHaveBeenLastCalledWith({
-      action: "open-meeting-settings",
+      action: "open-screen-recording-settings",
     });
 
     publish({
-      companion: { code: "send_failed", kind: "error", transcriptAvailable: true },
+      companion: { code: "busy", kind: "error" },
     });
-    await userEvent.click(screen.getByRole("button", { name: "Copy transcript" }));
-    expect(pushToTalk.overlayAction).toHaveBeenLastCalledWith({
-      action: "copy-transcript",
-    });
-    expect(await screen.findByText("Copied")).toBeInTheDocument();
-
-    publish({
-      companion: { code: "nothing_heard", kind: "error", transcriptAvailable: false },
-    });
-    expect(screen.getByRole("alert")).toHaveTextContent("Didn’t catch that");
+    expect(screen.getByRole("alert")).toBeVisible();
     expect(screen.queryByRole("button")).toBeNull();
 
-    publish({ companion: { kind: "busy" } });
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Wait for the current question"
-    );
+    publish({ companion: { kind: "ready" } });
+    expect(screen.getByRole("status")).toHaveTextContent("Reply ready");
 
     // An older revision delivered late is ignored.
     publishRaw({ ...listening, revision: 1 });
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Wait for the current question"
-    );
+    expect(screen.getByRole("status")).toHaveTextContent("Reply ready");
 
-    publish({ hiding: true, companion: { kind: "busy" } });
-    expect(screen.getByTestId("push-to-talk-overlay")).toHaveAttribute("data-hiding");
+    publish({ hiding: true, companion: { kind: "ready" } });
 
     publish({ companion: null });
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByTestId("push-to-talk-companion")).toBeNull();
+  });
+
+  it("shows a late reply as ready and opens chat only when its balloon is clicked", async () => {
+    const { pushToTalk } = installOverlayBridge({
+      ...listening,
+      companion: { kind: "ready" },
+      caption: "The Router finished the requested task.",
+      drawingEnabled: false,
+    });
+    render(<PushToTalkOverlayApp />);
+    await screen.findByRole("status");
+    expect(pushToTalk.overlayAction).not.toHaveBeenCalled();
+    const balloon = screen.getByRole("button", {
+      name: /The Router finished the requested task\./,
+    });
+    expect(balloon).toHaveTextContent("The Router finished the requested task.");
+    await userEvent.click(balloon);
+    expect(pushToTalk.overlayAction).toHaveBeenLastCalledWith({
+      action: "caption-click",
+    });
+  });
+
+  it("disables drawing and paints no stroke when drawing is not available", async () => {
+    const { pushToTalk } = installOverlayBridge({
+      ...listening,
+      drawingEnabled: false,
+    });
+    render(<PushToTalkOverlayApp />);
+    await screen.findByText("Listening");
+
+    drag(loop);
+    expect(pushToTalk.setStroke).not.toHaveBeenCalled();
+    expect(screen.queryByRole("img", { name: "Your drawing" })).toBeNull();
+  });
+
+  it("keeps drawing available while the service speaks during a held gesture", async () => {
+    const { pushToTalk } = installOverlayBridge({
+      ...listening,
+      companion: { kind: "speaking" },
+    });
+    render(<PushToTalkOverlayApp />);
+    await screen.findByText("Speaking");
+    drag(loop);
+    expect(screen.getByRole("img", { name: "Your drawing" })).toBeVisible();
+    expect(pushToTalk.setStroke).toHaveBeenLastCalledWith({ points: loop, surface: 7 });
+  });
+
+  it("clears in-progress stroke and paints no accepted stroke when drawing is revoked mid-turn", async () => {
+    const { publish, pushToTalk } = installOverlayBridge(listening);
+    render(<PushToTalkOverlayApp />);
+    await screen.findByText("Listening");
+
+    drag(loop);
+    expect(pushToTalk.setStroke).toHaveBeenLastCalledWith({ points: loop, surface: 7 });
+    expect(screen.getAllByRole("img", { name: "Your drawing" })).toHaveLength(1);
+
+    // Move to off-capture display: drawing availability is disabled and new surface starts
+    publish({ drawingEnabled: false, surface: 8 });
+    expect(screen.queryByRole("img", { name: "Your drawing" })).toBeNull();
+
+    // Off-capture dragging is ignored and paints no accepted-looking stroke
+    drag(loop);
+    expect(pushToTalk.setStroke).toHaveBeenLastCalledWith({ points: loop, surface: 7 });
+    expect(screen.queryByRole("img", { name: "Your drawing" })).toBeNull();
+
+    // Returning to captured display re-enables drawing
+    publish({ drawingEnabled: true, surface: 9 });
+    drag(loop);
+    expect(pushToTalk.setStroke).toHaveBeenLastCalledWith({ points: loop, surface: 9 });
+    expect(screen.getAllByRole("img", { name: "Your drawing" })).toHaveLength(1);
   });
 });

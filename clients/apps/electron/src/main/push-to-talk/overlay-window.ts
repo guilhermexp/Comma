@@ -55,12 +55,9 @@ interface PushToTalkOverlayOptions {
   displays(): ReadonlyArray<Display>;
   logger: { error(message: string): void; warn(message: string): void };
   openExternal(url: string): Promise<void> | void;
-  /** Comma Settings → Meeting, where transcription is chosen. */
-  openMeetingSettings(): Promise<void> | void;
   publish(state: PushToTalkOverlayState): void;
   /** Asks macOS for Screen Recording on Comma's behalf, so the pane lists Comma. */
   requestScreenRecording(): Promise<void>;
-  writeClipboard(text: string): void;
 }
 
 const systemSettingsPane = {
@@ -80,9 +77,9 @@ export const PUSH_TO_TALK_HIDE_FADE_MS = 320;
 /**
  * One reused, display-sized overlay that draws the cursor companion of the
  * Talk to agent turn. While shown it follows the pointer, moving to the
- * pointer's display. It takes mouse drags only while listening; otherwise it
- * is click-through except where the renderer reports the pointer over the
- * caption balloon or an error action.
+ * pointer's display. It takes mouse drags while the shortcut is held on the
+ * captured display, independently of voice state; otherwise only the
+ * caption balloon and error actions take clicks.
  */
 export class PushToTalkOverlayWindow
   implements PushToTalkCompanion, PushToTalkOverlayProvider
@@ -100,12 +97,13 @@ export class PushToTalkOverlayWindow
     caption: null,
     companion: null,
     cursor: { x: 0, y: 0 },
+    drawingEnabled: false,
     hiding: false,
     level: 0,
     revision: 0,
     surface: 0,
   };
-  #transcript: string | undefined;
+  #drawingRequested = false;
   #window: PushToTalkOverlayBrowserWindow | undefined;
   #windowPromise: Promise<PushToTalkOverlayBrowserWindow> | undefined;
 
@@ -130,10 +128,12 @@ export class PushToTalkOverlayWindow
     this.#display = display;
     this.#interactive = false;
     this.#setStroke(null);
+    const drawingEnabled = this.#drawingAllowed();
     this.#publish({
       caption: null,
       companion: this.#companion(input.state),
       cursor: relative(input.cursor, display.bounds),
+      drawingEnabled,
       hiding: false,
       level: 0,
       surface: this.#state.surface + 1,
@@ -149,10 +149,18 @@ export class PushToTalkOverlayWindow
   setState(state: PushToTalkTurnState) {
     // A late state of a finished turn never brings the overlay back.
     if (!this.#shown()) return;
+    const drawingEnabled = this.#drawingAllowed();
     this.#publish({
       companion: this.#companion(state),
+      drawingEnabled,
       ...(state.kind === "listening" ? {} : { level: 0 }),
     });
+    this.#applyMouse();
+  }
+  setDrawing(active: boolean) {
+    if (this.#drawingRequested === active) return;
+    this.#drawingRequested = active;
+    this.#publish({ drawingEnabled: this.#shown() && this.#drawingAllowed() });
     this.#applyMouse();
   }
 
@@ -172,7 +180,7 @@ export class PushToTalkOverlayWindow
   }
 
   hide(options: { immediate?: boolean } = {}) {
-    this.#transcript = undefined;
+    this.setDrawing(false);
     if (options.immediate) {
       clearTimeout(this.#hideTimer);
       this.#hideTimer = undefined;
@@ -191,17 +199,10 @@ export class PushToTalkOverlayWindow
     }, PUSH_TO_TALK_HIDE_FADE_MS);
   }
 
-  /**
-   * Runs an error's action, wherever the error was shown (companion or
-   * notch). `copy-transcript` copies `transcript`, the failed turn's words.
-   */
-  async runAction(action: PushToTalkErrorAction, transcript: string | undefined) {
-    if (action === "copy-transcript") {
-      if (transcript) this.#options.writeClipboard(transcript);
-      return;
-    }
-    if (action === "open-meeting-settings") {
-      await this.#options.openMeetingSettings();
+  /** Runs a PTT action from either surface through its existing owner. */
+  async runAction(action: PushToTalkErrorAction) {
+    if (action === "open-side-chat") {
+      for (const listener of this.#captionListeners) listener();
       return;
     }
     if (action === "open-screen-recording-settings") {
@@ -211,9 +212,9 @@ export class PushToTalkOverlayWindow
         );
       });
     }
-    await this.#options.openExternal(systemSettingsPane[action]);
+    const pane = systemSettingsPane[action as keyof typeof systemSettingsPane];
+    if (pane) await this.#options.openExternal(pane);
   }
-
   onStroke(listener: (stroke: PushToTalkStroke | null) => void) {
     this.#strokeListeners.add(listener);
     return () => void this.#strokeListeners.delete(listener);
@@ -240,7 +241,7 @@ export class PushToTalkOverlayWindow
       this.#display?.id !== this.#capturedDisplayId ||
       surface !== this.#state.surface ||
       !this.#shown() ||
-      this.#state.companion?.kind !== "listening"
+      !this.#drawingAllowed()
     )
       return;
     this.#setStroke(
@@ -249,7 +250,7 @@ export class PushToTalkOverlayWindow
   }
 
   setInteractive({ interactive }: { interactive: boolean }) {
-    if (!this.#shown() || this.#state.companion?.kind === "listening") return;
+    if (!this.#shown() || this.#state.drawingEnabled) return;
     this.#interactive = interactive;
     this.#applyMouse();
   }
@@ -257,10 +258,10 @@ export class PushToTalkOverlayWindow
   async overlayAction({ action }: { action: PushToTalkOverlayAction }) {
     if (action === "caption-click") {
       if (!this.#shown() || this.#state.caption === null) return;
-      for (const listener of this.#captionListeners) listener();
+      await this.runAction("open-side-chat");
       return;
     }
-    await this.runAction(action, this.#transcript);
+    await this.runAction(action);
   }
 
   #shown() {
@@ -268,15 +269,10 @@ export class PushToTalkOverlayWindow
   }
 
   #companion(state: PushToTalkTurnState): PushToTalkCompanionState {
-    if (state.kind !== "error") {
-      this.#transcript = undefined;
-      return { kind: state.kind };
-    }
-    this.#transcript = state.transcript || undefined;
+    if (state.kind !== "error") return { kind: state.kind };
     return {
       code: state.code,
       kind: "error",
-      transcriptAvailable: Boolean(this.#transcript),
     };
   }
 
@@ -287,7 +283,13 @@ export class PushToTalkOverlayWindow
 
   #removeWindow() {
     this.#stopFollowing();
-    this.#publish({ caption: null, companion: null, hiding: false, level: 0 });
+    this.#publish({
+      caption: null,
+      companion: null,
+      drawingEnabled: false,
+      hiding: false,
+      level: 0,
+    });
     const window = this.#liveWindow();
     if (!window) return;
     window.setIgnoreMouseEvents(true, { forward: true });
@@ -323,11 +325,13 @@ export class PushToTalkOverlayWindow
       this.#interactive = false;
       this.#setStroke(null);
       this.#liveWindow()?.setBounds(display.bounds);
-      this.#applyMouse();
+      const drawingEnabled = this.#drawingAllowed();
       this.#publish({
         cursor: relative(point, display.bounds),
+        drawingEnabled,
         surface: this.#state.surface + 1,
       });
+      this.#applyMouse();
       return;
     }
     const cursor = relative(point, display.bounds);
@@ -369,9 +373,17 @@ export class PushToTalkOverlayWindow
 
   #applyMouse() {
     const takesMouse =
-      this.#shown() &&
-      (this.#state.companion?.kind === "listening" || this.#interactive);
+      this.#shown() && (this.#state.drawingEnabled || this.#interactive);
     this.#liveWindow()?.setIgnoreMouseEvents(!takesMouse, { forward: true });
+  }
+
+  #drawingAllowed() {
+    return (
+      this.#drawingRequested &&
+      this.#display !== undefined &&
+      this.#capturedDisplayId !== undefined &&
+      this.#display.id === this.#capturedDisplayId
+    );
   }
 
   #liveWindow() {

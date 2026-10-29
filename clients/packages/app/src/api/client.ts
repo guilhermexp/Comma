@@ -2,11 +2,12 @@ import type { CommaLocale } from "@comma/i18n";
 import {
   voiceCallAnswerSchema,
   voiceCallEventsSchema,
-  voiceCallSaySchema,
+  voiceCallContextAcceptedSchema,
   type VoiceCallAnswer,
   type VoiceCallEvents,
   type VoiceCallMode,
-  type VoiceCallSay,
+  type VoiceCallContext,
+  type VoiceCallContextAccepted,
 } from "./voiceCalls";
 import {
   browserBindingSchema,
@@ -262,24 +263,29 @@ export type ComposioStatus = z.infer<typeof composioStatusSchema>;
 export type ComposioAccount = z.infer<typeof composioAccountSchema>;
 
 export interface CommaApiClient {
-  /** `read_aloud` opens a call that only reads the text sent with `sayVoiceCall`. */
+  /** Omit mode for a manual call; push_to_talk starts without a greeting. */
   startVoiceCall(
     workspaceId: string,
     sdp: string,
-    options?: { mode?: VoiceCallMode }
+    options?: { mode?: VoiceCallMode; signal?: AbortSignal }
   ): Promise<VoiceCallAnswer>;
-  sayVoiceCall(
+  appendVoiceCallContext(
     workspaceId: string,
     callId: string,
-    text: string
-  ): Promise<VoiceCallSay>;
+    context: VoiceCallContext,
+    options?: { signal?: AbortSignal }
+  ): Promise<VoiceCallContextAccepted>;
   voiceCallEvents(
     workspaceId: string,
     callId: string,
     after: number,
     options?: { signal?: AbortSignal }
   ): Promise<VoiceCallEvents>;
-  endVoiceCall(workspaceId: string, callId: string): Promise<unknown>;
+  endVoiceCall(
+    workspaceId: string,
+    callId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<unknown>;
   getComposio(
     workspaceId: string,
     options?: { signal?: AbortSignal }
@@ -993,15 +999,17 @@ export function createCommaApi(config: CommaApiConfig): CommaApiClient {
         "POST",
         `/v1/comma/workspaces/${encodeURIComponent(workspaceId)}/voice/calls`,
         voiceCallAnswerSchema,
-        options.mode ? { sdp, mode: options.mode } : { sdp }
+        options.mode ? { sdp, mode: options.mode } : { sdp },
+        options.signal
       );
     },
-    sayVoiceCall(workspaceId, callId, text) {
+    appendVoiceCallContext(workspaceId, callId, context, options = {}) {
       return request(
         "POST",
-        `/v1/comma/workspaces/${encodeURIComponent(workspaceId)}/voice/calls/${encodeURIComponent(callId)}/say`,
-        voiceCallSaySchema,
-        { text }
+        `/v1/comma/workspaces/${encodeURIComponent(workspaceId)}/voice/calls/${encodeURIComponent(callId)}/context`,
+        voiceCallContextAcceptedSchema,
+        context,
+        options.signal
       );
     },
     voiceCallEvents(workspaceId, callId, after, options = {}) {
@@ -1013,11 +1021,13 @@ export function createCommaApi(config: CommaApiConfig): CommaApiClient {
         options.signal
       );
     },
-    endVoiceCall(workspaceId, callId) {
+    endVoiceCall(workspaceId, callId, options = {}) {
       return request(
         "DELETE",
         `/v1/comma/workspaces/${encodeURIComponent(workspaceId)}/voice/calls/${encodeURIComponent(callId)}`,
-        z.unknown()
+        z.unknown(),
+        undefined,
+        options.signal
       );
     },
     getCompute(workspaceId, options = {}) {
@@ -2416,6 +2426,11 @@ export function createCommaApi(config: CommaApiConfig): CommaApiClient {
     },
 
     async uploadGroupFile(groupId, attrs) {
+      const combinedSignal = combineSignals(
+        attrs.signal,
+        config.sessionTransport?.signal
+      );
+      combinedSignal?.throwIfAborted();
       const form = new FormData();
       form.append("file", attrs.data, attrs.name);
       const init: RequestInit = {
@@ -2425,10 +2440,6 @@ export function createCommaApi(config: CommaApiConfig): CommaApiClient {
         body: form,
       };
 
-      const combinedSignal = combineSignals(
-        attrs.signal,
-        config.sessionTransport?.signal
-      );
       if (combinedSignal) {
         init.signal = combinedSignal;
       }

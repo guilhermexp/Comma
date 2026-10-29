@@ -96,7 +96,6 @@ import { PushToTalkVoiceWindow } from "./push-to-talk/voice-window";
 import { createNativePushToTalkHotkey } from "./push-to-talk/native-hotkey";
 import { NotchPushToTalkStatus } from "./push-to-talk/notch-status";
 import { PushToTalkScreen } from "./push-to-talk/screen-capture";
-import { SaySpeaker } from "./push-to-talk/speaker";
 import type { PushToTalkTurnState } from "./push-to-talk/types";
 import { initializeElectronMainI18n } from "./main-locale";
 import { readStoredLocalePreference } from "./app-preferences";
@@ -1507,14 +1506,12 @@ const pushToTalkOverlay = new PushToTalkOverlayWindow({
   displays: () => screen.getAllDisplays(),
   logger: log,
   openExternal: (url) => shell.openExternal(url),
-  openMeetingSettings: () => requestOpenMainAppRoute("/settings?category=meeting"),
   publish: (state) =>
     appContext?.nativeEventBus.emit(pushToTalkOverlayStateChangedEvent, state),
   requestScreenRecording: () => pushToTalkScreenRecording.request(),
-  writeClipboard: (text) => electronClipboard.writeText(text),
 });
 
-// The GPT Live voice's hidden WebRTC window; created on the first spoken reply.
+// Hidden WebRTC window; created on the first push-to-talk press.
 let pushToTalkVoiceWindow: PushToTalkVoiceWindow | undefined;
 function ensurePushToTalkVoiceWindow() {
   if (closingMainServices || !appContext)
@@ -1540,10 +1537,9 @@ function ensurePushToTalkVoiceWindow() {
 const pushToTalkStatus = new NotchPushToTalkStatus({
   notch,
   locale: () => electronMainLocale,
-  onAction: (action, { transcript }) => {
-    log.info(`push-to-talk notch action: ${action}`);
-    pushToTalkOverlay
-      .runAction(action, transcript)
+  onAction: (action) => {
+    void pushToTalkOverlay
+      .runAction(action)
       .catch((error: unknown) =>
         log.warn(`push-to-talk notch action failed: ${String(error)}`)
       );
@@ -1556,7 +1552,6 @@ function describePushToTalkState(state: PushToTalkTurnState | null) {
 }
 
 function createPushToTalkDeps() {
-  const speaker = new SaySpeaker();
   return {
     hotkey: createNativePushToTalkHotkey(sideChat, {
       log: (message) => log.info(message),
@@ -1578,15 +1573,12 @@ function createPushToTalkDeps() {
       createFromBitmap: (bitmap, size) => nativeImage.createFromBitmap(bitmap, size),
     }),
     screenRecording: pushToTalkScreenRecording,
-    speaker,
     voiceWindow: {
       open: async () => ensurePushToTalkVoiceWindow().open(),
     },
     powerMonitor,
     openSideChat: () => safelyControlSideChat(() => sideChat.open()),
     trace: (message: string) => log.info(message),
-    recordingsDir: join(app.getPath("temp"), "comma-push-to-talk"),
-    localBackend,
   };
 }
 
@@ -2054,6 +2046,7 @@ function startElectronApp() {
           ? {
               allowedOrigins: allowedRendererOrigins(devServerUrl),
               getMainWebContents: () => primaryWindow?.webContents,
+              getVoiceWebContents: () => pushToTalkVoiceWindow?.webContents(),
               requestSystemAccess: () =>
                 systemPreferences.askForMediaAccess("microphone"),
             }

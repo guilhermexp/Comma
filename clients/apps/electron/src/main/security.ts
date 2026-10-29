@@ -146,6 +146,7 @@ export function installSessionSecurity(
   microphone?: {
     allowedOrigins: string[];
     getMainWebContents: () => WebContents | undefined;
+    getVoiceWebContents?: () => WebContents | undefined;
     requestSystemAccess: () => Promise<boolean>;
   }
 ) {
@@ -158,7 +159,9 @@ export function installSessionSecurity(
     Boolean(
       microphone &&
       contents &&
-      contents === microphone.getMainWebContents() &&
+      (contents === microphone.getMainWebContents() ||
+        (microphone.getVoiceWebContents !== undefined &&
+          contents === microphone.getVoiceWebContents())) &&
       mainFrame &&
       url &&
       isAllowedUrl(url, origins) &&

@@ -1,37 +1,71 @@
 import { getNativeBridge, type PushToTalkVoiceSession } from "@comma/native-bridge";
 import { useEffect } from "react";
-import { openReadAloudPeer, type ReadAloudPeerDeps } from "./readAloudPeer";
+import { openPushToTalkPeer, type PushToTalkPeerDeps } from "./pushToTalkPeer";
 
 /**
  * Renderer of the hidden Talk to agent voice window. Main owns the
- * read-aloud call; this holds one WebRTC peer per active generation of
- * Main's replay-last session and drops it when the generation ends.
+ * live voice call; this holds one WebRTC peer per active generation of
+ * Main's replay-last session and updates listening without recreation.
  */
-export function PushToTalkVoiceApp({ deps }: { deps?: ReadAloudPeerDeps }) {
+export function PushToTalkVoiceApp({ deps }: { deps?: PushToTalkPeerDeps }) {
   const bridge = getNativeBridge();
   useEffect(() => {
     if (bridge.platform !== "electron") return;
-    let latest = -1;
-    let peer: { generation: number; close: () => void } | undefined;
+    let latestGeneration = -1;
+    let latestRevision = -1;
+    let peer:
+      | {
+          generation: number;
+          close: () => void;
+          update: (input: { listening?: boolean }) => void;
+        }
+      | undefined;
+
     const apply = (session: PushToTalkVoiceSession) => {
-      // A replayed snapshot may arrive after a newer one.
-      if (session.generation < latest) return;
-      latest = session.generation;
-      if (peer && (!session.active || peer.generation !== session.generation)) {
+      // Replay fencing: ignore older generation or older/equal revision in same generation
+      if (session.generation < latestGeneration) return;
+      if (session.generation === latestGeneration && session.revision <= latestRevision)
+        return;
+
+      const isSameGeneration =
+        peer !== undefined && peer.generation === session.generation;
+      latestGeneration = session.generation;
+      latestRevision = session.revision;
+
+      if (!session.active) {
+        if (peer) {
+          peer.close();
+          peer = undefined;
+        }
+        return;
+      }
+
+      if (isSameGeneration) {
+        peer!.update({
+          listening: session.listening,
+        });
+        return;
+      }
+
+      if (peer) {
         peer.close();
         peer = undefined;
       }
-      if (!session.active || peer) return;
+
       const { generation } = session;
+      const currentPeer = openPushToTalkPeer({
+        ...(deps ? { deps } : {}),
+        listening: session.listening,
+        offer: (sdp) => bridge.pushToTalkVoice.offer({ generation, sdp }),
+        report: (event) => void bridge.pushToTalkVoice.report({ event, generation }),
+      });
+
       peer = {
         generation,
-        ...openReadAloudPeer({
-          ...(deps ? { deps } : {}),
-          offer: (sdp) => bridge.pushToTalkVoice.offer({ generation, sdp }),
-          report: (event) => void bridge.pushToTalkVoice.report({ event, generation }),
-        }),
+        ...currentPeer,
       };
     };
+
     const unsubscribe = bridge.pushToTalkVoice.session.subscribe(apply);
     return () => {
       unsubscribe();

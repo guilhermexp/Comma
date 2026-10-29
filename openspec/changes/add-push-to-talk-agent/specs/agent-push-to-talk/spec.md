@@ -316,7 +316,7 @@ Conectar, enviar contexto e delegar MUST NOT usar ou apagar o rascunho da sideba
 
 ### Requirement: Resposta por voz e legenda
 
-O modelo GPT Live MUST responder por voz na própria chamada e MUST poder receber a resposta delegada do Router. O balão MUST acompanhar as legendas frase a frase. Não existe ajuste para desligar apenas a voz da resposta nem fallback para voz do sistema; não é uma leitura literal de mensagem do chat.
+O modelo GPT Live MUST responder por voz na própria chamada e MUST poder receber a resposta delegada do Router. O balão MUST acompanhar as legendas frase a frase. O áudio remoto recebido pelo peer MUST permanecer ao vivo e não ser bloqueado ou silenciado localmente à espera de legendas. Não existe ajuste para desligar apenas a voz da resposta nem fallback para voz do sistema; não é uma leitura literal de mensagem do chat.
 
 #### Scenario: Resposta direta
 
@@ -327,6 +327,17 @@ O modelo GPT Live MUST responder por voz na própria chamada e MUST poder recebe
 
 - **WHEN** o Router conclui uma delegação com a chamada ativa
 - **THEN** a resposta volta ao modelo de voz e pode ser falada com legenda no balão
+
+#### Scenario: Áudio novo não aguarda legenda
+
+- **WHEN** o serviço transmite áudio novo de resposta com o atalho pressionado ou recém-solto antes da chegada da legenda
+- **THEN** o áudio recebido é reproduzido imediatamente pelo peer sem bloqueio local ou espera de legenda
+
+#### Scenario: Fala contínua durante novo gesto
+
+- **WHEN** o usuário aperta e solta novamente enquanto a mídia continua audível, sem evento de silêncio
+- **THEN** o gesto não inventa silêncio; uma legenda final não oculta o companheiro nem inicia a inatividade até a mídia ficar silenciosa
+
 
 #### Scenario: Abrir a conversa pelo balão
 
@@ -379,9 +390,23 @@ Uma delegação pendente MUST manter a sessão aberta e o estado "Pensando", com
 - **THEN** a chamada já terminou sem incluir esse ID entre os confirmados do evento final
 - **AND** a resposta pela origem canônica original permanece na conversa; a origem final não autoriza um ID sem confirmação
 
+#### Scenario: Supervisor ou force durante encaminhamento
+
+- **WHEN** o supervisor encerra o Actor ou o drain força seu término enquanto há forwarding sem ACK
+- **THEN** a mídia fecha e o mesmo dono conclui o handoff possível antes da finalização, dentro do orçamento forçado existente
+- **AND** somente ACKs conhecidos entram no contexto final; trabalho aceito ou desconhecido não é cancelado nem reenviado
+- **AND** o encerramento não depende de um timer que exija a mailbox depois do término
+
+#### Scenario: Admissão do handoff não responde
+
+- **WHEN** a admissão do evento final permanece sem resposta durante encerramento forçado
+- **THEN** o término continua limitado pelo prazo existente e registra resultado não confirmado, sem inventar aceitação
+- **AND** eventual ingresso posterior conserva a autorização pela origem canônica, sem fila durável ou outra autoridade de conclusão
+
+
 ### Requirement: Só respostas vinculadas à chamada e aviso tardio
 
-Respostas a mensagens digitadas que não pertencem à delegação da chamada MUST NOT ser faladas nem mostradas no balão. Resposta do Router após o teto ou com PTT desligado MUST permanecer na conversa e gerar estado `ready` ("Resposta pronta") com balão na conta original. O app MUST avisar e esperar o clique para abrir a sidebar; MUST NOT iniciar outra chamada automaticamente.
+Respostas a mensagens digitadas que não pertencem à delegação da chamada MUST NOT ser faladas nem mostradas no balão. Resposta do Router após o teto ou com PTT desligado MUST permanecer na conversa e gerar estado `ready` ("Resposta pronta") com balão na conta original. O app MUST avisar e esperar o clique para abrir a sidebar; o clique no balão ou na ação do notch MUST reconhecer o aviso e limpar sua apresentação. MUST NOT iniciar outra chamada automaticamente.
 
 #### Scenario: Mensagem digitada
 
@@ -391,22 +416,26 @@ Respostas a mensagens digitadas que não pertencem à delegação da chamada MUS
 #### Scenario: Resposta depois do teto
 
 - **WHEN** o Router responde à delegação depois dos 10 min da chamada
-- **THEN** o texto fica na conversa, o notch/companheiro mostra "Resposta pronta" e clicar abre a sidebar, sem religação automática
+- **THEN** o texto fica na conversa, o notch/companheiro mostra "Resposta pronta" e clicar abre a sidebar e limpa o aviso, sem religação automática
 
 #### Scenario: Resposta com PTT desligado
 
 - **WHEN** o usuário desliga PTT com delegação pendente e a resposta chega na mesma conta
 - **THEN** o app mostra "Resposta pronta" com balão, sem reativar o atalho nem a chamada
 
-### Requirement: Interromper a resposta e voltar a falar
+### Requirement: Interrupção de resposta pelo serviço e nova captação
 
-Apertar o atalho durante a fala MUST interromper imediatamente a saída e fechar a legenda anterior, permitindo nova captação. Se a sessão ainda existe, o app MUST reutilizá-la em vez de abrir uma segunda chamada.
+Apertar o atalho durante uma resposta MUST limpar a legenda na UI e habilitar o microfone na mesma sessão após conexão e admissão do contexto. O serviço GPT Live MUST controlar a interrupção ao reconhecer fala, como no Call Comma. O aperto sem fala não garante cancelamento local definitivo; a cauda anterior MAY continuar até o reconhecimento. Áudio novo MUST NOT esperar legendas nem soltura.
 
-#### Scenario: Interromper a resposta
+#### Scenario: Interrupção pelo serviço com fala reconhecida
 
-- **WHEN** o modelo está falando e o usuário aperta o atalho
-- **THEN** a saída anterior para, o balão anterior fecha e o microfone é habilitado na mesma sessão
+- **WHEN** o modelo está falando e o usuário aperta o atalho e volta a falar
+- **THEN** a legenda anterior fecha imediatamente na UI, o microfone é habilitado na mesma sessão após conexão/admissão, e o serviço interrompe a saída ao reconhecer a nova fala
 
+#### Scenario: Aperto sem fala reconhecida
+
+- **WHEN** o usuário aperta o atalho durante uma resposta, mas o serviço ainda não reconheceu nova fala
+- **THEN** a legenda anterior fecha na UI, mas o app não promete corte definitivo da saída; a cauda pode continuar até o reconhecimento
 
 ### Requirement: Cursor companheiro
 

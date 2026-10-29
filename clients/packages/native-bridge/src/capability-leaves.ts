@@ -1280,7 +1280,6 @@ export const commaClientSettingsSchema = z
     pushToTalkShortcut: pushToTalkShortcutBindingSchema.default(
       defaultPushToTalkShortcut
     ),
-    pushToTalkSpeakReplies: z.boolean().default(true),
     pushToTalkSendScreen: z.boolean().default(true),
     // Icon-rail item ids in the reader's order. Stored loosely: an id the
     // running build no longer knows is dropped on read and one it newly ships
@@ -1312,7 +1311,6 @@ export const commaClientSettingsPatchSchema = z
     openCommaShortcut: sideChatShortcutBindingSchema.optional(),
     pushToTalkEnabled: z.boolean().optional(),
     pushToTalkShortcut: pushToTalkShortcutBindingSchema.optional(),
-    pushToTalkSpeakReplies: z.boolean().optional(),
     pushToTalkSendScreen: z.boolean().optional(),
     sidebarNavOrder: z.array(z.string()).optional(),
     onboardingCompletedUserIds: z.array(z.string()).optional(),
@@ -7684,16 +7682,15 @@ export const meetingRecorderStateLeaf = defineNativeState({
 // Talk to agent (macOS): Main owns the transparent overlay that draws the
 // cursor companion, its caption balloon and, while the shortcut is held, the
 // freehand stroke. Main follows the cursor and publishes its position; the
-// renderer draws and reports the stroke. The transcript stays in Main; the
-// overlay only learns whether it can be copied.
+// renderer draws and reports the stroke. Voice media and call authority stay
+// in their respective owners.
 export const pushToTalkErrorCodeSchema = z.enum([
   "microphone_denied",
   "screen_denied",
-  "transcription_unavailable",
-  "transcription_busy",
-  "transcription_failed",
-  "nothing_heard",
-  "send_failed",
+  "busy",
+  "plan_limit",
+  "context_failed",
+  "call_failed",
 ]);
 /**
  * The stroke's blue, also the cursor companion's. The capture draws the stroke
@@ -7702,15 +7699,14 @@ export const pushToTalkErrorCodeSchema = z.enum([
 export const pushToTalkStrokeColor = "#2F80FF";
 export const pushToTalkCompanionStateSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("listening") }).strict(),
-  z.object({ kind: z.literal("transcribing") }).strict(),
+  z.object({ kind: z.literal("connecting") }).strict(),
   z.object({ kind: z.literal("thinking") }).strict(),
   z.object({ kind: z.literal("speaking") }).strict(),
-  z.object({ kind: z.literal("busy") }).strict(),
+  z.object({ kind: z.literal("ready") }).strict(),
   z
     .object({
       code: pushToTalkErrorCodeSchema,
       kind: z.literal("error"),
-      transcriptAvailable: z.boolean(),
     })
     .strict(),
 ]);
@@ -7731,6 +7727,8 @@ export const pushToTalkOverlayStateSchema = z
     companion: pushToTalkCompanionStateSchema.nullable(),
     /** The pointer, in the overlay window's DIP space; Main follows it. */
     cursor: pushToTalkOverlayPointSchema,
+    /** Whether drawing is enabled on the current display and surface. */
+    drawingEnabled: z.boolean(),
     /** The companion and the stroke are fading out before the window hides. */
     hiding: z.boolean(),
     /** Microphone level while listening. */
@@ -7748,6 +7746,7 @@ export const hiddenPushToTalkOverlayState: PushToTalkOverlayState = {
   caption: null,
   companion: null,
   cursor: { x: 0, y: 0 },
+  drawingEnabled: false,
   hiding: false,
   level: 0,
   revision: 0,
@@ -7836,8 +7835,6 @@ export const pushToTalkSetInteractiveCapability = defineNativeCapability({
 export const pushToTalkOverlayActionSchema = z.enum([
   /** The user clicked the caption balloon. */
   "caption-click",
-  "copy-transcript",
-  "open-meeting-settings",
   "open-microphone-settings",
   "open-screen-recording-settings",
 ]);
@@ -7861,15 +7858,15 @@ export const pushToTalkOverlayActionCapability = defineNativeCapability({
   sessionAdmissionRationale:
     "Controls only Main's local Talk to agent overlay; Main admits the turn itself against its current Session.",
 });
-// Talk to agent's GPT Live voice (D12): Main owns the read-aloud call, its
-// Session and the reply text. The hidden voice window only holds the WebRTC
-// peer, with a silent synthetic input track, plays what it receives and
-// reports whether it is audible.
+// Main owns the live call and its Session authority. The hidden voice window
+// owns microphone/WebRTC media and follows Main's replay-last mute state.
 export const pushToTalkVoiceSessionSchema = z
   .object({
-    /** Increments on every change; a new active generation is a new peer. */
+    /** A new generation creates a new peer; mute updates keep it. */
     generation: z.number().int().nonnegative(),
-    /** False: the window holds no peer. */
+    /** Monotonic within a generation, including mute changes. */
+    revision: z.number().int().nonnegative(),
+    listening: z.boolean(),
     active: z.boolean(),
   })
   .strict();
@@ -7877,14 +7874,12 @@ export type PushToTalkVoiceSession = z.infer<typeof pushToTalkVoiceSessionSchema
 export const idlePushToTalkVoiceSession: PushToTalkVoiceSession = {
   active: false,
   generation: 0,
+  revision: 0,
+  listening: false,
 };
-export const pushToTalkVoiceReportSchema = z.enum([
-  /** The received audio became audible. */
-  "audible",
-  /** The received audio went quiet. */
-  "silent",
-  /** The peer could not connect or play. */
-  "failed",
+export const pushToTalkVoiceReportSchema = z.union([
+  z.enum(["connected", "audible", "silent", "microphone_denied", "failed"]),
+  z.object({ kind: z.literal("level"), level: z.number().min(0).max(1) }).strict(),
 ]);
 export type PushToTalkVoiceReport = z.infer<typeof pushToTalkVoiceReportSchema>;
 export const pushToTalkVoiceSessionCapability = defineNativeCapability({
@@ -7904,7 +7899,7 @@ export const pushToTalkVoiceSessionCapability = defineNativeCapability({
   permission: "push-to-talk.voice",
   sessionAdmission: "local_only",
   sessionAdmissionRationale:
-    "The window relays only WebRTC media signals; Main starts and ends the read-aloud call itself inside its current Session admission.",
+    "The window relays only WebRTC media signals; Main owns the live call inside its Session admission.",
 });
 export const pushToTalkVoiceSessionChangedEvent = defineNativeEvent({
   channel: "comma:push-to-talk-voice:session-changed",
@@ -7943,7 +7938,7 @@ export const pushToTalkVoiceOfferCapability = defineNativeCapability({
   permission: "push-to-talk.voice",
   sessionAdmission: "local_only",
   sessionAdmissionRationale:
-    "The window relays only WebRTC media signals; Main starts and ends the read-aloud call itself inside its current Session admission.",
+    "The window relays only WebRTC media signals; Main owns the live call inside its Session admission.",
 });
 export const pushToTalkVoiceReportCapability = defineNativeCapability({
   bridge: { method: "report", namespace: "pushToTalkVoice" },
@@ -7967,7 +7962,7 @@ export const pushToTalkVoiceReportCapability = defineNativeCapability({
   permission: "push-to-talk.voice",
   sessionAdmission: "local_only",
   sessionAdmissionRationale:
-    "The window relays only WebRTC media signals; Main starts and ends the read-aloud call itself inside its current Session admission.",
+    "The window relays only WebRTC media signals; Main owns the live call inside its Session admission.",
 });
 // -- airDrop ----------------------------------------------------------------
 //

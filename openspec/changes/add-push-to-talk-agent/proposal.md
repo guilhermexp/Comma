@@ -8,7 +8,8 @@ Para pedir algo sobre a tela, o usuário precisa abrir o Comma e explicar onde o
 
 - **Falar com o agente segurando um atalho**, em qualquer app e com a janela principal fechada:
   - um atalho global próprio, padrão **`⌃⌥` sozinhos** (só modificadores), separado do atalho que abre a sidebar; também aceita tecla + modificador;
-  - apertar abre ou reutiliza a sessão de voz e desmuta o microfone quando conectado; soltar muta a faixa imediatamente, sem esperar o print;
+  - apertar abre ou reutiliza a sessão de voz, limpa a legenda anterior na UI e desmuta o microfone quando conectado; soltar muta a faixa imediatamente, sem esperar o print;
+  - interrupção pelo serviço, como no Call Comma: a saída falada não é cortada localmente pelo simples aperto da tecla sem fala reconhecida; o serviço GPT Live interrompe a resposta ao reconhecer a nova fala (barge-in nativo); uma cauda anterior pode continuar até o reconhecimento; áudio novo nunca aguarda legendas;
   - com atalho só de modificadores, apertar outra tecla durante o gesto (ex.: `⌃⌥←`) cancela a captação;
   - um toque abaixo de 0,3 s é descartado; se abriu uma sessão que ainda não teve turno, ela é encerrada. O áudio já transmitido não pode ser recolhido;
   - o serviço decide o fim do turno. Uma pausa longa com a tecla presa pode antecipar a resposta; esse risco é aceito.
@@ -35,7 +36,7 @@ Nenhuma capability adicional. A revisão altera apenas esta capability da change
 ## Impacto
 
 - **Electron main**: controlador da chamada, sinalização e eventos, ciclo de 90 s/10 min, fence de conta, captura/upload/contexto e integração com as janelas e o notch existentes. Remove os transcritores PTT, WAV, entrega de mensagem transcrita, observador de respostas e speaker do sistema, com seus testes.
-- **Janela de voz** (`push-to-talk-voice`): peer com microfone real, faixa mutada por padrão, reprodução e nível de áudio; permissão de mídia por papel no Main. Continua oculta e sem foco.
+- **Janela de voz** (`push-to-talk-voice`): peer com microfone real, faixa do microfone mutada por padrão, áudio remoto sempre ao vivo para interrupção nativa pelo serviço e nível de áudio; permissão de mídia por papel no Main. Continua oculta e sem foco.
 - **Interface e API client** (`clients/packages/app`): Ajustes sem resposta falada nem dependência de Reunião; legendas e erros da chamada; contrato de início com `mode: "push_to_talk"` e envio de contexto; textos em `en`, `pt-BR` e `zh-CN`.
 - **Backend** (`systems/apps/salix_voice`, `systems/apps/comma_web`): modo `push_to_talk` e `POST /v1/comma/workspaces/:id/voice/calls/:call_id/context`, com escopo `{tenant, group, user}`. O CallActor entrega texto à sessão e anexos à próxima delegação; garante a continuação na conversa se a chamada terminar antes da resposta.
 - **BREAKING — remoção do modo de leitura**: sai `read_aloud`, a rota HTTP `say` e seu cliente. A ferramenta do Router `im_api.voice.say` da chamada normal permanece; sua resposta após o fim da chamada deve chegar à conversa.

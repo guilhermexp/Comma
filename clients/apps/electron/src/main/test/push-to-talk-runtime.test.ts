@@ -6,12 +6,10 @@ import {
 } from "@comma/native-bridge";
 import { PushToTalkController } from "../push-to-talk/controller";
 import {
-  choosePushToTalkTranscriber,
   PushToTalkRuntime,
   reportPushToTalkInputMonitoring,
   type PushToTalkRuntimeInputs,
 } from "../push-to-talk/runtime";
-import type { PushToTalkTranscriber } from "../push-to-talk/transcriber";
 import type {
   PushToTalkHotkey,
   PushToTalkInputMonitoring,
@@ -29,10 +27,6 @@ function withSettings(patch: Partial<CommaClientSettings>) {
 
 function unused(): never {
   throw new Error("No turn runs in these tests.");
-}
-
-function transcriber(): PushToTalkTranscriber {
-  return { ready: async () => true, transcribe: async () => ({ text: "" }) };
 }
 
 const flush = async () => {
@@ -65,24 +59,30 @@ function setup(initial: Partial<PushToTalkRuntimeInputs> = {}) {
         companion: {
           show: unused,
           setState: unused,
+          setDrawing: () => undefined,
           setLevel: unused,
-          setCaption: unused,
+          setCaption: () => undefined,
           hide: () => undefined,
-          onStroke: unused,
+          onStroke: () => () => undefined,
           onCaptionClick: () => () => undefined,
         },
-        status: { visible: unused, set: unused, setLevel: unused },
+        status: { visible: unused, set: () => undefined, setLevel: unused },
         openSideChat: unused,
-        microphone: { start: unused },
         screen: { locate: unused, capture: unused },
         screenRecording: { status: () => "granted", request: unused },
-        transcriber: { ready: unused, transcribe: unused },
-        delivery: { send: unused },
-        speaker: { speak: unused, stop: () => undefined },
-        replies: { arm: unused, cancel: () => undefined },
+        voice: {
+          open: unused,
+          beginContext: unused,
+          cancelContext: unused,
+          failContext: unused,
+          setListening: () => undefined,
+          appendContext: unused,
+          close: () => undefined,
+          onEvent: () => () => undefined,
+        },
+        isCurrentCaller: () => true,
         clock: new FakeClock(),
         powerMonitor: { on: () => undefined, removeListener: () => undefined },
-        removeFile: async () => undefined,
         settings,
         sessionGeneration,
       }),
@@ -207,39 +207,5 @@ describe("reportPushToTalkInputMonitoring", () => {
     for (const listener of listeners) listener("granted");
     await hotkey.register(shortcut);
     expect(report.mock.calls).toEqual([["denied"], ["granted"], ["not-needed"]]);
-  });
-});
-
-describe("choosePushToTalkTranscriber", () => {
-  it("uses the local backend's CommaTranscriber in local mode", () => {
-    const local = transcriber();
-    const remote = vi.fn(transcriber);
-    expect(
-      choosePushToTalkTranscriber({
-        localBackend: { pushToTalkTranscriber: local },
-        remote,
-      })
-    ).toBe(local);
-    expect(remote).not.toHaveBeenCalled();
-  });
-
-  it("uses the server's recording transcription in remote mode", () => {
-    const remoteTranscriber = transcriber();
-    expect(
-      choosePushToTalkTranscriber({
-        localBackend: undefined,
-        remote: () => remoteTranscriber,
-      })
-    ).toBe(remoteTranscriber);
-  });
-
-  it("reports transcription unavailable in a local build without the helper", async () => {
-    const remote = vi.fn(transcriber);
-    const chosen = choosePushToTalkTranscriber({
-      localBackend: { pushToTalkTranscriber: undefined },
-      remote,
-    });
-    expect(await chosen.ready()).toBe(false);
-    expect(remote).not.toHaveBeenCalled();
   });
 });

@@ -1,8 +1,6 @@
 import type { PushToTalkFrontmostApp, PushToTalkPoint, PushToTalkRect } from "./types";
 
-/** The screen part of a turn, in the coordinates the agent can cite. */
-export type PushToTalkMessageScreen =
-  // Pixels of the attached screenshot.
+export type PushToTalkContextScreen =
   | {
       kind: "screenshot";
       width: number;
@@ -10,85 +8,46 @@ export type PushToTalkMessageScreen =
       cursor: PushToTalkPoint;
       strokeBounds?: PushToTalkRect;
     }
-  // No screenshot: display-relative points of the cursor's display.
   | {
       kind: "pointer";
       cursor: PushToTalkPoint;
       display: { width: number; height: number };
     };
 
-const contextHeader = "Screen context (captured when I pressed the shortcut):";
-
-/**
- * The user message of a turn (openspec add-push-to-talk-agent, D6): the
- * transcript, then the context block. The composer's attachment section is
- * appended by the detached send.
- */
-export function composePushToTalkMessage(input: {
-  transcript: string;
+/** Text for the voice session; the Router receives the image attachments. */
+export function composePushToTalkContext(input: {
   frontmostApp: PushToTalkFrontmostApp | null;
-  screen?: PushToTalkMessageScreen;
+  screen: PushToTalkContextScreen;
+  fileNames: string[];
 }) {
-  const lines: string[] = [];
+  const lines = ["Screen context captured when the shortcut was pressed:"];
   if (input.frontmostApp) lines.push(`- Frontmost app: ${input.frontmostApp.name}`);
   const { screen } = input;
-  if (screen?.kind === "screenshot") {
+  if (screen.kind === "screenshot") {
     lines.push(`- Screenshot: ${screen.width} × ${screen.height} px`);
     lines.push(`- Cursor: (${screen.cursor.x}, ${screen.cursor.y}) px`);
     if (screen.strokeBounds) {
       const { x, y, width, height } = screen.strokeBounds;
-      lines.push(`- Stroke area: ${x}, ${y}, ${width} × ${height} px`);
+      lines.push(`- Marked area: ${x}, ${y}, ${width} × ${height} px`);
       lines.push(
-        "- The screenshot has my stroke drawn over it; the detail image is the stroke area at full resolution."
+        "- The screenshot includes the stroke; the detail image covers the marked area."
       );
-    } else {
-      lines.push(
-        "- The detail image is the region around the cursor at full resolution."
-      );
-    }
-  } else if (screen?.kind === "pointer") {
+    } else lines.push("- The detail image covers the cursor's surroundings.");
+    lines.push(`- Files: ${input.fileNames.join(", ")}`);
+    lines.push(
+      "Delegate screen questions to the Router; only the Router can inspect these images."
+    );
+  } else {
     lines.push("- No screenshot was included.");
     lines.push(
       `- Cursor: (${screen.cursor.x}, ${screen.cursor.y}) pt on a ${screen.display.width} × ${screen.display.height} pt display`
     );
   }
-  if (lines.length === 0) return input.transcript;
-  return [input.transcript, "", contextHeader, ...lines].join("\n");
-}
-
-/**
- * The reply as `say` should read it: Markdown marks removed, link labels
- * kept, images dropped and each code block replaced by `codeBlock`.
- */
-export function speakableText(markdown: string, options: { codeBlock: string }) {
-  return markdown
-    .replace(/```[\s\S]*?(?:```|$)/g, `\n${options.codeBlock}\n`)
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/<[^>\n]+>/g, "")
-    .split("\n")
-    .map((line) =>
-      line
-        .replace(/^\s*#{1,6}\s+/, "")
-        .replace(/^\s*>\s?/, "")
-        .replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "")
-        .replace(/`([^`]*)`/g, "$1")
-        .replace(/(\*\*|__)(\S(?:.*?\S)?)\1/g, "$2")
-        .replace(/\*(\S(?:.*?\S)?)\*/g, "$1")
-        .replace(/(^|\W)_(\S(?:.*?\S)?)_(?=\W|$)/g, "$1$2")
-        .trim()
-    )
-    .filter(Boolean)
-    .join("\n");
+  return lines.join("\n");
 }
 
 const sentenceSegmenter = new Intl.Segmenter(undefined, { granularity: "sentence" });
-
-/**
- * The speakable reply as the sentences the voice reads and the caption
- * shows one at a time. A line break also ends a sentence (list items,
- * headings).
- */
+/** Caption the current phrase without splitting decimal numbers. */
 export function splitSentences(text: string): string[] {
   return text
     .split("\n")

@@ -1,1310 +1,1213 @@
 import { describe, expect, it, vi } from "vitest";
-import type { CommaConversation, VoiceCallEvents } from "@comma/app/api";
-import type { ChatMessage, ChatTarget } from "@comma/chat-contract";
-import { defaultCommaClientSettings } from "@comma/native-bridge";
-import { PushToTalkRuntime } from "../push-to-talk/runtime";
-import { MicrophoneDeniedError } from "../modules/audio-capture/microphone";
-import {
-  busyVisibleMs,
-  captionLingerMs,
-  errorVisibleMs,
-  maxRecordingMs,
-  PushToTalkController,
-  type PushToTalkControllerDeps,
-  type PushToTalkDelivery,
-  type PushToTalkRecording,
-} from "../push-to-talk/controller";
+import type { ChatMessage } from "@comma/chat-contract";
+import type { VoiceCallEvent } from "@comma/app/api";
+import { PushToTalkController } from "../push-to-talk/controller";
 import {
   GptLiveVoice,
-  liveVoicePollMs,
-  type PushToTalkLiveVoice,
-  type PushToTalkVoiceResult,
+  type PushToTalkCallEvent,
+  type PushToTalkLiveCall,
 } from "../push-to-talk/live-voice";
-import { PushToTalkReplyWatcher, replyWaitMs } from "../push-to-talk/reply-watcher";
+import type { PushToTalkScreenCaptureResult } from "../push-to-talk/screen-capture";
 import type {
-  PushToTalkCursorLocation,
-  PushToTalkScreenCaptureResult,
-  PushToTalkScreenContext,
-} from "../push-to-talk/screen-capture";
-import { PushToTalkTranscriptionError } from "../push-to-talk/transcriber";
-import type {
-  PushToTalkCompanion,
   PushToTalkFrontmostApp,
-  PushToTalkHotkey,
   PushToTalkSettings,
-  PushToTalkStatus,
   PushToTalkStroke,
   PushToTalkTurnState,
 } from "../push-to-talk/types";
 import { FakeClock } from "./support/fake-clock";
 
-const shortcut = {
-  key: "space",
-  modifiers: { alt: true, control: true, meta: false, shift: false },
-} as const;
+const flush = async () => {
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+};
+const target = { workspaceId: "wsp_1", groupId: "grp_1", conversationId: "cnv_home" };
 const settings: PushToTalkSettings = {
   enabled: true,
-  shortcut,
-  speakReplies: true,
   sendScreen: true,
+  shortcut: {
+    key: null,
+    modifiers: { alt: true, control: true, meta: false, shift: false },
+  },
 };
-const safari: PushToTalkFrontmostApp = { name: "Safari", bundleId: "com.apple.Safari" };
-const target = {
-  conversationId: "cnv_home",
-  groupId: "grp_1",
-  workspaceId: "wsp_1",
-  messageId: "msg_ptt",
+const safari = { name: "Safari", bundleId: "com.apple.Safari" };
+const captured: PushToTalkScreenCaptureResult = {
+  status: "captured",
+  finalize: () => ({
+    width: 2560,
+    height: 1600,
+    cursor: { x: 50, y: 60 },
+    images: [
+      { name: "screen.png", mediaType: "image/png", data: Buffer.from([1, 2, 3]) },
+      { name: "detail.png", mediaType: "image/png", data: Buffer.from([4, 5]) },
+    ],
+  }),
 };
-const location: PushToTalkCursorLocation = {
-  displayId: 2,
-  cursor: { x: 2000, y: 500 },
-  bounds: { x: 1440, y: 0, width: 1728, height: 1117 },
-  scaleFactor: 2,
-};
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
+class Call implements PushToTalkLiveCall {
+  listeners = new Set<(event: PushToTalkCallEvent) => void>();
+  active = false;
+  sessions = 0;
+  listening = false;
+  close = vi.fn(() => {
+    this.active = false;
+    this.listening = false;
   });
-  return { promise, resolve, reject };
-}
-
-const flush = async () => {
-  for (let index = 0; index < 20; index++) await Promise.resolve();
-};
-
-function describeState(state: PushToTalkTurnState | null) {
-  if (state === null) return "null";
-  return state.kind === "error" ? `error ${state.code}` : state.kind;
-}
-
-class FakeHotkey implements PushToTalkHotkey {
-  pressed = new Set<(event: { frontmostApp: PushToTalkFrontmostApp | null }) => void>();
-  released = new Set<(event: { cancelled: boolean }) => void>();
-  restarted = new Set<() => void>();
-  register = vi.fn(async () => ({ inputMonitoring: "not-needed" as const }));
-  requestInputMonitoring = vi.fn(async () => undefined);
-  onInputMonitoring() {
-    return () => undefined;
-  }
-  onPressed(
-    listener: (event: { frontmostApp: PushToTalkFrontmostApp | null }) => void
-  ) {
-    this.pressed.add(listener);
-    return () => this.pressed.delete(listener);
-  }
-  onReleased(listener: (event: { cancelled: boolean }) => void) {
-    this.released.add(listener);
-    return () => this.released.delete(listener);
-  }
-  onHelperRestarted(listener: () => void) {
-    this.restarted.add(listener);
-    return () => this.restarted.delete(listener);
-  }
-  press(frontmostApp: PushToTalkFrontmostApp | null = safari) {
-    for (const listener of this.pressed) listener({ frontmostApp });
-  }
-  release(cancelled = false) {
-    for (const listener of this.released) listener({ cancelled });
-  }
-  restart() {
-    for (const listener of this.restarted) listener();
-  }
-}
-
-class FakeCompanion implements PushToTalkCompanion {
-  states: PushToTalkTurnState[] = [];
-  shown: Parameters<PushToTalkCompanion["show"]>[0][] = [];
-  captions: (string | null)[] = [];
-  levels: number[] = [];
-  visible = false;
-  caption: string | null = null;
-  strokeListeners = new Set<(stroke: PushToTalkStroke | null) => void>();
-  captionListeners = new Set<() => void>();
-  constructor(private readonly log: string[]) {}
-  show(input: Parameters<PushToTalkCompanion["show"]>[0]) {
-    this.visible = true;
-    this.caption = null;
-    this.shown.push(input);
-    this.states.push(input.state);
-    this.log.push(`companion.show ${describeState(input.state)}`);
-  }
-  setState(state: PushToTalkTurnState) {
-    this.states.push(state);
-    this.log.push(`companion.state ${describeState(state)}`);
-  }
-  setLevel(level: number) {
-    this.levels.push(level);
-  }
-  setCaption(text: string | null) {
-    this.caption = text;
-    this.captions.push(text);
-    this.log.push(`companion.caption ${text}`);
-  }
-  hide(_options?: { immediate?: boolean }) {
-    if (!this.visible) return;
-    this.visible = false;
-    this.caption = null;
-    this.log.push("companion.hide");
-  }
-  onStroke(listener: (stroke: PushToTalkStroke | null) => void) {
-    this.strokeListeners.add(listener);
-    return () => this.strokeListeners.delete(listener);
-  }
-  onCaptionClick(listener: () => void) {
-    this.captionListeners.add(listener);
-    return () => this.captionListeners.delete(listener);
-  }
-  draw(stroke: PushToTalkStroke | null) {
-    for (const listener of this.strokeListeners) listener(stroke);
-  }
-  clickCaption() {
-    for (const listener of this.captionListeners) listener();
-  }
-  last() {
-    return this.states.at(-1);
-  }
-}
-
-class FakeStatus implements PushToTalkStatus {
-  states: (PushToTalkTurnState | null)[] = [];
-  levels: number[] = [];
-  constructor(
-    private readonly log: string[],
-    public shownInNotch: boolean
-  ) {}
-  visible() {
-    return this.shownInNotch;
-  }
-  set(state: PushToTalkTurnState | null) {
-    // Repeated clears are no-ops for the notch; keep the sequence readable.
-    if (state === null && this.states.at(-1) === null) return;
-    this.states.push(state);
-    this.log.push(`notch ${describeState(state)}`);
-  }
-  setLevel(level: number) {
-    this.levels.push(level);
-  }
-  last() {
-    return this.states.at(-1);
-  }
-}
-
-class FakeSpeaker {
-  spoken: string[] = [];
-  #current: { text: string; done: () => void } | undefined;
-  constructor(private readonly log: string[]) {}
-  speak = vi.fn((text: string) => {
-    this.spoken.push(text);
-    this.log.push(`say ${text}`);
-    const { promise, resolve } = deferred<void>();
-    this.#current = { text, done: () => resolve() };
-    return promise;
-  });
-  stop = vi.fn(() => {
-    this.log.push("speaker.stop");
-    const current = this.#current;
-    this.#current = undefined;
-    current?.done();
-  });
-  /** The running sentence ends by itself. */
-  finish() {
-    const current = this.#current;
-    this.#current = undefined;
-    current?.done();
-  }
-  speaking() {
-    return this.#current?.text;
-  }
-}
-
-class FakeLiveVoice implements PushToTalkLiveVoice {
-  reading: { text: string; onCaption: (sentence: string) => void } | undefined;
-  #result: ((result: PushToTalkVoiceResult) => void) | undefined;
-  constructor(private readonly log: string[]) {}
-  prepare = vi.fn(
-    (workspaceId: string) => void this.log.push(`voice.prepare ${workspaceId}`)
+  beginContext = vi.fn(async (_contextId: number): Promise<void> => undefined);
+  appendContext = vi.fn(
+    async (_input: Parameters<PushToTalkLiveCall["appendContext"]>[0]): Promise<void> =>
+      undefined
   );
-  speak = vi.fn(
-    (input: {
-      workspaceId: string;
-      text: string;
-      onCaption: (sentence: string) => void;
-    }) => {
-      this.log.push(`voice.speak ${input.text}`);
-      this.reading = input;
-      const { promise, resolve } = deferred<PushToTalkVoiceResult>();
-      this.#result = resolve;
-      return promise;
-    }
-  );
-  stop = vi.fn(() => {
-    this.log.push("voice.stop");
-    this.end({ status: "stopped" });
+  cancelContext = vi.fn((_contextId: number): void => undefined);
+  failContext = vi.fn(async (_contextId: number): Promise<void> => undefined);
+  open = vi.fn(async () => {
+    if (!this.active) this.sessions++;
+    this.active = true;
+    return target;
   });
-  reset = vi.fn(() => void this.log.push("voice.reset"));
-  end(result: PushToTalkVoiceResult) {
-    const resolve = this.#result;
-    this.#result = undefined;
-    this.reading = undefined;
-    resolve?.(result);
+  setListening(value: boolean) {
+    this.listening = value;
+  }
+  onEvent(listener: (event: PushToTalkCallEvent) => void) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+  emit(event: PushToTalkCallEvent) {
+    for (const listener of this.listeners) listener(event);
   }
 }
-
-class FakePowerMonitor {
-  listeners = new Map<string, Set<() => void>>();
-  on(event: "lock-screen" | "suspend", listener: () => void) {
-    if (!this.listeners.has(event)) this.listeners.set(event, new Set());
-    this.listeners.get(event)!.add(listener);
-    return this;
-  }
-  removeListener(event: "lock-screen" | "suspend", listener: () => void) {
-    this.listeners.get(event)?.delete(listener);
-    return this;
-  }
-  emit(event: "lock-screen" | "suspend") {
-    for (const listener of this.listeners.get(event) ?? []) listener();
-  }
-}
-
-const screenshot: PushToTalkScreenContext = {
-  width: 2560,
-  height: 1655,
-  cursor: { x: 830, y: 741 },
-  images: [
-    { name: "screen.png", mediaType: "image/png", data: Buffer.from("screen") },
-    { name: "detail.png", mediaType: "image/png", data: Buffer.from("detail") },
-  ],
-};
-
-/** The stroke's box as the capture reports it, at 1 px per point. */
-function strokeBox(stroke: PushToTalkStroke) {
-  const xs = stroke.map((point) => point.x);
-  const ys = stroke.map((point) => point.y);
-  const x = Math.min(...xs);
-  const y = Math.min(...ys);
-  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
-}
-
-const conversation = {
-  id: "cnv_home",
-  kind: "user_chat",
-  messages: [],
-  status: "active",
-  title: "Home",
-  group_id: "grp_1",
-} as CommaConversation;
-
-function agentMessage(text: string, replyToMessageId = target.messageId) {
-  return {
-    attachments: [],
-    delivery: "sent",
-    messageId: `msg_${text.length}`,
-    replyToMessageId,
-    refs: [],
-    role: "assistant",
-    source: "server",
-    text,
-  } as unknown as ChatMessage;
-}
-
 function setup(
   options: {
-    settings?: Partial<PushToTalkSettings>;
-    notchVisible?: boolean;
     capture?: () => Promise<PushToTalkScreenCaptureResult>;
-    microphone?: () => Promise<PushToTalkRecording>;
-    transcript?: () => Promise<{ text: string }>;
-    ready?: boolean;
-    send?: (input: Parameters<PushToTalkDelivery["send"]>[0]) => Promise<typeof target>;
-    liveVoice?: boolean;
-    voice?: (clock: FakeClock) => PushToTalkLiveVoice;
-    /** `getMediaAccessStatus("screen")`; macOS 15+ says `denied` before any request. */
-    screenAccess?: string;
+    sendScreen?: boolean;
+    notch?: boolean;
   } = {}
 ) {
-  const log: string[] = [];
   const clock = new FakeClock();
-  const hotkey = new FakeHotkey();
-  const companion = new FakeCompanion(log);
-  const status = new FakeStatus(log, options.notchVisible ?? true);
-  const speaker = new FakeSpeaker(log);
-  const voice = new FakeLiveVoice(log);
-  const injectedVoice = options.voice?.(clock);
-  const powerMonitor = new FakePowerMonitor();
-  const replies = new PushToTalkReplyWatcher({ clock });
-  const finalize = vi.fn((stroke: PushToTalkStroke | null) => ({
-    ...screenshot,
-    ...(stroke?.length ? { strokeBounds: strokeBox(stroke) } : {}),
-  }));
-  let onLevel: ((level: number) => void) | undefined;
-  let wavCount = 0;
-  const startMicrophone =
-    options.microphone ??
-    (async () => {
-      const path = `/tmp/ptt-${++wavCount}.wav`;
-      return {
-        stop: vi.fn(async () => {
-          log.push(`mic.stop ${path}`);
-          return path;
-        }),
+  const voice = new Call();
+  const order: string[] = [];
+  let press:
+    | ((input: { frontmostApp: PushToTalkFrontmostApp | null }) => void)
+    | undefined;
+  let release: ((input: { cancelled: boolean }) => void) | undefined;
+  let restart: (() => void) | undefined;
+  let click: (() => void) | undefined;
+  const power = new Map<string, () => void>();
+  let currentUser = "owner";
+  let status: PushToTalkTurnState | null = null;
+  let companionState: PushToTalkTurnState | null = null;
+  let caption: string | null = null;
+  let visible = false;
+  const hotkey = {
+    register: vi.fn(async () => ({ inputMonitoring: "granted" as const })),
+    requestInputMonitoring: async () => undefined,
+    onInputMonitoring: () => () => undefined,
+    onPressed: (fn: typeof press) => {
+      press = fn;
+      return () => {
+        press = undefined;
       };
-    });
-  const deps = {
+    },
+    onReleased: (fn: typeof release) => {
+      release = fn;
+      return () => {
+        release = undefined;
+      };
+    },
+    onHelperRestarted: (fn: () => void) => {
+      restart = fn;
+      return () => {
+        restart = undefined;
+      };
+    },
+  };
+  const capture = vi.fn(async () => {
+    order.push("capture");
+    return options.capture ? options.capture() : captured;
+  });
+  const screenRecording = {
+    status: vi.fn(() => "granted"),
+    request: vi.fn(async () => undefined),
+  };
+  const levels: number[] = [];
+  const companion = {
+    show: (input: { state: PushToTalkTurnState }) => {
+      visible = true;
+      companionState = input.state;
+    },
+    setState: (state: PushToTalkTurnState) => {
+      companionState = state;
+    },
+    setDrawing: vi.fn(),
+    setLevel: (level: number) => levels.push(level),
+    setCaption: (text: string | null) => {
+      if (!visible && text !== null) return;
+      caption = text;
+    },
+    hide: vi.fn((input?: { immediate?: boolean }) => {
+      order.push(input?.immediate ? "hide immediate" : "hide");
+      visible = false;
+    }),
+    onStroke: (_fn: (stroke: PushToTalkStroke | null) => void) => () => undefined,
+    onCaptionClick: (fn: () => void) => {
+      click = fn;
+      return () => {
+        click = undefined;
+      };
+    },
+  };
+  const openSideChat = vi.fn();
+  const config = { ...settings, sendScreen: options.sendScreen ?? true };
+  const deps: ConstructorParameters<typeof PushToTalkController>[0] = {
     hotkey,
-    companion,
-    status,
+    voice,
     clock,
-    powerMonitor,
-    microphone: {
-      start: vi.fn((input: { onLevel: (level: number) => void }) => {
-        log.push("mic.start");
-        onLevel = input.onLevel;
-        return startMicrophone();
-      }),
-    },
-    screenRecording: {
-      status: vi.fn(() => options.screenAccess ?? "granted"),
-      request: vi.fn(async () => void log.push("screenRecording.request")),
-    },
+    companion,
+    screenRecording,
     screen: {
-      locate: vi.fn(() => location),
-      capture: vi.fn(() => {
-        log.push("screen.capture");
-        return (
-          options.capture?.() ??
-          Promise.resolve({ status: "captured" as const, finalize })
-        );
+      locate: () => ({
+        displayId: 2,
+        cursor: { x: 2000, y: 500 },
+        bounds: { x: 1440, y: 0, width: 1728, height: 1117 },
+        scaleFactor: 2,
       }),
+      capture,
     },
-    transcriber: {
-      ready: vi.fn(async () => options.ready ?? true),
-      transcribe: vi.fn((path: string) => {
-        log.push(`transcribe ${path}`);
-        return options.transcript?.() ?? Promise.resolve({ text: "What is this?" });
-      }),
+    status: {
+      visible: () => options.notch ?? true,
+      set: (state) => {
+        status = state;
+      },
+      setLevel: (level) => levels.push(level),
     },
-    delivery: {
-      send: vi.fn((input: Parameters<PushToTalkDelivery["send"]>[0]) => {
-        log.push("delivery.send");
-        return options.send?.(input) ?? Promise.resolve(target);
-      }),
+    powerMonitor: {
+      on: (event, fn) => power.set(event, fn),
+      removeListener: (event) => power.delete(event),
     },
-    speaker,
-    ...(injectedVoice ? { voice: injectedVoice } : options.liveVoice ? { voice } : {}),
-    replies,
-    openSideChat: vi.fn(() => void log.push("sideChat.open")),
-    removeFile: vi.fn(async (path: string) => void log.push(`rm ${path}`)),
-    settings: { ...settings, ...options.settings },
-    log: () => undefined,
-  } satisfies PushToTalkControllerDeps;
+    openSideChat,
+    isCurrentCaller: (userId) => userId === currentUser,
+    settings: config,
+    sessionGeneration: 1,
+  };
   const controller = new PushToTalkController(deps);
   controller.start();
-  /** Presses, waits for the turn to start, holds for `ms` and releases. */
-  const hold = async (ms: number, app: PushToTalkFrontmostApp | null = safari) => {
-    hotkey.press(app);
-    await flush();
-    clock.advance(ms);
-    hotkey.release();
-    await flush();
-  };
-  /** The agent's reply lands in `to` (the turn's conversation by default). */
-  const reply = async (text: string, to: ChatTarget = target) => {
-    replies.handleAppended({
-      conversation: { ...conversation, id: to.conversationId },
-      messages: [agentMessage(text)],
-      target: to,
+  const respond = async () => {
+    voice.emit({
+      kind: "caption",
+      text: "Tudo certo. Próxima frase.",
+      turn: 1,
+      final: true,
     });
-    await flush();
-  };
-  /** The running sentence ends; waits for the next one to start. */
-  const finishSentence = async () => {
-    speaker.finish();
+    voice.emit({ kind: "audible" });
+    voice.emit({ kind: "silent" });
+    clock.advance(2_000);
     await flush();
   };
   return {
-    controller,
     deps,
-    hotkey,
-    companion,
-    status,
-    speaker,
-    voice,
+    controller,
+    config,
     clock,
-    powerMonitor,
-    log,
-    finalize,
-    hold,
-    reply,
-    finishSentence,
-    level: (value: number) => onLevel?.(value),
+    voice,
+    order,
+    capture,
+    screenRecording,
+    companion,
+    openSideChat,
+    levels,
+    press: () => press?.({ frontmostApp: safari }),
+    release: (cancelled = false) => release?.({ cancelled }),
+    restart: () => restart?.(),
+    click: () => click?.(),
+    power,
+    setUser: (id: string) => {
+      currentUser = id;
+    },
+    status: () => status,
+    companionState: () => companionState,
+    caption: () => caption,
+    visible: () => visible,
+    respond,
   };
 }
 
-describe("PushToTalkController", () => {
-  // Padrão desligado
-  it("registers nothing and ignores the shortcut while the feature is off", async () => {
-    const { deps, hotkey, companion, status } = setup({ settings: { enabled: false } });
-    await flush();
-    expect(hotkey.register).toHaveBeenCalledWith(null);
-    hotkey.press();
-    await flush();
-    expect(deps.microphone.start).not.toHaveBeenCalled();
-    expect(deps.screen.capture).not.toHaveBeenCalled();
-    expect(companion.shown).toEqual([]);
-    expect(status.states).toEqual([]);
+function setupRealTransport(options: { notch?: boolean } = {}) {
+  const h = setup({ sendScreen: false, ...options });
+  h.controller.dispose();
+  const batches: VoiceCallEvent[][] = [];
+  let cursor = 0;
+  const api = {
+    startVoiceCall: vi.fn(async () => ({ call_id: "vc_real", sdp: "sdp_answer" })),
+    appendVoiceCallContext: vi.fn(async () => ({ accepted: true as const })),
+    uploadGroupFile: vi.fn(async () => ({
+      path: "/uploads/file.png",
+      name: "screen.png",
+      size: 10,
+    })),
+    voiceCallEvents: vi.fn(async () => {
+      const events = batches.shift() ?? [];
+      cursor += events.length;
+      return { events, cursor, truncated: false };
+    }),
+    endVoiceCall: vi.fn(async () => ({})),
+  };
+  const realVoice = new GptLiveVoice({
+    api: () => api,
+    resolveTarget: async () => target,
+    runOwned: async (fn) => fn(),
+    host: { open: vi.fn(async () => undefined), publish: vi.fn() },
+    clock: h.clock,
   });
+  const controller = new PushToTalkController({ ...h.deps, voice: realVoice });
+  controller.start();
+  return {
+    h,
+    api,
+    batches,
+    realVoice,
+    controller,
+    connect: async () => {
+      await flush();
+      const { generation } = realVoice.voiceSession();
+      await realVoice.voiceOffer({ generation, sdp: "sdp_offer" });
+      realVoice.voiceReport({ generation, event: "connected" });
+      await flush();
+    },
+  };
+}
+function lateReply(text = "The Router finished.", caller = "owner") {
+  const message: ChatMessage = {
+    messageId: "late_1",
+    role: "assistant",
+    actorRole: "router",
+    source: "server",
+    delivery: "sent",
+    text,
+    attachments: [],
+    refs: [],
+  };
+  return {
+    target,
+    messages: [message],
+    conversation: {
+      group_id: target.groupId,
+      id: target.conversationId,
+      title: "Home",
+      status: "active",
+      kind: "user_chat" as const,
+      messages: [
+        {
+          message_id: message.messageId,
+          actor_type: "agent",
+          role_label: "router",
+          kind: "message",
+          content: [],
+          metadata: {
+            event_type: "voice.reply",
+            voice_mode: "push_to_talk",
+            voice_call_id: "vc_1",
+            voice_delegation_id: "del_1",
+            voice_caller_user_id: caller,
+          },
+        },
+      ],
+    },
+  };
+}
 
-  // Trocar o atalho
-  it("registers the chosen shortcut and replaces it when the settings change", async () => {
-    const { controller, hotkey } = setup();
-    expect(hotkey.register).toHaveBeenLastCalledWith(shortcut);
-    const other = {
-      key: "d",
-      modifiers: { alt: false, control: false, meta: true, shift: true },
-    } as const;
-    controller.update({ ...settings, shortcut: other });
-    expect(hotkey.register).toHaveBeenLastCalledWith(other);
-    controller.update({ ...settings, enabled: false });
-    expect(hotkey.register).toHaveBeenLastCalledWith(null);
-  });
-
-  // Janela principal fechada
-  it("captures while the mic starts, then shows Listening in the notch and the companion", async () => {
-    const capture = deferred<PushToTalkScreenCaptureResult>();
-    const { hotkey, companion, status, log, finalize } = setup({
-      capture: () => capture.promise,
+describe("push-to-talk live call controller", () => {
+  it("invalidates a previous pending capture without hiding or contaminating the new gesture", async () => {
+    const previousCapture = Promise.withResolvers<PushToTalkScreenCaptureResult>();
+    let captures = 0;
+    const h = setup({
+      capture: () =>
+        ++captures === 1 ? previousCapture.promise : Promise.resolve(captured),
     });
-    hotkey.press();
+    h.press();
     await flush();
-    expect(log).toEqual(["speaker.stop", "screen.capture", "mic.start"]);
-    // Nothing of the turn appears before the screenshot is taken.
-    expect(companion.shown).toEqual([]);
-    expect(status.states).toEqual([]);
-    capture.resolve({ status: "captured", finalize });
+    h.voice.emit({ kind: "connected" });
+    h.clock.advance(400);
+    h.release();
+    h.press();
     await flush();
-    expect(companion.shown).toEqual([
-      { displayId: 2, cursor: { x: 2000, y: 500 }, state: { kind: "listening" } },
-    ]);
-    expect(status.last()).toEqual({ kind: "listening" });
+    expect(h.visible()).toBe(true);
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    previousCapture.resolve(captured);
+    await flush();
+    expect(
+      h.voice.appendContext.mock.calls.map(([context]) => context.contextId)
+    ).toEqual([2]);
+    h.controller.dispose();
   });
 
-  // Estados em sequência / Ciclo normal / Pergunta com print / Apontar sem desenhar
-  it("walks listening → transcribing → thinking → speaking on the notch and the companion, then hides", async () => {
-    const { deps, companion, status, hold, reply, finishSentence, clock } = setup();
-    await hold(4_000);
-    const sent = deps.delivery.send.mock.calls[0] as unknown as [
-      { text: string; attachments: { name: string }[] },
-    ];
-    expect(sent[0].text).toContain("What is this?");
-    expect(sent[0].text).toContain("- Frontmost app: Safari");
-    expect(sent[0].text).toContain("- Cursor: (830, 741) px");
-    expect(sent[0].attachments.map((image) => image.name)).toEqual([
-      "screen.png",
-      "detail.png",
-    ]);
-    // Waiting for the agent: the companion stays with its wait indicator.
-    expect(companion.visible).toBe(true);
-    expect(status.last()).toEqual({ kind: "thinking" });
-
-    await reply("Done.");
-    await finishSentence();
-    clock.advance(10_000);
-    expect(status.states.map(describeState)).toEqual([
-      "listening",
-      "transcribing",
-      "thinking",
-      "speaking",
-      "null",
-    ]);
-    expect(companion.states.map(describeState)).toEqual([
-      "listening",
-      "transcribing",
-      "thinking",
-      "speaking",
-    ]);
-    expect(companion.visible).toBe(false);
-  });
-
-  it("passes the microphone level to the notch and the companion", async () => {
-    const { hotkey, companion, status, level } = setup();
-    hotkey.press();
+  it("shows connecting until media and context control are ready, then sends real mic levels", async () => {
+    const admitted = Promise.withResolvers<void>();
+    const h = setup();
+    h.voice.beginContext.mockReturnValueOnce(admitted.promise);
+    h.press();
     await flush();
-    level(0.4);
-    level(0.7);
-    expect(status.levels).toEqual([0.4, 0.7]);
-    expect(companion.levels).toEqual([0.4, 0.7]);
-  });
-
-  // Tela muda depois do aperto
-  it("takes the screenshot at the press, never at the release", async () => {
-    const { deps, hotkey } = setup();
-    hotkey.press();
+    expect(h.voice.active).toBe(true);
+    expect(h.status()?.kind).toBe("connecting");
+    h.voice.emit({ kind: "connected" });
+    expect(h.status()?.kind).toBe("connecting");
+    admitted.resolve();
     await flush();
-    expect(deps.screen.capture).toHaveBeenCalledOnce();
-    hotkey.release();
-    await flush();
-    expect(deps.screen.capture).toHaveBeenCalledOnce();
+    h.voice.emit({ kind: "level", level: 0.6 });
+    expect(h.voice.listening).toBe(true);
+    expect(h.status()?.kind).toBe("listening");
+    expect(h.levels).toEqual([0.6, 0.6]);
+    h.controller.dispose();
   });
-
-  // Vários monitores
-  it("shows the companion on the display the cursor was on", async () => {
-    const { companion, hotkey } = setup();
-    hotkey.press();
+  it("mutes on release without waiting for the screenshot and appends its images later", async () => {
+    const gate = Promise.withResolvers<PushToTalkScreenCaptureResult>();
+    const h = setup({ capture: () => gate.promise });
+    h.press();
     await flush();
-    expect(companion.shown[0]?.displayId).toBe(2);
-  });
-
-  // Circular um gráfico
-  it("draws the latest freehand stroke on the screenshot, a new one replacing the previous", async () => {
-    const { deps, companion, hotkey, finalize, clock } = setup();
-    hotkey.press();
+    h.voice.emit({ kind: "connected" });
+    h.clock.advance(400);
+    h.release();
+    expect(h.voice.listening).toBe(false);
+    expect(h.voice.appendContext).not.toHaveBeenCalled();
+    gate.resolve(captured);
     await flush();
-    companion.draw([
-      { x: 1, y: 2 },
-      { x: 3, y: 4 },
-    ]);
-    const circle = [
-      { x: 10, y: 20 },
-      { x: 310, y: 40 },
-      { x: 200, y: 420 },
-      { x: 12, y: 25 },
-    ];
-    companion.draw(circle);
-    clock.advance(2_000);
-    hotkey.release();
-    await flush();
-    expect(finalize).toHaveBeenCalledWith(circle);
-    const [input] = deps.delivery.send.mock.calls[0] as unknown as [{ text: string }];
-    expect(input.text).toContain("- Stroke area: 10, 20, 300 × 400 px");
-  });
-
-  // Apontar sem desenhar
-  it("finalizes without a stroke when nothing was drawn", async () => {
-    const { finalize, hold } = setup();
-    await hold(1_000);
-    expect(finalize).toHaveBeenCalledWith(null);
-  });
-
-  // Nada abre
-  it("opens no window when the question is sent", async () => {
-    const { deps, hold, reply, finishSentence } = setup();
-    await hold(1_000);
-    expect(deps.delivery.send).toHaveBeenCalledOnce();
-    await reply("Done.");
-    await finishSentence();
-    expect(deps.openSideChat).not.toHaveBeenCalled();
-  });
-
-  // Abrir a conversa pelo balão
-  it("opens Side Chat when the caption balloon is clicked", async () => {
-    const { deps, companion, hold, reply } = setup();
-    await hold(1_000);
-    await reply("Here it is.");
-    expect(companion.caption).toBe("Here it is.");
-    companion.clickCaption();
-    expect(deps.openSideChat).toHaveBeenCalledOnce();
-  });
-
-  // Toque acidental
-  it("discards a 0.2 s tap without transcribing or sending", async () => {
-    const { deps, companion, status, log, hold } = setup();
-    await hold(200);
-    expect(deps.transcriber.transcribe).not.toHaveBeenCalled();
-    expect(deps.delivery.send).not.toHaveBeenCalled();
-    expect(log).toContain("rm /tmp/ptt-1.wav");
-    expect(companion.visible).toBe(false);
-    expect(status.last()).toBeNull();
-  });
-
-  it("hides an exiting companion immediately before a new capture within its 320 ms fade", async () => {
-    const { deps, companion, hotkey, clock, hold } = setup();
-    const hide = vi.spyOn(companion, "hide");
-    await hold(200);
-    expect(hide).toHaveBeenLastCalledWith();
-    hide.mockClear();
-    deps.screen.capture.mockClear();
-    clock.advance(100);
-    hotkey.press();
-    expect(hide).toHaveBeenCalledWith({ immediate: true });
-    expect(hide.mock.invocationCallOrder[0]).toBeLessThan(
-      deps.screen.capture.mock.invocationCallOrder[0]!
-    );
-    await flush();
-  });
-
-  // Outro atalho com os mesmos modificadores
-  it("drops a turn whose modifier-only chord was joined by another key, silently", async () => {
-    const { deps, hotkey, companion, status, clock, log } = setup();
-    hotkey.press();
-    await flush();
-    expect(companion.shown).toHaveLength(1);
-    clock.advance(1_500);
-    hotkey.release(true);
-    await flush();
-    expect(deps.transcriber.transcribe).not.toHaveBeenCalled();
-    expect(deps.delivery.send).not.toHaveBeenCalled();
-    expect(log).toContain("rm /tmp/ptt-1.wav");
-    expect(companion.visible).toBe(false);
-    expect(status.states.map(describeState)).toEqual(["listening", "null"]);
-    expect(companion.states.filter((state) => state.kind === "error")).toEqual([]);
-    // The next hold is a normal turn.
-    hotkey.press();
-    await flush();
-    clock.advance(1_000);
-    hotkey.release();
-    await flush();
-    expect(deps.delivery.send).toHaveBeenCalledOnce();
-  });
-
-  it("drops a turn cancelled before the microphone is ready", async () => {
-    const mic = deferred<PushToTalkRecording>();
-    const stop = vi.fn(async () => "/tmp/early.wav");
-    const { deps, hotkey, companion, clock } = setup({
-      microphone: () => mic.promise,
+    expect(h.voice.appendContext.mock.calls[0]?.[0]).toMatchObject({
+      attachments: [{ name: "screen.png" }, { name: "detail.png" }],
     });
-    hotkey.press();
-    await flush();
-    clock.advance(1_000);
-    hotkey.release(true);
-    mic.resolve({ stop });
-    await flush();
-    expect(stop).toHaveBeenCalledOnce();
-    expect(deps.removeFile).toHaveBeenCalledWith("/tmp/early.wav");
-    expect(deps.transcriber.transcribe).not.toHaveBeenCalled();
-    expect(companion.visible).toBe(false);
+    expect(h.voice.listening).toBe(false);
+    expect(h.openSideChat).not.toHaveBeenCalled();
+    h.controller.dispose();
   });
-
-  it("handles a release that arrives before the microphone is ready", async () => {
-    const mic = deferred<PushToTalkRecording>();
-    const stop = vi.fn(async () => "/tmp/early.wav");
-    const { deps, hotkey, companion } = setup({ microphone: () => mic.promise });
-    hotkey.press();
+  it("listens to a new gesture while the previous context is uploading", async () => {
+    const h = setup({ sendScreen: false });
+    const sending = Promise.withResolvers<void>();
+    h.voice.appendContext.mockReturnValueOnce(sending.promise);
+    h.press();
     await flush();
-    hotkey.release();
-    mic.resolve({ stop });
+    h.voice.emit({ kind: "connected" });
+    h.clock.advance(400);
+    h.release();
     await flush();
-    expect(stop).toHaveBeenCalledOnce();
-    expect(deps.removeFile).toHaveBeenCalledWith("/tmp/early.wav");
-    expect(deps.delivery.send).not.toHaveBeenCalled();
-    expect(companion.visible).toBe(false);
+    h.voice.emit({ kind: "caption", text: "A reply.", turn: 1, final: false });
+    h.voice.emit({ kind: "audible" });
+    h.press();
+    await flush();
+    expect(h.caption()).toBeNull();
+    expect(h.voice.listening).toBe(true);
+    expect(h.voice.sessions).toBe(1);
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    sending.resolve();
+    await flush();
+    expect(h.voice.appendContext).toHaveBeenCalledTimes(2);
+    h.controller.dispose();
   });
-
-  // Limite de duração
-  it("stops the recording at 120 s and continues to transcription", async () => {
-    const { deps, hotkey, clock } = setup();
-    hotkey.press();
+  it("bounds outstanding captures and never forwards obsolete screenshots", async () => {
+    const captures = [
+      Promise.withResolvers<PushToTalkScreenCaptureResult>(),
+      Promise.withResolvers<PushToTalkScreenCaptureResult>(),
+    ];
+    let next = 0;
+    const h = setup({ capture: () => captures[next++]!.promise });
+    h.press();
     await flush();
-    clock.advance(maxRecordingMs);
+    h.voice.emit({ kind: "connected" });
+    h.clock.advance(400);
+    h.release();
+    h.press();
     await flush();
-    expect(deps.transcriber.transcribe).toHaveBeenCalledWith("/tmp/ptt-1.wav");
-    expect(deps.delivery.send).toHaveBeenCalledOnce();
-    hotkey.release();
+    h.clock.advance(400);
+    h.release();
+    h.press();
     await flush();
-    expect(deps.delivery.send).toHaveBeenCalledOnce();
+    expect(h.voice.listening).toBe(true);
+    expect(h.capture).toHaveBeenCalledTimes(2);
+    h.clock.advance(400);
+    h.release();
+    captures.forEach((capture) => capture.resolve(captured));
+    await flush();
+    expect(h.voice.appendContext).not.toHaveBeenCalled();
+    expect(h.status()).toEqual({ kind: "error", code: "context_failed" });
+    h.controller.dispose();
   });
+  it("keeps cancelled captures in the context budget until they actually settle", async () => {
+    const captures = [
+      Promise.withResolvers<PushToTalkScreenCaptureResult>(),
+      Promise.withResolvers<PushToTalkScreenCaptureResult>(),
+    ];
+    let next = 0;
+    const h = setup({ capture: () => captures[next++]!.promise });
+    h.press();
+    await flush();
+    h.clock.advance(400);
+    h.release();
+    h.press();
+    await flush();
+    h.clock.advance(400);
+    h.release();
+    h.controller.update(h.config, 2);
+    h.press();
+    await flush();
+    expect(h.voice.listening).toBe(true);
+    expect(h.capture).toHaveBeenCalledTimes(2);
+    captures.forEach((capture) => capture.resolve(captured));
+    await flush();
+    expect(h.voice.appendContext).not.toHaveBeenCalled();
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    expect(h.status()).toEqual({ kind: "error", code: "context_failed" });
+    h.controller.dispose();
+  });
+  it("arms warm idle cleanup when a gesture is rejected for context capacity", async () => {
+    const captures = [
+      Promise.withResolvers<PushToTalkScreenCaptureResult>(),
+      Promise.withResolvers<PushToTalkScreenCaptureResult>(),
+    ];
+    let next = 0;
+    const h = setup({ capture: () => captures[next++]!.promise });
+    h.press();
+    await flush();
+    h.clock.advance(400);
+    h.release();
+    h.press();
+    await flush();
+    h.clock.advance(400);
+    h.release();
+    h.press();
+    await flush();
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    expect(h.status()).toEqual({ kind: "error", code: "context_failed" });
+    expect(h.voice.active).toBe(true);
+    captures.forEach((capture) => capture.resolve(captured));
+    await flush();
+    h.clock.advance(4000);
+    h.clock.advance(90_000);
+    expect(h.voice.active).toBe(false);
+    expect(h.status()).toBeNull();
+    h.controller.dispose();
+  });
+  it("does not unmute a delayed connection after release", async () => {
+    const h = setup();
+    h.press();
+    await flush();
+    h.clock.advance(400);
+    h.release();
+    h.voice.emit({ kind: "connected" });
+    expect(h.voice.listening).toBe(false);
+    h.controller.dispose();
+  });
+  it("reuses the warm call for a reply within 90 seconds and releases idle media afterward", async () => {
+    const h = setup();
+    h.press();
+    await flush();
+    h.voice.emit({ kind: "connected" });
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    await h.respond();
+    expect(h.visible()).toBe(false);
+    expect(h.status()).toBeNull();
+    h.clock.advance(60_000);
+    h.press();
+    await flush();
+    expect(h.voice.sessions).toBe(1);
+    expect(h.voice.listening).toBe(true);
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    await h.respond();
+    h.clock.advance(90_000);
+    await flush();
+    expect(h.voice.active).toBe(false);
+    h.controller.dispose();
+  });
+  it("enters the warm period when speech finished during a held-key pause", async () => {
+    const h = setup({ sendScreen: false });
+    h.press();
+    await flush();
+    h.voice.emit({ kind: "connected" });
+    h.voice.emit({ kind: "caption", text: "Already answered.", turn: 1, final: true });
+    h.voice.emit({ kind: "audible" });
+    h.voice.emit({ kind: "silent" });
+    h.clock.advance(2000);
+    expect(h.voice.active).toBe(true);
+    h.release();
+    await flush();
+    h.clock.advance(1500);
+    h.clock.advance(90_000);
+    expect(h.voice.active).toBe(false);
+    expect(h.status()).toBeNull();
+    h.controller.dispose();
+  });
+  it("enters the warm period when the last delegation is answered after playback ended", async () => {
+    const h = setup({ sendScreen: false });
+    h.press();
+    await flush();
+    h.voice.emit({ kind: "connected" });
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    h.voice.emit({ kind: "delegation", id: "del_1", status: "pending" });
+    h.voice.emit({ kind: "caption", text: "Done.", turn: 1, final: true });
+    h.voice.emit({ kind: "audible" });
+    h.voice.emit({ kind: "silent" });
+    h.clock.advance(2000);
+    h.voice.emit({ kind: "delegation", id: "del_1", status: "answered" });
+    h.clock.advance(1500);
+    h.clock.advance(90_000);
+    expect(h.voice.active).toBe(false);
+    h.controller.dispose();
+  });
+  it("does not expire the warm lease during audible speech when a delegation is answered", async () => {
+    const h = setup({ sendScreen: false });
+    try {
+      h.press();
+      await flush();
+      h.voice.emit({ kind: "connected" });
+      h.clock.advance(400);
+      h.release();
+      await flush();
+      h.voice.emit({ kind: "delegation", id: "del_1", status: "pending" });
+      h.voice.emit({ kind: "caption", text: "Long answer.", turn: 1, final: true });
+      h.voice.emit({ kind: "audible" });
+      h.voice.emit({ kind: "delegation", id: "del_1", status: "answered" });
+      h.clock.advance(90_001);
+      expect(h.voice.active).toBe(true);
+      expect(h.status()).toEqual({ kind: "speaking" });
 
-  it.each(["release", "120 s limit"] as const)(
-    "stops a ready microphone on %s while the screenshot is still pending",
-    async (ending) => {
-      const capture = deferred<PushToTalkScreenCaptureResult>();
-      const stop = vi.fn(async () => "/tmp/pending-screen.wav");
-      const { deps, hotkey, clock, finalize, companion, status } = setup({
-        capture: () => capture.promise,
-        microphone: async () => ({ stop }),
-      });
-      hotkey.press();
-      await flush();
-      clock.advance(ending === "release" ? 1_000 : maxRecordingMs);
-      if (ending === "release") hotkey.release();
-      await flush();
-      expect(stop).toHaveBeenCalledOnce();
-      expect(deps.transcriber.transcribe).toHaveBeenCalledWith(
-        "/tmp/pending-screen.wav"
-      );
-      expect(deps.delivery.send).not.toHaveBeenCalled();
-      expect(deps.removeFile).toHaveBeenCalledWith("/tmp/pending-screen.wav");
-      expect(companion.shown).toEqual([]);
-      expect(status.states).toEqual([]);
-      capture.resolve({ status: "captured", finalize });
-      await flush();
-      expect(deps.delivery.send).toHaveBeenCalledOnce();
-      expect(finalize).toHaveBeenCalledWith(null);
+      h.voice.emit({ kind: "silent" });
+      h.clock.advance(1_500);
+      h.clock.advance(89_999);
+      expect(h.voice.active).toBe(true);
+      h.clock.advance(1);
+      expect(h.voice.active).toBe(false);
+    } finally {
+      h.controller.dispose();
     }
-  );
-
-  // Aperto durante a transcrição
-  it("ignores a press while the previous turn transcribes and asks to wait in the notch", async () => {
-    const transcript = deferred<{ text: string }>();
-    const { deps, hotkey, status, clock, hold } = setup({
-      transcript: () => transcript.promise,
-    });
-    await hold(1_000);
-    hotkey.press();
-    await flush();
-    expect(deps.microphone.start).toHaveBeenCalledOnce();
-    expect(status.last()).toEqual({ kind: "busy" });
-    clock.advance(busyVisibleMs);
-    expect(status.last()).toEqual({ kind: "transcribing" });
-    transcript.resolve({ text: "First" });
-    await flush();
-    expect(deps.delivery.send).toHaveBeenCalledOnce();
   });
 
-  it("discards an account A transcription after the session changes to account B", async () => {
-    const transcript = deferred<{ text: string }>();
-    const { controller, deps, companion, status, hold } = setup({
-      transcript: () => transcript.promise,
-    });
-    await hold(1_000);
-    expect(status.last()).toEqual({ kind: "transcribing" });
-    controller.update(settings, 2);
-    transcript.resolve({ text: "Private account A screen" });
+  it("keeps pending delegation past 90 seconds but closes at the absolute ten-minute ceiling", async () => {
+    const h = setup();
+    h.press();
     await flush();
-    expect(deps.delivery.send).not.toHaveBeenCalled();
-    expect(deps.removeFile).toHaveBeenCalledWith("/tmp/ptt-1.wav");
-    expect(companion.visible).toBe(false);
-    expect(status.last()).toBeNull();
+    h.voice.emit({ kind: "connected" });
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    h.voice.emit({ kind: "delegation", id: "del_1", status: "pending" });
+    h.clock.advance(100_000);
+    await flush();
+    expect(h.voice.active).toBe(true);
+    expect(h.status()?.kind).toBe("thinking");
+    h.clock.advance(499_600);
+    await flush();
+    expect(h.voice.active).toBe(false);
+    h.controller.handleAppended(lateReply());
+    expect(h.status()?.kind).toBe("ready");
+    expect(h.caption()).toBe("The Router finished.");
+    expect(h.voice.sessions).toBe(1);
+    h.click();
+    expect(h.openSideChat).toHaveBeenCalledOnce();
+    expect(h.status()).toBeNull();
+    expect(h.visible()).toBe(false);
+    h.controller.dispose();
+  });
+  it("notifies a late result with PTT disabled, but ignores a typed reply and a different caller", async () => {
+    const h = setup();
+    h.press();
+    await flush();
+    h.controller.update({ ...h.config, enabled: false }, 1);
+    const typed = lateReply("Typed answer");
+    typed.conversation.messages[0]!.metadata.event_type = "chat.reply";
+    h.controller.handleAppended(typed);
+    expect(h.status()).toBeNull();
+    h.controller.handleAppended(lateReply("Another caller", "someone_else"));
+    expect(h.status()).toBeNull();
+    h.controller.handleAppended(lateReply());
+    expect(h.status()?.kind).toBe("ready");
+    expect(h.voice.sessions).toBe(1);
+    h.controller.dispose();
+  });
+  it("keeps a late reply ready after an earlier call error expires", async () => {
+    const h = setup({ sendScreen: false });
+    h.press();
+    await flush();
+    h.voice.emit({ kind: "error", code: "busy" });
+    h.controller.handleAppended(lateReply());
+    h.clock.advance(5000);
+    expect(h.status()).toEqual({ kind: "ready" });
+    expect(h.caption()).toBe("The Router finished.");
+    expect(h.openSideChat).not.toHaveBeenCalled();
+    h.controller.dispose();
+  });
+  it("bounds caption and warm idle cleanup for final replies without audible playback", async () => {
+    const h = setup({ sendScreen: false });
+    h.press();
+    await flush();
+    h.voice.emit({ kind: "connected" });
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    h.voice.emit({
+      kind: "caption",
+      text: "Sub-threshold audio answer.",
+      turn: 1,
+      final: true,
+    });
+    expect(h.status()?.kind).toBe("speaking");
+    expect(h.caption()).toBe("Sub-threshold audio answer.");
+    h.clock.advance(1500);
+    expect(h.status()).toBeNull();
+    expect(h.visible()).toBe(false);
+    expect(h.voice.active).toBe(true);
+    h.clock.advance(90_000);
+    expect(h.voice.active).toBe(false);
+    h.controller.dispose();
+  });
+  it("preserves a queued late reply across error teardown and displays it after the error expires", async () => {
+    const h = setup({ sendScreen: false });
+    h.press();
+    await flush();
+    h.controller.handleAppended(lateReply());
+    h.voice.emit({ kind: "error", code: "busy" });
+    expect(h.status()).toEqual({ kind: "error", code: "busy" });
+    h.clock.advance(4000);
+    expect(h.status()?.kind).toBe("ready");
+    expect(h.caption()).toBe("The Router finished.");
+    h.controller.dispose();
+  });
+  it("reports failed admission immediately even while capture and failure notification are pending", async () => {
+    const capture = Promise.withResolvers<PushToTalkScreenCaptureResult>();
+    const failureNotice = Promise.withResolvers<void>();
+    const h = setup({ capture: () => capture.promise });
+    h.voice.beginContext.mockRejectedValueOnce(new Error("Context admission rejected"));
+    h.voice.failContext.mockReturnValueOnce(failureNotice.promise);
+    h.press();
+    await flush();
+    expect(h.voice.listening).toBe(false);
+    expect(h.status()).toEqual({ kind: "error", code: "context_failed" });
+    expect(h.voice.failContext).toHaveBeenCalledWith(1);
+    capture.resolve(captured);
+    failureNotice.resolve();
+    await flush();
+    expect(h.voice.appendContext).not.toHaveBeenCalled();
+    h.controller.dispose();
   });
 
-  it("does not restore an old session's reply wait after a pending send completes", async () => {
-    const sent = deferred<typeof target>();
-    const { controller, companion, status, hold, reply, speaker } = setup({
-      send: () => sent.promise,
-    });
-    await hold(1_000);
-    controller.update(settings, 2);
-    sent.resolve(target);
-    await flush();
-    await reply("Account A response.");
-    expect(speaker.spoken).toEqual([]);
-    expect(companion.visible).toBe(false);
-    expect(status.last()).toBeNull();
-  });
-
-  it("does not show a stale transcription error in a new session", async () => {
-    const transcript = deferred<{ text: string }>();
-    const { controller, deps, companion, status, hold } = setup({
-      transcript: () => transcript.promise,
-    });
-    await hold(1_000);
-    controller.update(settings, 2);
-    transcript.reject(new Error("Old session failed"));
-    await flush();
-    expect(deps.delivery.send).not.toHaveBeenCalled();
-    expect(deps.removeFile).toHaveBeenCalledWith("/tmp/ptt-1.wav");
-    expect(companion.visible).toBe(false);
-    expect(status.last()).toBeNull();
-  });
-
-  it("fences a turn when runtime observes a new signed-in session with unchanged preferences", async () => {
-    const transcript = deferred<{ text: string }>();
-    const { controller, deps, companion, status, hold } = setup({
-      transcript: () => transcript.promise,
-    });
-    controller.dispose();
-    let sessionGeneration = 1;
-    const runtime = new PushToTalkRuntime({
-      read: () => ({
-        clientSettings: { ...defaultCommaClientSettings, pushToTalkEnabled: true },
-        sideChatEnabled: true,
-        signedIn: true,
-        sessionGeneration,
+  it("invalidates an admitted context when image finalization fails without awaiting notification", async () => {
+    const failureNotice = Promise.withResolvers<void>();
+    const h = setup({
+      capture: async () => ({
+        status: "captured",
+        finalize: () => {
+          throw new Error("Image encoding failed");
+        },
       }),
-      createController: (effective, generation) =>
-        new PushToTalkController({
-          ...deps,
-          settings: effective,
-          sessionGeneration: generation,
-        }),
     });
-    runtime.start();
-    await hold(1_000);
-    sessionGeneration = 2;
-    runtime.refresh();
-    transcript.resolve({ text: "Account A private question" });
+    h.voice.failContext.mockReturnValueOnce(failureNotice.promise);
+    h.press();
     await flush();
-    expect(deps.delivery.send).not.toHaveBeenCalled();
-    expect(deps.removeFile).toHaveBeenCalledWith("/tmp/ptt-1.wav");
-    expect(companion.visible).toBe(false);
-    expect(status.last()).toBeNull();
-    runtime.dispose();
+    h.voice.emit({ kind: "connected" });
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    expect(h.voice.failContext).toHaveBeenCalledWith(1);
+    expect(h.status()).toEqual({ kind: "error", code: "context_failed" });
+    expect(h.voice.appendContext).not.toHaveBeenCalled();
+    failureNotice.resolve();
+    await flush();
+    h.controller.dispose();
   });
-
-  // Mac bloqueado durante a gravação (and suspend, helper restart)
-  it.each(["lock-screen", "suspend", "helper-restart"] as const)(
-    "cancels the recording on %s and starts fresh on the next press",
-    async (interruption) => {
-      const { deps, hotkey, companion, status, powerMonitor, log } = setup();
-      hotkey.press();
+  it.each(["busy", "plan_limit", "microphone_denied"] as const)(
+    "shows %s in the notch and never opens a fallback call",
+    async (code) => {
+      const h = setup();
+      h.press();
       await flush();
-      if (interruption === "helper-restart") hotkey.restart();
-      else powerMonitor.emit(interruption);
-      await flush();
-      expect(log).toContain("rm /tmp/ptt-1.wav");
-      expect(companion.visible).toBe(false);
-      expect(status.last()).toBeNull();
-      hotkey.release();
-      await flush();
-      expect(deps.transcriber.transcribe).not.toHaveBeenCalled();
-      expect(deps.delivery.send).not.toHaveBeenCalled();
-
-      hotkey.press();
-      await flush();
-      expect(deps.microphone.start).toHaveBeenCalledTimes(2);
-      expect(companion.last()).toEqual({ kind: "listening" });
+      h.voice.emit({ kind: "error", code });
+      expect(h.status()).toEqual({ kind: "error", code });
+      expect(h.voice.active).toBe(false);
+      expect(h.voice.sessions).toBe(1);
+      h.controller.dispose();
     }
   );
-
-  it("stops a microphone that becomes ready after the turn was cancelled", async () => {
-    const mic = deferred<PushToTalkRecording>();
-    const stop = vi.fn(async () => "/tmp/late.wav");
-    const { deps, hotkey, powerMonitor } = setup({ microphone: () => mic.promise });
-    hotkey.press();
+  it("fences pending capture and late result when the account changes", async () => {
+    const gate = Promise.withResolvers<PushToTalkScreenCaptureResult>();
+    const h = setup({ capture: () => gate.promise });
+    h.press();
     await flush();
-    powerMonitor.emit("lock-screen");
-    mic.resolve({ stop });
+    h.clock.advance(400);
+    h.release();
+    h.setUser("account_B");
+    h.controller.update(h.config, 2);
+    expect(h.voice.active).toBe(false);
+    gate.resolve(captured);
     await flush();
-    expect(stop).toHaveBeenCalledOnce();
-    expect(deps.removeFile).toHaveBeenCalledWith("/tmp/late.wav");
+    expect(h.voice.appendContext).not.toHaveBeenCalled();
+    h.controller.handleAppended(lateReply());
+    expect(h.status()).toBeNull();
+    h.controller.dispose();
   });
-
-  // Microfone negado
-  it("shows the microphone permission error in the notch and sends nothing", async () => {
-    const { deps, companion, status, hold } = setup({
-      microphone: () => Promise.reject(new MicrophoneDeniedError()),
-    });
-    await hold(1_000);
-    expect(status.last()).toEqual({ kind: "error", code: "microphone_denied" });
-    expect(companion.visible).toBe(false);
-    expect(deps.transcriber.transcribe).not.toHaveBeenCalled();
-    expect(deps.delivery.send).not.toHaveBeenCalled();
-  });
-
-  // Permissão negada
-  it("sends without the screenshot, warns, then waits for the reply", async () => {
-    const { deps, status, hold, clock } = setup({
-      capture: async () => ({ status: "denied" }),
-    });
-    await hold(1_000);
-    const [input] = deps.delivery.send.mock.calls[0] as unknown as [
-      { text: string; attachments: unknown[] },
-    ];
-    expect(input.attachments).toEqual([]);
-    expect(input.text).toContain("- No screenshot was included.");
-    expect(input.text).toContain("- Cursor: (560, 500) pt on a 1728 × 1117 pt display");
-    expect(status.last()).toEqual({ kind: "error", code: "screen_denied" });
-    clock.advance(errorVisibleMs);
-    expect(status.last()).toEqual({ kind: "thinking" });
-  });
-
-  // Primeira vez: macOS 15+ answers `denied` before Comma ever asked, so the
-  // capture alone would never put Comma in the Screen Recording list.
-  it("asks macOS for Screen Recording at the first press of the run, before the capture, once", async () => {
-    const { deps, hold, log } = setup({
-      capture: async () => ({ status: "denied" }),
-      screenAccess: "denied",
-    });
-    await hold(1_000);
-    expect(log.indexOf("screenRecording.request")).toBeLessThan(
-      log.indexOf("screen.capture")
-    );
-    await hold(1_000);
-    expect(deps.screenRecording.request).toHaveBeenCalledOnce();
-  });
-
-  it("does not ask for Screen Recording when it is granted or the screenshot is off", async () => {
-    const granted = setup({ screenAccess: "granted" });
-    await granted.hold(1_000);
-    expect(granted.deps.screenRecording.request).not.toHaveBeenCalled();
-
-    const off = setup({ screenAccess: "denied", settings: { sendScreen: false } });
-    await off.hold(1_000);
-    expect(off.deps.screenRecording.request).not.toHaveBeenCalled();
-  });
-
-  it("asks for Screen Recording when the screenshot is turned on in Settings", async () => {
-    const { controller, deps, hold } = setup({
-      screenAccess: "not-determined",
-      settings: { sendScreen: false },
-    });
-    controller.update({ ...settings, speakReplies: false, sendScreen: false });
-    expect(deps.screenRecording.request).not.toHaveBeenCalled();
-    controller.update({ ...settings, sendScreen: true });
-    expect(deps.screenRecording.request).toHaveBeenCalledOnce();
-    // Already asked in this run: the first press does not ask again.
-    await hold(1_000);
-    expect(deps.screenRecording.request).toHaveBeenCalledOnce();
-  });
-
-  it("does not ask for Screen Recording when the screenshot is turned on with the feature off", async () => {
-    const { controller, deps } = setup({
-      screenAccess: "denied",
-      settings: { enabled: false, sendScreen: false },
-    });
-    controller.update({ ...settings, enabled: false, sendScreen: true });
-    expect(deps.screenRecording.request).not.toHaveBeenCalled();
-  });
-
-  // Print desligado
-  it("captures nothing with the screenshot off and sends the text with the app", async () => {
-    const { deps, companion, hold } = setup({ settings: { sendScreen: false } });
-    await hold(1_000);
-    expect(deps.screen.capture).not.toHaveBeenCalled();
-    expect(companion.shown[0]?.state).toEqual({ kind: "listening" });
-    const [input] = deps.delivery.send.mock.calls[0] as unknown as [
-      { text: string; attachments: unknown[] },
-    ];
-    expect(input.attachments).toEqual([]);
-    expect(input.text).toContain("- Frontmost app: Safari");
-    expect(input.text).not.toContain("Cursor");
-  });
-
-  // Transcrição indisponível
-  it("reports unavailable transcription in the notch at the press without recording", async () => {
-    const { deps, companion, status, hold, clock } = setup({ ready: false });
-    await hold(1_000);
-    expect(deps.microphone.start).not.toHaveBeenCalled();
-    expect(status.last()).toEqual({ kind: "error", code: "transcription_unavailable" });
-    expect(companion.shown).toEqual([]);
-    expect(deps.delivery.send).not.toHaveBeenCalled();
-    clock.advance(errorVisibleMs);
-    expect(status.last()).toBeNull();
-  });
-
-  // Notch desligado
-  it("shows the error next to the cursor companion when the notch is off", async () => {
-    const { companion, status, hold, clock } = setup({
-      ready: false,
-      notchVisible: false,
-    });
-    await hold(1_000);
-    expect(companion.shown.at(-1)?.state).toEqual({
-      kind: "error",
-      code: "transcription_unavailable",
-    });
-    expect(status.states.filter((state) => state?.kind === "error")).toEqual([]);
-    clock.advance(errorVisibleMs);
-    expect(companion.visible).toBe(false);
-  });
-
-  it("moves a mid-turn error to the companion when the notch is off", async () => {
-    const { companion, status, hold } = setup({
-      notchVisible: false,
-      transcript: async () => ({ text: "" }),
-    });
-    await hold(1_000);
-    expect(companion.last()).toEqual({ kind: "error", code: "nothing_heard" });
-    expect(companion.visible).toBe(true);
-    expect(status.states.filter((state) => state?.kind === "error")).toEqual([]);
-  });
-
-  // Silêncio
-  it("shows nothing_heard for an empty transcript, sends nothing and deletes the WAV", async () => {
-    const { deps, companion, status, log, hold } = setup({
-      transcript: async () => ({ text: "  " }),
-    });
-    await hold(1_000);
-    expect(status.last()).toEqual({ kind: "error", code: "nothing_heard" });
-    expect(companion.visible).toBe(false);
-    expect(deps.delivery.send).not.toHaveBeenCalled();
-    expect(log).toContain("rm /tmp/ptt-1.wav");
-  });
-
-  it.each([
-    "transcription_busy",
-    "transcription_unavailable",
-    "transcription_failed",
-  ] as const)("shows %s and still deletes the WAV", async (code) => {
-    const { deps, status, log, hold } = setup({
-      transcript: () => Promise.reject(new PushToTalkTranscriptionError(code)),
-    });
-    await hold(1_000);
-    expect(status.last()).toEqual({ kind: "error", code });
-    expect(log).toContain("rm /tmp/ptt-1.wav");
-    expect(deps.delivery.send).not.toHaveBeenCalled();
-  });
-
-  // Falha de envio
-  it("shows send_failed with the transcript to copy", async () => {
-    const { status, hold } = setup({ send: () => Promise.reject(new Error("413")) });
-    await hold(1_000);
-    expect(status.last()).toEqual({
-      kind: "error",
-      code: "send_failed",
-      transcript: "What is this?",
-    });
-  });
-
-  // Leitura da resposta
-  it("speaks the reply sentence by sentence, each one on the caption once", async () => {
-    const { speaker, companion, status, hold, reply, finishSentence } = setup();
-    await hold(1_000);
-    await reply("**Done.** See [the doc](https://x.test). Anything else?");
-    expect(status.last()).toEqual({ kind: "speaking" });
-    expect(speaker.speaking()).toBe("Done.");
-    expect(companion.caption).toBe("Done.");
-    await finishSentence();
-    expect(speaker.speaking()).toBe("See the doc.");
-    expect(companion.caption).toBe("See the doc.");
-    await finishSentence();
-    expect(companion.caption).toBe("Anything else?");
-    await finishSentence();
-    expect(speaker.spoken).toEqual(["Done.", "See the doc.", "Anything else?"]);
-    expect(companion.captions.filter(Boolean)).toEqual([
-      "Done.",
-      "See the doc.",
-      "Anything else?",
-    ]);
-  });
-
-  // Interromper a leitura
-  it("stops the voice, clears the caption and drops pending sentences on the next press", async () => {
-    const { deps, speaker, companion, status, hotkey, hold, reply, finishSentence } =
-      setup();
-    await hold(1_000);
-    await reply("First sentence. Second sentence.");
-    expect(speaker.speaking()).toBe("First sentence.");
-
-    hotkey.press();
-    expect(speaker.stop).toHaveBeenCalled();
-    expect(companion.caption).toBeNull();
+  it("removes the old account's visible caption immediately", async () => {
+    const h = setup({ sendScreen: false });
+    h.press();
     await flush();
-    await finishSentence();
-    expect(speaker.spoken).toEqual(["First sentence."]);
-    expect(status.last()).toEqual({ kind: "listening" });
-    expect(companion.last()).toEqual({ kind: "listening" });
-    expect(deps.microphone.start).toHaveBeenCalledTimes(2);
+    h.voice.emit({ kind: "caption", text: "Private reply.", turn: 1, final: false });
+    h.companion.hide.mockClear();
+    h.setUser("account_B");
+    h.controller.update(h.config, 2);
+    expect(h.companion.hide).toHaveBeenLastCalledWith({ immediate: true });
+    expect(h.caption()).toBeNull();
+    h.controller.dispose();
   });
-
-  // Mesma voz das chamadas
-  it("pre-warms the GPT Live voice when the question is sent and reads the reply with it", async () => {
-    const { voice, speaker, companion, status, hold, reply, clock, log } = setup({
-      liveVoice: true,
-    });
-    await hold(1_000);
-    expect(status.last()).toEqual({ kind: "thinking" });
-    expect(log.slice(-3)).toEqual([
-      "voice.prepare wsp_1",
-      "notch thinking",
-      "companion.state thinking",
-    ]);
-
-    await reply("**Done.** See [the doc](https://x.test).");
-    expect(status.last()).toEqual({ kind: "speaking" });
-    expect(voice.reading?.text).toBe("Done. See the doc.");
-    voice.reading?.onCaption("Done.");
-    voice.reading?.onCaption("See the doc.");
-    expect(companion.captions).toEqual(["Done.", "See the doc."]);
-    voice.end({ status: "done" });
+  it("requests screen permission again when the user explicitly re-enables screenshots", async () => {
+    const h = setup();
+    h.screenRecording.status.mockReturnValue("denied");
+    h.press();
     await flush();
-    expect(speaker.speak).not.toHaveBeenCalled();
-    clock.advance(captionLingerMs);
-    expect(companion.visible).toBe(false);
-    expect(status.last()).toBeNull();
-  });
-
-  // Voz GPT Live indisponível
-  it("reads with the system voice only the sentences the GPT Live voice did not speak", async () => {
-    const { voice, speaker, companion, hold, reply, finishSentence } = setup({
-      liveVoice: true,
-    });
-    await hold(1_000);
-    await reply("First sentence. Second sentence. Third sentence.");
-    voice.reading?.onCaption("First sentence.");
-    voice.end({ status: "unavailable", reason: "closed", spokenSentences: 1 });
+    h.clock.advance(200);
+    h.release();
     await flush();
-    expect(speaker.speaking()).toBe("Second sentence.");
-    expect(companion.caption).toBe("Second sentence.");
-    await finishSentence();
-    await finishSentence();
-    expect(speaker.spoken).toEqual(["Second sentence.", "Third sentence."]);
+    expect(h.screenRecording.request).toHaveBeenCalledOnce();
+    h.controller.update({ ...h.config, sendScreen: false });
+    h.controller.update(h.config);
+    expect(h.screenRecording.request).toHaveBeenCalledTimes(2);
+    h.controller.dispose();
   });
-
-  it("uses say only for the remainder when live voice closes after the first final chunk", async () => {
-    const batches: VoiceCallEvents["events"][] = [];
-    let live!: GptLiveVoice;
-    const { hold, reply, speaker, finishSentence, clock } = setup({
-      voice: (sharedClock) => {
-        live = new GptLiveVoice({
-          api: () => ({
-            startVoiceCall: async () => ({ call_id: "vc_1", sdp: "answer-sdp" }),
-            sayVoiceCall: async () => ({ queued: true, chunks: 2 }),
-            voiceCallEvents: async () => ({
-              events: batches.shift() ?? [],
-              cursor: 0,
-              truncated: false,
-            }),
-            endVoiceCall: async () => ({ ending: true }),
-          }),
-          runOwned: (handler) => handler(),
-          host: { open: async () => undefined, publish: () => undefined },
-          clock: sharedClock,
-        });
-        return live;
-      },
-    });
-    await hold(1_000);
-    const { generation } = live.voiceSession();
-    await live.voiceOffer({ generation, sdp: "offer-sdp" });
-    const firstChunk = `${"A".repeat(480)}.`;
-    await reply(`${firstChunk} Second sentence. Third sentence.`);
-    live.voiceReport({ generation, event: "audible" });
-    batches.push([
-      { kind: "caption", role: "agent", turn: 1, text: firstChunk, final: true },
-      { kind: "closed", reason: "chunk_drop" },
-    ]);
-    clock.advance(liveVoicePollMs);
+  it("with print disabled sends only app and cursor context, without capture or permission request", async () => {
+    const h = setup({ sendScreen: false });
+    h.press();
     await flush();
-    expect(speaker.speaking()).toBe("Second sentence.");
-    await finishSentence();
-    expect(speaker.speaking()).toBe("Third sentence.");
-    await finishSentence();
-    expect(speaker.spoken).toEqual(["Second sentence.", "Third sentence."]);
-  });
-
-  // Interromper a leitura
-  it("stops the GPT Live voice at once on the next press", async () => {
-    const { voice, speaker, companion, status, hotkey, hold, reply } = setup({
-      liveVoice: true,
-    });
-    await hold(1_000);
-    await reply("First sentence. Second sentence.");
-    voice.reading?.onCaption("First sentence.");
-
-    hotkey.press();
-    expect(voice.stop).toHaveBeenCalled();
-    expect(companion.caption).toBeNull();
+    h.clock.advance(400);
+    h.release();
     await flush();
-    expect(speaker.speak).not.toHaveBeenCalled();
-    expect(status.last()).toEqual({ kind: "listening" });
+    expect(h.capture).not.toHaveBeenCalled();
+    expect(h.screenRecording.request).not.toHaveBeenCalled();
+    const sent = h.voice.appendContext.mock.calls[0]?.[0];
+    expect(sent?.attachments).toEqual([]);
+    expect(sent?.text).toContain("Safari");
+    expect(sent?.text).toContain("560");
+    h.controller.dispose();
   });
-
-  // Agente demora
-  it("hangs up the pre-warmed voice when no reply comes in 180 s", async () => {
-    const { voice, hold, clock } = setup({ liveVoice: true });
-    await hold(1_000);
-    voice.stop.mockClear();
-    clock.advance(replyWaitMs);
-    expect(voice.stop).toHaveBeenCalled();
+  it.each([false, true])(
+    "discards an accidental or cancelled gesture without context (cancelled=%s)",
+    async (cancelled) => {
+      const h = setup();
+      h.press();
+      await flush();
+      h.clock.advance(cancelled ? 400 : 200);
+      h.release(cancelled);
+      await flush();
+      expect(h.voice.listening).toBe(false);
+      expect(h.voice.active).toBe(false);
+      expect(h.voice.appendContext).not.toHaveBeenCalled();
+      h.controller.dispose();
+    }
+  );
+  it("keeps accepted service work even when the gesture is short", async () => {
+    const h = setup();
+    h.press();
+    await flush();
+    h.voice.emit({ kind: "caller_turn" });
+    h.clock.advance(200);
+    h.release();
+    await flush();
+    expect(h.voice.listening).toBe(false);
+    expect(h.voice.active).toBe(true);
+    expect(h.voice.appendContext).not.toHaveBeenCalled();
+    h.controller.dispose();
   });
-
-  it("does not open the GPT Live voice while spoken replies are off, and retries it after a settings change", async () => {
-    const { controller, voice, speaker, hold, reply } = setup({
-      liveVoice: true,
-      settings: { speakReplies: false },
+  it("mutes the 120-second gesture even with a pending screenshot", async () => {
+    const gate = Promise.withResolvers<PushToTalkScreenCaptureResult>();
+    const h = setup({ capture: () => gate.promise });
+    h.press();
+    await flush();
+    h.voice.emit({ kind: "connected" });
+    h.clock.advance(120_000);
+    expect(h.voice.listening).toBe(false);
+    gate.resolve(captured);
+    await flush();
+    h.controller.dispose();
+  });
+  it("closes on suspend and clears the caption on a new gesture without another session", async () => {
+    const h = setup();
+    h.press();
+    await flush();
+    h.voice.emit({ kind: "connected" });
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    h.voice.emit({ kind: "caption", text: "Speaking.", turn: 1, final: false });
+    h.voice.emit({ kind: "audible" });
+    h.press();
+    await flush();
+    expect(h.caption()).toBeNull();
+    expect(h.voice.sessions).toBe(1);
+    h.power.get("suspend")?.();
+    expect(h.voice.active).toBe(false);
+    h.controller.dispose();
+  });
+  it("hides even an exiting companion before capture and uses it for errors when notch is off", async () => {
+    const h = setup({ notch: false });
+    h.press();
+    await flush();
+    expect(h.order.indexOf("hide immediate")).toBeLessThan(h.order.indexOf("capture"));
+    h.voice.emit({ kind: "error", code: "plan_limit" });
+    expect(h.companionState()).toEqual({ kind: "error", code: "plan_limit" });
+    h.controller.dispose();
+  });
+  it("keeps listening enabled when a newer held gesture replaces the original gesture during connection", async () => {
+    const h = setup({ sendScreen: false });
+    const gate = Promise.withResolvers<typeof target>();
+    h.voice.open.mockReturnValueOnce(gate.promise);
+    h.press();
+    await flush();
+    h.clock.advance(400);
+    h.release();
+    h.press();
+    await flush();
+    expect(h.voice.listening).toBe(true);
+    gate.resolve(target);
+    await flush();
+    expect(h.voice.listening).toBe(true);
+    h.clock.advance(400);
+    h.release();
+    expect(h.voice.listening).toBe(false);
+    h.controller.dispose();
+  });
+  it("retains captions arriving during screen capture and restores them when the companion is shown", async () => {
+    const gate = Promise.withResolvers<PushToTalkScreenCaptureResult>();
+    const h = setup({ capture: () => gate.promise });
+    h.press();
+    await flush();
+    expect(h.visible()).toBe(false);
+    h.voice.emit({
+      kind: "caption",
+      text: "Answer arriving during capture.",
+      turn: 1,
+      final: true,
     });
-    await hold(1_000);
-    await reply("All set.");
-    expect(voice.prepare).not.toHaveBeenCalled();
-    expect(voice.speak).not.toHaveBeenCalled();
-    expect(speaker.speak).not.toHaveBeenCalled();
-    controller.update({ ...settings, speakReplies: true });
-    expect(voice.reset).toHaveBeenCalled();
+    expect(h.caption()).toBeNull();
+    gate.resolve(captured);
+    await flush();
+    expect(h.visible()).toBe(true);
+    expect(h.caption()).toBe("Answer arriving during capture.");
+    h.controller.dispose();
+  });
+  it("bounds idle cleanup of a silent released gesture to the 90-second warm period", async () => {
+    const h = setup();
+    h.press();
+    await flush();
+    h.voice.emit({ kind: "connected" });
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    expect(h.voice.active).toBe(true);
+    expect(h.status()?.kind).toBe("thinking");
+    h.clock.advance(60_000);
+    expect(h.voice.active).toBe(true);
+    expect(h.status()?.kind).toBe("thinking");
+    h.clock.advance(30_000);
+    await flush();
+    expect(h.voice.active).toBe(false);
+    expect(h.status()).toBeNull();
+
+    h.press();
+    await flush();
+    h.voice.emit({ kind: "connected" });
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    await h.respond();
+    h.press();
+    await flush();
+    expect(h.voice.sessions).toBe(2);
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    h.clock.advance(90_000);
+    expect(h.voice.active).toBe(false);
+    h.controller.dispose();
+  });
+  it("distinguishes requested screenshot failure from print-off and posts failed without falling back to text-only", async () => {
+    const gate = Promise.withResolvers<PushToTalkScreenCaptureResult>();
+    const h = setup({ capture: () => gate.promise });
+    h.press();
+    await flush();
+    expect(h.voice.beginContext).toHaveBeenCalledWith(1);
+    h.clock.advance(400);
+    h.release();
+    gate.resolve({ status: "unavailable" });
+    await flush();
+    expect(h.voice.failContext).toHaveBeenCalledWith(1);
+    expect(h.voice.appendContext).not.toHaveBeenCalled();
+    expect(h.status()).toEqual({ kind: "error", code: "context_failed" });
+    h.controller.dispose();
+  });
+  it("cancels context on gesture cancellation or too-short release", async () => {
+    const h = setup();
+    h.press();
+    await flush();
+    expect(h.voice.beginContext).toHaveBeenCalledWith(1);
+    h.release(true);
+    await flush();
+    expect(h.voice.cancelContext).toHaveBeenCalledWith(1);
+    h.press();
+    await flush();
+    expect(h.voice.beginContext).toHaveBeenCalledWith(2);
+    h.clock.advance(100);
+    h.release();
+    await flush();
+    expect(h.voice.cancelContext).toHaveBeenCalledWith(2);
+    h.controller.dispose();
+  });
+  it("shows a context timeout while capture is still pending and never sends its late images", async () => {
+    const capture = Promise.withResolvers<PushToTalkScreenCaptureResult>();
+    const h = setup({ capture: () => capture.promise, notch: false });
+    h.press();
+    await flush();
+    h.voice.emit({ kind: "connected" });
+    h.clock.advance(400);
+    h.release();
+    h.voice.emit({ kind: "context_failed", contextId: 1 });
+    expect(h.visible()).toBe(true);
+    expect(h.companionState()).toMatchObject({ kind: "error", code: "context_failed" });
+    capture.resolve(captured);
+    await flush();
+    expect(h.voice.appendContext).not.toHaveBeenCalled();
+    h.controller.dispose();
   });
 
-  // Voz desligada
-  it.each([
-    ["a short reply for 4 s", "All set now.", 4_000],
-    [
-      "30 words for 9 s",
-      Array.from({ length: 30 }, (_, index) => `w${index}`).join(" "),
-      9_000,
-    ],
-    [
-      "a long reply for 20 s",
-      Array.from({ length: 200 }, (_, index) => `w${index}`).join(" "),
-      20_000,
-    ],
-  ])(
-    "shows %s on the caption without a voice when spoken replies are off",
-    async (_name, text, ms) => {
-      const { speaker, companion, status, hold, reply, clock } = setup({
-        settings: { speakReplies: false },
+  it("ignores stale context_failed events and presents error only for the matching context", async () => {
+    const h = setup();
+    h.press();
+    await flush();
+    h.voice.emit({ kind: "connected" });
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    h.press();
+    await flush();
+    h.voice.emit({ kind: "context_failed", contextId: 1 });
+    expect(h.status()?.kind).toBe("listening");
+    h.voice.emit({ kind: "context_failed", contextId: 2 });
+    expect(h.status()).toEqual({ kind: "error", code: "context_failed" });
+    h.controller.dispose();
+  });
+  it("cancels the silent idle timer when caller_turn arrives so in-progress replies are preserved", async () => {
+    const h = setup();
+    h.press();
+    await flush();
+    h.voice.emit({ kind: "connected" });
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    expect(h.status()?.kind).toBe("thinking");
+    h.voice.emit({ kind: "caller_turn" });
+    h.clock.advance(60_000);
+    expect(h.voice.active).toBe(true);
+    h.clock.advance(40_000);
+    await flush();
+    expect(h.voice.active).toBe(true);
+    h.controller.dispose();
+  });
+  it("does not arm 90s idle timer when caller_turn arrives before release", async () => {
+    const h = setup();
+    h.press();
+    await flush();
+    h.voice.emit({ kind: "connected" });
+    h.voice.emit({ kind: "caller_turn" });
+    h.clock.advance(400);
+    h.release();
+    await flush();
+    expect(h.status()?.kind).toBe("thinking");
+    h.clock.advance(60_000);
+    expect(h.voice.active).toBe(true);
+    h.clock.advance(40_000);
+    await flush();
+    expect(h.voice.active).toBe(true);
+    h.controller.dispose();
+  });
+  it.each([true, false])(
+    "reports a real backend context failure on the designated surface (notch=%s)",
+    async (notch) => {
+      const { h, batches, realVoice, controller, connect } = setupRealTransport({
+        notch,
       });
-      await hold(1_000);
-      await reply(text);
-      expect(speaker.speak).not.toHaveBeenCalled();
-      expect(companion.caption).toBe(text);
-      expect(status.last()).toEqual({ kind: "speaking" });
-      clock.advance(ms - 1);
-      expect(companion.visible).toBe(true);
-      clock.advance(1);
-      expect(companion.visible).toBe(false);
-      expect(status.last()).toBeNull();
+      try {
+        h.press();
+        await connect();
+        expect(realVoice.voiceSession().listening).toBe(true);
+        h.clock.advance(400);
+        h.release();
+        expect(realVoice.voiceSession().listening).toBe(false);
+        await flush();
+        batches.push([
+          { type: "delegation", id: "del_failed", status: "pending" },
+          { type: "delegation", id: "del_failed", status: "failed" },
+          { type: "context_failed", context_id: 1 },
+        ]);
+        h.clock.advance(500);
+        await flush();
+        expect(h.status()).toEqual({ kind: "error", code: "context_failed" });
+        expect(h.visible()).toBe(!notch);
+        if (!notch)
+          expect(h.companionState()).toEqual({
+            kind: "error",
+            code: "context_failed",
+          });
+        expect(realVoice.voiceSession().listening).toBe(false);
+        expect(h.openSideChat).not.toHaveBeenCalled();
+      } finally {
+        controller.dispose();
+        realVoice.close();
+      }
     }
   );
 
-  // Agente demora
-  it("hides silently when no reply comes in 180 s and ignores a later one", async () => {
-    const { speaker, companion, status, hold, reply, clock } = setup();
-    await hold(1_000);
-    expect(status.last()).toEqual({ kind: "thinking" });
-    clock.advance(replyWaitMs);
-    expect(companion.visible).toBe(false);
-    expect(status.last()).toBeNull();
-    await reply("Too late.");
-    expect(speaker.speak).not.toHaveBeenCalled();
-    expect(companion.captions).toEqual([]);
+  it("keeps continuous live speech visible across a new gesture until actual silence", async () => {
+    const { h, batches, realVoice, controller, connect } = setupRealTransport();
+    try {
+      h.press();
+      await connect();
+      h.clock.advance(400);
+      h.release();
+      await flush();
+      const generation = realVoice.voiceSession().generation;
+      realVoice.voiceReport({ generation, event: "audible" });
+      h.press();
+      await flush();
+      h.clock.advance(400);
+      h.release();
+      await flush();
+      batches.push([
+        {
+          kind: "caption",
+          role: "agent",
+          turn: 1,
+          text: "Still speaking.",
+          final: true,
+        },
+      ]);
+      h.clock.advance(500);
+      await flush();
+      h.clock.advance(2_000);
+      expect(h.visible()).toBe(true);
+      expect(h.status()).toEqual({ kind: "speaking" });
+      expect(h.caption()).toBe("Still speaking.");
+      realVoice.voiceReport({ generation, event: "silent" });
+      h.clock.advance(1_500);
+      expect(h.visible()).toBe(false);
+      expect(realVoice.voiceSession().listening).toBe(false);
+    } finally {
+      controller.dispose();
+      realVoice.close();
+    }
   });
 
-  // Mensagem digitada
-  it("ignores agent replies in another conversation", async () => {
-    const { speaker, companion, hold, reply } = setup();
-    await hold(1_000);
-    await reply("Other chat.", { ...target, conversationId: "cnv_other" });
-    expect(speaker.speak).not.toHaveBeenCalled();
-    expect(companion.captions).toEqual([]);
+  it("shows fresh live speech before its caption while the next gesture remains held", async () => {
+    const { h, batches, realVoice, controller, connect } = setupRealTransport();
+    try {
+      h.press();
+      await connect();
+      h.clock.advance(400);
+      h.release();
+      await flush();
+      batches.push([
+        {
+          kind: "caption",
+          role: "agent",
+          turn: 1,
+          text: "Previous answer.",
+          final: true,
+        },
+      ]);
+      h.clock.advance(500);
+      await flush();
+      const generation = realVoice.voiceSession().generation;
+      realVoice.voiceReport({ generation, event: "audible" });
+      h.press();
+      await flush();
+      expect(h.caption()).toBeNull();
+      expect(realVoice.voiceSession().listening).toBe(true);
+
+      // The service may answer during a pause with the shortcut still held.
+      // Media precedes its caption and must already drive the speaking surface.
+      realVoice.voiceReport({ generation, event: "silent" });
+      realVoice.voiceReport({ generation, event: "audible" });
+      expect(h.status()).toEqual({ kind: "speaking" });
+      expect(realVoice.voiceSession().listening).toBe(true);
+      expect(h.caption()).toBeNull();
+
+      batches.push([
+        {
+          kind: "caption",
+          role: "agent",
+          turn: 2,
+          text: "Fresh answer.",
+          final: false,
+        },
+      ]);
+      h.clock.advance(500);
+      await flush();
+      expect(h.caption()).toBe("Fresh answer.");
+      h.release();
+      expect(realVoice.voiceSession().listening).toBe(false);
+      expect(h.openSideChat).not.toHaveBeenCalled();
+    } finally {
+      controller.dispose();
+      realVoice.close();
+    }
   });
 
-  it("ignores a typed message's reply in the shared conversation while waiting for PTT", async () => {
-    const { deps, speaker, companion, hold, reply } = setup();
-    await hold(1_000);
-    deps.replies.handleAppended({
-      conversation,
-      messages: [agentMessage("Answer to a typed question.", "msg_typed_before")],
-      target,
-    });
-    await flush();
-    expect(speaker.spoken).toEqual([]);
-    expect(companion.caption).toBeNull();
-    await reply("Answer to PTT.");
-    expect(speaker.speaking()).toBe("Answer to PTT.");
-  });
+  it.each(["cancelled", "short"] as const)(
+    "silently discards a %s warm gesture while real transport admission is in flight",
+    async (mode) => {
+      const { h, api, batches, realVoice, controller, connect } = setupRealTransport();
+      const admission = Promise.withResolvers<{ accepted: true }>();
+      try {
+        h.press();
+        await connect();
+        h.clock.advance(400);
+        h.release();
+        await flush();
+        batches.push([
+          { kind: "caption", role: "agent", turn: 1, text: "Done.", final: true },
+        ]);
+        h.clock.advance(500);
+        await flush();
+        const generation = realVoice.voiceSession().generation;
+        realVoice.voiceReport({ generation, event: "audible" });
+        realVoice.voiceReport({ generation, event: "silent" });
+        h.clock.advance(1_500);
+        await flush();
+        expect(h.status()).toBeNull();
 
-  it("keeps a causal reply that arrives before the send request resolves", async () => {
-    const sent = deferred<typeof target>();
-    const state = setup({
-      send: ({ onSending }) => {
-        onSending?.(target);
-        state.deps.replies.handleAppended({
-          conversation,
-          messages: [agentMessage("Fast PTT answer.")],
-          target,
-        });
-        return sent.promise;
-      },
-    });
-    await state.hold(1_000);
-    expect(state.speaker.spoken).toEqual([]);
-    sent.resolve(target);
-    await flush();
-    expect(state.speaker.speaking()).toBe("Fast PTT answer.");
-  });
+        api.appendVoiceCallContext.mockImplementationOnce(() => admission.promise);
+        h.press();
+        await flush();
+        expect(realVoice.voiceSession().listening).toBe(false);
+        h.clock.advance(mode === "short" ? 100 : 400);
+        h.release(mode === "cancelled");
+        expect(realVoice.voiceSession().listening).toBe(false);
+        await flush();
 
-  // Fora de um turno
-  it("leaves nothing on screen after an error times out", async () => {
-    const { companion, status, hold, clock } = setup({
-      notchVisible: false,
-      transcript: async () => ({ text: "" }),
-    });
-    await hold(1_000);
-    expect(companion.visible).toBe(true);
-    clock.advance(errorVisibleMs);
-    expect(companion.visible).toBe(false);
-    expect(status.last()).toBeNull();
-  });
+        expect(h.status()).toBeNull();
+        expect(h.visible()).toBe(false);
+        expect(realVoice.voiceSession().active).toBe(true);
+        h.press();
+        await flush();
+        expect(realVoice.voiceSession().listening).toBe(true);
+        expect(api.startVoiceCall).toHaveBeenCalledTimes(1);
+      } finally {
+        admission.resolve({ accepted: true });
+        controller.dispose();
+        realVoice.close();
+      }
+    }
+  );
 });

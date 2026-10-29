@@ -28,7 +28,7 @@ export function PushToTalkOverlayApp() {
   // Outside a drag the window lets clicks through; Main forwards the pointer
   // so the balloon and its buttons can take clicks while it is over them.
   const clickThrough =
-    state.companion !== null && state.companion.kind !== "listening" && !state.hiding;
+    state.companion !== null && !state.drawingEnabled && !state.hiding;
   useEffect(() => {
     if (!clickThrough) return;
     let interactive = false;
@@ -58,9 +58,12 @@ export function PushToTalkOverlayApp() {
       caption={state.caption}
       color={pushToTalkStrokeColor}
       cursor={state.cursor}
+      drawingEnabled={state.drawingEnabled}
       hiding={state.hiding}
       level={state.level}
-      onAction={(action) => bridge.pushToTalk.overlayAction({ action })}
+      onAction={(action) => {
+        void bridge.pushToTalk.overlayAction({ action });
+      }}
       onCaptionClick={() => {
         void bridge.pushToTalk.overlayAction({ action: "caption-click" });
       }}

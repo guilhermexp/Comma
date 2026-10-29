@@ -5,7 +5,7 @@
 Motivação em `proposal.md`; contrato em `specs/agent-push-to-talk/spec.md`. Esta revisão substitui o fluxo gravar → transcrever → enviar texto → ler por uma chamada GPT Live, conforme o desenho aprovado pelo dono em 2026-10-28.
 
 - **Base preservada**: atalho Carbon/event tap do SideChatHost, cancelamento por tecla extra, captura do monitor do cursor, traço, overlay, notch, pedidos de Monitoramento de Entrada e Gravação de Tela. Não alterar helper Swift nem NotchHost.
-- **Chamada existente**: `systems/apps/salix_voice` usa `CallActor`, carrier Electron e `Model.Codex` (`gpt-live-1-codex`), com mídia WebRTC direta entre renderer e serviço e controle por sideband. `VoiceCallControl` é a referência de microfone, SDP/ICE, reprodução e polling.
+- **Chamada existente**: `systems/apps/salix_voice` usa `CallActor`, carrier Electron e `Model.Codex` (`gpt-live-1-codex`), com mídia WebRTC direta entre renderer e serviço e controle por sideband. `VoiceCallControl` é a referência de microfone, SDP/ICE, áudio remoto ao vivo e polling.
 - **Delegação existente**: o modelo de voz não tem ferramentas nem visão; o CallActor encaminha a delegação ao Router por `enqueue_group_router_im_provider_message`, que já aceita `attachments:`. O Router tem o contexto e as ferramentas do workspace.
 - **Controle existente**: início, eventos e hangup passam por `systems/apps/comma_web`; operações da chamada têm escopo `{tenant, group, user}`. Só uma chamada pode ocupar o Group.
 - **Janela existente**: `push-to-talk-voice` hospeda o peer de leitura com faixa sintética. Será convertida para microfone real; hoje a permissão de mídia do Main cobre apenas a janela principal.
@@ -41,9 +41,11 @@ Cada handler devolve `eventNotHandledErr` quando o `EventHotKeyID` pertence à o
 
 Estados visíveis: `connecting → listening → thinking → speaking → idle`, mais `ready` para resposta tardia e `error` transitório. `connecting` dura até a faixa conectar e o controle admitir o contexto do gesto; não espera captura ou upload. `listening` mostra o nível do microfone; `thinking` vale depois de soltar até o primeiro áudio e enquanto houver delegação. O VAD pode antecipar `speaking` com a tecla ainda presa. `idle` pode conter uma sessão quente, mutada e sem UI; não significa necessariamente chamada fechada.
 
+A atividade audível pertence aos eventos de mídia da sessão, não ao gesto. Novo aperto limpa legenda e reinicia o contexto, mas não inventa silêncio: enquanto o áudio continua, um final de caption não pode ocultar o companheiro nem armar inatividade.
+
 Dependências injetadas: sessão de voz, captura/upload/contexto, notch, companheiro, relógio e geração de conta. Regras: mínimo de 0,3 s, captação por aperto limitada a 120 s, réplica por 90 s após a resposta, retenção durante delegação e teto absoluto de 10 min para a sessão. Não há espera de mensagem transcrita ou remoção de WAV.
 
-No aperto: interromper a saída falada em curso e ocultar imediatamente a sobreposição anterior, inclusive no fade; iniciar sinalização, admissão do contexto do gesto e captura em paralelo. A intenção de desmutar é imediata; a mídia só flui com faixa conectada, contexto admitido e gesto ainda ativo. Esse ACK de controle não espera captura/upload. Mostrar a sobreposição depois da captura e restaurar a última legenda recebida enquanto estava oculta. Soltar, cancelar ou atingir 120 s muta imediatamente, sem aguardar captura/upload/contexto (F2). Uma continuação ou ACK atrasado não pode desmutar depois da soltura.
+No aperto: limpar imediatamente a legenda anterior na UI e ocultar a sobreposição anterior, inclusive no fade; iniciar sinalização, admissão do contexto do gesto e captura em paralelo. A intenção de desmutar o microfone é imediata; a entrada só flui com faixa conectada, contexto admitido e gesto ainda ativo. A saída remota permanece ao vivo no renderer: a interrupção da resposta falada pertence ao serviço ao reconhecer nova fala (barge-in nativo, como no Call Comma), sem cancelamento local definitivo apenas pela tecla pressionada; pode haver cauda anterior até esse reconhecimento, e áudio novo recebido não aguarda legendas nem o término do gesto. Esse ACK de controle não espera captura/upload. Mostrar a sobreposição depois da captura. Soltar, cancelar ou atingir 120 s muta imediatamente o microfone, sem aguardar captura/upload/contexto (F2). Uma continuação ou ACK atrasado não pode desmutar depois da soltura.
 
 Mudança de geração de conta encerra a chamada, invalida o turno e suas continuações, descarta contexto/anexos pendentes e oculta a UI (F1). Operações já admitidas mantêm o fence da credencial original; nenhuma continuação adquire a conta nova. Bloqueio, suspensão ou reinício do helper encerram a captação e a chamada quando a soltura não puder ser garantida. Desligar PTT encerra a chamada; resposta pendente segue a política de D16, sem reabrir o microfone.
 
@@ -66,9 +68,9 @@ A mesma janela transparente do monitor do cursor (`focusable: false`, nível `sc
 
 - **Companheiro**: marcador junto ao cursor, com barras do microfone em `listening`, espera em `connecting`/`thinking`, legenda em `speaking` e aviso em `ready`. Mantém a referência visual já implementada do HeyClicky.
 - **Traço**: durante `listening` a janela aceita o mouse (cursor em cruz) e cada arrasto desenha um traço livre, que substitui o anterior; os pontos voltam ao Main por `pushToTalk.setStroke`. O traço some com fade ~1,5 s depois de soltar.
-- **Balão**: frase falada pelo modelo de voz ou "Resposta pronta" com a resposta tardia do Router; clicar abre a sidebar. Fora da região interativa, a janela deixa os cliques atravessarem.
+- **Balão**: frase falada pelo modelo de voz ou "Resposta pronta" com a resposta tardia do Router; clicar abre a sidebar. O clique em `ready`, pelo balão ou pela ação do notch, reconhece o aviso e limpa as duas apresentações. Um clique durante fala não encerra a mídia nem oculta a legenda. Fora da região interativa, a janela deixa os cliques atravessarem.
 
-O Main acompanha o cursor a ~60 Hz somente enquanto a janela está visível. O nível vem do `AnalyserNode` do renderer de voz, enviado ao Main por IPC a ~20 Hz. Há uma única sessão e uma sobreposição ativa por app; não há timer por delegação. Erros aparecem no notch (D9) ou no companheiro quando o notch está desligado.
+O Main acompanha o cursor a ~60 Hz somente enquanto a janela está visível. O nível vem do `AnalyserNode` do renderer de voz, enviado ao Main por IPC a ~20 Hz. Há uma única sessão e uma sobreposição ativa por app; não há timer por delegação. Erros aparecem exclusivamente no notch visível (D9); ocultar o companheiro anterior. Com notch desligado, o companheiro mostra o erro e a ação.
 
 O monitor capturado no início continua sendo o único espaço válido para o traço. Ao mover o cursor para outro monitor, o companheiro acompanha o cursor e o traço anterior é limpo, mas novos traços nesse monitor são recusados. Ao voltar ao monitor capturado, o desenho volta a ser aceito. Não se remapeiam coordenadas de B sobre o print de A: isso apontaria para conteúdo diferente do que o usuário marcou.
 
@@ -111,21 +113,25 @@ A mesma exclusão por Group vale para chamada manual e PTT. `busy` (409) mostra 
 
 ### D14. Microfone real na janela oculta
 
-Converter o peer de `readAloudPeer.ts` e `PushToTalkVoiceApp` para `getUserMedia({ audio: true })`, mantendo a janela `push-to-talk-voice` oculta, sem foco e com autoplay. A faixa nasce com `track.enabled = false`. `pressed` desmuta quando conectada; `released` muta na hora. O `AnalyserNode` fornece o nível para o Main; teardown para as faixas e fecha o peer.
+Converter o peer de `readAloudPeer.ts` e `PushToTalkVoiceApp` para `getUserMedia({ audio: true })`, mantendo a janela `push-to-talk-voice` oculta, sem foco e com autoplay. A faixa do microfone nasce com `track.enabled = false`. `pressed` desmuta quando conectada; `released` muta na hora. O elemento de áudio remoto permanece ao vivo e desmutado, sem bloqueio local por legenda ou flag de reprodução; a interrupção cabe ao serviço ao reconhecer fala. O `AnalyserNode` fornece o nível para o Main; teardown para as faixas e fecha o peer.
 
 Em `security.ts`, conceder mídia áudio-apenas ao frame principal de origem permitida dos papéis já autorizados e de `push-to-talk-voice`. Não exigir uma janela principal aberta e não conceder vídeo ou mídia às outras janelas. O Main mantém o pedido de Microfone do macOS. Testar o papel autorizado e os papéis que continuam negados.
 
-### D15. Fim do turno é do serviço
+### D15. Fim do turno e interrupção são do serviço
 
-Soltar o atalho só muta a faixa. O protocolo da assinatura não expõe `input_audio_buffer.commit` nem `turn_detection`; não enviar comandos inventados. O VAD do serviço determina o fim e pode responder numa pausa longa com a tecla presa (R12).
+Soltar o atalho só muta a faixa do microfone. O protocolo da assinatura não expõe `input_audio_buffer.commit` nem `turn_detection`; não enviar comandos inventados. O VAD do serviço determina o fim e pode responder numa pausa longa com a tecla presa (R12).
+
+**Autoridade da reprodução e interrupção (decisão do dono via `ask` específico `ptt_media_authority`):** o dono selecionou explicitamente “Interrupção pelo serviço, como Call Comma”.
+- **Por que a autoridade é do serviço:** legendas chegam por polling serial a cada 500 ms e contadores sintéticos de turno (`turn`) ou RMS não constituem identidade de áudio dos frames WebRTC. Qualquer tentativa de silenciamento ou buffering local antes da legenda consome o prefixo da resposta nova (causal RED artifact://536, onde mídia fresca chegava com reprodução bloqueada até o recebimento tardio da legenda do agente). O protocolo Codex Quicksilver/AVAS não fornece comandos confirmados de cancelamento/limpeza (`cancel`/`clear`), e o cliente não deve inventar flags, contadores, buffers ou timers locais de corte.
+- **Microfone e legendas locais:** o atalho no aperto apenas limpa a legenda anterior na UI e habilita a entrada do microfone quando conectada; ao soltar, muta o microfone imediatamente.
+- **Interrupção e barge-in pelo serviço:** a saída de áudio remoto permanece ao vivo no renderer. O serviço é o único dono da interrupção da resposta falada ao reconhecer a nova fala (barge-in nativo). Remove-se qualquer promessa de cancelamento local definitivo da saída falada exclusivamente pelo aperto da tecla sem fala reconhecida: uma cauda de áudio da resposta anterior pode continuar soando até o reconhecimento pelo serviço. Áudio novo nunca aguarda legendas, inclusive quando o atalho continua pressionado.
 
 Toque abaixo de 0,3 s ou tecla extra muta e cancela o gesto. Se aquele aperto abriu uma sessão que ainda não teve turno, desligá-la. Não enviar seu contexto/print. Como o áudio flui ao conectar, cancelar não recolhe amostras já transmitidas nem garante apagar um turno já iniciado no serviço.
-
 ### D16. Sessão quente, delegação e resposta tardia
 
 Iniciar SDP/ICE/sideband no `pressed`, em paralelo à fala e à captura. Não há buffer de gravação local para recuperar fala anterior à conexão: notch mostra "Conectando" até o áudio poder fluir e depois "Ouvindo". Após a resposta, manter a sessão mutada por 90 s; uma réplica nesse intervalo reutiliza a mesma sessão e sua memória.
 
-Um gesto solto sem fala/turno reconhecido pelo serviço tem limpeza limitada pela janela de 90 s. A chegada de um turno do chamador cancela essa limpeza: ela não é um novo timeout para uma resposta em processamento. Áudio e legendas atualizam a apresentação mesmo após interrupção local; guardar o estado audível remoto enquanto a reprodução estiver mutada.
+Um gesto solto sem fala/turno reconhecido pelo serviço tem limpeza limitada pela janela de 90 s. A chegada de um turno do chamador cancela essa limpeza: ela não é um novo timeout para uma resposta em processamento. Como a reprodução remota permanece sempre ao vivo sem bloqueio local, áudio recebido toca imediatamente e as legendas atualizam a apresentação à medida que chegam, sem aguardar sincronismo local ou travar saída de mídia.
 
 Delegação pendente impede o fechamento por inatividade, com "Pensando". Reutilizar a nota aos 20 s e a desculpa falada aos 90 s do CallActor, sem inventar outro timeout de resposta. O teto absoluto é 10 min: `max_call_seconds` próprio no backend e encerramento pelo Main com `DELETE`, inclusive com delegação pendente.
 
@@ -138,6 +144,11 @@ A resposta final tardia usa a identidade de request já suportada pela conversa,
 A confirmação de fala ao vivo pertence ao CallActor e não cria recibo de append na conversa. A identidade acima deduplica a mensagem final tardia; não estabelece um limite global de `say` entre entrega ao vivo e entrega após o encerramento. Uma resposta explicitamente enviada depois do fim pela origem canônica da delegação continua no contrato de preservação.
 
 O evento final projeta somente os ACKs conhecidos até o fim da espera limitada, não um inventário de aceitações futuras. Sem ACK no prazo, o resultado do forwarding é desconhecido: não autorizar esse ID pela origem final nem apagar, cancelar ou repetir o trabalho. Se o ingresso real aceitar depois, sua origem canônica original permite responder na conversa. Isso não exige outro recibo, snapshot ou dono de completude.
+
+Decisão humana posterior via `ask` `ptt_forced_end_authority`: **“Consolidar também o encerramento forçado”**. O mesmo CallActor possui o fechamento da mídia e o handoff. No fim normal, uma espera global de até 10 s cobre os ACKs do forwarding e a admissão do evento final; callbacks mantêm a mailbox responsiva. O marcador de tentativa não é um recibo de aceitação. A conclusão do ingresso vem do resultado real do Router.
+
+No force do drain, reutilizar o prazo absoluto dos 2 s restantes da política existente (notice até 5 s, force aos 8 s), sem iniciar outra espera de 10 s. Em `terminate/2`, usar o mesmo orçamento forçado, dentro da supervisão existente, para concluir o que for possível antes de perder a mailbox. Não depender de um timer que só seria processado depois do retorno. Sem admissão confirmada no prazo, registrar erro limitado e finalizar; não inventar ACK, cancelar/repetir trabalho desconhecido nem criar fila, entidade ou snapshot paralelo. A origem original continua válida para trabalho que for aceito posteriormente.
+
 
 Reutilizar o poll serial de eventos da ligação (500 ms, até 200 eventos/512 KiB por página), apenas com a chamada ativa. A legenda acompanha a fala por frases; não prova leitura literal nem exige comparação de palavras. A observação da continuação tardia deve usar a identidade da delegação e a entrega existente da conversa, sem varredura de histórico ou poll por anexo.
 
@@ -186,12 +197,13 @@ Até duas operações de captura são reservadas antes de começar; canceladas c
 **Decisão do dono após a terceira rodada de revisão:** o dono escolheu explicitamente “Consolidar transições existentes” no `ask` desta sessão e confirmou a autorização. Reutilizar uma transição terminal por dono em cancelamento, falha e encerramento. Aceitação e handoff dependem do ACK real do enqueue no Router, nunca do flag anterior ao despacho. Requisições PTT, inclusive poll de eventos, têm prazo e aborto vinculados à chamada; não criar política global nova na API. Preservar o contrato externo e as garantias, sem nova entidade, fila durável, snapshots paralelos ou fallback. Primeiro reproduzir causalmente os três limites (admissão cancelada quente, HTTP de eventos travado e encerramento antes/durante forwarding); depois consolidar autoridade/transições, repetir provas, rebuild assinado e par de revisão completo. A alternativa de redesenhar fases internas não foi escolhida.
 
 
-### D18. Remover o fluxo de transcrição e leitura
+### D18. Remover o fluxo de transcrição, leitura e bloqueio local de mídia
 
 Remover os transcritores PTT (`local-transcription/push-to-talk-transcriber.ts`, `remote-transcriber.ts`), WAV/`push-to-talk/microphone.ts`, `delivery.ts`, `reply-watcher.ts`, `speaker.ts` e o modo de leitura de `live-voice.ts`. Remover `read_aloud`, a rota HTTP `say` e `sayVoiceCall` no backend/client; preservar `im_api.voice.say` usado pelo Router na chamada. Remover `pushToTalkSpeakReplies`, UI/i18n, erros de transcrição e dependência de Ajustes → Reunião. Não remover a transcrição de reuniões.
 
-Apagar os testes exclusivos do código retirado, sem adaptá-los para manter o desenho antigo. F4 (reply-watcher) e F5 (leitura) saem com o código. Preservar F1 (troca de conta encerra a chamada), F2 (soltura muta sem esperar print), F3 (Carbon), F6 (monitor do traço), F7 (conflito ao religar) e F8 (ocultação antes do print). D13–D18 substituem D5, D6, D7 e D12.
+Corte limpo da máquina de interrupção local: remover o campo e controle de reprodução (`playback`) em `PushToTalkVoiceSession`, opções/update do peer e `PushToTalkLiveCall.interrupt()`, sem campos de compatibilidade ou no-ops.
 
+Apagar os testes exclusivos do código retirado, sem adaptá-los para manter o desenho antigo. F4 (reply-watcher) e F5 (leitura) saem com o código. Testes antigos que fixavam o bloqueio local obsoleto são removidos ou substituídos por testes de comportamento real onde mídia nova chega sem aguardar legendas. Preservar F1 (troca de conta encerra a chamada), F2 (soltura muta sem esperar print), F3 (Carbon), F6 (monitor do traço), F7 (conflito ao religar) e F8 (ocultação antes do print). D13–D18 substituem D5, D6, D7 e D12.
 ## Risks / Trade-offs
 
 - **R1** — O Router pode não ter modelo com visão. O texto conserva app/coordenadas e nomes dos arquivos, mas não substitui a imagem; explicar a exigência nos Ajustes.
@@ -200,11 +212,12 @@ Apagar os testes exclusivos do código retirado, sem adaptá-los para manter o d
 - **R7** — Print pode conter dados sensíveis. Manter envio desligável e aviso do destino; nada é capturado com print desligado.
 - **R8** — Um atalho com tecla extra pode começar conexão/captura antes de cancelar. Mutar, descartar contexto/print e encerrar a sessão nova sem turno; áudio já transmitido não pode ser recolhido.
 - **R9** — Entrada segura do macOS pode impedir eventos do tap. Atalho inativo nesse momento; risco aceito.
-- **R12** — VAD pode responder numa pausa com a tecla presa. Risco aceito pelo dono; medir no smoke, sem prometer commit ao soltar.
+- **R12** — VAD pode responder numa pausa com a tecla presa. Risco aceito pelo dono; medir no smoke (reservado a 8.2 e 9.3), sem prometer commit ao soltar. O áudio novo recebido não espera legendas nem a soltura da tecla.
 - **R13** — Latência de conexão e admissão do contexto ainda não medida. Medir aperto → mídia/primeiro áudio, inclusive ACK de controle na réplica quente; nenhuma dessas etapas espera captura/upload.
 - **R14** — Sessão aberta e espera de delegação consomem quota. Aplicar 90 s sem pendência e teto de 10 min; mostrar `plan_limit`, sem fallback nem reconexão automática.
 - **R15** — O Router precisa de visão (R1). Verificar print no mesmo pedido, inclusive com delegação antes do upload; marcador de contexto ausente/antigo deve falhar explicitamente. O modelo de voz não vê imagens. Medir no smoke real se o serviço respeita a correlação instruída; não inferir isso de fixtures.
 
+- **R16** — Cauda de áudio anterior até reconhecimento da nova fala pelo serviço: como a interrupção da resposta pertence ao serviço GPT Live (barge-in nativo, como no Call Comma) e não a um corte local definitivo no aperto, uma cauda da resposta falada anterior pode continuar soando até o serviço detectar e processar a nova fala. Risco explicitamente aceito pelo dono na escolha de autoridade da mídia. Smokes reais de voz, TCC e latência continuam reservados às tarefas 8.2 e 9.1–3.
 ## Migration Plan
 
 Função desligada por padrão; sem migração de dados de conversa ou nova entidade. Remover a preferência obsoleta de resposta falada e seus consumidores; manter as demais preferências. Atualizar backend e cliente para `push_to_talk`/`context`, sem compatibilidade com o modo de leitura retirado. Desligar PTT encerra a chamada; trabalho delegado já aceito continua na conversa, sem retorno automático de voz. Não implantar a branch: integração e rollout seguem o fluxo mainline aprovado do projeto.

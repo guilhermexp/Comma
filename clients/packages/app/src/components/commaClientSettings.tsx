@@ -64,7 +64,11 @@ export function readWebCommaClientSettings(): CommaClientSettings {
   try {
     const stored = globalThis.localStorage?.getItem(commaClientSettingsStorageKey);
     if (stored) {
-      const parsed = commaClientSettingsSchema.safeParse(JSON.parse(stored));
+      const raw = JSON.parse(stored);
+      if (typeof raw === "object" && raw !== null) {
+        delete (raw as Record<string, unknown>).pushToTalkSpeakReplies;
+      }
+      const parsed = commaClientSettingsSchema.safeParse(raw);
       if (parsed.success) {
         const defaultsRevision = Number(
           globalThis.localStorage?.getItem(

@@ -32,37 +32,35 @@ export type PushToTalkShortcutBinding = PushToTalkShortcut | null;
 
 export type PushToTalkErrorCode =
   | "microphone_denied"
-  | "screen_denied" // the question was sent without the screenshot
-  | "transcription_unavailable"
-  | "transcription_busy"
-  | "transcription_failed"
-  | "nothing_heard"
-  | "send_failed";
+  | "screen_denied"
+  | "busy"
+  | "plan_limit"
+  | "context_failed"
+  | "call_failed";
 
 /** State of the turn, shown by the notch and by the cursor companion. */
 export type PushToTalkTurnState =
+  | { kind: "connecting" }
   | { kind: "listening" }
-  | { kind: "transcribing" }
-  | { kind: "thinking" } // sent; waiting for the agent's reply
-  | { kind: "speaking" } // the reply is on the caption (and read aloud when enabled)
-  | { kind: "busy" } // a press was ignored because a turn is still running
-  | { kind: "error"; code: PushToTalkErrorCode; transcript?: string };
+  | { kind: "thinking" }
+  | { kind: "speaking" }
+  | { kind: "ready" }
+  | { kind: "error"; code: PushToTalkErrorCode };
 
 /** Actions offered next to an error, wherever it is shown. */
 export type PushToTalkErrorAction =
   | "open-microphone-settings"
   | "open-screen-recording-settings"
   | "open-input-monitoring-settings"
-  | "open-meeting-settings"
-  | "copy-transcript";
+  | "open-side-chat";
 
 /**
  * The transparent window of the cursor's display that hosts the cursor
  * companion, its caption balloon and the freehand stroke. `show` is only
  * called after the screenshot was taken. The window follows the cursor by
- * itself (and moves to the cursor's display) while shown. While `listening`
- * it accepts mouse drags to draw the stroke; in any other state it is
- * click-through except over the caption balloon and error actions.
+ * itself (and moves to the cursor's display) while shown. While the gesture
+ * is held it accepts drags on the captured display, independently of voice
+ * playback state; otherwise only the balloon and error actions take clicks.
  * Errors are shown here only when the notch is off (the controller decides).
  */
 export interface PushToTalkCompanion {
@@ -72,6 +70,8 @@ export interface PushToTalkCompanion {
     state: PushToTalkTurnState;
   }): void;
   setState(state: PushToTalkTurnState): void;
+  /** Whether the shortcut is held; independent of VAD or spoken output. */
+  setDrawing(active: boolean): void;
   /** Microphone level 0..1 while listening (~20 Hz). */
   setLevel(level: number): void;
   /** Text of the caption balloon; `null` removes the balloon. */
@@ -145,6 +145,5 @@ export interface PushToTalkScreenRecording {
 export type PushToTalkSettings = {
   enabled: boolean;
   shortcut: PushToTalkShortcutBinding;
-  speakReplies: boolean;
   sendScreen: boolean;
 };

@@ -16,7 +16,6 @@ import { resolveElectronStartupSession } from "../startup-session";
 import { TranscriberProviderClient } from "../local-transcription/helper-provider-client";
 import { LocalTranscriptionManager } from "../local-transcription/manager";
 import { MeetingTranscriptionService } from "../local-transcription/meeting-transcription";
-import { LocalPushToTalkTranscriber } from "../local-transcription/push-to-talk-transcriber";
 import {
   MeetingProviderStore,
   type SafeStorageLike,
@@ -145,12 +144,6 @@ export function createMainLocalBackend({
     openPath,
     localTranscription,
     meetingTranscription,
-    pushToTalkTranscriber: new LocalPushToTalkTranscriber({
-      url: () => service.transcriberUrl,
-      token: () => service.transcriberToken,
-      state: async () => (await meetingTranscription?.state()) ?? { ready: false },
-      beforeTranscribe: async () => meetingTranscription?.ensureDelivered(),
-    }),
   });
   return controller;
 }

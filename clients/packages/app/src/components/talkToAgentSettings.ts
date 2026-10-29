@@ -69,7 +69,7 @@ export function talkToAgentSettingsSection({
         type: "shortcut",
         allowModifierOnly: true,
         value: settings.pushToTalkShortcut,
-        disabled: optionsDisabled,
+        disabled: !preferencesLoaded || pending,
         recordingLabel: m.settings_press_shortcut(),
         onClear: () => onShortcutChange(null),
         onChange: onShortcutChange,
@@ -81,17 +81,6 @@ export function talkToAgentSettingsSection({
     (inputMonitoring === "denied" || inputMonitoring === "granted")
       ? [inputMonitoringItem({ m, inputMonitoring, onOpenInputMonitoringSettings })]
       : []),
-    {
-      id: "keyboard.talk-to-agent.speak-replies",
-      title: m.settings_talk_to_agent_speak_replies(),
-      description: m.settings_talk_to_agent_speak_replies_description(),
-      control: {
-        type: "toggle",
-        checked: settings.pushToTalkSpeakReplies,
-        disabled: optionsDisabled,
-        onChange: (event) => onUpdate({ pushToTalkSpeakReplies: event.target.checked }),
-      },
-    },
     {
       id: "keyboard.talk-to-agent.send-screen",
       title: m.settings_talk_to_agent_send_screen(),

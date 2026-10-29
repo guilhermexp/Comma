@@ -1659,35 +1659,21 @@ describe("AppSettingsRoute", () => {
       renderSettings();
       const section = await openTalkToAgentSettings();
 
-      expect(
-        section.getByText(/Audio goes to the transcription engine chosen in Meeting/)
-      ).toBeVisible();
-      expect(
-        section.getByText(
-          /Screenshots go to the workspace agent and its model provider/
-        )
-      ).toBeVisible();
+      expect(section.getByText(/OpenAI GPT Live.*Router/)).toBeVisible();
       const enabled = section.getByRole("switch", { name: "Talk to agent" });
       await waitFor(() => expect(enabled).toBeEnabled());
       expect(enabled).not.toBeChecked();
-      expect(
-        section.getByRole("switch", { name: "Read replies aloud" })
-      ).toBeDisabled();
 
       await userEvent.click(enabled);
       await waitFor(() =>
         expect(readStoredClientSettings().pushToTalkEnabled).toBe(true)
       );
-      const speak = section.getByRole("switch", { name: "Read replies aloud" });
       const screenshot = section.getByRole("switch", { name: "Send a screenshot" });
-      expect(speak).toBeChecked();
       expect(screenshot).toBeChecked();
-      await userEvent.click(speak);
       await userEvent.click(screenshot);
       await waitFor(() =>
         expect(readStoredClientSettings()).toMatchObject({
           pushToTalkSendScreen: false,
-          pushToTalkSpeakReplies: false,
         })
       );
 
@@ -1827,7 +1813,7 @@ describe("AppSettingsRoute", () => {
       expect(section.getByRole("switch", { name: "Talk to agent" })).toBeDisabled();
       expect(
         section.getByRole("button", { name: "Hold to talk: Ctrl + Alt" })
-      ).toBeDisabled();
+      ).toBeEnabled();
     });
 
     it("refuses a chord that Side Chat or Open Comma already uses and names it", async () => {
@@ -1923,6 +1909,30 @@ describe("AppSettingsRoute", () => {
         await section.findByText("Already used by Open Side Chat.")
       ).toBeInTheDocument();
       expect(readStoredClientSettings().pushToTalkEnabled).toBe(false);
+
+      // Repair the conflicting shortcut while PTT remains off
+      const pttShortcut = section.getByRole("button", {
+        name: "Hold to talk: Ctrl + Alt + Space",
+      });
+      expect(pttShortcut).toBeEnabled();
+      await userEvent.click(pttShortcut);
+      await userEvent.keyboard("{Control>}{Shift>}k{/Shift}{/Control}");
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkShortcut).toEqual({
+          key: "k",
+          modifiers: { alt: false, control: true, meta: false, shift: true },
+        })
+      );
+      expect(
+        section.queryByText("Already used by Open Side Chat.")
+      ).not.toBeInTheDocument();
+
+      // Now reenabling succeeds
+      await userEvent.click(enabled);
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkEnabled).toBe(true)
+      );
+      expect(enabled).toBeChecked();
     });
   });
 

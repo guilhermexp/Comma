@@ -1,3 +1,4 @@
+import type { ChatLeasedTarget } from "@comma/chat-contract";
 import { LocalComputeOperator } from "./compute-node/local-operator";
 import { LocalHostMaintenance } from "./compute-node/host-maintenance";
 import { homedir } from "node:os";
@@ -29,22 +30,15 @@ import {
   type PushToTalkScreenSource,
 } from "../push-to-talk/controller";
 import { systemClock } from "../push-to-talk/clock";
-import { createPushToTalkDelivery } from "../push-to-talk/delivery";
-import { HelperPushToTalkMicrophone } from "../push-to-talk/microphone";
-import { RemotePushToTalkTranscriber } from "../push-to-talk/remote-transcriber";
 import {
   GptLiveVoice,
   idlePushToTalkVoiceProvider,
   type PushToTalkVoiceProvider,
 } from "../push-to-talk/live-voice";
-import { PushToTalkReplyWatcher } from "../push-to-talk/reply-watcher";
 import {
-  choosePushToTalkTranscriber,
   PushToTalkRuntime,
   reportPushToTalkInputMonitoring,
 } from "../push-to-talk/runtime";
-import type { PushToTalkSpeaker } from "../push-to-talk/speaker";
-import type { PushToTalkTranscriber } from "../push-to-talk/transcriber";
 import type {
   PushToTalkCompanion,
   PushToTalkHotkey,
@@ -99,7 +93,6 @@ import {
   type AppPreferences,
   type CommaOperatingSystem,
 } from "@comma/native-bridge";
-import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   defaultLocale,
@@ -113,7 +106,7 @@ import {
   type SessionLifecycleSnapshot,
   type SessionProductLease,
 } from "@comma/session-contract";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { ATTACHMENT_TRANSCODED_IMAGE_EXTENSIONS } from "@comma/app/chat-runtime";
 import { createMainChatCoordinatorOptions, type ChatCoordinator } from "./chat";
 import { createDarwinImageTranscoder } from "./chat/image-transcoder";
@@ -395,23 +388,13 @@ export interface ElectronMainRuntimeDeps {
         screen: PushToTalkScreenSource;
         /** Comma's Screen Recording status and its request through the helper. */
         screenRecording: PushToTalkScreenRecording;
-        speaker: PushToTalkSpeaker;
-        /**
-         * The hidden window that holds the GPT Live voice's WebRTC peer.
-         * Absent, replies are read with `speaker` only.
-         */
-        voiceWindow?: { open(): Promise<void> } | undefined;
+        /** Hidden renderer for the live call's microphone and WebRTC peer. */
+        voiceWindow: { open(): Promise<void> };
         powerMonitor: PushToTalkPowerMonitor;
         /** Opens Side Chat normally (a click on the caption balloon). */
         openSideChat: () => void;
         /** One log line per step of a turn. */
         trace?: ((message: string) => void) | undefined;
-        /** Where each turn's WAV lives until the turn ends. */
-        recordingsDir: string;
-        /** Local mode's backend; absent, the server transcribes. */
-        localBackend?:
-          | { pushToTalkTranscriber: PushToTalkTranscriber | undefined }
-          | undefined;
       }
     | undefined;
   secureSessionFilePath: string;
@@ -744,6 +727,7 @@ export async function createElectronMainContext(
   const currentMainLocale = () => mainLocale;
   let pushToTalk: PushToTalkRuntime | undefined;
   let pushToTalkVoice: GptLiveVoice | undefined;
+  let pushToTalkController: PushToTalkController | undefined;
   const appPreferencesService = await AppPreferencesService.open({
     filePath: deps.appPreferencesFilePath,
     onStateChanged: (preferences) => {
@@ -885,9 +869,9 @@ export async function createElectronMainContext(
     ? deps.decorateAppPreferencesProvider(appPreferencesRuntime)
     : appPreferencesRuntime;
   let chat: ChatCoordinator | undefined;
-  // Fed by the chat coordinator's confirmed messages; only a sent Talk to
-  // agent turn arms it.
-  const pushToTalkReplies = new PushToTalkReplyWatcher({ clock: systemClock });
+  // One existing canonical chat stream per account, shared with Side Chat.
+  // It remains retained for a late Router result after the voice media ends.
+  let pushToTalkChatLease: ChatLeasedTarget | undefined;
   const messageNotifications = deps.messageNotificationsPlatform
     ? new MessageNotificationsService({
         emitEvent: (payload) => nativeEventBus.emit(messageNotificationsEvent, payload),
@@ -935,6 +919,7 @@ export async function createElectronMainContext(
       if (state.generation !== publishedSessionGeneration) {
         publishedSessionGeneration = state.generation;
         chat?.reset();
+        pushToTalkChatLease = undefined;
         airDropReception.reset();
         void airdropSender?.reset();
         void airdrop
@@ -1085,7 +1070,7 @@ export async function createElectronMainContext(
       onCanonicalMessagesAppended: (input) => {
         if (messageNotifications)
           void messageNotifications.handleAppendedMessages(input);
-        pushToTalkReplies.handleAppended(input);
+        pushToTalkController?.handleAppended(input);
       },
       ...(transcodeAttachment ? { transcodeAttachment } : {}),
       onLocalFilesCommitted: async (files, committedAtMs) => {
@@ -1316,34 +1301,45 @@ export async function createElectronMainContext(
     drive: recordingDrive,
   });
   const pushToTalkDeps = deps.pushToTalk;
-  if (pushToTalkDeps && deps.microphoneHostPath) {
-    const microphoneHostPath = deps.microphoneHostPath;
+  if (pushToTalkDeps) {
     const logPushToTalk = (message: string) =>
       deps.logger?.warn(message, { source: "push-to-talk" });
-    const transcriber = choosePushToTalkTranscriber({
-      localBackend: pushToTalkDeps.localBackend,
-      remote: () =>
-        new RemotePushToTalkTranscriber({
-          encoder: new HelperRecordingEncoder(microphoneHostPath),
-          bindSession: bindRecordingTranscriptionSession,
-          runOwned: async (handler) => sessionAdmissionGuard.runOwned(handler),
-        }),
+    const voice = new GptLiveVoice({
+      api: () => createCurrentMainSessionApiBinding({ session }).api,
+      runOwned: (handler) => sessionAdmissionGuard.runOwned(handler),
+      resolveTarget: async () => {
+        const target = await appRuntime.chat.resolveWorkspaceChat();
+        if (target.status !== "ready")
+          throw new Error(`Workspace chat is ${target.status}.`);
+        if (
+          pushToTalkChatLease &&
+          (pushToTalkChatLease.conversationId !== target.conversationId ||
+            pushToTalkChatLease.groupId !== target.groupId ||
+            pushToTalkChatLease.workspaceId !== target.workspaceId)
+        ) {
+          appRuntime.chat.release(pushToTalkChatLease);
+          pushToTalkChatLease = undefined;
+        }
+        if (!pushToTalkChatLease) {
+          const lease = {
+            ...target,
+            leaseId: randomUUID(),
+            subscriberId: "main:push-to-talk",
+          };
+          appRuntime.chat.retain(lease);
+          pushToTalkChatLease = lease;
+        }
+        return target;
+      },
+      host: {
+        open: () => pushToTalkDeps.voiceWindow.open(),
+        publish: (state) =>
+          nativeEventBus.emit(pushToTalkVoiceSessionChangedEvent, state),
+      },
+      clock: systemClock,
+      log: logPushToTalk,
+      ...(pushToTalkDeps.trace ? { trace: pushToTalkDeps.trace } : {}),
     });
-    const voiceWindow = pushToTalkDeps.voiceWindow;
-    const voice = voiceWindow
-      ? new GptLiveVoice({
-          api: () => createCurrentMainSessionApiBinding({ session }).api,
-          runOwned: async (handler) => sessionAdmissionGuard.runOwned(handler),
-          host: {
-            open: () => voiceWindow.open(),
-            publish: (state) =>
-              nativeEventBus.emit(pushToTalkVoiceSessionChangedEvent, state),
-          },
-          clock: systemClock,
-          log: logPushToTalk,
-          ...(pushToTalkDeps.trace ? { trace: pushToTalkDeps.trace } : {}),
-        })
-      : undefined;
     pushToTalkVoice = voice;
     const hotkey = reportPushToTalkInputMonitoring(pushToTalkDeps.hotkey, (state) =>
       appPreferencesService.setPushToTalkInputMonitoringStatus(state)
@@ -1358,43 +1354,28 @@ export async function createElectronMainContext(
           sessionGeneration: session.state().generation,
         };
       },
-      createController: (settings, sessionGeneration) =>
-        new PushToTalkController({
+      createController: (settings, sessionGeneration) => {
+        pushToTalkController = new PushToTalkController({
           hotkey,
           companion: pushToTalkDeps.companion,
           status: pushToTalkDeps.status,
           openSideChat: pushToTalkDeps.openSideChat,
           screen: pushToTalkDeps.screen,
           screenRecording: pushToTalkDeps.screenRecording,
-          speaker: pushToTalkDeps.speaker,
-          ...(voice ? { voice } : {}),
+          voice,
           powerMonitor: pushToTalkDeps.powerMonitor,
-          microphone: new HelperPushToTalkMicrophone({
-            capture: new HelperMicrophoneCapture({
-              executablePath: microphoneHostPath,
-            }),
-            directory: pushToTalkDeps.recordingsDir,
-            log: logPushToTalk,
-          }),
-          transcriber,
-          delivery: createPushToTalkDelivery({
-            chat: appRuntime.chat,
-            api: () => createCurrentMainSessionApiBinding({ session }).api,
-            runOwned: async (handler) => sessionAdmissionGuard.runOwned(handler),
-          }),
-          replies: pushToTalkReplies,
           clock: systemClock,
-          removeFile: (path) => rm(path, { force: true }),
           settings,
           sessionGeneration,
-          codeBlockLabel: () =>
-            messages.electron_push_to_talk_code_block(
-              {},
-              { locale: currentMainLocale() }
-            ),
+          isCurrentCaller: (userId) => {
+            const state = session.state();
+            return state.phase === "signed_in" && state.principal.userId === userId;
+          },
           log: logPushToTalk,
           ...(pushToTalkDeps.trace ? { trace: pushToTalkDeps.trace } : {}),
-        }),
+        });
+        return pushToTalkController;
+      },
     });
   }
   meetingRecorder = new MeetingRecorderService({

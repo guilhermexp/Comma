@@ -1,242 +1,497 @@
 import {
   CommaApiError,
-  type VoiceCallAnswer,
+  type CommaApiClient,
   type VoiceCallEvent,
-  type VoiceCallEvents,
 } from "@comma/app/api";
+import type { ChatTarget } from "@comma/chat-contract";
 import {
   idlePushToTalkVoiceSession,
   type PushToTalkVoiceReport,
   type PushToTalkVoiceSession,
 } from "@comma/native-bridge";
 import type { PushToTalkClock } from "./clock";
-import { splitSentences } from "./message";
-import { replyWaitMs } from "./reply-watcher";
+import type { PushToTalkImage } from "./screen-capture";
 
-/** Events are read like the call bar reads them. */
 export const liveVoicePollMs = 500;
-/** No audio this long after the text was handed over: the system voice reads it. */
-export const liveVoiceNoAudioMs = 8_000;
-/** Silence after the final caption that ends the reading. */
-export const liveVoiceQuietMs = 1_200;
-/** A pre-warmed call hangs up when the reply does not come in this time. */
-export const liveVoiceIdleMs = replyWaitMs;
-/** The server ends a read-aloud call at 120 s; this guards a stalled poll. */
-export const liveVoiceMaxReadMs = 130_000;
-/** Consecutive failed event reads that end the call. */
+export const maxAdmissionBudgetMs = 30_000;
+export const maxUploadBudgetMs = 30_000;
+const maxControlBudgetMs = 30_000;
 const maxPollFailures = 3;
-/** Refusals that stay true until the settings change (D12). */
-const rememberedFailures = new Set(["disabled", "codex_account_required"]);
-
-/** The voice routes Main calls with its own Session. */
-export interface PushToTalkVoiceApi {
-  startVoiceCall(
-    workspaceId: string,
-    sdp: string,
-    options: { mode: "read_aloud" }
-  ): Promise<VoiceCallAnswer>;
-  sayVoiceCall(workspaceId: string, callId: string, text: string): Promise<unknown>;
-  voiceCallEvents(
-    workspaceId: string,
-    callId: string,
-    after: number
-  ): Promise<VoiceCallEvents>;
-  endVoiceCall(workspaceId: string, callId: string): Promise<unknown>;
-}
-
-/** The hidden `push-to-talk-voice` window that holds the WebRTC peer. */
+export type PushToTalkVoiceApi = Pick<
+  CommaApiClient,
+  | "startVoiceCall"
+  | "appendVoiceCallContext"
+  | "voiceCallEvents"
+  | "endVoiceCall"
+  | "uploadGroupFile"
+>;
 export interface PushToTalkVoiceHost {
-  /** Creates and loads the window when it is missing. */
   open(): Promise<void>;
-  /** The replay-last session the window follows: a new active generation is a new peer. */
   publish(session: PushToTalkVoiceSession): void;
 }
-
-/** The renderer-facing half: generated capabilities call these. */
 export interface PushToTalkVoiceProvider {
   voiceSession(_input?: void): PushToTalkVoiceSession;
-  /** The peer's offer; resolves with the answer, or `null` when it is not wanted. */
   voiceOffer(input: {
     generation: number;
     sdp: string;
   }): Promise<{ sdp: string } | null>;
   voiceReport(input: { generation: number; event: PushToTalkVoiceReport }): void;
 }
-
-/** Without a voice window no peer is ever wanted. */
 export const idlePushToTalkVoiceProvider: PushToTalkVoiceProvider = {
   voiceSession: () => idlePushToTalkVoiceSession,
   voiceOffer: async () => null,
   voiceReport: () => undefined,
 };
-
-export type PushToTalkVoiceResult =
-  | { status: "done" }
-  | { status: "stopped" }
-  /**
-   * The GPT Live voice could not read it; `spokenSentences` of the text were
-   * already heard, so the system voice reads only the rest.
-   */
-  | { status: "unavailable"; reason: string; spokenSentences: number };
-
-export interface PushToTalkLiveVoice {
-  /** Opens a read-aloud call ahead of the reply (pre-warm). */
-  prepare(workspaceId: string): void;
-  speak(input: {
-    workspaceId: string;
+export type PushToTalkCallEvent =
+  | { kind: "connected" | "audible" | "silent" | "caller_turn" }
+  | { kind: "level"; level: number }
+  | { kind: "caption"; text: string; turn: number; final: boolean }
+  | { kind: "delegation"; id: string; status: "pending" | "answered" | "failed" }
+  | { kind: "context_failed"; contextId: number }
+  | { kind: "closed"; reason: string }
+  | { kind: "error"; code: string };
+export interface PushToTalkLiveCall {
+  open(): Promise<ChatTarget>;
+  setListening(listening: boolean): void;
+  beginContext(contextId: number): Promise<void>;
+  appendContext(input: {
+    contextId: number;
     text: string;
-    /** The sentence being read, from the agent caption. */
-    onCaption: (sentence: string) => void;
-  }): Promise<PushToTalkVoiceResult>;
-  /** Hangs up now; a reading resolves `stopped`. */
-  stop(): void;
-  /** The settings changed: a remembered refusal is tried again. */
-  reset(): void;
+    attachments: PushToTalkImage[];
+  }): Promise<void>;
+  cancelContext(contextId: number): void;
+  failContext(contextId: number): Promise<void>;
+  close(): void;
+  onEvent(listener: (event: PushToTalkCallEvent) => void): () => void;
 }
-
-type Reading = {
-  text: string;
-  onCaption: (sentence: string) => void;
-  resolve: (result: PushToTalkVoiceResult) => void;
-  turns: Map<number, { text: string; final: boolean }>;
-  caption?: string | undefined;
-  /** Audio arrived after the text was handed over. */
-  heard: boolean;
-  audible: boolean;
-  said: boolean;
-  timers: (() => void)[];
-  stopQuiet?: (() => void) | undefined;
+type ActiveContext = {
+  contextId: number;
+  abortController: AbortController;
+  admitted: Promise<void>;
+  resolveAdmission: () => void;
+  rejectAdmission: (reason: Error) => void;
+  stopBudget?: () => void;
 };
 
 type Call = {
   generation: number;
-  workspaceId: string;
-  state: "offering" | "connecting" | "open" | "failed" | "ended";
-  failure?: string | undefined;
-  callId?: string | undefined;
+  api: PushToTalkVoiceApi;
+  target: ChatTarget;
+  ready: Promise<string>;
+  resolveReady: (callId: string) => void;
+  rejectReady: (reason: Error) => void;
+  offering: boolean;
+  offerController?: AbortController;
+  callId?: string;
   cursor: number;
   pollFailures: number;
-  reading?: Reading | undefined;
-  stopIdle: () => void;
-  stopPoll?: (() => void) | undefined;
+  pollController?: AbortController;
+  stopPoll?: () => void;
+  activeContext?: ActiveContext;
+  admittedContextId?: number;
+  pendingControls: Set<() => void>;
 };
 
-/**
- * Reads push-to-talk replies with the GPT Live voice of Comma calls (D12):
- * a `read_aloud` call on Main's Session, whose media lives in the hidden
- * voice window. Main signals, sends the text, reads the captions and ends
- * the call after the final caption goes quiet. Any failure resolves
- * `unavailable` so the caller reads the rest with the system voice.
- */
-export class GptLiveVoice implements PushToTalkLiveVoice, PushToTalkVoiceProvider {
-  readonly #api: () => PushToTalkVoiceApi;
-  readonly #runOwned: <T>(handler: () => Promise<T>) => Promise<T>;
-  readonly #host: PushToTalkVoiceHost;
-  readonly #clock: PushToTalkClock;
-  readonly #log: (message: string) => void;
-  readonly #trace: (message: string) => void;
-  #generation = 0;
-  #session: PushToTalkVoiceSession = { generation: 0, active: false };
+type GptLiveVoiceOptions = {
+  api: () => PushToTalkVoiceApi;
+  resolveTarget: () => Promise<ChatTarget>;
+  runOwned: <T>(handler: () => Promise<T>) => T | Promise<T>;
+  host: PushToTalkVoiceHost;
+  clock: PushToTalkClock;
+  log?: (message: string) => void;
+  trace?: (message: string) => void;
+};
+
+/** Main owns call authority; the hidden renderer owns the microphone and peer. */
+export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider {
+  readonly #options: GptLiveVoiceOptions;
+  readonly #listeners = new Set<(event: PushToTalkCallEvent) => void>();
+  #session: PushToTalkVoiceSession = { ...idlePushToTalkVoiceSession };
   #call: Call | undefined;
-  #remembered: string | undefined;
-
-  constructor(options: {
-    /** Bound to the current Session for each request. */
-    api: () => PushToTalkVoiceApi;
-    /** The turn starts from the native hotkey, outside any renderer call. */
-    runOwned: <T>(handler: () => Promise<T>) => Promise<T>;
-    host: PushToTalkVoiceHost;
-    clock: PushToTalkClock;
-    log?: (message: string) => void;
-    trace?: (message: string) => void;
-  }) {
-    this.#api = options.api;
-    this.#runOwned = options.runOwned;
-    this.#host = options.host;
-    this.#clock = options.clock;
-    this.#log = options.log ?? (() => undefined);
-    this.#trace = options.trace ?? (() => undefined);
+  #opening = 0;
+  #openingPromise: Promise<Call> | undefined;
+  #desiredListening = false;
+  #currentContextId: number | undefined;
+  constructor(options: GptLiveVoiceOptions) {
+    this.#options = options;
   }
 
-  prepare(workspaceId: string) {
-    if (this.#remembered) {
-      this.#trace(`push-to-talk voice skipped: ${this.#remembered}`);
-      return;
-    }
-    const current = this.#call;
-    if (
-      current &&
-      current.workspaceId === workspaceId &&
-      current.state !== "failed" &&
-      current.state !== "ended"
-    )
-      return;
-    if (current) this.#close(current, { status: "stopped" });
-    const generation = ++this.#generation;
-    const call: Call = {
-      generation,
-      workspaceId,
-      state: "offering",
-      cursor: 0,
-      pollFailures: 0,
-      stopIdle: () => undefined,
+  onEvent(listener: (event: PushToTalkCallEvent) => void) {
+    this.#listeners.add(listener);
+    return () => {
+      this.#listeners.delete(listener);
     };
-    this.#call = call;
-    call.stopIdle = this.#clock.setTimeout(() => {
-      if (this.#call === call && !call.reading) this.#close(call);
-    }, liveVoiceIdleMs);
-    this.#publish({ generation, active: true });
-    this.#trace(`push-to-talk voice preparing (generation ${generation})`);
-    this.#host.open().catch((error: unknown) => {
-      this.#log(`Push-to-talk voice window failed: ${message(error)}`);
-      this.#fail(call, "window");
-    });
   }
 
-  speak(input: {
-    workspaceId: string;
-    text: string;
-    onCaption: (sentence: string) => void;
-  }): Promise<PushToTalkVoiceResult> {
-    if (this.#remembered) return Promise.resolve(unavailable(this.#remembered, 0));
-    if (this.#call?.workspaceId !== input.workspaceId || this.#call.state === "ended")
-      this.prepare(input.workspaceId);
-    const call = this.#call;
-    if (!call) return Promise.resolve(unavailable(this.#remembered ?? "window", 0));
-    if (call.state === "failed") {
-      this.#call = undefined;
-      return Promise.resolve(unavailable(call.failure ?? "failed", 0));
-    }
-    return new Promise((resolve) => {
-      const reading: Reading = {
-        text: input.text,
-        onCaption: input.onCaption,
-        resolve,
-        turns: new Map(),
-        heard: false,
-        audible: false,
-        said: false,
-        timers: [],
+  async open(): Promise<ChatTarget> {
+    const opening = ++this.#opening;
+    const openingPromise = Promise.resolve(
+      this.#options.runOwned(async () => {
+        const boundApi = this.#options.api();
+        const resolvedTarget = await this.#options.resolveTarget();
+        return { api: boundApi, target: resolvedTarget };
+      })
+    ).then(({ api, target }) => {
+      if (opening !== this.#opening) throw new Error("Voice opening was cancelled.");
+      const previous = this.#call;
+      if (
+        previous &&
+        previous.target.workspaceId === target.workspaceId &&
+        previous.target.groupId === target.groupId &&
+        previous.target.conversationId === target.conversationId
+      ) {
+        return previous;
+      }
+      if (previous) this.#teardown(previous);
+      let resolveReady!: (callId: string) => void;
+      let rejectReady!: (reason: Error) => void;
+      const ready = new Promise<string>((resolve, reject) => {
+        resolveReady = resolve;
+        rejectReady = reject;
+      });
+      void ready.catch(() => undefined);
+      const call: Call = {
+        generation: this.#session.generation + 1,
+        api,
+        target,
+        ready,
+        resolveReady,
+        rejectReady,
+        offering: true,
+        cursor: 0,
+        pollFailures: 0,
+        pendingControls: new Set(),
       };
-      call.reading = reading;
-      call.stopIdle();
-      reading.timers.push(
-        this.#clock.setTimeout(() => {
-          if (!reading.heard) this.#fail(call, "no_audio");
-        }, liveVoiceNoAudioMs),
-        this.#clock.setTimeout(() => this.#fail(call, "timeout"), liveVoiceMaxReadMs)
-      );
-      if (call.state === "open") this.#say(call, reading);
+      this.#call = call;
+      this.#publish({
+        generation: call.generation,
+        active: true,
+        listening: false,
+      });
+      return call;
     });
+
+    this.#openingPromise = openingPromise;
+
+    let call: Call | undefined;
+    try {
+      call = await openingPromise;
+      await this.#options.host.open();
+    } catch (error) {
+      if (call) this.#fail(call, "window");
+      throw error;
+    } finally {
+      if (this.#openingPromise === openingPromise) {
+        this.#openingPromise = undefined;
+      }
+    }
+    if (!call || this.#call !== call) throw new Error("Voice opening was cancelled.");
+    this.#options.trace?.("push-to-talk voice signaling started");
+    return call.target;
   }
 
-  stop() {
+  setListening(listening: boolean) {
+    this.#desiredListening = listening;
+    if (!listening) {
+      if (this.#session.listening) {
+        this.#publish({ listening: false });
+      }
+      return;
+    }
     const call = this.#call;
-    if (call) this.#close(call, { status: "stopped" });
+    const canUnmute =
+      call !== undefined &&
+      call.callId !== undefined &&
+      this.#currentContextId !== undefined &&
+      call.admittedContextId === this.#currentContextId;
+    if (canUnmute && !this.#session.listening) {
+      this.#publish({ listening: true });
+    }
   }
 
-  reset() {
-    this.#remembered = undefined;
+  async beginContext(contextId: number): Promise<void> {
+    this.#currentContextId = contextId;
+    if (this.#session.listening) {
+      this.#publish({ listening: false });
+    }
+
+    let call = this.#call;
+    if (!call && this.#openingPromise) {
+      try {
+        call = await this.#openingPromise;
+      } catch {
+        throw new Error("Voice call failed to open.");
+      }
+    }
+    if (!call || this.#call !== call) throw new Error("Voice call is not active.");
+    if (this.#currentContextId !== contextId) throw new Error("Context was cancelled.");
+
+    if (call.activeContext) {
+      this.#teardownActiveContext(call, new Error("Superseded by new gesture."));
+    }
+
+    const abortController = new AbortController();
+    let resolveAdmission!: () => void;
+    let rejectAdmission!: (reason: Error) => void;
+    const admitted = new Promise<void>((resolve, reject) => {
+      resolveAdmission = resolve;
+      rejectAdmission = reject;
+    });
+    void admitted.catch(() => undefined);
+    const stopAdmissionBudget = this.#options.clock.setTimeout(() => {
+      const timeoutError = new Error("Context admission timed out.");
+      abortController.abort(timeoutError);
+      rejectAdmission(timeoutError);
+    }, maxAdmissionBudgetMs);
+
+    const activeContext: ActiveContext = {
+      contextId,
+      abortController,
+      admitted,
+      resolveAdmission,
+      rejectAdmission,
+      stopBudget: stopAdmissionBudget,
+    };
+    call.activeContext = activeContext;
+
+    void this.#doBeginContext(call, activeContext).catch(rejectAdmission);
+    try {
+      await admitted;
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      rejectAdmission(err);
+      if (call.activeContext === activeContext) {
+        delete call.activeContext;
+      }
+      throw err;
+    } finally {
+      stopAdmissionBudget();
+    }
+  }
+
+  async #doBeginContext(call: Call, activeContext: ActiveContext) {
+    const { contextId, abortController, resolveAdmission } = activeContext;
+    const callId = await call.ready;
+    this.#assertActive(call);
+    if (abortController.signal.aborted || this.#currentContextId !== contextId) {
+      throw new Error("Context was cancelled.");
+    }
+
+    await call.api.appendVoiceCallContext(
+      call.target.workspaceId,
+      callId,
+      {
+        context_id: contextId,
+        status: "pending",
+      },
+      { signal: abortController.signal }
+    );
+
+    this.#assertActive(call);
+    if (abortController.signal.aborted || this.#currentContextId !== contextId) {
+      throw new Error("Context was cancelled.");
+    }
+
+    call.admittedContextId = contextId;
+    resolveAdmission();
+
+    if (
+      this.#call === call &&
+      this.#currentContextId === contextId &&
+      this.#desiredListening
+    ) {
+      this.#publish({ listening: true });
+    }
+  }
+
+  cancelContext(contextId: number): void {
+    const call = this.#call;
+    if (call?.activeContext && call.activeContext.contextId === contextId) {
+      this.#teardownActiveContext(call, new Error("Context cancelled."));
+    }
+    if (this.#currentContextId === contextId) {
+      this.#currentContextId = undefined;
+      this.#desiredListening = false;
+      if (this.#session.listening) {
+        this.#publish({ listening: false });
+      }
+    }
+    if (!call) return;
+    this.#sendBestEffortControl(call, contextId, "cancelled");
+  }
+
+  async failContext(contextId: number): Promise<void> {
+    const call = this.#call;
+    if (call?.activeContext && call.activeContext.contextId === contextId) {
+      this.#teardownActiveContext(call, new Error("Context failed."));
+    }
+    if (this.#currentContextId === contextId) {
+      this.#currentContextId = undefined;
+      this.#desiredListening = false;
+      if (this.#session.listening) {
+        this.#publish({ listening: false });
+      }
+    }
+    if (!call) return;
+    this.#sendBestEffortControl(call, contextId, "failed");
+  }
+
+  #sendBestEffortControl(
+    call: Call,
+    contextId: number,
+    status: "failed" | "cancelled"
+  ) {
+    const abortController = new AbortController();
+    let stopTimer: (() => void) | undefined;
+    const cleanup = () => {
+      if (stopTimer) {
+        stopTimer();
+        stopTimer = undefined;
+      }
+      call.pendingControls.delete(cancel);
+    };
+    const cancel = () => {
+      abortController.abort();
+      cleanup();
+    };
+    call.pendingControls.add(cancel);
+
+    stopTimer = this.#options.clock.setTimeout(() => {
+      cancel();
+    }, maxControlBudgetMs);
+
+    let rejectAbort!: (reason: Error) => void;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      rejectAbort = reject;
+    });
+    const onAbort = () => rejectAbort(new Error("Control aborted"));
+    abortController.signal.addEventListener("abort", onAbort, { once: true });
+    void (async () => {
+      try {
+        const callId = await Promise.race([call.ready, aborted]);
+        if (abortController.signal.aborted || this.#call !== call) return;
+        await Promise.race([
+          call.api.appendVoiceCallContext(
+            call.target.workspaceId,
+            callId,
+            {
+              context_id: contextId,
+              status,
+            },
+            { signal: abortController.signal }
+          ),
+          aborted,
+        ]);
+      } catch {
+        // Safe best effort
+      } finally {
+        abortController.signal.removeEventListener("abort", onAbort);
+        cleanup();
+      }
+    })();
+  }
+
+  #teardownActiveContext(call: Call, reason: Error) {
+    const context = call.activeContext;
+    if (!context) return;
+    delete call.activeContext;
+    context.stopBudget?.();
+    context.abortController.abort(reason);
+    context.rejectAdmission(reason);
+  }
+
+  async appendContext(input: {
+    contextId: number;
+    text: string;
+    attachments: PushToTalkImage[];
+  }): Promise<void> {
+    const call = this.#call;
+    if (!call) throw new Error("Voice call is not active.");
+
+    const activeContext = call.activeContext;
+    if (!activeContext || activeContext.contextId !== input.contextId) {
+      throw new Error("Context is no longer active.");
+    }
+
+    await activeContext.admitted;
+    this.#assertActive(call);
+
+    if (
+      this.#currentContextId !== input.contextId ||
+      call.activeContext !== activeContext
+    ) {
+      throw new Error("Context is no longer current.");
+    }
+
+    let rejectBudget!: (reason: Error) => void;
+    const budget = new Promise<never>((_resolve, reject) => {
+      rejectBudget = reject;
+    });
+    const budgetTimer = this.#options.clock.setTimeout(() => {
+      const timeoutError = new Error("Context upload timed out.");
+      activeContext.abortController.abort(timeoutError);
+      rejectBudget(timeoutError);
+    }, maxUploadBudgetMs);
+    activeContext.stopBudget = budgetTimer;
+
+    try {
+      await Promise.race([
+        this.#doAppendContext(call, input, activeContext.abortController.signal),
+        budget,
+      ]);
+    } finally {
+      if (call.activeContext === activeContext) {
+        this.#teardownActiveContext(call, new Error("Context operation finished."));
+      } else {
+        budgetTimer();
+      }
+    }
+  }
+
+  async #doAppendContext(
+    call: Call,
+    input: { contextId: number; text: string; attachments: PushToTalkImage[] },
+    signal: AbortSignal
+  ) {
+    const callId = await call.ready;
+    this.#assertActive(call);
+
+    const attachments = await Promise.all(
+      input.attachments.map(async (image) => {
+        this.#assertActive(call);
+        if (signal.aborted) throw new Error("Upload aborted.");
+        const uploaded = await call.api.uploadGroupFile(call.target.groupId, {
+          data: new Blob([image.data as Uint8Array<ArrayBuffer>], {
+            type: image.mediaType,
+          }),
+          name: image.name,
+          signal,
+        });
+        this.#assertActive(call);
+        return { path: uploaded.path, name: uploaded.name, mime: image.mediaType };
+      })
+    );
+
+    this.#assertActive(call);
+    if (signal.aborted) throw new Error("Upload aborted.");
+
+    await call.api.appendVoiceCallContext(
+      call.target.workspaceId,
+      callId,
+      {
+        context_id: input.contextId,
+        status: "complete",
+        text: input.text,
+        attachments,
+      },
+      { signal }
+    );
+    this.#assertActive(call);
+  }
+
+  close() {
+    ++this.#opening;
+    if (this.#call) this.#teardown(this.#call);
   }
 
   voiceSession(): PushToTalkVoiceSession {
@@ -245,241 +500,201 @@ export class GptLiveVoice implements PushToTalkLiveVoice, PushToTalkVoiceProvide
 
   async voiceOffer(input: { generation: number; sdp: string }) {
     const call = this.#call;
-    if (!call || call.generation !== input.generation || call.state !== "offering")
-      return null;
-    call.state = "connecting";
-    let answer: VoiceCallAnswer;
+    if (!call || call.generation !== input.generation || !call.offering) return null;
+    call.offering = false;
+
+    const offerController = new AbortController();
+    call.offerController = offerController;
+    const stopOfferBudget = this.#options.clock.setTimeout(() => {
+      offerController.abort(new Error("Voice offer timed out."));
+    }, maxControlBudgetMs);
+
     try {
-      answer = await this.#owned((api) =>
-        api.startVoiceCall(call.workspaceId, input.sdp, { mode: "read_aloud" })
-      );
+      const answer = await call.api.startVoiceCall(call.target.workspaceId, input.sdp, {
+        mode: "push_to_talk",
+        signal: offerController.signal,
+      });
+      stopOfferBudget();
+      if (call.offerController === offerController) {
+        delete call.offerController;
+      }
+      if (this.#call !== call) {
+        void this.#hangup(call, answer.call_id);
+        return null;
+      }
+      call.callId = answer.call_id;
+      call.resolveReady(answer.call_id);
+      void this.#poll(call);
+      return { sdp: answer.sdp };
     } catch (error) {
-      const code = failureCode(error);
-      if (rememberedFailures.has(code)) this.#remembered = code;
-      this.#trace(`push-to-talk voice unavailable: ${code}`);
-      this.#fail(call, code);
+      stopOfferBudget();
+      if (call.offerController === offerController) {
+        delete call.offerController;
+      }
+      this.#fail(call, voiceFailureCode(error));
       return null;
     }
-    if (this.#call !== call || call.state !== "connecting") {
-      // Stopped while signaling: the call exists, so it is ended here.
-      this.#hangUp(call.workspaceId, answer.call_id);
-      return null;
-    }
-    call.callId = answer.call_id;
-    call.state = "open";
-    this.#trace(`push-to-talk voice call ${answer.call_id} open`);
-    if (call.reading) this.#say(call, call.reading);
-    void this.#poll(call);
-    return { sdp: answer.sdp };
   }
 
-  voiceReport(input: { generation: number; event: PushToTalkVoiceReport }) {
+  voiceReport({
+    generation,
+    event,
+  }: {
+    generation: number;
+    event: PushToTalkVoiceReport;
+  }) {
     const call = this.#call;
-    if (!call || call.generation !== input.generation) return;
-    if (input.event === "failed") {
-      this.#fail(call, "connection");
-      return;
+    if (!call || call.generation !== generation) return;
+    if (typeof event !== "string") {
+      if (this.#session.listening) this.#emit({ kind: "level", level: event.level });
+    } else if (event === "failed" || event === "microphone_denied") {
+      this.#fail(call, event === "failed" ? "connection" : event);
+    } else {
+      this.#emit({ kind: event });
     }
-    const reading = call.reading;
-    if (!reading) return;
-    reading.audible = input.event === "audible";
-    if (reading.audible && !reading.heard) {
-      reading.heard = true;
-      this.#trace("push-to-talk voice audio started");
-    }
-    this.#checkDone(call, reading);
-  }
-
-  #say(call: Call, reading: Reading) {
-    if (reading.said || !call.callId) return;
-    reading.said = true;
-    const callId = call.callId;
-    this.#owned((api) =>
-      api.sayVoiceCall(call.workspaceId, callId, reading.text)
-    ).catch((error: unknown) => this.#fail(call, failureCode(error)));
   }
 
   async #poll(call: Call) {
-    if (this.#call !== call || call.state !== "open" || !call.callId) return;
-    const callId = call.callId;
+    if (this.#call !== call || !call.callId) return;
+
+    const controller = new AbortController();
+    call.pollController = controller;
+    const stopPollBudget = this.#options.clock.setTimeout(() => {
+      controller.abort(new Error("Event poll timed out."));
+    }, maxControlBudgetMs);
+
     try {
-      const batch = await this.#owned((api) =>
-        api.voiceCallEvents(call.workspaceId, callId, call.cursor)
+      const batch = await call.api.voiceCallEvents(
+        call.target.workspaceId,
+        call.callId,
+        call.cursor,
+        { signal: controller.signal }
       );
-      call.pollFailures = 0;
+      stopPollBudget();
+      if (call.pollController === controller) {
+        delete call.pollController;
+      }
       if (this.#call !== call) return;
+      if (batch.truncated) {
+        this.#fail(call, "events_truncated");
+        return;
+      }
+      call.pollFailures = 0;
       call.cursor = batch.cursor;
       for (const event of batch.events) {
         if (this.#call !== call) return;
         this.#event(call, event);
       }
     } catch (error) {
-      this.#log(`Push-to-talk voice events failed: ${message(error)}`);
+      stopPollBudget();
+      if (call.pollController === controller) {
+        delete call.pollController;
+      }
+      if (this.#call !== call) return;
       if (++call.pollFailures >= maxPollFailures) {
-        this.#fail(call, "events");
+        this.#fail(call, voiceFailureCode(error));
         return;
       }
     }
-    if (this.#call === call && call.state === "open")
-      call.stopPoll = this.#clock.setTimeout(
-        () => void this.#poll(call),
-        liveVoicePollMs
-      );
+    if (this.#call === call)
+      call.stopPoll = this.#options.clock.setTimeout(() => {
+        void this.#poll(call);
+      }, liveVoicePollMs);
   }
 
   #event(call: Call, event: VoiceCallEvent) {
-    if (!("kind" in event)) return;
-    const reading = call.reading;
-    if (event.kind === "caption") {
-      if (event.role !== "agent" || !reading) return;
-      reading.turns.set(event.turn, { text: event.text, final: event.final });
-      const sentence = splitSentences(heardText(reading)).at(-1);
-      if (sentence && sentence !== reading.caption) {
-        reading.caption = sentence;
-        reading.onCaption(sentence);
+    if (!("kind" in event)) {
+      if (event.type === "delegation") {
+        this.#emit({ kind: "delegation", id: event.id, status: event.status });
+      } else if (event.type === "context_failed") {
+        this.#emit({ kind: "context_failed", contextId: event.context_id });
       }
-      this.#checkDone(call, reading);
       return;
     }
-    if (event.kind === "closed" || event.kind === "error") {
-      call.callId = undefined;
-      if (reading?.heard && allRead(reading)) this.#close(call, { status: "done" });
-      else if (reading) this.#fail(call, event.kind);
-      // A pre-warmed call that ended by itself is simply opened again.
-      else this.#close(call);
+    if (event.kind === "caption" && event.role === "agent") {
+      this.#emit({
+        kind: "caption",
+        text: event.text,
+        turn: event.turn,
+        final: event.final,
+      });
+    } else if (
+      event.kind === "caption" &&
+      event.role === "caller" &&
+      event.text.trim()
+    ) {
+      this.#emit({ kind: "caller_turn" });
+    } else if (event.kind === "error") {
+      this.#fail(call, event.code);
+    } else if (event.kind === "closed") {
+      this.#teardown(call);
+      this.#emit({ kind: "closed", reason: event.reason });
     }
   }
 
-  /** Done once the last caption is final and the audio stayed quiet. */
-  #checkDone(call: Call, reading: Reading) {
-    reading.stopQuiet?.();
-    reading.stopQuiet = undefined;
-    if (!reading.heard || reading.audible || !allRead(reading)) return;
-    reading.stopQuiet = this.#clock.setTimeout(() => {
-      if (this.#call === call && call.reading === reading)
-        this.#close(call, { status: "done" });
-    }, liveVoiceQuietMs);
-  }
-
-  #fail(call: Call, reason: string) {
+  #fail(call: Call, code: string) {
     if (this.#call !== call) return;
-    const reading = call.reading;
-    if (reading) {
-      this.#trace(`push-to-talk voice fell back: ${reason}`);
-      this.#close(call, unavailable(reason, heardSentences(reading)));
-      return;
-    }
-    // Before the reply: the turn's reading falls back at once, without a new wait.
     this.#teardown(call);
-    call.state = "failed";
-    call.failure = reason;
+    this.#emit({ kind: "error", code });
   }
 
-  #close(call: Call, result: PushToTalkVoiceResult = { status: "stopped" }) {
-    if (this.#call === call) this.#call = undefined;
-    this.#teardown(call);
-    call.state = "ended";
-    const reading = call.reading;
-    call.reading = undefined;
-    if (reading) {
-      if (result.status === "done") this.#trace("push-to-talk voice read the reply");
-      reading.resolve(result);
-    }
+  #assertActive(call: Call) {
+    if (this.#call !== call) throw new Error("Voice call is no longer active.");
   }
 
   #teardown(call: Call) {
-    call.stopIdle();
+    call.offerController?.abort();
+    delete call.offerController;
+    call.pollController?.abort();
+    delete call.pollController;
     call.stopPoll?.();
-    call.reading?.stopQuiet?.();
-    for (const stop of call.reading?.timers.splice(0) ?? []) stop();
-    if (this.#session.active && this.#session.generation === call.generation)
-      this.#publish({ generation: ++this.#generation, active: false });
-    const callId = call.callId;
-    call.callId = undefined;
-    if (callId) this.#hangUp(call.workspaceId, callId);
+    call.rejectReady(new Error("Voice call ended."));
+    this.#teardownActiveContext(call, new Error("Voice call ended."));
+    for (const cancel of call.pendingControls) {
+      cancel();
+    }
+    call.pendingControls.clear();
+    delete call.admittedContextId;
+    this.#currentContextId = undefined;
+    this.#desiredListening = false;
+    if (this.#call === call) {
+      this.#call = undefined;
+      this.#publish({ active: false, listening: false });
+    }
+    if (call.callId) void this.#hangup(call, call.callId);
+  }
+  async #hangup(call: Call, callId: string) {
+    const abortController = new AbortController();
+    const stopBudget = this.#options.clock.setTimeout(() => {
+      abortController.abort(new Error("Hangup timed out."));
+    }, maxControlBudgetMs);
+    try {
+      await call.api.endVoiceCall(call.target.workspaceId, callId, {
+        signal: abortController.signal,
+      });
+    } catch {
+      this.#options.log?.("Push-to-talk hangup could not reach the original session.");
+    } finally {
+      stopBudget();
+    }
   }
 
-  #hangUp(workspaceId: string, callId: string) {
-    this.#owned((api) => api.endVoiceCall(workspaceId, callId)).catch(
-      (error: unknown) =>
-        this.#log(`Push-to-talk voice hang up failed: ${message(error)}`)
-    );
+  #publish(patch: Partial<Omit<PushToTalkVoiceSession, "revision">>) {
+    this.#session = {
+      ...this.#session,
+      ...patch,
+      revision: this.#session.revision + 1,
+    };
+    this.#options.host.publish(this.#session);
   }
 
-  #publish(session: PushToTalkVoiceSession) {
-    this.#session = session;
-    this.#host.publish(session);
-  }
-
-  #owned<T>(request: (api: PushToTalkVoiceApi) => Promise<T>): Promise<T> {
-    return this.#runOwned(() => request(this.#api()));
+  #emit(event: PushToTalkCallEvent) {
+    for (const listener of this.#listeners) listener(event);
   }
 }
 
-function unavailable(reason: string, spokenSentences: number): PushToTalkVoiceResult {
-  return { status: "unavailable", reason, spokenSentences };
-}
-
-/** The agent caption so far, across the turns of one reading. */
-function heardText(reading: Reading) {
-  return [...reading.turns.entries()]
-    .toSorted(([a], [b]) => a - b)
-    .map(([, turn]) => turn.text.trim())
-    .filter(Boolean)
-    .join(" ");
-}
-
-function allFinal(reading: Reading) {
-  return (
-    reading.turns.size > 0 && [...reading.turns.values()].every((turn) => turn.final)
-  );
-}
-function words(text: string): string[] {
-  return text.toLowerCase().match(/\p{L}+|\p{N}+/gu) ?? [];
-}
-
-function isTerminal(text: string, expectedText: string): boolean {
-  if (/[.!?…。！？]["'”’)\]]*$/u.test(text)) return true;
-  const expectedWords = words(expectedText);
-  const lastWord = expectedWords.at(-1);
-  if (!lastWord) return true;
-  const heard = words(text);
-  return heard.at(-1) === lastWord;
-}
-
-/** Done only when all received turns are final and the whole reply was heard word for word. */
-function allRead(reading: Reading) {
-  if (!allFinal(reading)) return false;
-  const expectedSentences = splitSentences(reading.text);
-  if (expectedSentences.length === 0) return true;
-  if (heardSentences(reading) < expectedSentences.length) return false;
-  const expectedWords = words(reading.text);
-  const heardWords = words(heardText(reading));
-  if (expectedWords.length === 0) return true;
-  if (expectedWords.length !== heardWords.length) return false;
-  for (let index = 0; index < expectedWords.length; index++) {
-    if (expectedWords[index] !== heardWords[index]) return false;
-  }
-  return true;
-}
-
-/** Whole sentences already heard; a sentence cut off is read again. */
-function heardSentences(reading: Reading) {
-  if (!reading.heard) return 0;
-  const text = heardText(reading);
-  const sentences = splitSentences(text);
-  const complete = isTerminal(text, reading.text)
-    ? sentences.length
-    : sentences.length - 1;
-  return Math.max(0, Math.min(complete, splitSentences(reading.text).length));
-}
-
-function failureCode(error: unknown) {
-  if (error instanceof CommaApiError)
-    return error.body?.error ?? `http_${error.status}`;
-  return "unreachable";
-}
-
-function message(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+export function voiceFailureCode(error: unknown) {
+  return error instanceof CommaApiError
+    ? (error.body?.error ?? `http_${error.status}`)
+    : "unreachable";
 }

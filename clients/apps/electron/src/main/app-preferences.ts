@@ -513,8 +513,13 @@ async function readStoredPreferences(filePath: string) {
   }
   const { defaultsRevision, ...rest } =
     typeof stored === "object" && stored !== null
-      ? (stored as { defaultsRevision?: unknown })
+      ? (stored as { defaultsRevision?: unknown; clientSettings?: unknown })
       : {};
+  // Drop the retired PTT setting before strict parsing. Otherwise an older
+  // preferences file would reset unrelated settings to their defaults.
+  if (typeof rest.clientSettings === "object" && rest.clientSettings !== null) {
+    delete (rest.clientSettings as Record<string, unknown>).pushToTalkSpeakReplies;
+  }
   try {
     return {
       defaultsRevision: typeof defaultsRevision === "number" ? defaultsRevision : 0,

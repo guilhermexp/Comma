@@ -184,7 +184,6 @@ describe("Comma Main client-control API", () => {
                 pushToTalkEnabled: expect.any(Object),
                 pushToTalkSendScreen: expect.any(Object),
                 pushToTalkShortcut: expect.any(Object),
-                pushToTalkSpeakReplies: expect.any(Object),
                 sideChatAppearance: expect.any(Object),
                 sideChatShortcut: expect.any(Object),
               }),

@@ -15,8 +15,8 @@ type PushToTalkVoiceWindowOptions = {
 
 /**
  * The hidden `push-to-talk-voice` renderer that holds the GPT Live voice's
- * WebRTC peer (D12). It is created on the first spoken reply and kept, so
- * later replies skip the load; it is never shown and takes no focus.
+ * WebRTC peer (D12). It is created on demand and kept so later turns skip
+ * the load; it is never shown and takes no focus.
  */
 export class PushToTalkVoiceWindow {
   readonly #options: PushToTalkVoiceWindowOptions;
@@ -25,6 +25,11 @@ export class PushToTalkVoiceWindow {
 
   constructor(options: PushToTalkVoiceWindowOptions) {
     this.#options = options;
+  }
+
+  webContents(): BrowserWindow["webContents"] | undefined {
+    if (!this.#window || this.#window.isDestroyed()) return undefined;
+    return this.#window.webContents;
   }
 
   open(): Promise<void> {
