@@ -35,6 +35,12 @@ defmodule Comma.ConversationAttachmentsTest do
     end
   end
 
+  test "uses the workspace basename rather than the human title for download metadata" do
+    attachment = block(1) |> Map.delete("file_name")
+    attachment = Map.merge(attachment, %{"title" => "Comparison of two shifts", "path" => "/artifacts/x.csv"})
+    assert ConversationAttachments.describe(attachment)["file_name"] == "x.csv"
+  end
+
   defp block(size, file_name \\ "report.pdf") do
     %{
       "blob_ref" => %{"hash" => "sha256:abc", "size" => size, "uuid" => "blob-1"},

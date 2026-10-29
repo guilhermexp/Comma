@@ -148,6 +148,34 @@ defmodule CommaWeb.CommaMessageResourceTest do
     :ok
   end
 
+  @tag timeout: 180_000
+  test "downloads an Agent file older than the recent message window in Home" do
+    %{workspace: workspace, session: session} =
+      create_workspace_session("old-file@example.com", "Old file")
+    conversation = create_conversation(session, workspace)
+    group_id = workspace["default_group_id"]
+    agent_id = workspace["router_agent_id"]
+    seed_agent_vfs!(agent_id, %{"/artifacts/x.csv" => "shift,count\nfirst,231"})
+    assert {:ok, content} = SalixIM.ConversationAttachments.bind_sender_files(agent_id, [
+      %{"type" => "file", "title" => "Comparison of two shifts", "path" => "/artifacts/x.csv"}
+    ])
+    assert {:ok, %{"message_id" => message_id}} =
+      SalixIM.ConversationServer.append_group_conversation_agent_message(group_id, conversation["id"], agent_id,
+        %{"client_request_id" => "old-file", "content" => content})
+    for index <- 1..1001 do
+      assert {:ok, _} = SalixIM.ConversationServer.append_group_conversation_agent_message(
+        group_id, conversation["id"], agent_id,
+        %{"client_request_id" => "later-#{index}", "content" => [%{"type" => "text", "text" => "Later message"}]})
+    end
+    url = "/v1/comma/groups/#{group_id}/conversations/#{conversation["id"]}/messages/#{message_id}/attachments/0"
+    download = user_req(session["token"], :get, url, decode_body: false)
+    assert download.status == 200, "old attachment HTTP status: #{download.status}"
+    assert download.body == "shift,count\nfirst,231"
+    assert Req.Response.get_header(download, "content-disposition") == ["attachment; filename*=UTF-8''x.csv"]
+    %{session: outsider} = create_workspace_session("old-file-outsider@example.com", "Other")
+    assert user_req(outsider["token"], :get, url).status in [403, 404]
+  end
+
   test "an Agent image reference from the canonical Message renders the immutable bytes" do
     %{workspace: workspace, session: session} =
       create_workspace_session("message-resource@example.com", "Message Resource")

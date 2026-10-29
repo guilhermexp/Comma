@@ -252,14 +252,14 @@ describe("ConversationChannel", () => {
       "report.pdf",
     ],
     [
-      "title fallback",
+      "path takes precedence over a display title",
       {
         file_name: " .. ",
         title: " folder/title.pdf ",
-        path: "/ignored.pdf",
+        path: "/artifacts/x.csv",
         blob_ref: { uuid: "u", hash: "h", size: 1 },
       },
-      "title.pdf",
+      "x.csv",
     ],
     [
       "path fallback",
