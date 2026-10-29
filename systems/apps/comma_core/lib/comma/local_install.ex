@@ -6,7 +6,9 @@ defmodule Comma.LocalInstall do
   `COMMA_ENVIRONMENT=local` before it starts the backend, on every launch. The
   step creates the installation's storage bucket when it is missing and then
   runs `Comma.FreshInstall.run/0`, which initializes an empty database once
-  and afterwards applies only pending migrations. When `meetings.local_asr`
+  and afterwards applies only pending migrations. With `COMMA_DESKTOP_LOCAL=1`,
+  it enables voice unless an explicit enabled value is already stored.
+  When `meetings.local_asr`
   is configured, it then points the global `local-meeting-asr` template at
   the app's loopback ASR server, whose port can change between launches.
   """
@@ -24,6 +26,15 @@ defmodule Comma.LocalInstall do
     case ensure_bucket() do
       :ok -> Comma.FreshInstall.run()
       {:error, reason} -> raise "local storage bucket is unavailable: #{inspect(reason)}"
+    end
+
+    if System.get_env("COMMA_DESKTOP_LOCAL") == "1" do
+      {:ok, _} = Application.ensure_all_started(:salix_store)
+
+      case apply(SalixVoice.Settings, :enable_by_default, []) do
+        {:ok, _settings} -> :ok
+        {:error, reason} -> raise "local voice settings are unavailable: #{inspect(reason)}"
+      end
     end
 
     case Application.get_env(:comma_core, :local_meeting_asr) do

@@ -132,6 +132,20 @@ defmodule SalixVoice.SettingsTest do
     assert {:ok, %{body: "invalid json"}} = S3.get(Keys.ctl_system_voice())
   end
 
+  test "desktop initialization settles a lost write response by reading the stored value" do
+    :ok = SalixStore.S3.Fake.set_fault({:ambiguous_after, :put, Keys.ctl_system_voice()})
+    assert {:ok, %{"enabled" => true}} = Settings.enable_by_default()
+    assert {:ok, %{"enabled" => true}} = Settings.get()
+  end
+
+  test "desktop initialization returns a bounded error when writes remain ambiguous" do
+    :ok = SalixStore.S3.Fake.blackhole({:ambiguous_before, :put, Keys.ctl_system_voice()})
+    on_exit(fn -> SalixStore.S3.Fake.clear_blackhole() end)
+    initializer = Task.async(fn -> Settings.enable_by_default() end)
+    assert {:error, {:ambiguous, :injected}} = Task.await(initializer, 1_000)
+    assert {:error, :not_found} = S3.get(Keys.ctl_system_voice())
+  end
+
   defp wait_until(fun, attempts \\ 100) do
     cond do
       fun.() -> :ok
