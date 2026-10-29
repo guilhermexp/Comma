@@ -13,10 +13,10 @@ Only the configured origin gets the bearer, without redirects. Sends require the
 
 One PostgreSQL advisory lock serializes receiver passes, every five seconds. A new relay ID starts at the tail. Admission or explicit rejection precedes cursor advancement. Replay after a lost checkpoint uses the Session input identity and deduplication.
 Malformed values and group messages get no private-chat authority.
-Limits: 1 MiB per event, ten images of 20 MiB per message, 1,000 expired claims pruned per pass, a 120-second database checkout per pass and bounded HTTP waits.
-A process pauses after three failed owning passes without a successful one. Waiting for another owner does not reset the count. Restore the dependency and restart the receiver to resume from the saved cursor. Lock contention prevents a fixed total elapsed-time bound.
+Limits: 1 MiB per event, ten images of 20 MiB per message, 1,000 expired claims pruned per pass, 120 s DB checkout per pass, bounded HTTP waits.
+A process pauses after three failed owning passes. Waiting for another owner does not reset the count. Restore the dependency and restart the receiver to resume from the saved cursor. Lock contention prevents a fixed total elapsed-time bound.
 
-A text or image send makes one HTTP attempt. A timeout, error or missing acknowledgement returns `imessage_delivery_unknown`, `retryable=false`: the Agent stops the turn and asks for verification in Messages. A relay message ID is acknowledgement, not Apple delivery. There is no cross-call deduplication.
+A text or image send makes one HTTP attempt. Timeout, error or missing ACK returns `imessage_delivery_unknown`, `retryable=false`: Agent stops turn and asks for Messages verification. Relay message ID is ACK, not Apple delivery. No cross-call deduplication.
 
 Before real acceptance, confirm the shared Apple identity, stop any previous relay consumer, and test locally with a separate relay origin and database. Preserve the previous configuration and data.
 Verify binding, inbound chat, text and image replies, disconnect and rebind with the test contact. Fixtures do not prove real delivery. A rollback disables the receiver and keeps binding tables.
@@ -29,8 +29,8 @@ Comma owns references; Salix owns credentials/peers/cursors/lifecycle. Setup loc
 Activation rechecks authorization/references. Enablement requires persisted references and bot reservation. Disconnect retires current/pending connections.
 CAS fences stale releases. Non-atomic S3 deletion requires reusable identity tombstones. Workspace migration preserves data.
 
-Tencent's SDK needs OpenClaw's Node runtime; Elixir uses Req/OTP AES. QR URLs require approved WeChat HTTPS origins, without redirects.
-Browser responses omit tokens and forbid caching. Only the scanned account's private messages enter its Workspace, never groups.
+Tencent SDK needs OpenClaw Node; Elixir uses Req/OTP AES. QR URLs require approved WeChat HTTPS origins, no redirects.
+Browser responses omit tokens, forbid caching. Only scanned account's private messages enter its Workspace, never groups.
 
 Before staging, IM Connect stores one batch, limited to 100 messages/1 MiB. Oversized batches cannot advance the cursor.
 Polling drains pending heads before fetching. Revision CAS advances after Router admission or a product-command reply; the final head commits the cursor.
@@ -41,18 +41,18 @@ Pending inputs survive restart/deployment. Older binaries cannot drain them; use
 
 Current text/transcripts supply authority, never quotes. Text/image/file/voice/video quotes parse once, without recursion.
 ID-only quotes resolve observed inputs/replies within one connect/peer: 10 direct items, 4 exact reads, no scans.
-Quotes have a 64 KiB limit and seven-day logical expiry, not physical deletion. Missing originals stay explicit, without summary substitution.
+Quotes have 64 KiB limit, seven-day logical expiry, not physical deletion. Missing originals stay explicit, without summary substitution.
 Quotes grant no Message/delivery authority or unobserved-history access.
 
-Direct/quoted media share staging/Blob/VFS: four attachments, 10 MiB plaintext each. Unsupported items/failures stay explicit.
-Downloads share a 15s soft budget, checked before requests/at chunks. Receive waits use remaining time; Blob/VFS time is excluded.
-CDN connections time out after 5s, without credentials/redirects. One transient HTTP/transport retry shares the budget; total wall time is unbounded.
+Direct/quoted media share staging/Blob/VFS: 4 attachments, 10 MiB plaintext each. Unsupported items/failures stay explicit.
+Downloads share 15s soft budget, checked before requests/at chunks. Receive waits use remaining time; Blob/VFS excluded.
+CDN connections time out after 5s, no credentials/redirects. One transient retry shares budget; total wall time is unbounded.
 CDN URLs/keys stay private; path hashes confer no authority.
 Peer authorization precedes staging and Session admission. Raw voice/video need tools; receipts prove neither transcription nor understanding. Outbound quote bubbles remain unverified.
 
 Inline image syntax is removed. Native media uses `reply_image`/`reply_file`/`reply_video`.
-Video uses VFS/AES/CDN with mp4/mov/webm/mkv/avi paths, without transcoding or playback guarantees.
-Captions are separate; media failure can follow a successful caption.
+Video uses VFS/AES/CDN with mp4/mov/webm/mkv/avi paths, no transcoding or playback guarantees.
+Captions are separate; media failure can follow successful caption.
 
 No drafts or status text leave.
 Each peer actor keeps tickets/32 source IDs, refreshes at most every 4s, and stops after 30min or 60s idle.
@@ -67,15 +67,15 @@ Exhausted requests emit `telegram_oidc_transport_failed` without URLs, credentia
 ## Telegram questions and replies
 
 `question.request` sends a native question in the current authorized Telegram chat: inline buttons for choices, else a text reply.
-Delivery ends the activation. The answer becomes a new input without polling. A chosen card shows the answer without buttons. Repeated callbacks enqueue nothing.
+Delivery ends activation. Answers become input without polling; chosen cards show answers without buttons. Repeat callbacks enqueue nothing.
 
 Untargeted replies and questions quote the source message. Explicit targets stay unchanged. Answers quote the card or typed answer.
 References use Telegram IDs, never Salix or guessed IDs. Automatic references allow delivery without the original in the same request. Comma never retries ambiguous sends without their reference.
 
 ## Telegram location requests
 
-Comma Telegram neither discloses nor executes `location.request`: it returns `location_request_unavailable` before database lookup or button dispatch, also for old disclosures. Ask for a city in text instead.
-User-sent locations, answers to earlier requests and internal host location are unchanged. The native button has not passed client acceptance.
+Comma Telegram neither discloses nor executes `location.request`: it returns `location_request_unavailable` before DB lookup or button dispatch, also for old disclosures. Ask for a city in text.
+User-sent locations, prior answers, internal host location unchanged. Native button lacks client acceptance.
 
 ## Voice calls
 
@@ -83,14 +83,14 @@ User-sent locations, answers to earlier requests and internal host location are 
 Delegations settle/300 ms: caller text/last agent sentence via `ConversationServer -> ConversationActor`; Codex request/API offsets. `provider/chat_id/message_id=voice/call/delegation`; source `im_provider:voice:<connect>:<call>:<delegation>`.
 `im_api.voice.say`/`voice.note`/`voice.hang_up`: speak/quiet/end ≤10 s (optional farewell). Text ≤16000 B, chunks ≤1800 chars. IDs default to source; match Group/connect.
 Ended PTT `say`: original-chat text, canonical caller/connect/call/delegation; Actor dedupes call/delegation, rejects changed text. No Agent/provider wakeup/redial; other ended ops: `voice_call_ended`, no retry.
-PTT closes media now; one ≤10 s enqueue-ACK wait; mailbox responsive. Only ACKed IDs authorize handoff; missing ACK cannot cancel/replay stored work. Pending: quiet/20 s, spoken apology/90 s. Caller: phone/WebSocket key creator/Electron user.
+PTT closes media now; one ≤10 s enqueue-ACK wait; mailbox responsive. Only ACKed IDs authorize handoff; missing ACK cannot cancel/replay stored work. PTT enqueue refusal sends final delegation context. Pending: quiet/20 s, spoken apology/90 s. Caller: phone/WebSocket key creator/Electron user.
 
 ### Electron subscription calls
 
-Native-only call UI. WebRTC audio: main/`push-to-talk-voice` plus macOS permission; deny other windows/frames/camera.
+Native-only call UI. WebRTC audio: main/`push-to-talk-voice` (remote audio live; macOS permission); deny other windows/frames/camera.
 `/v1/comma/workspaces/:workspace_id/voice/calls`: `POST {sdp,mode?}` → `{sdp,call_id}`, `GET /:call_id/events?after=N`, `DELETE /:call_id`.
-`POST /:call_id/context {context_id,status,text?,attachments?}`: Workspace/caller scope, `no-store`; increasing IDs/call; `pending/complete/failed/cancelled`. Quiet `session.context.append`; matching text + one-shot VFS `{path,name,mime}` via `[ptt-context:N]` at receipt. Pending ≤150 s. Cancel/failure/new gesture fail unqueued work, including settle; never substitute.
-`push_to_talk`: hidden/muted mic; audio needs control ACK, not capture/upload. Release mutes; service ends turns. Warm 90 s after reply; pending retains; cap 10 min. Late → `ready`/click for chat. One chat lease/account; no delegation polling.
+`POST /:call_id/context {context_id,status,text?,attachments?}`: Workspace/caller scope, `no-store`; increasing IDs/call; `pending/complete/failed/cancelled`. Quiet `session.context.append`; text + one-shot VFS `{path,name,mime}` via `[ptt-context:N]`. Pending ≤150 s. Cancel/failure/new gesture fail unqueued work/settle; never substitute.
+`push_to_talk`: hidden peer, mic muted initially; mic needs connection/control ACK, not capture/upload. Key clears UI caption; mic enables after admission. Service owns interruption on recognized speech ('Interrupção pelo serviço, como Call Comma'; fresh audio never waits captions; old tail may continue until recognition). Captions/turn counters/RMS are not audio identity. Release mutes mic; service ends turns (may answer while held). Warm 90 s after reply; pending retains; cap 10 min. Late → `ready`/click for chat. One chat lease/account; no delegation polling.
 Admission: voice enabled, tenant Codex AccountPool, no API key. ChatGPT `codex/realtime/calls?intent=quicksilver&architecture=avas`, `gpt-live-1-codex`; control `wss://api.openai.com/v1/live/<rtc_id>`. Approved Codex Desktop headers. One 401 renew/retry; plan limits refuse. Never read native Codex logins/expose credentials.
 Context ≤500 UTF-8 bytes/chunk; finals omit `channel`, others commentary. Notes/screen stay quiet; captions merge/turn without final repeats.
 Serial poll 500 ms/caller: ≤200 events/512 KiB queue, explicit gaps. No reads/60 s ends call; ended events expire/60 s even if read. Manual: ≤200 post-hangup turns, no durable transcript; exit closes media/call.
@@ -109,12 +109,12 @@ Metrics labels: finite `transport`, `reason`, `outcome`.
 
 ## Twilio admission
 
-Public Twilio paths allow 600 requests a minute per peer address, 6,000 in total. Then:
+Public Twilio paths allow 600 req/min per peer address, 6,000 total. Then:
 
-1. `POST /v1/voice/twilio/{incoming,pin,status}` check `X-Twilio-Signature` over the public URL and exact POST parameters: 403 and no TwiML on failure, 413 over 16 KB.
-2. `To` must be a platform line, and `From` a number bound on that line.
-3. Full STIR/SHAKEN attestation (`TN-Validation-Passed-A`) passes. Other callers enter the number's PIN at `POST /v1/voice/twilio/pin`. Salix refuses a number without a PIN.
-4. `SalixVoice.admit/1` checks drain, enablement, the OpenAI key, capacity and the Group's call.
+1. `POST /v1/voice/twilio/{incoming,pin,status}` check `X-Twilio-Signature` over public URL and POST parameters: 403, no TwiML on failure, 413 over 16 KB.
+2. `To` must be platform line, `From` a number bound on line.
+3. Full STIR/SHAKEN attestation (`TN-Validation-Passed-A`) passes; other callers enter number PIN at `POST /v1/voice/twilio/pin`. Salix refuses numbers without PIN.
+4. `SalixVoice.admit/1` checks drain, enablement, OpenAI key, capacity, Group call.
 5. Salix answers `<Connect><Stream>` to `/v1/voice/twilio/stream/<token>`.
 
 After the signature check, Salix speaks each refusal and hangs up.
@@ -145,7 +145,7 @@ Text frames are JSON objects, at most 16 KB, named by `type`. Both sides ignore 
 The first client frame is `session.start {audio_format, client, display_name?}`, within 10 s.
 Formats are `pcmu_8k` or `pcm16_24k` (little-endian mono); `client` is `name/version`.
 Salix answers `session.started {call_id, audio_format, max_duration_s}`. Both send binary audio, at most 16 KB.
-Salix sends `output.clear` to drop playback and `output.mark {name}`; the client answers `output.played {name}` after playback.
+Salix sends `output.clear` to drop playback, `output.mark {name}`; client answers `output.played {name}` after playback.
 `transcript {role, text, final}` uses `caller` or `agent`. The client hangs up with `session.end`.
 Salix ends with `session.ended {reason, duration_s}` or `error {code, message}`, then closes with integer `code`.
 
@@ -181,7 +181,7 @@ Defaults: `enabled` false, `gpt_live_model` `gpt-live-1`, `max_call_seconds` 180
 
 ## Voice profile
 
-Before GPT-Live starts, `SalixVoice.Profile` asks Jev (`decide`) one `choice` question per template field: `language`, `reply_length`, `formality`, `small_talk`, `expertise`, `units` and `clock`. Each has `unknown`.
+Before GPT-Live starts, `SalixVoice.Profile` asks Jev (`decide`) one `choice` question per template field: `language`, `reply_length`, `formality`, `small_talk`, `expertise`, `units`, `clock`. Each has `unknown`.
 An answer counts at its field threshold, a 70% to 80% winning probability, not calibrated. Fixed sentences for counted answers extend the instructions and set the greeting language. No user or Jev text reaches GPT-Live. Nothing is stored.
 
 `SalixAgent.RouterDecision` sends the newest 12 user and assistant texts of the Router session, 1,500 bytes each, within 12 KiB. `decide` is public egress. By owner decision, message IFC labels and the Group IFC policy do not filter this text. Without text, it sends nothing.
@@ -189,18 +189,18 @@ The profile runs when `decide` is configured and meters as `voice_profile`. Afte
 
 ## Voice verification
 
-Local model/carrier fakes cover admission, delegation, chunks, captions, timers, revocation, drain and media. Client fixtures cover call states and microphone authority, not provider delivery.
-Earlier live API runs proved PCM16, mu-law, delegation, seconds and barge-in. Subscription, read-aloud, Twilio, multi-node behavior and pricing need runtime evidence. Capacity, one-call, drain and Twilio rate limits need independent availability-gate review. Calls have no TLA+ model.
+Local model/carrier fakes cover admission, delegation, chunks, captions, timers, revocation, drain, media. Client fixtures cover call states and mic authority, not provider delivery.
+Live API runs proved PCM16, mu-law, delegation, seconds, barge-in. Subscription, read-aloud, Twilio, multi-node, pricing need runtime evidence. Capacity, one-call, drain, Twilio rate limits need independent review. Calls have no TLA+ model.
 
 ## Signal
 
-Register at `/dash/signal/register`. Keys persist before startup. Failures stay `registering`. A verified session resumes `registering` accounts for that number and service. Active numbers are refused.
-Shared tenant number: `/dash/signal`, `PUT /v1/admin/signal/settings`. A tenant's active account overrides it for new claims.
-A `signal` IM Connect binds up to 50 ACI or `group:<id>` peers. `signal:peer:<account>:<peer>` routes each peer to one Group.
-Bind with `comma connect XXXX-XXXX`. Codes appear once, expire in 10 minutes, and work once. Store only SHA-256 digests (`signal:claim:<account>:<digest>`). Only a code holder binds. Unbound senders get no reply.
+Register at `/dash/signal/register`. Keys persist before startup. Failures stay `registering`. Verified sessions resume `registering` accounts for that number/service. Active numbers are refused.
+Shared tenant number: `/dash/signal`, `PUT /v1/admin/signal/settings`. Active tenant accounts override for new claims.
+`signal` IM Connect binds up to 50 ACI or `group:<id>` peers. `signal:peer:<account>:<peer>` routes each peer to one Group.
+Bind with `comma connect XXXX-XXXX`. Codes appear once, expire in 10 min, work once. Store only SHA-256 digests (`signal:claim:<account>:<digest>`). Only code holders bind. Unbound senders get no reply.
 Bound messages, files, voice notes, reactions, edits and deletes enter the Router at least once as `im_provider:signal:<connect>:<sender>:<timestamp>`. Permanent refusals drop just that one.
-Accounts accept ACI/PNI invitations. Joining initializes missing profiles and preserves named profiles. Membership does not bind chats.
+Accounts accept ACI/PNI invitations. Joining inits missing profiles, preserves named profiles. Membership does not bind chats.
 `signal.*` tools reach only bound chats; replies and failure notices use `signal.send_message`. Bound peers' calls are Voice Calls. Unbinding ends them.
 Routes: `/v1/runtime/agent-groups/:group_id/im-connects/signal`, `/v1/runtime/signal/number`, Comma `/v1/comma/workspaces/:workspace_id/integrations/signal`.
 
-Calls require one TURN-over-TLS relay, no UDP or direct ICE paths. TLS failure stops startup.
+Calls require one TURN-over-TLS relay, no UDP/direct ICE. TLS failure stops startup.

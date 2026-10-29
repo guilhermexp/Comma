@@ -1269,15 +1269,7 @@ defmodule SalixVoice.CallActor do
           delegation = %{delegation | accepted: false, task_pid: nil}
           state = %{state | delegations: Map.put(state.delegations, id, delegation)}
 
-          append(
-            state,
-            :instructions,
-            id,
-            "The assistant cannot take this request right now. Tell the caller briefly and offer to try again later."
-          )
-
-          electron_delegation(state, id, "failed")
-          finish_delegation(state, id, "failed")
+          fail_delegation(state, id, nil)
 
         %{^id => delegation} ->
           updated = %{delegation | accepted: false, task_pid: nil}

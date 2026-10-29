@@ -954,6 +954,7 @@ defmodule SalixVoice.CallActorTest do
       _ -> :ok
     end
 
+    previous_group_context = Application.fetch_env(:salix_agent, :group_context_mod)
     SalixAgent.TestSupport.configure_control_fixtures!()
 
     test_pid = self()
@@ -989,6 +990,8 @@ defmodule SalixVoice.CallActorTest do
         Application.put_env(app, key, value)
         {app, key, old}
       end
+
+    previous = [{:salix_agent, :group_context_mod, previous_group_context} | previous]
 
     on_exit(fn ->
       for {app, key, old} <- previous do
@@ -1194,6 +1197,33 @@ defmodule SalixVoice.CallActorTest do
     assert ended_msg
     result = execute_late_voice_tool(fixture, ended_msg, "del_settle")
     assert result.error
+  end
+
+  @tag :ptt_causal_regressions
+  test "push_to_talk Router admission refusal resolves the model delegation with a final response" do
+    interceptor = fn
+      "voice.delegation", _proceed -> {:error, :router_unavailable}
+      _other, proceed -> proceed.()
+    end
+
+    %{call: call, model: model} =
+      setup_causal_ptt_fixture(%{settle_ms: 10, interceptor: interceptor})
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(call, {:context, %{context_id: 1, status: :pending}})
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(
+               call,
+               {:context, %{context_id: 1, status: :complete, text: "Screen", attachments: []}}
+             )
+
+    emit(model, call, {:delegation, "del_refused", 100, "[ptt-context:1] Inspect screen"})
+
+    assert_receive {:fake_model, ^model, {:append, :final, "del_refused", _}}, 1_000
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(call, {:context, %{context_id: 2, status: :pending}})
   end
 
   @tag :ptt_causal_regressions
