@@ -30,8 +30,8 @@ defmodule SalixVoice.Drain do
       deadline = System.monotonic_time(:millisecond) + Keyword.get(opts, :timeout_ms, @wait_ms)
       remaining = await(monitors, deadline)
 
-      Enum.each(remaining, fn {_mref, pid} -> send(pid, :voice_drain_now) end)
-      force_deadline = System.monotonic_time(:millisecond) + @force_wait_ms
+      force_deadline = force_deadline()
+      Enum.each(remaining, fn {_mref, pid} -> send(pid, {:voice_drain_now, force_deadline}) end)
       remaining = await(remaining, force_deadline)
       Enum.each(remaining, fn {mref, _pid} -> Process.demonitor(mref, [:flush]) end)
       flush_drained(ref)
@@ -44,6 +44,9 @@ defmodule SalixVoice.Drain do
       :ok
     end
   end
+
+  @doc false
+  def force_deadline, do: System.monotonic_time(:millisecond) + @force_wait_ms
 
   defp await(monitors, _deadline) when map_size(monitors) == 0, do: monitors
 

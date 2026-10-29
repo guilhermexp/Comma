@@ -1802,4 +1802,116 @@ defmodule SalixVoice.CallActorTest do
 
     assert conflict_result.error
   end
+
+  @tag :ptt_shutdown_regressions
+  test "supervisor termination records the call handoff while a Router ACK is still pending" do
+    %{call: call, group: group} = fixture = held_shutdown_fixture()
+    monitor = Process.monitor(call)
+
+    shutdown =
+      Task.async(fn -> DynamicSupervisor.terminate_child(SalixVoice.CallSupervisor, call) end)
+
+    assert_receive {:shutdown_handoff, handoff}, 1_000
+    on_exit(fn -> send(handoff, :release_handoff) end)
+    refute_receive {:DOWN, ^monitor, :process, ^call, _}, 100
+    send(handoff, :release_handoff)
+    assert :ok = Task.await(shutdown, 4_000)
+    assert_receive {:DOWN, ^monitor, :process, ^call, :shutdown}, 1_000
+
+    assert_receive {:ingress, ^group, _content,
+                    %{"event_type" => "voice.call_ended", "voice_pending_delegation_ids" => []},
+                    _source, _opts},
+                   1_000
+
+    ended = get_ended_conversation_message(fixture)
+    assert execute_late_voice_tool(fixture, ended, "del_forced").error
+  end
+
+  @tag :ptt_shutdown_regressions
+  test "forced drain completes within its existing bound while a Router ACK is still pending" do
+    %{call: call, group: group} = fixture = held_shutdown_fixture()
+    monitor = Process.monitor(call)
+    shutdown = Task.async(fn -> SalixVoice.Drain.drain(timeout_ms: 400) end)
+    assert_receive {:shutdown_handoff, handoff}, 1_000
+    on_exit(fn -> send(handoff, :release_handoff) end)
+    refute_receive {:DOWN, ^monitor, :process, ^call, _}, 100
+    send(handoff, :release_handoff)
+    assert :ok = Task.await(shutdown, 4_000)
+    assert_receive {:DOWN, ^monitor, :process, ^call, :normal}, 1_000
+
+    assert_receive {:ingress, ^group, _content,
+                    %{"event_type" => "voice.call_ended", "voice_pending_delegation_ids" => []},
+                    _source, _opts},
+                   1_000
+
+    ended = get_ended_conversation_message(fixture)
+    assert execute_late_voice_tool(fixture, ended, "del_forced").error
+  end
+
+  @tag :ptt_shutdown_regressions
+  test "supervisor termination remains bounded when handoff admission itself is stalled" do
+    %{call: call, group: group} = fixture = held_shutdown_fixture()
+    monitor = Process.monitor(call)
+
+    shutdown =
+      Task.async(fn -> DynamicSupervisor.terminate_child(SalixVoice.CallSupervisor, call) end)
+
+    assert_receive {:shutdown_handoff, handoff}, 1_000
+    on_exit(fn -> send(handoff, :release_handoff) end)
+    assert :ok = Task.await(shutdown, 4_000)
+    assert_receive {:DOWN, ^monitor, :process, ^call, :shutdown}, 1_000
+    refute_received {:ingress, ^group, _, %{"event_type" => "voice.call_ended"}, _, _}
+
+    send(handoff, :release_handoff)
+
+    assert_receive {:ingress, ^group, _,
+                    %{"event_type" => "voice.call_ended", "voice_pending_delegation_ids" => []},
+                    _, _},
+                   1_000
+
+    ended = get_ended_conversation_message(fixture)
+    assert execute_late_voice_tool(fixture, ended, "del_forced").error
+  end
+
+  defp held_shutdown_fixture do
+    parent = self()
+
+    interceptor = fn
+      "voice.delegation", _proceed ->
+        send(parent, {:shutdown_forwarding, self()})
+
+        receive do
+          :release -> {:error, :router_unavailable}
+        end
+
+      "voice.call_ended", proceed ->
+        send(parent, {:shutdown_handoff, self()})
+
+        receive do
+          :release_handoff -> proceed.()
+        end
+
+      _other, proceed ->
+        proceed.()
+    end
+
+    fixture =
+      setup_causal_ptt_fixture(%{settle_ms: 10, enqueue_wait_ms: 3_000, interceptor: interceptor})
+
+    %{call: call, model: model} = fixture
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(call, {:context, %{context_id: 1, status: :pending}})
+
+    assert {:ok, %{accepted: true}} =
+             GenServer.call(
+               call,
+               {:context, %{context_id: 1, status: :complete, text: "Screen", attachments: []}}
+             )
+
+    emit(model, call, {:delegation, "del_forced", 100, "[ptt-context:1] Inspect screen"})
+    assert_receive {:shutdown_forwarding, task}, 1_000
+    on_exit(fn -> send(task, :release) end)
+    fixture
+  end
 end

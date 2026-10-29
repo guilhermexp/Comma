@@ -83,14 +83,14 @@ User-sent locations, prior answers, internal host location unchanged. Native but
 Delegations settle/300 ms: caller text/last agent sentence via `ConversationServer -> ConversationActor`; Codex request/API offsets. `provider/chat_id/message_id=voice/call/delegation`; source `im_provider:voice:<connect>:<call>:<delegation>`.
 `im_api.voice.say`/`voice.note`/`voice.hang_up`: speak/quiet/end ≤10 s (optional farewell). Text ≤16000 B, chunks ≤1800 chars. IDs default to source; match Group/connect.
 Ended PTT `say`: original-chat text, canonical caller/connect/call/delegation; Actor dedupes call/delegation, rejects changed text. No Agent/provider wakeup/redial; other ended ops: `voice_call_ended`, no retry.
-PTT closes media now; one ≤10 s enqueue-ACK wait; mailbox responsive. Only ACKed IDs authorize handoff; missing ACK cannot cancel/replay stored work. PTT enqueue refusal sends final delegation context. Pending: quiet/20 s, spoken apology/90 s. Caller: phone/WebSocket key creator/Electron user.
+PTT closes media immediately; forwarding/handoff share ≤10 s; mailbox responsive. Only ACKed pending IDs enter final context; unknown work is never cancelled/replayed. Enqueue refusal is final. Force/terminate flush the same handoff within the existing 2 s force budget; timeout logs unconfirmed, not accepted. Pending: quiet/20 s, spoken apology/90 s. Caller: phone/WebSocket key creator/Electron user.
 
 ### Electron subscription calls
 
 Native-only call UI. WebRTC audio: main/`push-to-talk-voice` (remote audio live; macOS permission); deny other windows/frames/camera.
 `/v1/comma/workspaces/:workspace_id/voice/calls`: `POST {sdp,mode?}` → `{sdp,call_id}`, `GET /:call_id/events?after=N`, `DELETE /:call_id`.
 `POST /:call_id/context {context_id,status,text?,attachments?}`: Workspace/caller scope, `no-store`; increasing IDs/call; `pending/complete/failed/cancelled`. Quiet `session.context.append`; text + one-shot VFS `{path,name,mime}` via `[ptt-context:N]`. Pending ≤150 s. Cancel/failure/new gesture fail unqueued work/settle; never substitute.
-`push_to_talk`: hidden peer, mic muted initially; mic needs connection/control ACK, not capture/upload. Key clears UI caption; mic enables after admission. Service owns interruption on recognized speech ('Interrupção pelo serviço, como Call Comma'; fresh audio never waits captions; old tail may continue until recognition). Captions/turn counters/RMS are not audio identity. Release mutes mic; service ends turns (may answer while held). Warm 90 s after reply; pending retains; cap 10 min. Late → `ready`/click for chat. One chat lease/account; no delegation polling.
+`push_to_talk`: hidden peer, mic muted initially; mic needs connection/control ACK, not capture/upload. Key clears caption; release mutes mic. Service owns barge-in on recognized speech; old tail may continue until recognition. Fresh audio never waits captions. Captions/turn counters/RMS are not audio identity. Service ends turns (may answer while held). Warm 90 s after reply; pending retains; cap 10 min. Late → `ready`/click for chat. One chat lease/account; no delegation polling.
 Admission: voice enabled, tenant Codex AccountPool, no API key. ChatGPT `codex/realtime/calls?intent=quicksilver&architecture=avas`, `gpt-live-1-codex`; control `wss://api.openai.com/v1/live/<rtc_id>`. Approved Codex Desktop headers. One 401 renew/retry; plan limits refuse. Never read native Codex logins/expose credentials.
 Context ≤500 UTF-8 bytes/chunk; finals omit `channel`, others commentary. Notes/screen stay quiet; captions merge/turn without final repeats.
 Serial poll 500 ms/caller: ≤200 events/512 KiB queue, explicit gaps. No reads/60 s ends call; ended events expire/60 s even if read. Manual: ≤200 post-hangup turns, no durable transcript; exit closes media/call.
@@ -101,7 +101,7 @@ PTT HTTP ≤30 s/request; teardown aborts offer/poll/context; DELETE has its own
 API audio passes unchanged: mu-law 8 kHz, or WebSocket PCM16 24 kHz. Keep newest 2 s before model startup. Barge-in clears playback.
 One call per Group; races keep earlier `{started_at_ms, call_id}`, else `busy`. `max_calls_per_node` bounds each node. `max_call_seconds` ends with notice.
 Attach: 20 s Twilio, 5 s WebSocket/Electron. Model startup after profile: 15 s API, 60 s subscription.
-Pre-stop withdraws readiness, rejects admission, notifies callers, ends in 5 s and forces the rest at 8 s.
+Pre-stop withdraws readiness/rejects admission; notice ≤5 s, force at 8 s with 2 s remaining, then Router drain.
 
 `VoiceMetering` authorizes API calls at admission/model start. Group ownership and `voice:<carrier>:<carrier call ID>` key the charge, without key IDs. Model/carrier seconds apply; lost model transport bills at least elapsed time. Missing prices stay pending; no billing owner means no charge.
 Subscription seconds use charge reporting source `billing_core.voice_subscription`, status `tenant_funded`, zero credits, no ledger debit or pending charge. No Comma credit admission applies. Reporting is best effort: buffer loss, missing owner or sink failure can leave no row.
@@ -190,7 +190,7 @@ The profile runs when `decide` is configured and meters as `voice_profile`. Afte
 ## Voice verification
 
 Local model/carrier fakes cover admission, delegation, chunks, captions, timers, revocation, drain, media. Client fixtures cover call states and mic authority, not provider delivery.
-Live API runs proved PCM16, mu-law, delegation, seconds, barge-in. Subscription, read-aloud, Twilio, multi-node, pricing need runtime evidence. Capacity, one-call, drain, Twilio rate limits need independent review. Calls have no TLA+ model.
+Live API runs proved PCM16, mu-law, delegation, seconds, barge-in. Subscription, PTT, Twilio, multi-node, pricing need runtime evidence. Capacity, one-call, drain, Twilio rate limits need independent review. Calls have no TLA+ model.
 
 ## Signal
 

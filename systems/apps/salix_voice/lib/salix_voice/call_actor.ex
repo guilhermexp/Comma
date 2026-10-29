@@ -167,7 +167,8 @@ defmodule SalixVoice.CallActor do
       greeting: greeting(nil),
       profile_task: nil,
       call_started_task: nil,
-      call_ended_emitted?: false,
+      call_ended_attempted?: false,
+      call_ended_task: nil,
       model_closed?: false,
       model_closed_mono: nil,
       model_transport_lost?: false,
@@ -570,12 +571,18 @@ defmodule SalixVoice.CallActor do
 
   def handle_info({:voice_abandon, _carrier_call_id, _reason}, state), do: {:noreply, state}
 
+  def handle_info({:call_ended_enqueued, _result}, %{phase: :ending} = state),
+    do: %{state | call_ended_task: nil} |> maybe_finish_ending() |> noreply()
+
+  def handle_info({:call_ended_enqueued, _result}, state), do: {:noreply, state}
+
   def handle_info({:voice_drain, from, ref}, state) do
     state = %{state | drain_waiters: [{from, ref} | state.drain_waiters]}
     state |> notice_then_end(:draining, draining_notice()) |> noreply()
   end
 
-  def handle_info(:voice_drain_now, state), do: state |> end_call(:draining) |> noreply()
+  def handle_info({:voice_drain_now, deadline}, state),
+    do: state |> force_end(:draining, deadline) |> noreply()
 
   def handle_info({:timer, name, event}, state) do
     state = %{state | timer_refs: Map.delete(state.timer_refs, name)}
@@ -631,17 +638,15 @@ defmodule SalixVoice.CallActor do
     end
   end
 
-  defp timer(state, :model_close_wait), do: finalize(state)
+  defp timer(state, :model_close_wait) do
+    if is_pid(state.model_pid) and not state.model_closed?,
+      do: Process.exit(state.model_pid, :kill)
 
-  defp timer(state, :delegation_enqueue_timeout) do
-    delegations =
-      Enum.reduce(state.delegations, state.delegations, fn {id, d}, acc ->
-        if is_pid(d[:task_pid]), do: Map.put(acc, id, %{d | task_pid: nil}), else: acc
-      end)
-
-    %{state | delegations: delegations}
-    |> maybe_finish_ending()
+    %{state | model_closed?: true} |> maybe_finish_ending()
   end
+
+  defp timer(state, :ending_deadline),
+    do: force_end(state, state.end_reason, System.monotonic_time(:millisecond))
 
   defp timer(%{profile_task: {task, _started}} = state, :profile_deadline) do
     Task.shutdown(task, :brutal_kill)
@@ -988,6 +993,7 @@ defmodule SalixVoice.CallActor do
   # stop before the task finishes, so the task logs its own failure.
   defp enqueue_call_ended(%{greeted: true} = state) do
     call_id = state.call_id
+    owner = self()
     started_task = state.call_started_task
 
     accepted_pending_ids =
@@ -1025,14 +1031,18 @@ defmodule SalixVoice.CallActor do
       metadata,
       source_message_id(state, "end"),
       [before: fn -> await_task(started_task, @call_started_wait_ms) end],
-      fn
-        {:ok, _} ->
-          :ok
+      fn result ->
+        case result do
+          {:ok, _} ->
+            :ok
 
-        result ->
-          Logger.warning(
-            "voice call end ingress failed call=#{call_id} reason=#{inspect(result)}"
-          )
+          _ ->
+            Logger.warning(
+              "voice call end ingress failed call=#{call_id} reason=#{inspect(result)}"
+            )
+        end
+
+        send(owner, {:call_ended_enqueued, result})
       end
     )
   end
@@ -1077,7 +1087,9 @@ defmodule SalixVoice.CallActor do
     receive do
       {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
     after
-      timeout_ms -> Process.demonitor(ref, [:flush])
+      timeout_ms ->
+        Process.demonitor(ref, [:flush])
+        :timeout
     end
   end
 
@@ -1289,26 +1301,27 @@ defmodule SalixVoice.CallActor do
   defp maybe_finish_ending(%{phase: :ending} = state) do
     cond do
       in_flight_delegations?(state) ->
-        wait_ms = state.timers[:delegation_enqueue_wait_ms] || @delegation_enqueue_wait_ms
+        wait_for_ending(state)
 
-        if Map.has_key?(state.timer_refs, :delegation_enqueue_timeout) do
-          state
-        else
-          schedule(state, :delegation_enqueue_timeout, wait_ms, :delegation_enqueue_timeout)
-        end
+      not state.call_ended_attempted? ->
+        state |> emit_call_ended() |> maybe_finish_ending()
 
-      not state.call_ended_emitted? ->
-        state = cancel(state, :delegation_enqueue_timeout)
-        state = %{state | call_ended_emitted?: true}
-        _ = enqueue_call_ended(state)
-        maybe_finish_ending(state)
+      is_pid(state.call_ended_task) ->
+        wait_for_ending(state)
 
       state.model_pid != nil and not state.model_closed? ->
-        if Map.has_key?(state.timer_refs, :model_close_wait) do
-          state
-        else
-          schedule(state, :model_close_wait, state.timers.model_close_wait_ms, :model_close_wait)
-        end
+        state =
+          if Map.has_key?(state.timer_refs, :model_close_wait),
+            do: state,
+            else:
+              schedule(
+                state,
+                :model_close_wait,
+                state.timers.model_close_wait_ms,
+                :model_close_wait
+              )
+
+        wait_for_ending(state)
 
       true ->
         finalize(state)
@@ -1316,6 +1329,29 @@ defmodule SalixVoice.CallActor do
   end
 
   defp maybe_finish_ending(state), do: state
+
+  defp wait_for_ending(state) do
+    if Map.has_key?(state.timer_refs, :ending_deadline),
+      do: state,
+      else: schedule(state, :ending_deadline, ending_remaining_ms(state), :ending_deadline)
+  end
+
+  defp ending_remaining_ms(state) do
+    budget = state.timers[:delegation_enqueue_wait_ms] || @delegation_enqueue_wait_ms
+    elapsed = System.convert_time_unit(now() - state.ended_mono, :native, :millisecond)
+    max(budget - elapsed, 0)
+  end
+
+  defp emit_call_ended(%{phase: :ending, call_ended_attempted?: false} = state) do
+    task = enqueue_call_ended(state)
+
+    if state.greeted and not is_pid(task),
+      do: Logger.warning("voice call end ingress could not start call=#{state.call_id}")
+
+    %{state | call_ended_attempted?: true, call_ended_task: task}
+  end
+
+  defp emit_call_ended(state), do: state
 
   @ptt_marker_regex ~r/\A\[ptt-context:(\d+)\]\s*(.*)\z/s
 
@@ -1688,7 +1724,6 @@ defmodule SalixVoice.CallActor do
   # Ask the model to tell the caller why the call ends, then end after the
   # notice audio goes quiet or `notice_max_ms`. Without audio flowing the call
   # ends at once.
-  # A read-aloud call says only its text: it ends without a notice.
 
   defp notice_then_end(%{phase: :live} = state, reason, notice) do
     cond do
@@ -1711,7 +1746,9 @@ defmodule SalixVoice.CallActor do
     |> schedule(:closing_max, max_ms, :closing_done)
   end
 
-  defp end_call(%{phase: :live} = state, reason) do
+  defp end_call(state, reason), do: state |> begin_ending(reason) |> maybe_finish_ending()
+
+  defp begin_ending(%{phase: :live} = state, reason) do
     state = state |> cancel_all() |> stop_profile()
 
     Enum.each(state.delegations, fn {_id, delegation} ->
@@ -1724,12 +1761,27 @@ defmodule SalixVoice.CallActor do
     if state.key_id, do: :pg.leave(@pg, {:voice_key, state.key_id}, self())
     if state.model_pid && not state.model_closed?, do: close_model(state)
 
-    state = %{state | phase: :ending, end_reason: reason, ended_mono: now(), closing: nil}
-
-    maybe_finish_ending(state)
+    %{state | phase: :ending, end_reason: reason, ended_mono: now(), closing: nil}
   end
 
-  defp end_call(state, _reason), do: state
+  defp begin_ending(state, _reason), do: state
+
+  defp force_end(%{phase: :finalized} = state, _reason, _deadline), do: state
+
+  defp force_end(state, reason, deadline) do
+    state = state |> begin_ending(reason) |> emit_call_ended()
+
+    remaining =
+      min(ending_remaining_ms(state), max(deadline - System.monotonic_time(:millisecond), 0))
+
+    if await_task(state.call_ended_task, remaining) == :timeout do
+      Logger.warning(
+        "voice call end ingress unconfirmed at shutdown deadline call=#{state.call_id}"
+      )
+    end
+
+    finalize(state)
+  end
 
   defp close_model(state) do
     state.model_mod.close(state.model_pid)
@@ -1868,14 +1920,10 @@ defmodule SalixVoice.CallActor do
   end
 
   @impl GenServer
-  def terminate(_reason, state) do
-    state =
-      case state.phase do
-        :live -> state |> end_call(:other)
-        _ -> state
-      end
+  def terminate(_reason, %{phase: :finalized}), do: :ok
 
-    _ = finalize(state)
+  def terminate(_reason, state) do
+    _ = force_end(state, :other, SalixVoice.Drain.force_deadline())
     :ok
   end
 
