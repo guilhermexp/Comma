@@ -1737,7 +1737,7 @@ describe("AppSettingsRoute", () => {
     });
 
     // Gravação de Tela: macOS lists Comma only after it asked.
-    it("says screenshots are off without Screen Recording and opens System Settings", async () => {
+    it("explains failed screenshot requests and the voice-only alternative", async () => {
       const openScreenRecordingSettings = vi.fn(async () => ({ opened: true }));
       installTalkToAgentMac(true, {
         screenRecording: "denied",
@@ -1752,7 +1752,10 @@ describe("AppSettingsRoute", () => {
       await userEvent.click(enabled);
 
       expect(await section.findByText("Screen Recording")).toBeVisible();
-      expect(section.getByText("Screenshots off")).toBeVisible();
+      expect(section.getByText(/requests fail until.*permission/i)).toBeVisible();
+      expect(
+        section.getByText(/turn off.*send a screenshot.*voice.only/i)
+      ).toBeVisible();
       await userEvent.click(
         section.getByRole("button", { name: "Open System Settings" })
       );

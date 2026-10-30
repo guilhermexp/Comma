@@ -306,6 +306,17 @@ describe("PushToTalkVoiceApp", () => {
     expect(peer?.tracks).toEqual(destinationTracks);
     expect(peer?.trackStateAtAdd[0]).toBe(false);
     expect(destinationTracks[0]?.enabled).toBe(false);
+
+    // Real press: listening true with valid contextId initiates offer & level reports
+    await bridge.publish({
+      active: true,
+      generation: 1,
+      revision: 2,
+      listening: true,
+      admitted: false,
+      contextId: 1,
+    });
+
     expect(bridge.pushToTalkVoice.offer).toHaveBeenCalledWith({
       generation: 1,
       sdp: "offer-sdp",
@@ -900,7 +911,7 @@ describe("PushToTalkVoiceApp", () => {
       contextId: null,
     });
 
-    expect(micTracks[0]?.enabled).toBe(false);
+    expect(micTracks).toHaveLength(0);
 
     // Press: listening true
     await bridge.publish({
@@ -1010,8 +1021,18 @@ describe("PushToTalkVoiceApp", () => {
     });
 
     const [peer] = peers;
-    expect(micTracks[0]?.stopped).toBe(false);
     expect(destinationTracks[0]?.stopped).toBe(false);
+
+    // Press: acquire microphone track
+    await bridge.publish({
+      active: true,
+      generation: 1,
+      revision: 2,
+      listening: true,
+      contextId: 1,
+      admitted: false,
+    });
+    expect(micTracks[0]?.stopped).toBe(false);
 
     await bridge.publish({
       active: false,
@@ -1040,12 +1061,13 @@ describe("PushToTalkVoiceApp", () => {
     const bridge = installVoiceBridge();
     render(<PushToTalkVoiceApp deps={deps} />);
 
+    // Press initiates getUserMedia acquisition
     await bridge.publish({
       active: true,
       generation: 1,
       revision: 1,
-      listening: false,
-      contextId: null,
+      listening: true,
+      contextId: 1,
       admitted: false,
     });
 
@@ -1079,12 +1101,13 @@ describe("PushToTalkVoiceApp", () => {
     const bridge = installVoiceBridge();
     render(<PushToTalkVoiceApp deps={deps} />);
 
+    // Press triggers getUserMedia which encounters permission denial
     await bridge.publish({
       active: true,
       generation: 1,
       revision: 1,
-      listening: false,
-      contextId: null,
+      listening: true,
+      contextId: 1,
       admitted: false,
     });
 
@@ -1100,12 +1123,13 @@ describe("PushToTalkVoiceApp", () => {
     bridge.pushToTalkVoice.offer.mockResolvedValueOnce(null as never);
 
     render(<PushToTalkVoiceApp deps={deps} />);
+    // Press initiates signaling offer
     await bridge.publish({
       active: true,
       generation: 2,
       revision: 1,
-      listening: false,
-      contextId: null,
+      listening: true,
+      contextId: 1,
       admitted: false,
     });
 

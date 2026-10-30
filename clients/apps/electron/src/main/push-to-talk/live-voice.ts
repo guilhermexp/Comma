@@ -27,6 +27,7 @@ export type PushToTalkVoiceApi = Pick<
 >;
 export interface PushToTalkVoiceHost {
   open(): Promise<void>;
+  close(): void;
   publish(session: PushToTalkVoiceSession): void;
 }
 export interface PushToTalkVoiceProvider {
@@ -44,6 +45,7 @@ export const idlePushToTalkVoiceProvider: PushToTalkVoiceProvider = {
 };
 export type PushToTalkCallEvent =
   | { kind: "connected" | "audible" | "silent" | "caller_turn" }
+  | { kind: "media_delayed"; contextId?: number }
   | { kind: "level"; level: number }
   | { kind: "caption"; text: string; turn: number; final: boolean }
   | { kind: "delegation"; id: string; status: "pending" | "answered" | "failed" }
@@ -52,6 +54,8 @@ export type PushToTalkCallEvent =
   | { kind: "error"; code: string };
 export interface PushToTalkLiveCall {
   open(): Promise<ChatTarget>;
+  warm(): Promise<void>;
+  destroy(): void;
   setListening(listening: boolean): void;
   beginContext(contextId: number, qualifiesAt: number): Promise<void>;
   appendContext(input: {
@@ -98,7 +102,6 @@ type GptLiveVoiceOptions = {
   host: PushToTalkVoiceHost;
   clock: PushToTalkClock;
   log?: (message: string) => void;
-  trace?: (message: string) => void;
 };
 
 /** Main owns call authority; the hidden renderer owns the microphone and peer. */
@@ -124,9 +127,32 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
     };
   }
 
+  async warm(): Promise<void> {
+    if (!this.#call && !this.#session.active) {
+      const generation = this.#session.generation + 1;
+      this.#publish({
+        generation,
+        active: true,
+        listening: false,
+        contextId: null,
+        admitted: false,
+        qualified: false,
+      });
+    }
+    try {
+      await this.#options.host.open();
+    } catch (error) {
+      this.#options.log?.(`push-to-talk voice warmup failed: ${String(error)}`);
+      throw error;
+    }
+  }
+
   async open(): Promise<ChatTarget> {
     const opening = ++this.#opening;
-    const generation = this.#session.generation + 1;
+    const generation =
+      this.#session.active && !this.#call
+        ? this.#session.generation
+        : this.#session.generation + 1;
     const openingPromise = Promise.resolve(
       this.#options.runOwned(async () => {
         const boundApi = this.#options.api();
@@ -202,7 +228,6 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
       }
     }
     if (!call || this.#call !== call) throw new Error("Voice opening was cancelled.");
-    this.#options.trace?.("push-to-talk voice signaling started");
     return call.target;
   }
 
@@ -520,24 +545,26 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
   close() {
     ++this.#opening;
     if (this.#call) this.#teardown(this.#call);
-    else {
-      this.#desiredListening = false;
-      this.#currentContextId = undefined;
-      this.#clearQualification();
-      this.#publish({
-        active: false,
-        listening: false,
-        contextId: null,
-        qualified: false,
-        admitted: false,
-      });
-    }
+    this.#desiredListening = false;
+    this.#currentContextId = undefined;
+    this.#clearQualification();
+    this.#publish({
+      active: false,
+      listening: false,
+      contextId: null,
+      qualified: false,
+      admitted: false,
+    });
+  }
+
+  destroy() {
+    this.close();
+    this.#options.host.close();
   }
 
   voiceSession(): PushToTalkVoiceSession {
     return this.#session;
   }
-
   async voiceOffer(input: { generation: number; sdp: string }) {
     let call = this.#call;
     if (
@@ -596,8 +623,12 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
   }) {
     const call = this.#call;
     if (!this.#session.active || this.#session.generation !== generation) return;
-    if (typeof event !== "string") {
-      if (this.#session.listening) this.#emit({ kind: "level", level: event.level });
+    if (typeof event === "object") {
+      if (event.kind === "level") {
+        if (this.#session.listening) this.#emit({ kind: "level", level: event.level });
+      } else if (event.kind === "media_delayed") {
+        this.#emit({ kind: "media_delayed", contextId: event.contextId });
+      }
     } else if (event === "failed" || event === "microphone_denied") {
       const code = event === "failed" ? "connection" : event;
       if (call) this.#fail(call, code);

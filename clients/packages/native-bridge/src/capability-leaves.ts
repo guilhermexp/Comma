@@ -506,7 +506,6 @@ export type NotchAirDropTransfer = z.infer<typeof notchAirDropTransferSchema>;
 
 export const notchVoiceStateSchema = z.enum([
   "listening",
-  "transcribing",
   "thinking",
   "speaking",
   "busy",
@@ -7888,6 +7887,12 @@ export const idlePushToTalkVoiceSession: PushToTalkVoiceSession = {
 export const pushToTalkVoiceReportSchema = z.union([
   z.enum(["connected", "audible", "silent", "microphone_denied", "failed"]),
   z.object({ kind: z.literal("level"), level: z.number().min(0).max(1) }).strict(),
+  z
+    .object({
+      kind: z.literal("media_delayed"),
+      contextId: z.number().int().positive(),
+    })
+    .strict(),
 ]);
 export type PushToTalkVoiceReport = z.infer<typeof pushToTalkVoiceReportSchema>;
 export const pushToTalkVoiceSessionCapability = defineNativeCapability({

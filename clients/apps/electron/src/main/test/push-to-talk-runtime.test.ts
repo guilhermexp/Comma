@@ -72,6 +72,8 @@ function setup(initial: Partial<PushToTalkRuntimeInputs> = {}) {
         screenRecording: { status: () => "granted", request: unused },
         voice: {
           open: unused,
+          warm: async () => undefined,
+          destroy: () => undefined,
           beginContext: unused,
           cancelContext: unused,
           failContext: unused,

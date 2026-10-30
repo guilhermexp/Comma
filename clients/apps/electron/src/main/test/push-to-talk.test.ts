@@ -46,6 +46,10 @@ class Call implements PushToTalkLiveCall {
   active = false;
   sessions = 0;
   listening = false;
+  warm = vi.fn(async () => undefined);
+  destroy = vi.fn(() => {
+    this.close();
+  });
   close = vi.fn(() => {
     this.active = false;
     this.listening = false;
@@ -254,7 +258,7 @@ function setupRealTransport(options: { notch?: boolean } = {}) {
     api: () => api,
     resolveTarget: async () => target,
     runOwned: async (fn) => fn(),
-    host: { open: vi.fn(async () => undefined), publish: vi.fn() },
+    host: { open: vi.fn(async () => undefined), close: vi.fn(), publish: vi.fn() },
     clock: h.clock,
   });
   const controller = new PushToTalkController({ ...h.deps, voice: realVoice });
@@ -315,6 +319,25 @@ function lateReply(text = "The Router finished.", caller = "owner") {
 }
 
 describe("push-to-talk live call controller", () => {
+  it("reports registration failures only for the current shortcut", async () => {
+    const h = setup();
+    const log = vi.fn();
+    h.deps.log = log;
+    const previous = Promise.withResolvers<{ inputMonitoring: "granted" }>();
+    const current = Promise.withResolvers<{ inputMonitoring: "granted" }>();
+    const register = vi.mocked(h.deps.hotkey.register);
+    register.mockReturnValueOnce(previous.promise).mockReturnValueOnce(current.promise);
+    h.controller.update({ ...h.config, shortcut: null });
+    h.controller.update(h.config);
+    previous.reject(new Error("superseded"));
+    await flush();
+    expect(log).not.toHaveBeenCalled();
+    current.reject(new Error("registration failed"));
+    await flush();
+    expect(log).toHaveBeenCalledWith("Push-to-talk shortcut could not register.");
+    h.controller.dispose();
+  });
+
   it("invalidates a previous pending capture without hiding or contaminating the new gesture", async () => {
     const previousCapture = Promise.withResolvers<PushToTalkScreenCaptureResult>();
     let captures = 0;

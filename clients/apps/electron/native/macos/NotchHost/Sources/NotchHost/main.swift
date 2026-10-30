@@ -231,7 +231,6 @@ final class NotchHost {
 
         if payload?.voice != nil {
             applyVoiceOpening(previous: previousVoice)
-            return
         }
         // The turn keeps the Notch; AirDrop opens once it is given back.
         guard currentVoice == nil else { return }

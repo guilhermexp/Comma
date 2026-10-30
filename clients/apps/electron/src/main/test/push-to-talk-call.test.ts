@@ -54,7 +54,11 @@ function setup(resolveTarget: () => Promise<typeof target> = async () => target)
     api: () => api,
     resolveTarget,
     runOwned: async <T>(fn: () => Promise<T>) => fn(),
-    host: { open: async () => undefined, publish: () => undefined },
+    host: {
+      open: async () => undefined,
+      close: () => undefined,
+      publish: () => undefined,
+    },
     clock,
   });
   voice.onEvent((event) => events.push(event));
@@ -275,7 +279,11 @@ describe("push-to-talk live session transport", () => {
       clock,
       resolveTarget: async () => target,
       runOwned: (handler) => handler(),
-      host: { open: async () => undefined, publish: () => undefined },
+      host: {
+        open: async () => undefined,
+        close: () => undefined,
+        publish: () => undefined,
+      },
     });
     await voice.open();
     await voice.voiceOffer({
@@ -518,7 +526,11 @@ describe("push-to-talk live session transport", () => {
       api: () => api,
       resolveTarget: async () => target,
       runOwned: async (handler) => handler(),
-      host: { open: async () => undefined, publish: () => undefined },
+      host: {
+        open: async () => undefined,
+        close: () => undefined,
+        publish: () => undefined,
+      },
       clock: new FakeClock(),
     });
     try {
@@ -665,7 +677,11 @@ describe("push-to-talk live session transport", () => {
       api: () => api,
       resolveTarget: async () => target,
       runOwned: async (fn) => fn(),
-      host: { open: async () => undefined, publish: () => undefined },
+      host: {
+        open: async () => undefined,
+        close: () => undefined,
+        publish: () => undefined,
+      },
       clock,
     });
     voice.onEvent((event) => events.push(event));
@@ -765,7 +781,11 @@ describe("push-to-talk live session transport", () => {
       api: () => api,
       resolveTarget: async () => target,
       runOwned: async (fn) => fn(),
-      host: { open: async () => undefined, publish: () => undefined },
+      host: {
+        open: async () => undefined,
+        close: () => undefined,
+        publish: () => undefined,
+      },
       clock,
     });
     voice.onEvent((event) => events.push(event));
@@ -852,7 +872,11 @@ describe("push-to-talk live session transport", () => {
       api: () => api,
       resolveTarget: async () => target,
       runOwned: async (fn) => fn(),
-      host: { open: async () => undefined, publish: () => undefined },
+      host: {
+        open: async () => undefined,
+        close: () => undefined,
+        publish: () => undefined,
+      },
       clock,
     });
     voice.onEvent((event) => events.push(event));
@@ -946,7 +970,11 @@ describe("push-to-talk live session transport", () => {
       api: () => api,
       resolveTarget: async () => currentTarget,
       runOwned: async (fn) => fn(),
-      host: { open: async () => undefined, publish: () => undefined },
+      host: {
+        open: async () => undefined,
+        close: () => undefined,
+        publish: () => undefined,
+      },
       clock,
     });
     voice.onEvent((event) => events.push(event));
@@ -1008,7 +1036,11 @@ describe("push-to-talk live session transport", () => {
       api: () => api,
       resolveTarget: async () => target,
       runOwned: async (fn) => fn(),
-      host: { open: async () => undefined, publish: () => undefined },
+      host: {
+        open: async () => undefined,
+        close: () => undefined,
+        publish: () => undefined,
+      },
       clock,
     });
     voice.onEvent((event) => events.push(event));
@@ -1096,7 +1128,11 @@ describe("push-to-talk live session transport", () => {
       api: () => api,
       resolveTarget: async () => currentTarget,
       runOwned: async (fn) => fn(),
-      host: { open: async () => undefined, publish: () => undefined },
+      host: {
+        open: async () => undefined,
+        close: () => undefined,
+        publish: () => undefined,
+      },
       clock,
     });
 

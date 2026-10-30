@@ -293,11 +293,18 @@ export class NativeSideChatService {
   #confirmedShortcutGeneration: number | undefined;
   #queuedShortcutUpdate: QueuedSideChatShortcutUpdate | undefined;
   #restartTimer: ReturnType<typeof setTimeout> | undefined;
-  // Hold-to-talk chord: off (null) until Main registers it; the last
-  // confirmed binding is replayed to every restarted helper.
+  // Hold-to-talk chord: off (null) until Main registers it; the desired
+  // intent is preserved across helper restarts and replayed to every restarted helper.
   #pushToTalkShortcut: PushToTalkShortcutBinding = null;
+  #pushToTalkIntentGeneration = 0;
   // Last Input Monitoring state the helper reported for a modifier-only chord.
   #pushToTalkInputMonitoring: "granted" | "denied" = "denied";
+  #activePushToTalkShortcutUpdate:
+    | {
+        readonly reject: (error: Error) => void;
+        readonly intentGeneration: number;
+      }
+    | undefined;
   readonly #pushToTalkCommands = new Map<string, PendingPushToTalkCommand>();
   readonly #pushToTalkPressedListeners = new Set<
     (event: PushToTalkPressedEvent) => void
@@ -480,20 +487,57 @@ export class NativeSideChatService {
   ): Promise<{ inputMonitoring: PushToTalkInputMonitoringState }> {
     const shortcut = pushToTalkShortcutBindingSchema.parse(input);
     return new Promise((resolve, reject) => {
+      const intentGeneration = ++this.#pushToTalkIntentGeneration;
+      this.#pushToTalkShortcut = shortcut;
+      this.#activePushToTalkShortcutUpdate?.reject(
+        new Error("The push-to-talk shortcut update was superseded.")
+      );
+      this.#activePushToTalkShortcutUpdate = { intentGeneration, reject };
       this.#sendPushToTalkCommand(
         (host) =>
-          this.#sendPushToTalkShortcut(host, shortcut, {
-            reject,
-            // The helper reports the permission before the result.
-            resolve: () =>
-              resolve({
-                inputMonitoring:
-                  shortcut?.key === null
-                    ? this.#pushToTalkInputMonitoring
-                    : "not-needed",
-              }),
-          }),
-        reject
+          this.#sendPushToTalkShortcut(
+            host,
+            shortcut,
+            {
+              reject: (error) => {
+                if (
+                  this.#activePushToTalkShortcutUpdate?.intentGeneration ===
+                  intentGeneration
+                ) {
+                  this.#activePushToTalkShortcutUpdate = undefined;
+                }
+                reject(error);
+              },
+              // The helper reports the permission before the result.
+              resolve: () => {
+                if (
+                  this.#activePushToTalkShortcutUpdate?.intentGeneration ===
+                  intentGeneration
+                ) {
+                  this.#activePushToTalkShortcutUpdate = undefined;
+                }
+                if (intentGeneration !== this.#pushToTalkIntentGeneration) {
+                  reject(new Error("The push-to-talk shortcut update was superseded."));
+                  return;
+                }
+                resolve({
+                  inputMonitoring:
+                    shortcut?.key === null
+                      ? this.#pushToTalkInputMonitoring
+                      : "not-needed",
+                });
+              },
+            },
+            intentGeneration
+          ),
+        (error) => {
+          if (
+            this.#activePushToTalkShortcutUpdate?.intentGeneration === intentGeneration
+          ) {
+            this.#activePushToTalkShortcutUpdate = undefined;
+          }
+          reject(error);
+        }
       );
     });
   }
@@ -750,6 +794,10 @@ export class NativeSideChatService {
       new Error("The Side Chat service was disposed.")
     );
     this.#rejectQueuedShortcutUpdate(new Error("The Side Chat service was disposed."));
+    this.#activePushToTalkShortcutUpdate?.reject(
+      new Error("The Side Chat service was disposed.")
+    );
+    this.#activePushToTalkShortcutUpdate = undefined;
     this.#rejectPushToTalkCommands(new Error("The Side Chat service was disposed."));
     this.#confirmedShortcutGeneration = undefined;
     this.#stopHost();
@@ -868,7 +916,7 @@ export class NativeSideChatService {
     // registers the chord.
     if (!this.#enabled) this.#writeHostFrame(host, enabledFrame(false));
     this.#replayShortcut(host);
-    if (this.#pushToTalkShortcut) {
+    if (this.#pushToTalkShortcut && !this.#activePushToTalkShortcutUpdate) {
       this.#sendPushToTalkShortcut(host, this.#pushToTalkShortcut, {
         reject: (error) =>
           log.warn(`push-to-talk shortcut replay failed: ${errorMessage(error)}`),
@@ -1564,8 +1612,13 @@ export class NativeSideChatService {
   #sendPushToTalkShortcut(
     host: ChildProcessWithoutNullStreams,
     shortcut: PushToTalkShortcutBinding,
-    settlement: { reject: (error: Error) => void; resolve: () => void }
+    settlement: { reject: (error: Error) => void; resolve: () => void },
+    intentGeneration = this.#pushToTalkIntentGeneration
   ) {
+    if (intentGeneration !== this.#pushToTalkIntentGeneration) {
+      settlement.reject(new Error("The push-to-talk shortcut update was superseded."));
+      return;
+    }
     const binding = pushToTalkRegistration(shortcut);
     this.#writePushToTalkCommand(
       host,
@@ -1574,7 +1627,6 @@ export class NativeSideChatService {
       {
         reject: settlement.reject,
         resolve: () => {
-          this.#pushToTalkShortcut = shortcut;
           settlement.resolve();
         },
       }

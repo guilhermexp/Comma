@@ -573,14 +573,7 @@
                   "type": "string"
                 },
                 "state": {
-                  "enum": [
-                    "listening",
-                    "transcribing",
-                    "thinking",
-                    "speaking",
-                    "busy",
-                    "error"
-                  ],
+                  "enum": ["listening", "thinking", "speaking", "busy", "error"],
                   "type": "string"
                 }
               },

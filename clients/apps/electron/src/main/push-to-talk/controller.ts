@@ -54,7 +54,6 @@ export type PushToTalkControllerDeps = {
   settings: PushToTalkSettings;
   sessionGeneration?: number;
   log?: (message: string) => void;
-  trace?: (message: string) => void;
 };
 type Turn = {
   contextId: number;
@@ -88,6 +87,7 @@ export class PushToTalkController {
   readonly #deps: PushToTalkControllerDeps;
   #settings: PushToTalkSettings;
   #generation: number;
+  #registrationGeneration = 0;
   #lastContextId = 0;
   #currentContextId: number | undefined;
   #turn: Turn | undefined;
@@ -134,6 +134,13 @@ export class PushToTalkController {
       });
     }
     this.#register();
+    if (this.#settings.enabled) {
+      void this.#deps.voice
+        .warm()
+        .catch((error) =>
+          this.#deps.log?.(`Push-to-talk warm failed: ${String(error)}`)
+        );
+    }
   }
 
   update(settings: PushToTalkSettings, generation = this.#generation) {
@@ -143,7 +150,19 @@ export class PushToTalkController {
       this.#generation = generation;
       this.#ready = undefined;
       this.#endSession("clear");
-    } else if (!settings.enabled) this.#endSession();
+      if (settings.enabled) {
+        void this.#deps.voice
+          .warm()
+          .catch((error) =>
+            this.#deps.log?.(`Push-to-talk warm failed: ${String(error)}`)
+          );
+      } else {
+        this.#deps.voice.destroy();
+      }
+    } else if (!settings.enabled) {
+      this.#endSession("clear");
+      this.#deps.voice.destroy();
+    }
     if (settings.enabled && settings.sendScreen && !previous.sendScreen) {
       this.#screenRequested = false;
       this.#requestScreen();
@@ -153,6 +172,13 @@ export class PushToTalkController {
       JSON.stringify(previous.shortcut) !== JSON.stringify(settings.shortcut)
     )
       this.#register();
+    if (settings.enabled) {
+      void this.#deps.voice
+        .warm()
+        .catch((error) =>
+          this.#deps.log?.(`Push-to-talk warm failed: ${String(error)}`)
+        );
+    }
   }
 
   dispose() {
@@ -160,6 +186,7 @@ export class PushToTalkController {
     for (const unsubscribe of this.#unsubscribe.splice(0)) unsubscribe();
     this.#ready = undefined;
     this.#endSession("clear");
+    this.#deps.voice.destroy();
     void this.#deps.hotkey
       .register(null)
       .catch(() => this.#deps.log?.("Push-to-talk shortcut could not unregister."));
@@ -316,7 +343,6 @@ export class PushToTalkController {
     turn.stopMax = this.#deps.clock.setTimeout(() => {
       if (this.#turn === turn) this.#release(false);
     }, maxGestureMs);
-    this.#deps.trace?.("push-to-talk pressed; call setup and screen capture started");
   }
 
   #release(cancelled: boolean) {
@@ -454,6 +480,24 @@ export class PushToTalkController {
     if (event.kind === "connected") {
       const held = this.#turn?.releasedAt === undefined && this.#turn !== undefined;
       this.#deps.voice.setListening(held);
+    } else if (event.kind === "media_delayed") {
+      const targetContextId = event.contextId;
+      if (
+        targetContextId === undefined ||
+        this.#currentContextId === targetContextId ||
+        this.#turn?.contextId === targetContextId
+      ) {
+        const idToCancel =
+          targetContextId ?? this.#currentContextId ?? this.#turn?.contextId;
+        if (idToCancel !== undefined) {
+          this.#terminateContext(idToCancel);
+          this.#deps.voice.cancelContext(idToCancel);
+        }
+        this.#deps.status.set(null);
+        this.#deps.companion.hide({ immediate: true });
+        this.#hide();
+        if (session && !session.hadTurn) this.#endSession("clear");
+      }
     } else if (event.kind === "level") {
       if (this.#turn && this.#turn.releasedAt === undefined) {
         this.#deps.status.setLevel(event.level);
@@ -559,6 +603,13 @@ export class PushToTalkController {
     this.#stopError = undefined;
     this.#hide(clearPresentation);
     if (presentation === "ready" && this.#ready && !this.#disposed) this.#showReady();
+    if (this.#settings.enabled && !this.#disposed) {
+      void this.#deps.voice
+        .warm()
+        .catch((error) =>
+          this.#deps.log?.(`Push-to-talk warm failed: ${String(error)}`)
+        );
+    }
   }
 
   #present(state: PushToTalkTurnState) {
@@ -633,9 +684,13 @@ export class PushToTalkController {
   }
 
   #register() {
+    const generation = ++this.#registrationGeneration;
     void this.#deps.hotkey
       .register(this.#settings.enabled ? this.#settings.shortcut : null)
-      .catch(() => this.#deps.log?.("Push-to-talk shortcut could not register."));
+      .catch(() => {
+        if (!this.#disposed && generation === this.#registrationGeneration)
+          this.#deps.log?.("Push-to-talk shortcut could not register.");
+      });
   }
 
   #requestScreen() {

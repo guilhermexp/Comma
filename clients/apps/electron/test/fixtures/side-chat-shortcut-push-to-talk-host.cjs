@@ -11,8 +11,14 @@
 // - "chord": a modifier-only binding reports Input Monitoring denied until
 //   push-to-talk.request-input-monitoring grants it; the grant is followed by
 //   a press and release, then a press cancelled by another key.
+// - "crash-before-ack": the first helper exits immediately upon receiving
+//   push-to-talk.shortcut without sending command.result; restarted helper confirms.
+// - "crash-on-second": confirms the first push-to-talk.shortcut registration,
+//   then crashes upon receiving the second registration before acknowledging it;
+// - "stale-ack-crash": the first helper receives chord 1, delays its ack until
+//   after crashing, exits after 30ms; the second helper confirms.
+//   The fixture sends the stale ack from helper 1 right before/as it exits.
 // In every mode push-to-talk.request-screen-recording is logged and acknowledged.
-
 const { appendFileSync, existsSync, writeFileSync } = require("node:fs");
 const readline = require("node:readline");
 
@@ -85,6 +91,47 @@ input.on("line", (line) => {
       emitResult(requestId, false, "The fixture refused the push-to-talk chord.");
       return;
     }
+    if (mode === "crash-before-ack") {
+      if (!existsSync(crashedMarker)) {
+        writeFileSync(crashedMarker, "1");
+        setTimeout(() => process.exit(1), 20);
+        return;
+      }
+      if (binding && binding.keyCode === undefined) emitPermission();
+      emitResult(requestId, true);
+      return;
+    }
+    if (mode === "stale-ack-crash") {
+      if (!existsSync(crashedMarker)) {
+        writeFileSync(crashedMarker, "1");
+        // Helper 1 delays, emits stale result for chord 1, then exits
+        setTimeout(() => {
+          emitResult(requestId, true);
+          process.exit(1);
+        }, 30);
+        return;
+      }
+      if (binding && binding.keyCode === undefined) emitPermission();
+      emitResult(requestId, true);
+      return;
+    }
+    if (mode === "crash-on-second") {
+      const secondMarker = `${logPath}.first-confirmed`;
+      if (!existsSync(secondMarker)) {
+        writeFileSync(secondMarker, "1");
+        if (binding && binding.keyCode === undefined) emitPermission();
+        emitResult(requestId, true);
+        return;
+      }
+      if (!existsSync(crashedMarker)) {
+        writeFileSync(crashedMarker, "1");
+        setTimeout(() => process.exit(1), 20);
+        return;
+      }
+      if (binding && binding.keyCode === undefined) emitPermission();
+      emitResult(requestId, true);
+      return;
+    }
     if (binding && binding.keyCode === undefined) emitPermission();
     emitResult(requestId, true);
     if (mode !== "crash-while-held" || binding?.keyCode === undefined) return;
@@ -113,7 +160,6 @@ input.on("line", (line) => {
     });
     return;
   }
-
   if (frame.kind === "side-chat.stop") {
     emitResult(requestId, true);
     setImmediate(() => process.exit(0));

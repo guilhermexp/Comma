@@ -138,6 +138,7 @@ export const PushToTalkCompanion = ({
     const points = [{ x: event.clientX, y: event.clientY }];
     drawing.current = { lastReport: 0, pointerId: event.pointerId, points };
     // A new drag replaces the previous stroke.
+    report(null);
     setStroke(points);
   };
   const move = (event: PointerEvent<HTMLDivElement>) => {

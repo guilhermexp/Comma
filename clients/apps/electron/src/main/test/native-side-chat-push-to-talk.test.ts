@@ -32,7 +32,15 @@ describe("push-to-talk hotkey over the Side Chat helper", () => {
     for (const cleanup of cleanups.splice(0).toReversed()) await cleanup();
   });
 
-  async function startFixture(mode: "chord" | "crash-while-held" | "reject") {
+  async function startFixture(
+    mode:
+      | "chord"
+      | "crash-while-held"
+      | "reject"
+      | "crash-before-ack"
+      | "stale-ack-crash"
+      | "crash-on-second"
+  ) {
     const directory = await mkdtemp(join(tmpdir(), "comma-ptt-fixture-"));
     const logPath = join(directory, "frames.jsonl");
     const service = new NativeSideChatService({
@@ -58,6 +66,17 @@ describe("push-to-talk hotkey over the Side Chat helper", () => {
     };
     return { registrations, service };
   }
+
+  it("registers a shortcut only once when registration starts the helper", async () => {
+    const { registrations, service } = await startFixture("chord");
+    const hotkey = createNativePushToTalkHotkey(service);
+
+    await hotkey.register(controlOptionSpace);
+
+    expect(await registrations()).toEqual([
+      { binding: { keyCode: 49, modifiers: 6_144 } },
+    ]);
+  });
 
   it("registers the chord, reports press and release, and replays it after a helper crash", async () => {
     const { registrations, service } = await startFixture("crash-while-held");
@@ -180,5 +199,91 @@ describe("push-to-talk hotkey over the Side Chat helper", () => {
       timeout: 2_000,
     });
     expect(pressed).not.toHaveBeenCalled();
+  });
+
+  it("re-registers the chord when the helper restarts before first enable registration returns", async () => {
+    const { registrations, service } = await startFixture("crash-before-ack");
+    const hotkey = createNativePushToTalkHotkey(service);
+    service.start();
+
+    // First enable of PTT: helper crashes before registration returns.
+    // The original register promise may settle/reject on host loss, but desired registration must recover.
+    const initialPromise = hotkey.register(controlOptionSpace).catch(() => undefined);
+    await initialPromise;
+
+    // Helper restarts and replays desired registration
+    await vi.waitFor(
+      async () => {
+        const reg = await registrations();
+        expect(reg).toEqual([
+          { binding: { keyCode: 49, modifiers: 6_144 } },
+          { binding: { keyCode: 49, modifiers: 6_144 } },
+        ]);
+      },
+      { interval: 20, timeout: 4_000 }
+    );
+  });
+
+  it("re-registers the updated chord when the helper restarts before shortcut change registration returns", async () => {
+    const { registrations, service } = await startFixture("crash-on-second");
+    const hotkey = createNativePushToTalkHotkey(service);
+    service.start();
+
+    // 1. Initial chord registration succeeds
+    await expect(hotkey.register(controlOption)).resolves.toEqual({
+      inputMonitoring: "denied",
+    });
+    expect(await registrations()).toEqual([{ binding: { modifiers: 6_144 } }]);
+
+    // 2. Change to new chord (controlOptionSpace) on the SAME service; helper crashes before ack
+    const changePromise = hotkey.register(controlOptionSpace).catch(() => undefined);
+    await changePromise;
+
+    // 3. Restarted replacement helper must receive the desired updated chord (controlOptionSpace, keyCode 49),
+    // not the old chord (controlOption)
+    await vi.waitFor(
+      async () => {
+        const reg = await registrations();
+        expect(reg).toEqual([
+          { binding: { modifiers: 6_144 } },
+          { binding: { keyCode: 49, modifiers: 6_144 } },
+          { binding: { keyCode: 49, modifiers: 6_144 } },
+        ]);
+      },
+      { interval: 20, timeout: 4_000 }
+    );
+  });
+
+  it("fences stale helper registration results across helper restarts against newer user intent", async () => {
+    const { registrations, service } = await startFixture("stale-ack-crash");
+    const hotkey = createNativePushToTalkHotkey(service);
+    service.start();
+
+    // Initial registration starts with chord 1 (controlOptionSpace)
+    const firstRegister = hotkey.register(controlOptionSpace);
+
+    // Newer intent is submitted: chord 2 (controlOption)
+    const secondRegister = hotkey.register(controlOption).catch(() => undefined);
+
+    // Older update must reject explicitly as superseded
+    await expect(firstRegister).rejects.toThrow(
+      "The push-to-talk shortcut update was superseded."
+    );
+
+    await secondRegister;
+
+    // Across helper crash and restart, the newer intent must win and be the eventual helper state
+    await vi.waitFor(
+      async () => {
+        const reg = await registrations();
+        const bindings = reg.filter(
+          (r): r is { binding: unknown } =>
+            typeof r === "object" && r !== null && "binding" in r
+        );
+        const lastBinding = bindings.at(-1);
+        expect(lastBinding).toEqual({ binding: { modifiers: 6_144 } });
+      },
+      { interval: 20, timeout: 4_000 }
+    );
   });
 });

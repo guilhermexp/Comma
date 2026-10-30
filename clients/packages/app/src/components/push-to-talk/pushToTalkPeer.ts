@@ -316,76 +316,99 @@ export function openPushToTalkPeer({
     }
   };
 
-  // The initial SDP must include the destination track.
-  const microphoneReady = (async () => {
-    try {
-      void context.resume().catch(() => undefined);
-      const stream = await deps.getUserMedia({ audio: true });
-      if (abort.signal.aborted) {
-        for (const track of stream.getAudioTracks()) track.stop();
-        return;
-      }
-      micStream = stream;
-      for (const track of stream.getAudioTracks()) {
-        track.addEventListener("ended", onTrackEnded);
-      }
-      applyPhysicalMicEnabled();
+  let micInitiated = false;
+  let micReadyPromise: Promise<boolean> | undefined;
 
-      const micSource = context.createMediaStreamSource(stream);
-
-      // Create processor to buffer and stream PCM audio chronologically
-      processor = context.createScriptProcessor(4096, 1, 1);
-      micSource.connect(processor);
-      const silentGain = context.createGain();
-      silentGain.gain.value = 0;
-      processor.connect(silentGain);
+  const ensureMicrophone = () => {
+    if (micInitiated || abort.signal.aborted) return micReadyPromise;
+    micInitiated = true;
+    micReadyPromise = (async () => {
       try {
-        silentGain.connect(context.destination);
-      } catch {}
-      processor.onaudioprocess = (e) => {
-        if (abort.signal.aborted) return;
-        if (
-          (!listening && !drainInputOnRelease) ||
-          currentContextId === null ||
-          isGestureDisqualified
-        )
-          return;
-        // The track is already muted on release. Drain only its in-flight block,
-        // which WebAudio delivers after the gesture's final captured samples.
-        drainInputOnRelease = false;
-        const channelData = e.inputBuffer.getChannelData(0);
-        if (totalCapturedSamplesInGesture + channelData.length <= maxSamples) {
-          totalCapturedSamplesInGesture += channelData.length;
-          const copy = new Float32Array(channelData);
-          pendingChunks.push(copy);
-          schedulePendingAudio();
+        void context.resume().catch(() => undefined);
+        const stream = await deps.getUserMedia({ audio: true });
+        if (abort.signal.aborted) {
+          for (const track of stream.getAudioTracks()) track.stop();
+          return false;
         }
-      };
+        if (!listening) {
+          for (const track of stream.getAudioTracks()) track.stop();
+          discardBuffer();
+          micInitiated = false;
+          micReadyPromise = undefined;
+          signalingStarted = false;
+          if (currentContextId !== null) {
+            report({ kind: "media_delayed", contextId: currentContextId });
+          }
+          return false;
+        }
+        micStream = stream;
+        for (const track of stream.getAudioTracks()) {
+          track.addEventListener("ended", onTrackEnded);
+        }
+        applyPhysicalMicEnabled();
 
-      watchInputLevel(stream);
-      return true;
-    } catch (error) {
-      if (abort.signal.aborted) return;
-      const isPermissionDenied =
-        (error instanceof Error &&
-          (error.name === "NotAllowedError" ||
-            error.name === "PermissionDeniedError")) ||
-        (typeof error === "object" &&
-          error !== null &&
-          "name" in error &&
-          (error.name === "NotAllowedError" || error.name === "PermissionDeniedError"));
-      if (isPermissionDenied) {
-        report("microphone_denied");
-      } else {
-        fail();
+        const micSource = context.createMediaStreamSource(stream);
+
+        // Create processor to buffer and stream PCM audio chronologically
+        processor = context.createScriptProcessor(4096, 1, 1);
+        micSource.connect(processor);
+        const silentGain = context.createGain();
+        silentGain.gain.value = 0;
+        processor.connect(silentGain);
+        try {
+          silentGain.connect(context.destination);
+        } catch {}
+        processor.onaudioprocess = (e) => {
+          if (abort.signal.aborted) return;
+          if (
+            (!listening && !drainInputOnRelease) ||
+            currentContextId === null ||
+            isGestureDisqualified
+          )
+            return;
+          // The track is already muted on release. Drain only its in-flight block,
+          // which WebAudio delivers after the gesture's final captured samples.
+          drainInputOnRelease = false;
+          const channelData = e.inputBuffer.getChannelData(0);
+          if (totalCapturedSamplesInGesture + channelData.length <= maxSamples) {
+            totalCapturedSamplesInGesture += channelData.length;
+            const copy = new Float32Array(channelData);
+            pendingChunks.push(copy);
+            schedulePendingAudio();
+          }
+        };
+
+        watchInputLevel(stream);
+        return true;
+      } catch (error) {
+        if (abort.signal.aborted) return false;
+        const isPermissionDenied =
+          (error instanceof Error &&
+            (error.name === "NotAllowedError" ||
+              error.name === "PermissionDeniedError")) ||
+          (typeof error === "object" &&
+            error !== null &&
+            "name" in error &&
+            (error.name === "NotAllowedError" ||
+              error.name === "PermissionDeniedError"));
+        if (isPermissionDenied) {
+          report("microphone_denied");
+        } else {
+          fail();
+        }
+        return false;
       }
-    }
-  })();
+    })();
+    return micReadyPromise;
+  };
 
-  // Signaling
-  void (async () => {
+  let signalingStarted = false;
+  const startSignaling = async () => {
+    if (signalingStarted || abort.signal.aborted) return;
+    signalingStarted = true;
     try {
-      if (!(await microphoneReady) || abort.signal.aborted) return;
+      const micReady = await ensureMicrophone();
+      if (!micReady || abort.signal.aborted) return;
       await pc.setLocalDescription(await pc.createOffer());
       await gatherIce(pc, abort.signal);
       const sdp = pc.localDescription?.sdp;
@@ -401,7 +424,11 @@ export function openPushToTalkPeer({
     } catch {
       fail();
     }
-  })();
+  };
+
+  if (initialListening) {
+    void startSignaling();
+  }
 
   const update = (input: {
     listening?: boolean;
@@ -440,6 +467,7 @@ export function openPushToTalkPeer({
     // Reconcile gesture state after atomic updates
     if (contextChanged || listeningChanged) {
       if (currentContextId !== null && listening) {
+        void startSignaling();
         void context.resume().catch(() => undefined);
         drainInputOnRelease = false;
         isGestureDisqualified = false;

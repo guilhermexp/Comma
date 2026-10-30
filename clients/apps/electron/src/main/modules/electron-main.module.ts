@@ -389,12 +389,10 @@ export interface ElectronMainRuntimeDeps {
         /** Comma's Screen Recording status and its request through the helper. */
         screenRecording: PushToTalkScreenRecording;
         /** Hidden renderer for the live call's microphone and WebRTC peer. */
-        voiceWindow: { open(): Promise<void> };
+        voiceWindow: { open(): Promise<void>; close(): void };
         powerMonitor: PushToTalkPowerMonitor;
         /** Opens Side Chat normally (a click on the caption balloon). */
         openSideChat: () => void;
-        /** One log line per step of a turn. */
-        trace?: ((message: string) => void) | undefined;
       }
     | undefined;
   secureSessionFilePath: string;
@@ -1335,10 +1333,10 @@ export async function createElectronMainContext(
         open: () => pushToTalkDeps.voiceWindow.open(),
         publish: (state) =>
           nativeEventBus.emit(pushToTalkVoiceSessionChangedEvent, state),
+        close: () => pushToTalkDeps.voiceWindow.close(),
       },
       clock: systemClock,
       log: logPushToTalk,
-      ...(pushToTalkDeps.trace ? { trace: pushToTalkDeps.trace } : {}),
     });
     pushToTalkVoice = voice;
     const hotkey = reportPushToTalkInputMonitoring(pushToTalkDeps.hotkey, (state) =>
@@ -1372,7 +1370,6 @@ export async function createElectronMainContext(
             return state.phase === "signed_in" && state.principal.userId === userId;
           },
           log: logPushToTalk,
-          ...(pushToTalkDeps.trace ? { trace: pushToTalkDeps.trace } : {}),
         });
         return pushToTalkController;
       },

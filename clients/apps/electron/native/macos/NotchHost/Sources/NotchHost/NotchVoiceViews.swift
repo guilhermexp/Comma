@@ -10,7 +10,6 @@ extension CommaNotchVoiceState {
     var tint: Color {
         switch self {
         case .listening: Color(red: 0.31, green: 0.84, blue: 0.86)
-        case .transcribing: Color(red: 0.42, green: 0.70, blue: 1.0)
         case .thinking: Color(red: 0.78, green: 0.50, blue: 1.0)
         case .speaking: Color(red: 1.0, green: 0.60, blue: 0.27)
         case .busy: Color.white.opacity(0.62)
@@ -20,7 +19,7 @@ extension CommaNotchVoiceState {
 
     /// Processing states read as work in progress: the text shimmers.
     var isWorking: Bool {
-        self == .transcribing || self == .thinking
+        self == .thinking
     }
 }
 
@@ -246,7 +245,7 @@ struct CommaNotchVoiceMeter: View {
                         return NotchVoiceMetrics.barHeight(level: max(0.05, sway), index: index)
                     }
                 }
-            case .transcribing, .thinking, .busy:
+            case .thinking, .busy:
                 TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion || state == .busy)) { context in
                     let time = context.date.timeIntervalSinceReferenceDate
                     dots(count: 3) { index in

@@ -1546,23 +1546,13 @@ const pushToTalkStatus = new NotchPushToTalkStatus({
   },
 });
 
-function describePushToTalkState(state: PushToTalkTurnState | null) {
-  if (state === null) return "hidden";
-  return state.kind === "error" ? `error ${state.code}` : state.kind;
-}
-
 function createPushToTalkDeps() {
   return {
-    hotkey: createNativePushToTalkHotkey(sideChat, {
-      log: (message) => log.info(message),
-    }),
+    hotkey: createNativePushToTalkHotkey(sideChat),
     companion: pushToTalkOverlay,
     status: {
       visible: () => pushToTalkStatus.visible(),
-      set: (state: PushToTalkTurnState | null) => {
-        log.info(`push-to-talk notch: ${describePushToTalkState(state)}`);
-        pushToTalkStatus.set(state);
-      },
+      set: (state: PushToTalkTurnState | null) => pushToTalkStatus.set(state),
       setLevel: (level: number) => pushToTalkStatus.setLevel(level),
     },
     screen: new PushToTalkScreen({
@@ -1575,10 +1565,10 @@ function createPushToTalkDeps() {
     screenRecording: pushToTalkScreenRecording,
     voiceWindow: {
       open: async () => ensurePushToTalkVoiceWindow().open(),
+      close: () => pushToTalkVoiceWindow?.close(),
     },
     powerMonitor,
     openSideChat: () => safelyControlSideChat(() => sideChat.open()),
-    trace: (message: string) => log.info(message),
   };
 }
 

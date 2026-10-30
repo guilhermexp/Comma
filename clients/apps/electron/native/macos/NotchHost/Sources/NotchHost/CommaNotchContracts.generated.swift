@@ -769,7 +769,6 @@ public struct CommaNotchScenePayloadVoiceTurnAction: Codable, Equatable, Sendabl
 
 public enum CommaNotchScenePayloadVoiceTurnState: String, Codable, Equatable, Sendable {
     case listening = "listening"
-    case transcribing = "transcribing"
     case thinking = "thinking"
     case speaking = "speaking"
     case busy = "busy"

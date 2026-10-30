@@ -130,6 +130,43 @@ describe("PushToTalkOverlayApp", () => {
     expect(screen.queryByRole("img", { name: "Your drawing" })).toBeNull();
   });
 
+  it("clears old stroke before shortcut release when replacement pointer drag begins while mouse remains down", async () => {
+    const { publish, pushToTalk } = installOverlayBridge(listening);
+    render(<PushToTalkOverlayApp />);
+    expect(await screen.findByRole("status")).toHaveTextContent("Listening");
+
+    // Complete first stroke.
+    drag(loop);
+    expect(pushToTalk.setStroke).toHaveBeenLastCalledWith({
+      points: loop,
+      surface: 7,
+    });
+
+    // Begin replacement drag (pointer down only, mouse remains down).
+    const surface = screen.getByTestId("push-to-talk-overlay");
+    fireEvent.pointerDown(surface, {
+      button: 0,
+      clientX: 400,
+      clientY: 300,
+      pointerId: 1,
+    });
+
+    // The replacement drag must immediately report null to clear the old stroke in Main.
+    expect(pushToTalk.setStroke).toHaveBeenLastCalledWith({
+      points: null,
+      surface: 7,
+    });
+
+    // PTT shortcut is released while the replacement pointer drag is still down.
+    publish({ companion: { kind: "thinking" }, drawingEnabled: false });
+
+    // The old stroke must not be re-sent or retained upon release.
+    expect(pushToTalk.setStroke).toHaveBeenLastCalledWith({
+      points: null,
+      surface: 7,
+    });
+  });
+
   it("follows the cursor with level bars while listening", async () => {
     const { publish } = installOverlayBridge(listening);
     render(<PushToTalkOverlayApp />);

@@ -105,9 +105,6 @@ defmodule SalixVoice.CallActor do
   @doc "The GPT-Live session instructions every call starts with."
   def instructions, do: @instructions
 
-  @doc "The GPT-Live session instructions of a `:push_to_talk` call."
-  def push_to_talk_instructions, do: @push_to_talk_instructions
-
   # -- Init --------------------------------------------------------------------
 
   @impl GenServer
