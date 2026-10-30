@@ -86,14 +86,17 @@ defmodule SalixVoice.CallActor do
   """
 
   @push_to_talk_instructions """
-  You are the voice of the Comma assistant for shortcut speech turns. Keep every reply short \
-  and natural for speech. You cannot look things up, see the screen, or act on your own: for any \
-  request that involves the screen, current app, tools, or actions, delegate it, tell the caller \
-  briefly that you are checking, and wait. When a gesture context is active, every delegation \
-  request must begin with its exact [ptt-context:N] marker. Never say you do not know about \
-  something before delegating the request and waiting for the result. Your own lack of knowledge is \
-  a reason to delegate, not a final answer. When commentary arrives for a delegation, say it in \
-  your own words without adding facts. Never invent results.\
+  You are the voice of the Comma assistant. The user speaks in short turns while holding
+  a keyboard shortcut and listens after releasing it. Keep replies short and natural for speech.
+  You cannot look things up or act on your own: for any request that needs knowledge,
+  tools, accounts or actions, delegate it, tell the user briefly that you are checking, and wait.
+  Never say you do not know about something before delegating the request and waiting for
+  the result. Your own lack of knowledge is a reason to delegate, not a final answer.
+  Only report that information is unavailable if the delegation result confirms it.
+  When commentary arrives for a delegation, say it in your own words without adding facts.
+  Never invent results. Screen and cursor context is supplied quietly for the user's current
+  gesture; do not read its metadata aloud. Do not claim to see screen content unless the
+  delegated agent has inspected it.
   """
   @push_to_talk_max_ms 600_000
 
@@ -134,6 +137,7 @@ defmodule SalixVoice.CallActor do
       caller: args.caller,
       carrier_call_id: args.carrier_call_id || args.call_id,
       audio_format: args.audio_format,
+      ptt_turn: nil,
       key_id: args[:key_id],
       key_name: args[:key_name],
       principal: args[:principal],
@@ -655,7 +659,8 @@ defmodule SalixVoice.CallActor do
 
   defp timer(state, {:context_timeout, id}) do
     case state.ptt_context do
-      %{id: ^id, status: :pending} = context ->
+      %{id: ^id, status: status, native_start_ms: boundary} = context
+      when status == :pending or (status == :complete and is_nil(boundary)) ->
         updated_context = %{context | status: :failed, attachments: []}
         state = %{state | ptt_context: updated_context}
 
@@ -663,7 +668,7 @@ defmodule SalixVoice.CallActor do
           fail_waiting_delegations(
             state,
             id,
-            "The screen context could not be captured. Tell the caller briefly and ask them to try again."
+            "The screen context is unavailable for this request. Tell the user briefly and ask them to try again."
           )
 
         to_socket(state, {:voice_call, :context_failed, id})
@@ -726,22 +731,57 @@ defmodule SalixVoice.CallActor do
 
   # A read-aloud call has nothing to delegate to.
 
-  defp model_event(state, {:delegation, id, offset_ms, request}) do
+  defp model_event(
+         %{mode: :push_to_talk, ptt_context: %{id: id, status: status} = context} = state,
+         {:context_started, id, boundary}
+       )
+       when status in [:pending, :complete] do
+    if is_integer(boundary) and boundary >= 0 do
+      state = %{state | ptt_context: %{context | native_start_ms: boundary}}
+      state = if status == :complete, do: cancel(state, :context_timeout), else: state
+      flush_waiting_delegations(state, id)
+    else
+      {:ok, _, state} = transition_ptt_context(state, %{context_id: id, status: :failed})
+      state
+    end
+  end
+
+  defp model_event(
+         %{mode: :push_to_talk, ptt_turn: %{id: id}} = state,
+         {:user_turn_started, id, _}
+       ),
+       do: state
+
+  defp model_event(%{mode: :push_to_talk} = state, {:user_turn_started, id, start_ms}) do
+    context_id =
+      case state.ptt_context do
+        %{id: context_id, status: status} when status in [:pending, :complete] -> context_id
+        _ -> nil
+      end
+
+    %{state | ptt_turn: %{id: id, context_id: context_id, start_ms: start_ms}}
+  end
+
+  defp model_event(state, {:delegation, id, offset_ms, request, native_turn_id}) do
     state = model_event(state, {:delegation, id, offset_ms})
 
-    case state.delegations do
-      %{^id => delegation} ->
-        if state.mode == :push_to_talk do
-          handle_ptt_delegation_request(state, id, delegation, request)
-        else
-          %{
-            state
-            | delegations: Map.put(state.delegations, id, Map.put(delegation, :request, request))
-          }
-        end
+    if Map.has_key?(state.delegations, id) do
+      cond do
+        is_nil(request) and state.mode == :push_to_talk ->
+          fail_delegation(
+            state,
+            id,
+            "The handoff contains no readable request. Ask the user to try again."
+          )
 
-      _ ->
-        state
+        state.mode == :push_to_talk ->
+          handle_ptt_delegation_request(state, id, request, native_turn_id)
+
+        true ->
+          update_in(state.delegations[id], &%{&1 | request: request})
+      end
+    else
+      state
     end
   end
 
@@ -777,6 +817,7 @@ defmodule SalixVoice.CallActor do
         created_mono: now(),
         request: nil,
         context_id: nil,
+        native_start_ms: nil,
         status: :pending,
         enqueued: false,
         accepted: false,
@@ -872,9 +913,14 @@ defmodule SalixVoice.CallActor do
       %{^id => %{status: :pending, enqueued: false} = delegation} when state.phase == :live ->
         cond do
           state.mode == :push_to_talk and delegation[:context_id] == nil ->
-            fail_missing_marker_ptt_delegation(state, id)
+            fail_unbound_ptt_delegation(state, id)
 
           state.mode == :push_to_talk and delegation.waiting_for_context ->
+            state
+
+          state.mode == :push_to_talk and
+              System.convert_time_unit(now() - delegation.created_mono, :native, :millisecond) <
+                state.timers.delegation_settle_ms ->
             state
 
           state.mode == :push_to_talk and
@@ -1373,62 +1419,34 @@ defmodule SalixVoice.CallActor do
 
   defp call_ended_required?(%{greeted: true}), do: true
   defp call_ended_required?(_state), do: false
-  @ptt_marker_regex ~r/\A\[ptt-context:(\d+)\]\s*(.*)\z/s
 
-  defp parse_ptt_context_marker(request) when is_binary(request) do
-    case Regex.run(@ptt_marker_regex, String.trim_leading(request)) do
-      [_, digits, rest] ->
-        case Integer.parse(digits) do
-          {context_id, ""} when context_id in 1..9_007_199_254_740_991 ->
-            {:ok, context_id, String.trim_leading(rest)}
+  defp handle_ptt_delegation_request(state, id, request, native_turn_id) do
+    context =
+      case {state.ptt_turn, state.ptt_context} do
+        {%{id: ^native_turn_id, context_id: context_id, start_ms: start_ms},
+         %{id: context_id, status: status, native_start_ms: boundary} = context}
+        when is_binary(native_turn_id) and status in [:pending, :complete] and
+               (is_nil(boundary) or start_ms >= boundary) ->
+          context
 
-          _ ->
-            :error
-        end
+        _ ->
+          nil
+      end
 
-      _ ->
-        :error
-    end
-  end
+    case context do
+      %{id: context_id, status: status, native_start_ms: boundary} ->
+        update_in(state.delegations[id], fn delegation ->
+          %{
+            delegation
+            | request: request,
+              context_id: context_id,
+              native_start_ms: state.ptt_turn.start_ms,
+              waiting_for_context: status == :pending or is_nil(boundary)
+          }
+        end)
 
-  defp parse_ptt_context_marker(_), do: :error
-
-  defp handle_ptt_delegation_request(state, id, delegation, request) do
-    case parse_ptt_context_marker(request) do
-      {:ok, context_id, stripped_request} ->
-        cond do
-          state.ptt_context == nil or state.ptt_context.id != context_id or
-              state.ptt_context.status in [:failed, :cancelled] ->
-            fail_invalid_ptt_delegation(
-              state,
-              id,
-              context_id,
-              "The screen context for this request has expired. Ask the caller to press and hold to try again."
-            )
-
-          state.ptt_context.id == context_id and state.ptt_context.status == :pending ->
-            updated = %{
-              delegation
-              | request: stripped_request,
-                context_id: context_id,
-                waiting_for_context: true
-            }
-
-            %{state | delegations: Map.put(state.delegations, id, updated)}
-
-          state.ptt_context.id == context_id and state.ptt_context.status == :complete ->
-            updated = %{
-              delegation
-              | request: stripped_request,
-                context_id: context_id,
-                waiting_for_context: false
-            }
-
-            %{state | delegations: Map.put(state.delegations, id, updated)}
-        end
-
-      :error ->
-        fail_missing_marker_ptt_delegation(state, id)
+      nil ->
+        fail_unbound_ptt_delegation(state, id)
     end
   end
 
@@ -1509,15 +1527,16 @@ defmodule SalixVoice.CallActor do
         context = %{
           id: id,
           status: :pending,
+          native_start_ms: nil,
           text: nil,
           attachments: []
         }
 
         append(
           state,
-          :thinking,
+          {:context, id},
           nil,
-          "[ptt-context:#{id}] Active push-to-talk gesture. Any delegation for this gesture must start its request text with [ptt-context:#{id}]. Do not speak screen metadata."
+          "Screen and cursor context is pending for the next shortcut speech turn."
         )
 
         next_state = %{state | highest_context_id: id, ptt_context: context}
@@ -1533,7 +1552,9 @@ defmodule SalixVoice.CallActor do
        }) do
     case state.ptt_context do
       %{id: ^id, status: :pending} = context ->
-        state = cancel(state, :context_timeout)
+        state =
+          if is_integer(context.native_start_ms), do: cancel(state, :context_timeout), else: state
+
         append(state, :thinking, nil, text)
 
         updated_context = %{
@@ -1611,24 +1632,35 @@ defmodule SalixVoice.CallActor do
     end
   end
 
-  defp flush_waiting_delegations(state, context_id) do
+  defp flush_waiting_delegations(
+         %{ptt_context: %{id: context_id, status: :complete, native_start_ms: boundary}} = state,
+         context_id
+       )
+       when is_integer(boundary) do
     Enum.reduce(state.delegations, state, fn
       {id,
        %{
          status: :pending,
          enqueued: false,
          context_id: ^context_id,
-         waiting_for_context: true
+         waiting_for_context: true,
+         native_start_ms: start_ms
        }},
       acc ->
-        delegation = %{Map.fetch!(acc.delegations, id) | waiting_for_context: false}
-        acc = %{acc | delegations: Map.put(acc.delegations, id, delegation)}
-        flush_delegation(acc, id)
+        if start_ms >= boundary do
+          delegation = %{Map.fetch!(acc.delegations, id) | waiting_for_context: false}
+          acc = %{acc | delegations: Map.put(acc.delegations, id, delegation)}
+          flush_delegation(acc, id)
+        else
+          fail_unbound_ptt_delegation(acc, id)
+        end
 
       _, acc ->
         acc
     end)
   end
+
+  defp flush_waiting_delegations(state, _context_id), do: state
 
   defp fail_waiting_delegations(state, context_id, reason_message) do
     Enum.reduce(state.delegations, state, fn
@@ -1679,14 +1711,12 @@ defmodule SalixVoice.CallActor do
     end
   end
 
-  defp fail_missing_marker_ptt_delegation(state, id) do
-    msg =
-      "The screen context marker for this request is missing or invalid. Ask the caller to press and hold to try again."
-
-    if state.ptt_context,
-      do: to_socket(state, {:voice_call, :context_failed, state.ptt_context.id})
-
-    fail_delegation(state, id, msg)
+  defp fail_unbound_ptt_delegation(state, id) do
+    fail_delegation(
+      state,
+      id,
+      "Screen context is not linked to this speech turn. Ask the user to try again."
+    )
   end
 
   defp fail_invalid_ptt_delegation(state, id, context_id, msg) do

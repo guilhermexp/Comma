@@ -133,6 +133,11 @@ defmodule SalixVoice.CallActorTest do
     :ok
   end
 
+  defp emit_native_turn(model, context_id, native_id) do
+    Fake.emit(model, {:context_started, context_id, 0})
+    Fake.emit(model, {:user_turn_started, native_id, 1})
+  end
+
   defp request(info, extra) do
     Map.merge(
       %{
@@ -1202,7 +1207,13 @@ defmodule SalixVoice.CallActorTest do
                 }}
              )
 
-    emit(model, call, {:delegation, "del_pending_handoff", 100, "[ptt-context:1] Work on screen"})
+    emit_native_turn(model, 1, "turn_fixture_1")
+
+    emit(
+      model,
+      call,
+      {:delegation, "del_pending_handoff", 100, "Work on screen", "turn_fixture_1"}
+    )
 
     assert_receive {:ingress, ^group, _,
                     %{"event_type" => "voice.delegation", "message_id" => "del_pending_handoff"},
@@ -1250,7 +1261,13 @@ defmodule SalixVoice.CallActorTest do
              GenServer.call(call, {:context, %{context_id: 1, status: :pending}})
 
     # Delegation emitted while context is pending
-    emit(model, call, {:delegation, "del_pending_ctx", 100, "[ptt-context:1] Summarize screen"})
+    emit_native_turn(model, 1, "turn_fixture_pending")
+
+    emit(
+      model,
+      call,
+      {:delegation, "del_pending_ctx", 100, "Summarize screen", "turn_fixture_pending"}
+    )
 
     # Caller hangs up while context is still pending
     send(call, {:voice_carrier, :hangup, :normal})
@@ -1286,7 +1303,8 @@ defmodule SalixVoice.CallActorTest do
              )
 
     # Delegation emitted into settle window
-    emit(model, call, {:delegation, "del_settle", 100, "[ptt-context:2] Summarize screen"})
+    emit_native_turn(model, 2, "turn_fixture_settle")
+    emit(model, call, {:delegation, "del_settle", 100, "Summarize screen", "turn_fixture_settle"})
 
     # Hang up immediately during settle
     send(call, {:voice_carrier, :hangup, :normal})
@@ -1316,7 +1334,8 @@ defmodule SalixVoice.CallActorTest do
                {:context, %{context_id: 1, status: :complete, text: "Screen", attachments: []}}
              )
 
-    emit(model, call, {:delegation, "del_refused", 100, "[ptt-context:1] Inspect screen"})
+    emit_native_turn(model, 1, "turn_fixture_refused")
+    emit(model, call, {:delegation, "del_refused", 100, "Inspect screen", "turn_fixture_refused"})
 
     assert_receive {:fake_model, ^model, {:append, :final, "del_refused", _}}, 1_000
 
@@ -1362,7 +1381,13 @@ defmodule SalixVoice.CallActorTest do
                 }}
              )
 
-    emit(model, call, {:delegation, "del_flight_failed", 100, "[ptt-context:3] Summarize screen"})
+    emit_native_turn(model, 3, "turn_fixture_flight_failed")
+
+    emit(
+      model,
+      call,
+      {:delegation, "del_flight_failed", 100, "Summarize screen", "turn_fixture_flight_failed"}
+    )
 
     # Wait until forwarding is in flight at the Router boundary
     assert_receive {:delegation_in_flight, task_pid}, 1_000
@@ -1422,7 +1447,13 @@ defmodule SalixVoice.CallActorTest do
                 }}
              )
 
-    emit(model, call, {:delegation, "del_flight_ok", 100, "[ptt-context:4] Summarize screen"})
+    emit_native_turn(model, 4, "turn_fixture_flight_ok")
+
+    emit(
+      model,
+      call,
+      {:delegation, "del_flight_ok", 100, "Summarize screen", "turn_fixture_flight_ok"}
+    )
 
     assert_receive {:delegation_in_flight, task_pid}, 1_000
 
@@ -1493,7 +1524,13 @@ defmodule SalixVoice.CallActorTest do
                 }}
              )
 
-    emit(model, call, {:delegation, "del_stalled", 100, "[ptt-context:5] Summarize screen"})
+    emit_native_turn(model, 5, "turn_fixture_stalled")
+
+    emit(
+      model,
+      call,
+      {:delegation, "del_stalled", 100, "Summarize screen", "turn_fixture_stalled"}
+    )
 
     assert_receive {:delegation_in_flight, _task_pid}, 1_000
 
@@ -1557,7 +1594,13 @@ defmodule SalixVoice.CallActorTest do
              )
 
     # Delegation 1 emitted -> flushes -> enqueued to Router -> ACKed immediately
-    emit(model, call, {:delegation, "del_first_acked", 100, "[ptt-context:1] First task"})
+    emit_native_turn(model, 1, "turn_fixture_first_acked")
+
+    emit(
+      model,
+      call,
+      {:delegation, "del_first_acked", 100, "First task", "turn_fixture_first_acked"}
+    )
 
     assert_receive {:ingress, ^group, _,
                     %{"event_type" => "voice.delegation", "message_id" => "del_first_acked"}, _,
@@ -1597,7 +1640,14 @@ defmodule SalixVoice.CallActorTest do
              )
 
     # Delegation 2 emitted -> forwarding starts and hits interceptor barrier
-    emit(model, call, {:delegation, "del_second_held", 200, "[ptt-context:2] Second task"})
+    emit_native_turn(model, 2, "turn_fixture_second_held")
+
+    emit(
+      model,
+      call,
+      {:delegation, "del_second_held", 200, "Second task", "turn_fixture_second_held"}
+    )
+
     assert_receive {:second_delegation_in_flight, second_task_pid}, 1_000
 
     # Caller hangs up while second delegation forwarding is in flight
@@ -1681,7 +1731,14 @@ defmodule SalixVoice.CallActorTest do
                 }}
              )
 
-    emit(model, call, {:delegation, "del_post_budget", 100, "[ptt-context:1] Post budget task"})
+    emit_native_turn(model, 1, "turn_fixture_post_budget")
+
+    emit(
+      model,
+      call,
+      {:delegation, "del_post_budget", 100, "Post budget task", "turn_fixture_post_budget"}
+    )
+
     assert_receive {:delegation_in_flight, task_pid}, 1_000
 
     # Caller hangs up while delegation enqueue is in flight
@@ -1772,7 +1829,13 @@ defmodule SalixVoice.CallActorTest do
              )
 
     # Delegation emitted and ACKed by Router
-    emit(model, call, {:delegation, "del_live_delivered", 100, "[ptt-context:1] Live task"})
+    emit_native_turn(model, 1, "turn_fixture_live_delivered")
+
+    emit(
+      model,
+      call,
+      {:delegation, "del_live_delivered", 100, "Live task", "turn_fixture_live_delivered"}
+    )
 
     assert_receive {:ingress, ^group, _,
                     %{"event_type" => "voice.delegation", "message_id" => "del_live_delivered"},
@@ -1973,7 +2036,8 @@ defmodule SalixVoice.CallActorTest do
                {:context, %{context_id: 1, status: :complete, text: "Screen 1", attachments: []}}
              )
 
-    emit(model, call, {:delegation, "del_accepted", 50, "[ptt-context:1] First task"})
+    emit_native_turn(model, 1, "turn_fixture_accepted")
+    emit(model, call, {:delegation, "del_accepted", 50, "First task", "turn_fixture_accepted"})
     assert_receive {:shutdown_forwarding, first_task}, 1_000
     first_monitor = Process.monitor(first_task)
     send(first_task, :release)
@@ -1995,7 +2059,8 @@ defmodule SalixVoice.CallActorTest do
                {:context, %{context_id: 2, status: :complete, text: "Screen 2", attachments: []}}
              )
 
-    emit(model, call, {:delegation, "del_forced", 100, "[ptt-context:2] Second task"})
+    emit_native_turn(model, 2, "turn_fixture_forced")
+    emit(model, call, {:delegation, "del_forced", 100, "Second task", "turn_fixture_forced"})
     assert_receive {:shutdown_forwarding, task}, 1_000
     on_exit(fn -> send(task, :release) end)
     fixture

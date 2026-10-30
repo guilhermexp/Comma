@@ -264,7 +264,17 @@ O modelo de voz MUST delegar ao Router pedidos sobre a tela ou ferramentas. O ap
 
 ### Requirement: Associação do print ao pedido
 
-Cada gesto MUST ter `context_id` crescente por chamada e estado `pending/complete/failed/cancelled`. A delegação MUST trazer `[ptt-context:N]` e ser vinculada ao ID na chegada. O CallActor MUST esperar o contexto exato e entregar seus anexos VFS uma única vez. MUST NOT transferir print atrasado a outro pedido; associação ausente/antiga MUST falhar explicitamente.
+Cada gesto MUST ter `context_id` crescente por chamada e estado `pending/complete/failed/cancelled`. O CallActor MUST vincular o print ao turno nativo via `user_bidi_turn_id`, `turn.start_ms` e ACK de `pending`. MUST esperar contexto e ACK, entregar anexos VFS uma vez e falhar sem vínculo válido. MUST NOT exigir marcador textual, adivinhar pelo último contexto ou transferir imagens entre pedidos.
+
+#### Scenario: Fronteira nativa do gesto
+
+- **WHEN** o serviço confirma o append de `pending` com `session.context.appended` e delega um turno nativo
+- **THEN** o ID `user_bidi_turn_id` corresponde ao `turn.created` congelado no mesmo contexto, e `turn.start_ms` é maior ou igual ao `end_ms` desse ACK; ACK de contexto completo não desloca essa fronteira
+
+#### Scenario: Réplica após gesto silencioso
+
+- **WHEN** um novo gesto substitui um gesto sem fala reconhecida
+- **THEN** a sessão quente continua, sem encerramento por falta de turno anterior; fala antiga anterior à nova fronteira falha sem consumir a imagem nova
 
 #### Scenario: Referência do upload
 
@@ -274,7 +284,17 @@ Cada gesto MUST ter `context_id` crescente por chamada e estado `pending/complet
 #### Scenario: Pergunta com print
 
 - **WHEN** a delegação do gesto chega antes de terminar o upload do print e recorte
-- **THEN** não há envio prematuro ao Router; a delegação espera o `complete` do mesmo `context_id` e recebe os dois anexos VFS com os bytes enviados
+- **THEN** não há envio prematuro ao Router; a delegação espera o `complete` e o ACK nativo do `pending` do mesmo `context_id`, dentro do prazo de 150 s, e recebe os dois anexos VFS com os bytes enviados
+
+#### Scenario: Pixels após leitura do anexo
+
+- **WHEN** o Router lê pelo `fs.read_file` o anexo de tela do turno delegado e o modelo aceita imagens
+- **THEN** a requisição ao modelo contém os bytes da imagem pelo caminho existente de `ImageRefs`, não somente nome, localizador ou confirmação de upload
+
+#### Scenario: Upload concluído sem ACK nativo
+
+- **WHEN** o upload termina e a delegação chega, mas o serviço não confirma o append nativo do contexto
+- **THEN** o pedido não é enviado ao Router; o prazo original de 150 s produz falha explícita, e um `complete` atrasado não reativa o contexto
 
 #### Scenario: Anexos consumidos
 
@@ -298,8 +318,8 @@ Cada gesto MUST ter `context_id` crescente por chamada e estado `pending/complet
 
 #### Scenario: Delegação sem associação válida
 
-- **WHEN** o pedido de delegação não tem marcador válido do contexto admitido ou aponta a contexto antigo
-- **THEN** a chamada dá erro limitado e acionável para repetir o pedido; não executa silenciosamente um pedido de tela sem os anexos correspondentes
+- **WHEN** o pedido de delegação não traz correlação válida com o turno nativo do contexto admitido ou referencia turno anterior à fronteira do contexto ou inexistente
+- **THEN** a chamada emite falha explícita e limitada para repetir o pedido; não executa silenciosamente um pedido de tela sem os anexos correspondentes nem cancela contextos mais recentes
 
 #### Scenario: Soltura antes do ACK de controle
 

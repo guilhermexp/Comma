@@ -23,6 +23,15 @@ defmodule SalixVoice.Model.CodexTest do
     def notify_conversation(_, _), do: :ok
   end
 
+  defmodule ImageRequestConsumer do
+    def request_config(opts), do: SalixLlm.Provider.request_config(opts)
+
+    def complete({:encoded_provider_request, protocol, body}, _tools, _opts) do
+      send(self(), {:screen_model_request, protocol, Jason.decode!(body)})
+      {:final, "fixture answer"}
+    end
+  end
+
   defmodule ObservedIngress do
     def enqueue_group_router_im_provider_message(group, content, metadata, source, opts) do
       observer = Application.get_env(:salix_voice, :codex_test_pid)
@@ -52,8 +61,22 @@ defmodule SalixVoice.Model.CodexTest do
     end
 
     def handle_in({data, [opcode: :text]}, state) do
-      send(state.test, {:sent, Jason.decode!(data)})
-      {:ok, state}
+      event = Jason.decode!(data)
+      send(state.test, {:sent, event})
+
+      if event["type"] == "session.context.append" and Map.get(state, :ack_context, true) do
+        start_ms = Map.get(state, :context_ms, 0)
+        end_ms = start_ms + 100
+        ack = %{"type" => "session.context.appended", "start_ms" => start_ms, "end_ms" => end_ms}
+        {:push, {:text, Jason.encode!(ack)}, Map.put(state, :context_ms, end_ms)}
+      else
+        {:ok, state}
+      end
+    end
+
+    def handle_info({:ack_context, enabled}, state) do
+      send(state.test, {:ack_context, enabled})
+      {:ok, Map.put(state, :ack_context, enabled)}
     end
 
     def handle_info({:push, event}, state), do: {:push, {:text, Jason.encode!(event)}, state}
@@ -208,15 +231,19 @@ defmodule SalixVoice.Model.CodexTest do
       {:push,
        %{
          "type" => "delegation.created",
+         "offset_ms" => 4800,
          "item" => %{
            "target" => "client",
            "id" => "del_1",
+           "user_bidi_turn_id" => "turn_native",
            "content" => [%{"type" => "input_text", "text" => "tomorrow at nine"}]
          }
        }}
     )
 
-    assert_receive {:voice_model, ^ref, {:delegation, "del_1", nil, "tomorrow at nine"}}
+    assert_receive {:voice_model, ^ref,
+                    {:delegation, "del_1", 4800, "tomorrow at nine", "turn_native"}}
+
     text = String.duplicate("é😀", 180)
     Codex.append(pid, :commentary, "del_1", text)
 
@@ -452,6 +479,49 @@ defmodule SalixVoice.Model.CodexTest do
              %{type: "delegation", id: "del_call", status: "answered"}
            ]
 
+    # Manual calls retain their supported transcript-ledger fallback when
+    # the native handoff omits its optional content.
+    send(
+      server,
+      {:push,
+       %{
+         "type" => "turn.done",
+         "turn" => %{"role" => "user", "transcript" => "Find my meetings for tomorrow"}
+       }}
+    )
+
+    send(
+      server,
+      {:push,
+       %{"type" => "delegation.created", "item" => %{"target" => "client", "id" => "del_ledger"}}}
+    )
+
+    manual_messages = wait_messages(group, conversation["conversation_id"], 50, "del_ledger")
+
+    assert manual_delegation =
+             Enum.find(
+               manual_messages,
+               &(get_in(&1, ["agent_input", "trusted_origin", "provider_context", "message_id"]) ==
+                   "del_ledger")
+             )
+
+    assert manual_delegation["agent_input"]["content"] =~ "Find my meetings for tomorrow"
+    refute manual_delegation["agent_input"]["content"] =~ "Create a reminder"
+
+    assert {:ok, _} =
+             SalixIM.Provider.call_api(router["agent_id"], "voice", "voice.say", %{
+               "connect_id" => connect["connect_id"],
+               "params" => %{
+                 "call_id" => answer.call_id,
+                 "delegation_id" => "del_ledger",
+                 "text" => "Checked the calendar."
+               }
+             })
+
+    assert_receive {:sent,
+                    %{"type" => "delegation.context.append", "delegation_item_id" => "del_ledger"}},
+                   2_000
+
     assert {:ok, _} = Electron.hang_up(answer.call_id, scope)
     assert_receive {:sent, %{"type" => "session.close"}}, 2_000
     send(server, {:push, %{"type" => "session.closed"}})
@@ -463,7 +533,7 @@ defmodule SalixVoice.Model.CodexTest do
     assert {:error, :not_configured} = SalixVoice.admit(%{attrs | carrier: :websocket})
   end
 
-  test "a push_to_talk Electron call runs with 600s ceiling, skips profile/greeting, delegates to Router, and ingests context" do
+  test "a native push_to_talk handoff carries its screen pixels without a model-generated context marker" do
     alias SalixVoice.Carrier.Electron
     %{tenant: tenant, group: group, router: router, connect: connect} = ptt_fixture()
 
@@ -541,12 +611,9 @@ defmodule SalixVoice.Model.CodexTest do
                     %{
                       "type" => "session.context.append",
                       "channel" => "commentary",
-                      "content" => [%{"type" => "input_text", "text" => pending_append}]
+                      "content" => [%{"type" => "input_text", "text" => _pending_append}]
                     }},
                    2_000
-
-    assert String.contains?(pending_append, "[ptt-context:1]")
-    assert String.starts_with?(pending_append, "Quiet context, do not speak: ")
 
     assert {:ok, %{accepted: true}} =
              Electron.context(answer.call_id, scope, %{
@@ -565,7 +632,26 @@ defmodule SalixVoice.Model.CodexTest do
                    2_000
 
     assert String.contains?(complete_append, context_text)
-    assert String.starts_with?(complete_append, "Quiet context, do not speak: ")
+
+    send(
+      server,
+      {:push,
+       %{
+         "type" => "turn.created",
+         "turn" => %{
+           "id" => "turn_screen",
+           "role" => "user",
+           "start_ms" => 3800,
+           "end_ms" => 4000
+         }
+       }}
+    )
+
+    send(
+      server,
+      {:push,
+       %{"type" => "input_transcript.added", "item" => %{"text" => "Look at this screenshot"}}}
+    )
 
     # When delegation happens, pending attachments are passed to Router ingress once
     send(
@@ -575,11 +661,82 @@ defmodule SalixVoice.Model.CodexTest do
          "type" => "delegation.created",
          "item" => %{
            "target" => "client",
+           "id" => "del_malformed",
+           "user_bidi_turn_id" => "turn_screen",
+           "content" => nil
+         }
+       }}
+    )
+
+    assert_receive {:sent,
+                    %{
+                      "type" => "delegation.context.append",
+                      "delegation_item_id" => "del_malformed"
+                    } = malformed_response},
+                   2_000
+
+    refute Map.has_key?(malformed_response, "channel")
+    refute_receive {:ingress, ^group, _content, %{"event_id" => "del_malformed"}, _, _}, 100
+
+    send(
+      server,
+      {:push,
+       %{
+         "type" => "turn.done",
+         "turn" => %{
+           "id" => "turn_previous",
+           "role" => "user",
+           "transcript" => "An earlier unrelated question"
+         }
+       }}
+    )
+
+    send(
+      server,
+      {:push,
+       %{
+         "type" => "delegation.created",
+         "item" => %{
+           "target" => "client",
+           "id" => "del_empty",
+           "user_bidi_turn_id" => "turn_screen",
+           "content" => []
+         }
+       }}
+    )
+
+    assert_receive {:sent,
+                    %{
+                      "type" => "delegation.context.append",
+                      "delegation_item_id" => "del_empty"
+                    } = empty_response},
+                   2_000
+
+    assert get_in(empty_response, ["content", Access.at(0), "text"]) =~ "no readable request"
+    refute_receive {:ingress, ^group, _content, %{"event_id" => "del_empty"}, _, _}, 100
+
+    send(
+      server,
+      {:push,
+       %{
+         "type" => "delegation.created",
+         "item" => %{
+           "target" => "client",
            "id" => "del_ptt_1",
+           "user_bidi_turn_id" => "turn_screen",
            "content" => [
-             %{"type" => "input_text", "text" => "[ptt-context:1] Look at this screenshot"}
+             %{"type" => "input_text", "text" => "Look at this screenshot"}
            ]
          }
+       }}
+    )
+
+    send(
+      server,
+      {:push,
+       %{
+         "type" => "turn.done",
+         "turn" => %{"role" => "user", "transcript" => "Look at this screenshot"}
        }}
     )
 
@@ -613,6 +770,103 @@ defmodule SalixVoice.Model.CodexTest do
     assert size == byte_size(image)
     assert {:ok, ^image} = SalixAgent.AgentWorkspace.read(router["agent_id"], path)
 
+    # Continue from the actual handoff attachment through fs.read_file and
+    # request materialization, rather than stopping at upload/VFS acceptance.
+    agent_id = router["agent_id"]
+
+    read_content =
+      SalixAgent.Tools.read_file(%{"path" => path}, %{
+        agent_id: agent_id,
+        model_supports_images: true
+      })
+
+    session =
+      SalixVerifiedKernel.Session.new(agent_id, "ptt-screen-consumer")
+      |> SalixVerifiedKernel.Session.export()
+      |> Map.put(:messages, [
+        %{
+          id: 1,
+          role: "tool",
+          tool_name: "fs.read_file",
+          tool_call_id: "read-screen",
+          content: read_content
+        }
+      ])
+      |> SalixVerifiedKernel.Session.open()
+
+    previous_llm = Application.fetch_env(:salix_agent, :llm)
+    Application.put_env(:salix_agent, :llm, ImageRequestConsumer)
+
+    on_exit(fn ->
+      case previous_llm do
+        {:ok, value} -> Application.put_env(:salix_agent, :llm, value)
+        :error -> Application.delete_env(:salix_agent, :llm)
+      end
+    end)
+
+    opts = %{"model" => "screen-fixture", "supports_images" => true, "metering_disabled" => true}
+    {protocol, cfg, true} = SalixAgent.LLM.request_config(opts)
+
+    config = %{
+      "role" => "router",
+      "canonical_router" => true,
+      "disclosure" => %{},
+      "protocol" => protocol,
+      "cfg" => cfg,
+      "tools" => [],
+      "mode" => "complete"
+    }
+
+    reader = SalixAgent.ImageRefs.reader(%{agent_id: agent_id, model_supports_images: true})
+
+    assert {:ok, encoded_request, _} =
+             SalixVerifiedKernel.Session.query(session, :round_request, config, reader)
+
+    assert {:final, "fixture answer"} =
+             SalixAgent.LLM.complete(
+               {:encoded_provider_request, protocol, encoded_request},
+               [],
+               opts
+             )
+
+    assert_receive {:screen_model_request, "chat", model_request}
+
+    image_blocks =
+      for %{"content" => content} <- model_request["messages"],
+          is_list(content),
+          %{"type" => "image_url"} = block <- content,
+          do: block
+
+    assert [%{"image_url" => %{"url" => "data:image/png;base64," <> encoded_pixels}}] =
+             image_blocks
+
+    assert Base.decode64!(encoded_pixels) == image
+
+    send(
+      server,
+      {:push,
+       %{
+         "type" => "turn.created",
+         "turn" => %{
+           "id" => "turn_followup",
+           "role" => "user",
+           "start_ms" => 6000,
+           "end_ms" => 6200
+         }
+       }}
+    )
+
+    send(
+      server,
+      {:push, %{"type" => "input_transcript.added", "item" => %{"text" => "Second question"}}}
+    )
+
+    send(
+      server,
+      {:push,
+       %{"type" => "turn.done", "turn" => %{"role" => "user", "transcript" => "Second question"}}}
+    )
+
     # Second delegation does NOT receive the same attachments again
     send(
       server,
@@ -622,7 +876,8 @@ defmodule SalixVoice.Model.CodexTest do
          "item" => %{
            "target" => "client",
            "id" => "del_ptt_2",
-           "content" => [%{"type" => "input_text", "text" => "[ptt-context:1] Second question"}]
+           "user_bidi_turn_id" => "turn_followup",
+           "content" => [%{"type" => "input_text", "text" => "Second question"}]
          }
        }}
     )
@@ -677,7 +932,148 @@ defmodule SalixVoice.Model.CodexTest do
     assert ended["voice_pending_delegation_ids"] == ["del_ptt_2"]
   end
 
-  test "push_to_talk correlated context regressions: delegation before upload, invalid/stale markers, superseding gestures, and failure/cancel handling" do
+  test "a silent gesture keeps its warm session and late native speech cannot steal the next screen" do
+    alias SalixVoice.Carrier.Electron
+
+    %{scope: scope, answer: answer, server: server, group: group, path: path} =
+      setup_ptt_call(%{})
+
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{context_id: 90, status: :pending})
+
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{
+               context_id: 90,
+               status: :complete,
+               text: "Old screen",
+               attachments: []
+             })
+
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{context_id: 91, status: :pending})
+
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{
+               context_id: 91,
+               status: :complete,
+               text: "Current screen",
+               attachments: [%{"path" => path, "name" => "screen.png", "mime" => "image/png"}]
+             })
+
+    for _ <- 1..4, do: assert_receive({:sent, %{"type" => "session.context.append"}}, 2_000)
+    refute_receive {:sent, %{"type" => "session.close"}}, 100
+
+    # The native turn arrives after the new context, but starts before its
+    # acknowledged native boundary (300ms). Its transcription has no marker.
+    send_native_handoff(server, "del_late_native", "turn_late", "Old question", 250)
+
+    assert_receive {:sent,
+                    %{
+                      "type" => "delegation.context.append",
+                      "delegation_item_id" => "del_late_native"
+                    }},
+                   2_000
+
+    refute_receive {:ingress, ^group, _content, %{"event_id" => "del_late_native"}, _, _}, 100
+
+    # A turn between the pending ACK and complete ACK belongs to the new
+    # gesture; the complete ACK must not move the boundary to 400ms.
+    send_native_handoff(server, "del_current_native", "turn_current", "Current question", 350)
+
+    assert_receive {:ingress, ^group, content, %{"event_id" => "del_current_native"}, _, opts},
+                   2_000
+
+    assert content =~ "Current screen"
+    refute content =~ "Old screen"
+    assert [%{"path" => ^path}] = opts[:attachments]
+    assert {:ok, _} = Electron.hang_up(answer.call_id, scope)
+    assert_receive {:sent, %{"type" => "session.close"}}, 2_000
+    send(server, {:push, %{"type" => "session.closed"}})
+  end
+
+  test "an invalid native context ACK publishes one terminal failure to the Electron peer" do
+    alias SalixVoice.Carrier.Electron
+    %{scope: scope, answer: answer, server: server, group: group} = setup_ptt_call(%{})
+    send(server, {:ack_context, false})
+    assert_receive {:ack_context, false}
+
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{context_id: 1, status: :pending})
+
+    assert_receive {:sent, %{"type" => "session.context.append"}}, 2_000
+    send_native_handoff(server, "del_invalid_ack", "turn_invalid_ack", "Describe the screen")
+    send(server, {:push, %{"type" => "session.context.appended"}})
+
+    assert_receive {:sent,
+                    %{
+                      "type" => "delegation.context.append",
+                      "delegation_item_id" => "del_invalid_ack"
+                    }},
+                   2_000
+
+    # A repeated terminal control is idempotent and synchronizes the public
+    # event page after the native failure, without inspecting actor state.
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{context_id: 1, status: :failed})
+
+    assert {:ok, page} = Electron.events(answer.call_id, scope, 0)
+
+    assert [%{type: "context_failed", context_id: 1}] =
+             Enum.filter(page.events, &(&1[:type] == "context_failed"))
+
+    refute_receive {:ingress, ^group, _content, %{"event_id" => "del_invalid_ack"}, _, _}, 100
+    assert {:ok, _} = Electron.hang_up(answer.call_id, scope)
+    assert_receive {:sent, %{"type" => "session.close"}}, 2_000
+    send(server, {:push, %{"type" => "session.closed"}})
+  end
+
+  test "completed upload without a native context ACK fails within the existing context budget" do
+    alias SalixVoice.Carrier.Electron
+
+    %{scope: scope, answer: answer, server: server, group: group, path: path} =
+      setup_ptt_call(%{context_timeout_ms: 500})
+
+    send(server, {:ack_context, false})
+    assert_receive {:ack_context, false}
+
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{context_id: 1, status: :pending})
+
+    assert {:ok, %{accepted: true}} =
+             Electron.context(answer.call_id, scope, %{
+               context_id: 1,
+               status: :complete,
+               text: "Screen uploaded",
+               attachments: [%{"path" => path, "name" => "screen.png", "mime" => "image/png"}]
+             })
+
+    send_native_handoff(server, "del_missing_ack", "turn_missing_ack", "Describe the screen")
+    refute_receive {:ingress, ^group, _content, %{"event_id" => "del_missing_ack"}, _, _}, 100
+
+    assert_receive {:sent,
+                    %{
+                      "type" => "delegation.context.append",
+                      "delegation_item_id" => "del_missing_ack"
+                    } = failure},
+                   2_000
+
+    refute Map.has_key?(failure, "channel")
+    refute_receive {:ingress, ^group, _content, %{"event_id" => "del_missing_ack"}, _, _}, 100
+
+    assert {:error, :invalid_input} =
+             Electron.context(answer.call_id, scope, %{
+               context_id: 1,
+               status: :complete,
+               text: "Too late",
+               attachments: []
+             })
+
+    assert {:ok, _} = Electron.hang_up(answer.call_id, scope)
+    assert_receive {:sent, %{"type" => "session.close"}}, 2_000
+    send(server, {:push, %{"type" => "session.closed"}})
+  end
+
+  test "push_to_talk native turn correlation: pending upload, missing or stale IDs, supersession, cancellation and timeout" do
     alias SalixVoice.Carrier.Electron
 
     previous_timers = Application.get_env(:salix_voice, :timers)
@@ -743,29 +1139,17 @@ defmodule SalixVoice.Model.CodexTest do
     assert_receive {:sent,
                     %{
                       "type" => "session.context.append",
-                      "content" => [%{"text" => quiet_10}]
+                      "channel" => "commentary",
+                      "content" => [%{"text" => _quiet_10}]
                     }},
                    2_000
 
-    assert String.contains?(quiet_10, "[ptt-context:10]")
-
     # GPT Live sends delegation while upload is still in progress
-    send(
+    send_native_handoff(
       server,
-      {:push,
-       %{
-         "type" => "delegation.created",
-         "item" => %{
-           "target" => "client",
-           "id" => "del_before_upload",
-           "content" => [
-             %{
-               "type" => "input_text",
-               "text" => "[ptt-context:10] Check screenshot before upload"
-             }
-           ]
-         }
-       }}
+      "del_before_upload",
+      "turn_upload",
+      "Check screenshot before upload"
     )
 
     # Delegation is retained, NOT enqueued to Router yet
@@ -812,9 +1196,11 @@ defmodule SalixVoice.Model.CodexTest do
            ] = Enum.filter(blocks, &(&1["type"] == "image"))
 
     assert {:ok, ^image} = SalixAgent.AgentWorkspace.read(router["agent_id"], path)
-    # --- 2. Missing or malformed marker fails closed without Router ingress ---
+    # Missing native turn identity fails closed without Router ingress.
     assert {:ok, %{accepted: true}} =
              Electron.context(answer.call_id, scope, %{context_id: 20, status: :pending})
+
+    send_native_turn(server, "turn_unlinked")
 
     send(
       server,
@@ -823,8 +1209,8 @@ defmodule SalixVoice.Model.CodexTest do
          "type" => "delegation.created",
          "item" => %{
            "target" => "client",
-           "id" => "del_missing_marker",
-           "content" => [%{"type" => "input_text", "text" => "Request without context marker"}]
+           "id" => "del_missing_turn",
+           "content" => [%{"type" => "input_text", "text" => "Request without turn identity"}]
          }
        }}
     )
@@ -834,13 +1220,13 @@ defmodule SalixVoice.Model.CodexTest do
     assert_receive {:sent,
                     %{
                       "type" => "delegation.context.append",
-                      "delegation_item_id" => "del_missing_marker"
+                      "delegation_item_id" => "del_missing_turn"
                     } = missing_response},
                    2_000
 
     refute Map.has_key?(missing_response, "channel")
 
-    # --- 3. Stale marker fails closed ---
+    # Unknown native turn fails without consuming or failing the newer context.
     send(
       server,
       {:push,
@@ -848,9 +1234,10 @@ defmodule SalixVoice.Model.CodexTest do
          "type" => "delegation.created",
          "item" => %{
            "target" => "client",
-           "id" => "del_stale_marker",
+           "id" => "del_stale_turn",
+           "user_bidi_turn_id" => "turn_unknown",
            "content" => [
-             %{"type" => "input_text", "text" => "[ptt-context:15] Stale marker request"}
+             %{"type" => "input_text", "text" => "Unknown turn request"}
            ]
          }
        }}
@@ -861,7 +1248,7 @@ defmodule SalixVoice.Model.CodexTest do
     assert_receive {:sent,
                     %{
                       "type" => "delegation.context.append",
-                      "delegation_item_id" => "del_stale_marker"
+                      "delegation_item_id" => "del_stale_turn"
                     } = stale_response},
                    2_000
 
@@ -871,20 +1258,8 @@ defmodule SalixVoice.Model.CodexTest do
     assert {:ok, %{accepted: true}} =
              Electron.context(answer.call_id, scope, %{context_id: 30, status: :pending})
 
-    send(
-      server,
-      {:push,
-       %{
-         "type" => "delegation.created",
-         "item" => %{
-           "target" => "client",
-           "id" => "del_superseded",
-           "content" => [
-             %{"type" => "input_text", "text" => "[ptt-context:30] Old gesture request"}
-           ]
-         }
-       }}
-    )
+    send_native_handoff(server, "del_superseded", "turn_old", "Old gesture request")
+    wait_delegation_pending(actor, "del_superseded")
 
     # Next gesture arrives before context 30 completes
     assert {:ok, %{accepted: true}} =
@@ -909,18 +1284,7 @@ defmodule SalixVoice.Model.CodexTest do
                attachments: []
              })
 
-    send(
-      server,
-      {:push,
-       %{
-         "type" => "delegation.created",
-         "item" => %{
-           "target" => "client",
-           "id" => "del_admitted",
-           "content" => [%{"type" => "input_text", "text" => "[ptt-context:31] Valid request"}]
-         }
-       }}
-    )
+    send_native_handoff(server, "del_admitted", "turn_admitted", "Valid request")
 
     # Admitted to Router
     assert_receive {:ingress, ^group, _content, %{"event_type" => "voice.delegation"}, _, _},
@@ -954,20 +1318,7 @@ defmodule SalixVoice.Model.CodexTest do
                    2_000
 
     # --- 5. Context cancellation fails waiting delegation explicitly without Router ingress ---
-    send(
-      server,
-      {:push,
-       %{
-         "type" => "delegation.created",
-         "item" => %{
-           "target" => "client",
-           "id" => "del_cancelled",
-           "content" => [
-             %{"type" => "input_text", "text" => "[ptt-context:32] Cancelled gesture"}
-           ]
-         }
-       }}
-    )
+    send_native_handoff(server, "del_cancelled", "turn_cancelled", "Cancelled gesture")
 
     assert {:ok, %{accepted: true}} =
              Electron.context(answer.call_id, scope, %{context_id: 32, status: :cancelled})
@@ -1008,18 +1359,7 @@ defmodule SalixVoice.Model.CodexTest do
     assert {:ok, %{accepted: true}} =
              Electron.context(answer.call_id, scope, %{context_id: 60, status: :pending})
 
-    send(
-      server,
-      {:push,
-       %{
-         "type" => "delegation.created",
-         "item" => %{
-           "target" => "client",
-           "id" => "del_context_timeout",
-           "content" => [%{"type" => "input_text", "text" => "[ptt-context:60] Wait for print"}]
-         }
-       }}
-    )
+    send_native_handoff(server, "del_context_timeout", "turn_timeout", "Wait for print")
 
     refute_receive {:sent, %{"delegation_item_id" => "del_context_timeout"}}, 1_200
 
@@ -1054,18 +1394,7 @@ defmodule SalixVoice.Model.CodexTest do
                attachments: []
              })
 
-    send(
-      server,
-      {:push,
-       %{
-         "type" => "delegation.created",
-         "item" => %{
-           "target" => "client",
-           "id" => "del_after_timeout",
-           "content" => [%{"type" => "input_text", "text" => "[ptt-context:61] Current request"}]
-         }
-       }}
-    )
+    send_native_handoff(server, "del_after_timeout", "turn_after_timeout", "Current request")
 
     assert_receive {:ingress, ^group, _content,
                     %{"event_type" => "voice.delegation", "message_id" => "del_after_timeout"},
@@ -1109,22 +1438,11 @@ defmodule SalixVoice.Model.CodexTest do
     assert {:ok, %{accepted: true}} =
              Electron.context(answer.call_id, scope, %{context_id: 10, status: :pending})
 
-    send(
+    send_native_handoff(
       server,
-      {:push,
-       %{
-         "type" => "delegation.created",
-         "item" => %{
-           "target" => "client",
-           "id" => "del_before_upload",
-           "content" => [
-             %{
-               "type" => "input_text",
-               "text" => "[ptt-context:10] Check screenshot before upload"
-             }
-           ]
-         }
-       }}
+      "del_before_upload",
+      "turn_upload",
+      "Check screenshot before upload"
     )
 
     refute_receive {:ingress, ^group, _content, %{"event_type" => "voice.delegation"}, _, _}, 100
@@ -1175,22 +1493,11 @@ defmodule SalixVoice.Model.CodexTest do
     assert {:ok, %{accepted: true}} =
              Electron.context(answer.call_id, scope, %{context_id: 11, status: :pending})
 
-    send(
+    send_native_handoff(
       server,
-      {:push,
-       %{
-         "type" => "delegation.created",
-         "item" => %{
-           "target" => "client",
-           "id" => "del_before_upload_no_att",
-           "content" => [
-             %{
-               "type" => "input_text",
-               "text" => "[ptt-context:11] What window is this?"
-             }
-           ]
-         }
-       }}
+      "del_before_upload_no_att",
+      "turn_no_image",
+      "What window is this?"
     )
 
     refute_receive {:ingress, ^group, _content, %{"event_id" => "del_before_upload_no_att"}, _,
@@ -1250,22 +1557,11 @@ defmodule SalixVoice.Model.CodexTest do
                attachments: attachments
              })
 
-    send(
+    send_native_handoff(
       server,
-      {:push,
-       %{
-         "type" => "delegation.created",
-         "item" => %{
-           "target" => "client",
-           "id" => "del_unsettled_superseded",
-           "content" => [
-             %{
-               "type" => "input_text",
-               "text" => "[ptt-context:70] First gesture waiting settle"
-             }
-           ]
-         }
-       }}
+      "del_unsettled_superseded",
+      "turn_old",
+      "First gesture waiting settle"
     )
 
     # Bounded wait until delegate is registered pending/enqueued:false before new pending
@@ -1296,23 +1592,19 @@ defmodule SalixVoice.Model.CodexTest do
                attachments: attachments
              })
 
-    send(
-      server,
-      {:push,
-       %{
-         "type" => "delegation.created",
-         "item" => %{
-           "target" => "client",
-           "id" => "del_new_gesture",
-           "content" => [
-             %{
-               "type" => "input_text",
-               "text" => "[ptt-context:71] Second gesture valid"
-             }
-           ]
-         }
-       }}
-    )
+    # Replaying an old native start cannot rebind that turn to the new screenshot.
+    send_native_handoff(server, "del_late_old", "turn_old", "Delayed old request")
+
+    assert_receive {:sent,
+                    %{
+                      "type" => "delegation.context.append",
+                      "delegation_item_id" => "del_late_old"
+                    }},
+                   2_000
+
+    refute_receive {:ingress, ^group, _content, %{"event_id" => "del_late_old"}, _, _}, 400
+
+    send_native_handoff(server, "del_new_gesture", "turn_new", "Second gesture valid")
 
     assert_receive {:ingress, ^group, _content, %{"event_id" => "del_new_gesture"}, _, _},
                    2_000
@@ -1368,22 +1660,11 @@ defmodule SalixVoice.Model.CodexTest do
                attachments: attachments
              })
 
-    send(
+    send_native_handoff(
       server,
-      {:push,
-       %{
-         "type" => "delegation.created",
-         "item" => %{
-           "target" => "client",
-           "id" => "del_unsettled_cancelled",
-           "content" => [
-             %{
-               "type" => "input_text",
-               "text" => "[ptt-context:80] Cancelled before settle"
-             }
-           ]
-         }
-       }}
+      "del_unsettled_cancelled",
+      "turn_cancelled",
+      "Cancelled before settle"
     )
 
     # Bounded wait until delegate is registered pending/enqueued:false before cancel
@@ -1409,6 +1690,35 @@ defmodule SalixVoice.Model.CodexTest do
     send(server, {:push, %{"type" => "session.closed"}})
   end
 
+  defp send_native_turn(server, native_turn_id, start_ms \\ 10_000) do
+    send(
+      server,
+      {:push,
+       %{
+         "type" => "turn.created",
+         "turn" => %{"id" => native_turn_id, "role" => "user", "start_ms" => start_ms}
+       }}
+    )
+  end
+
+  defp send_native_handoff(server, id, native_turn_id, request, start_ms \\ 10_000) do
+    send_native_turn(server, native_turn_id, start_ms)
+
+    send(
+      server,
+      {:push,
+       %{
+         "type" => "delegation.created",
+         "item" => %{
+           "target" => "client",
+           "id" => id,
+           "user_bidi_turn_id" => native_turn_id,
+           "content" => [%{"type" => "input_text", "text" => request}]
+         }
+       }}
+    )
+  end
+
   defp setup_ptt_call(opts) do
     alias SalixVoice.Carrier.Electron
 
@@ -1423,7 +1733,7 @@ defmodule SalixVoice.Model.CodexTest do
     timers =
       Map.merge(Map.new(previous_timers || []), %{
         delegation_settle_ms: Map.get(opts, :settle_ms, 10),
-        context_timeout_ms: 2_000
+        context_timeout_ms: Map.get(opts, :context_timeout_ms, 2_000)
       })
 
     Application.put_env(:salix_voice, :timers, timers)
