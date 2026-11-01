@@ -78,6 +78,7 @@ const testTransform = {
   } as unknown as OxcConfig,
 } satisfies UserConfig;
 const testExclude = ["**/node_modules/**", "**/dist/**", "**/out/**", "**/.vite/**"];
+const taskWindowEntranceTest = "apps/electron/test/task-window-entrance.test.ts";
 
 export default defineConfig({
   ...testTransform,
@@ -97,7 +98,7 @@ export default defineConfig({
           include: ["{apps,packages}/**/test/**/*.test.ts", "scripts/**/*.test.ts"],
           // Files may opt into jsdom with `@vitest-environment jsdom`.
           setupFiles: ["./packages/test-utils/src/setup-web-storage.ts"],
-          exclude: testExclude,
+          exclude: [...testExclude, taskWindowEntranceTest],
         },
       },
       {
@@ -111,6 +112,18 @@ export default defineConfig({
             "./packages/test-utils/src/setup-dom.ts",
           ],
           exclude: testExclude,
+        },
+      },
+      {
+        ...testTransform,
+        test: {
+          name: "task-window-entrance",
+          environment: "node",
+          include: [taskWindowEntranceTest],
+          setupFiles: ["./packages/test-utils/src/setup-web-storage.ts"],
+          exclude: testExclude,
+          // Measure real frame cadence after the parallel unit projects finish.
+          sequence: { groupOrder: 1 },
         },
       },
     ],

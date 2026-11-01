@@ -86,6 +86,10 @@ and the AppKit-owned menu items, need a run on a Mac.
 ## Client Harness
 
 - Vitest runs unit and component tests across Node and jsdom projects.
+- The `task-window-entrance` Vitest project runs after Node and jsdom, in the
+  same unit command. Its real Electron timing checks must not compete with
+  parallel unit projects. It needs macOS, the built renderer, and the native
+  backdrop addon; without those prerequisites the test remains skipped.
 - `clients/packages/test-utils/src/render.tsx` wraps React Testing Library
   render helpers.
 - `clients/packages/test-utils/src/native-bridge.ts` installs a deterministic

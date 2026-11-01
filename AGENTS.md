@@ -332,6 +332,8 @@ merely repeat the implementation or documentation.
 - Test business/user behavior; prefer E2E across runtime/UI/native boundaries.
   Fixes need regressions. Extend existing E2E; justify heavyweight setup. Do
   not test-wrap simple repo checks.
+- Keep real-window frame-cadence checks in the ordered `task-window-entrance`
+  Vitest project, after parallel Node/jsdom work. The full unit command includes it.
 - For modified tests, report old behavior, new behavior, and why.
 - If behavior changes lack tests, check PR `[test-not-required]` with a concrete
   reason before relying on `make test-policy`.
