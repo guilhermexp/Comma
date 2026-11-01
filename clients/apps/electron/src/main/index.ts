@@ -221,7 +221,7 @@ if (process.env.NODE_ENV === "test" && !app.commandLine.hasSwitch("lang")) {
   app.commandLine.appendSwitch("lang", "en-US");
 }
 
-const notch = new NotchService();
+const notch = new NotchService({ onOpenMainAppRoute: requestOpenMainAppRoute });
 const opaqueWindowBackgrounds = new OpaqueWindowBackgroundController(
   nativeTheme.shouldUseDarkColors
 );

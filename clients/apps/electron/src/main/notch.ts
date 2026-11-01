@@ -50,6 +50,7 @@ type SpawnNotchHost = (
 ) => ChildProcessWithoutNullStreams;
 
 export interface NotchServiceOptions {
+  onOpenMainAppRoute?: ((route: string) => void) | undefined;
   isSupportedPlatform?: (() => boolean) | undefined;
   pathExists?: ((path: string) => boolean) | undefined;
   resolveHostPath?: (() => string) | undefined;
@@ -114,6 +115,7 @@ export function isNotchHostEvent(value: unknown): value is NotchHostEvent {
 }
 
 export class NotchService {
+  readonly #onOpenMainAppRoute: ((route: string) => void) | undefined;
   readonly #isSupportedPlatform: () => boolean;
   readonly #pathExists: (path: string) => boolean;
   readonly #resolveHostPath: () => string;
@@ -134,11 +136,13 @@ export class NotchService {
   private lastHostRestore = Number.NEGATIVE_INFINITY;
 
   constructor({
+    onOpenMainAppRoute,
     isSupportedPlatform = isMacOS,
     pathExists = existsSync,
     resolveHostPath = defaultNotchHostPath,
     spawnHost = defaultSpawnNotchHost,
   }: NotchServiceOptions = {}) {
+    this.#onOpenMainAppRoute = onOpenMainAppRoute;
     this.#isSupportedPlatform = isSupportedPlatform;
     this.#pathExists = pathExists;
     this.#resolveHostPath = resolveHostPath;
@@ -496,6 +500,20 @@ export class NotchService {
     }
 
     const action = event.payload?.action;
+    if (action === "task:open") {
+      // NotchHost closes its panel before emitting this action (main.swift onOpen).
+      // Main keeps this projection after the main window (and its renderer) closes.
+      const task = this.retainedScene.tasks?.find(
+        (item) => item.id === event.payload?.value
+      );
+      if (task) {
+        const segments = [task.workspaceId, task.groupId, task.conversationId];
+        this.#onOpenMainAppRoute?.(
+          `/inbox/${segments.map(encodeURIComponent).join("/")}`
+        );
+      }
+      return;
+    }
     if (!action?.startsWith("window:")) {
       return;
     }
