@@ -21,3 +21,20 @@ defmodule SalixStore.TriageKeysTest do
     end
   end
 end
+
+defmodule SalixStore.VoiceCallKeysTest do
+  use ExUnit.Case, async: true
+
+  test "voice call segments have an isolated, validated call prefix" do
+    call_id = "vc_" <> String.duplicate("0", 26)
+
+    assert SalixStore.Keys.agent_voice_call_segments_prefix("router", call_id) ==
+             "agents/router/voice_calls/76635f#{String.duplicate("30", 26)}/segments/"
+
+    for invalid <- ["", "../other", "vc_invalid", nil] do
+      assert_raise ArgumentError, fn ->
+        SalixStore.Keys.agent_voice_call_segments_prefix("router", invalid)
+      end
+    end
+  end
+end

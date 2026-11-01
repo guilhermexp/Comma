@@ -4,55 +4,54 @@
 
 ## Comma iMessage
 
-Comma uses one shared iMessage account through the Willow Mac relay and official BlueBubbles. Comma owns the Workspace binding. Salix owns the provider connection and Router delivery.
-It takes private text and images, not groups, SMS, typing or other destinations. The Settings entry stays hidden, and starts no polling, until shared-account readiness is resolved.
-The retained API creates a ten-minute claim command that binds its sender and chat to the user's default Workspace. Authenticated operations cancel attempts and disconnect bindings.
+Comma uses one shared iMessage account through the Willow Mac relay and official BlueBubbles. Comma owns Workspace binding; Salix owns provider connection and Router delivery.
+Private text/images only: no groups, SMS, typing or other destinations. Settings stays hidden and polling off until shared-account readiness resolves.
+The retained API creates a ten-minute claim command binding sender and chat to the user's default Workspace. Authenticated operations cancel attempts or disconnect bindings.
 
 Server configuration: `COMMA_IMESSAGE_ENABLED`, `COMMA_IMESSAGE_RELAY_ID`, `COMMA_IMESSAGE_RELAY_BASE_URL`, `COMMA_IMESSAGE_RELAY_BEARER_TOKEN`, `COMMA_IMESSAGE_SHARED_HANDLE`, and `COMMA_IMESSAGE_SHARED_IDENTITY` (display name).
 Only the configured origin gets the bearer, without redirects. Sends require the binding's exact sender and chat.
 
-One PostgreSQL advisory lock serializes receiver passes, every five seconds. A new relay ID starts at the tail. Admission or explicit rejection precedes cursor advancement. Replay after a lost checkpoint uses the Session input identity and deduplication.
+One PostgreSQL advisory lock serializes receiver passes every five seconds. A new relay ID starts at the tail. Admission or explicit rejection precedes cursor advancement. Replay after a lost checkpoint uses Session input identity and deduplication.
 Malformed values and group messages get no private-chat authority.
-Limits: 1 MiB per event, ten images of 20 MiB per message, 1,000 expired claims pruned per pass, 120 s DB checkout per pass, bounded HTTP waits.
-A process pauses after three failed owning passes. Waiting for another owner does not reset the count. Restore the dependency and restart the receiver to resume from the saved cursor. Lock contention prevents a fixed total elapsed-time bound.
+Limits: 1 MiB/event, ten images of 20 MiB/message, 1,000 expired claims pruned/pass, 120 s DB checkout/pass, bounded HTTP waits.
+After three failed owning passes the process pauses. Waiting for another owner does not reset the count. Restore the dependency and restart to resume from the saved cursor. Lock contention prevents a fixed elapsed-time bound.
 
-A text or image send makes one HTTP attempt. Timeout, error or missing ACK returns `imessage_delivery_unknown`, `retryable=false`: Agent stops turn and asks for Messages verification. Relay message ID is ACK, not Apple delivery. No cross-call deduplication.
+A text or image send makes one HTTP attempt. Timeout, error or missing ACK returns `imessage_delivery_unknown`, `retryable=false`: Agent stops the turn and asks for Messages verification. Relay message ID is ACK, not Apple delivery. No cross-call deduplication.
 
-Before real acceptance, confirm the shared Apple identity, stop any previous relay consumer, and test locally with a separate relay origin and database. Preserve the previous configuration and data.
-Verify binding, inbound chat, text and image replies, disconnect and rebind with the test contact. Fixtures do not prove real delivery. A rollback disables the receiver and keeps binding tables.
+Before real acceptance, confirm the shared Apple identity, stop any previous relay consumer, and test locally with a separate relay origin and database. Preserve configuration and data.
+Verify binding, inbound chat, text and image replies, disconnect and rebind with the test contact. Fixtures do not prove real delivery. Rollback disables the receiver and keeps binding tables.
 
 ## Comma WeChat ClawBot
 
-Owners create five-minute QR attempts with new IDs and optional pairing codes. Channels polls sequentially every 3s, with 15s timeouts.
-Refresh retries activation; cancel/reconnect invalidate attempts. Retirement preserves previously active records only.
-Comma owns references; Salix owns credentials/peers/cursors/lifecycle. Setup locks the Workspace; HTTP holds no DB checkout.
-Activation rechecks authorization/references. Enablement requires persisted references and bot reservation. Disconnect retires current/pending connections.
+Owners create five-minute QR attempts with new IDs and optional pairing codes. Channels polls sequentially every 3s, timeout 15s.
+Refresh retries activation; cancel/reconnect invalidate attempts. Retirement preserves only previously active records.
+Comma owns references; Salix owns credentials/peers/cursors/lifecycle. Setup locks Workspace; HTTP holds no DB checkout.
+Activation rechecks authorization/references; enablement requires persisted references and bot reservation. Disconnect retires current/pending connections.
 CAS fences stale releases. Non-atomic S3 deletion requires reusable identity tombstones. Workspace migration preserves data.
 
 Tencent SDK needs OpenClaw Node; Elixir uses Req/OTP AES. QR URLs require approved WeChat HTTPS origins, no redirects.
-Browser responses omit tokens, forbid caching. Only scanned account's private messages enter its Workspace, never groups.
+Browser responses omit tokens and forbid caching. Only the scanned account's private messages enter its Workspace, never groups.
 
-Before staging, IM Connect stores one batch, limited to 100 messages/1 MiB. Oversized batches cannot advance the cursor.
-Polling drains pending heads before fetching. Revision CAS advances after Router admission or a product-command reply; the final head commits the cursor.
+Before staging, IM Connect stores one batch of ≤100 messages/1 MiB. Oversized batches cannot advance the cursor.
+Polling drains pending heads before fetching; revision CAS advances after Router admission or a product-command reply. The final head commits the cursor.
 Completed receipts skip downloads; legacy receipts replay through Router source-ID deduplication. Exit cannot complete unfinished receipts.
-A 30s lease reduces concurrency, not delivery authority. Stale workers may replay, but cannot advance newer state/context.
-After exit, polling resumes after lease expiry. Passes repeat 5s after completion; outages delay recovery.
-Pending inputs survive restart/deployment. Older binaries cannot drain them; use forward repair.
+A 30s lease reduces concurrency, not delivery authority. Stale workers may replay but cannot advance newer state/context.
+After exit, polling resumes after lease expiry; passes repeat 5s after completion, outages delay recovery.
+Pending inputs survive restart/deployment; older binaries cannot drain them. Use forward repair.
 
-Current text/transcripts supply authority, never quotes. Text/image/file/voice/video quotes parse once, without recursion.
+Current text/transcripts supply authority, never quotes. Text/image/file/voice/video quotes parse once without recursion.
 ID-only quotes resolve observed inputs/replies within one connect/peer: 10 direct items, 4 exact reads, no scans.
-Quotes have 64 KiB limit, seven-day logical expiry, not physical deletion. Missing originals stay explicit, without summary substitution.
-Quotes grant no Message/delivery authority or unobserved-history access.
+Quotes: 64 KiB, seven-day logical expiry, not physical deletion. Missing originals stay explicit, without summary substitution.
+Quotes grant no Message/delivery authority or access to unobserved history.
 
 Direct/quoted media share staging/Blob/VFS: 4 attachments, 10 MiB plaintext each. Unsupported items/failures stay explicit.
-Downloads share 15s soft budget, checked before requests/at chunks. Receive waits use remaining time; Blob/VFS excluded.
-CDN connections time out after 5s, no credentials/redirects. One transient retry shares budget; total wall time is unbounded.
+Downloads share a 15s soft budget, checked before requests/at chunks; receive waits use remaining time. Blob/VFS excluded.
+CDN connections time out after 5s; no credentials/redirects. One transient retry shares the budget; total wall time is unbounded.
 CDN URLs/keys stay private; path hashes confer no authority.
 Peer authorization precedes staging and Session admission. Raw voice/video need tools; receipts prove neither transcription nor understanding. Outbound quote bubbles remain unverified.
 
-Inline image syntax is removed. Native media uses `reply_image`/`reply_file`/`reply_video`.
-Video uses VFS/AES/CDN with mp4/mov/webm/mkv/avi paths, no transcoding or playback guarantees.
-Captions are separate; media failure can follow successful caption.
+Inline image syntax is removed; native media uses `reply_image`/`reply_file`/`reply_video`.
+Video uses VFS/AES/CDN with mp4/mov/webm/mkv/avi paths, no transcoding or playback guarantees. Captions are separate; media failure can follow a successful caption.
 
 No drafts or status text leave.
 Each peer actor keeps tickets/32 source IDs, refreshes at most every 4s, and stops after 30min or 60s idle.
@@ -79,22 +78,24 @@ User-sent locations, prior answers, internal host location unchanged. Native but
 
 ## Voice calls
 
-`CallActor` owns Twilio/WebSocket/Electron. Manual greets/records `voice.call_started/ended`. PTT skips greeting/profile wait and lifecycle rows/cards; metering remains.
+`CallActor` owns Twilio/WebSocket/Electron. Manual greets and records `voice.call_started/ended`; PTT skips greeting, profile wait and lifecycle rows/cards, not metering.
 Delegations settle/300 ms: caller text/last agent sentence via `ConversationServer -> ConversationActor`; Codex request/API offsets. `provider/chat_id/message_id=voice/call/delegation`; source `im_provider:voice:<connect>:<call>:<delegation>`.
 `im_api.voice.say`/`voice.note`/`voice.hang_up`: speak/quiet/end ≤10 s (optional farewell). Text ≤16000 B, chunks ≤1800 chars. IDs default to source; match Group/connect.
-Ended PTT `say`: original-chat text, canonical caller/connect/call/delegation; Actor dedupes call/delegation, rejects changed text. No Agent/provider wakeup/redial; other ended ops: `voice_call_ended`, no retry.
-PTT media closes now; forwarding/handoff ≤10 s, mailbox responsive. ACKed pending IDs → internal `voice.delegation_handoff`; no IDs, no terminal input. Never cancel/replay unknown work. Refusal is final. Force/terminate: existing 2 s, timeout unconfirmed. Pending: quiet/20 s, apology/90 s. Caller: phone/WebSocket key creator/Electron user.
+Ended PTT `say`: original-chat text with canonical caller/connect/call/delegation; Actor dedupes call/delegation and rejects changed text. No Agent/provider wakeup/redial; other ended ops: `voice_call_ended`, no retry.
+PTT media closes now; forwarding/handoff ≤10 s, mailbox responsive. ACKed pending IDs → internal `voice.delegation_handoff`; no IDs means no terminal input. Never cancel/replay unknown work; refusal is final. Force/terminate: existing 2 s, timeout unconfirmed. Pending: quiet/20 s, apology/90 s. Caller: phone/WebSocket key creator/Electron user.
 
 ### Electron subscription calls
 
 WebRTC: main/hidden `push-to-talk-voice`; macOS audio permission. Deny other windows/frames/camera.
 `/v1/comma/workspaces/:workspace_id/voice/calls`: `POST {sdp,mode?}` → `{sdp,call_id}`, `GET /:call_id/events?after=N`, `DELETE /:call_id`.
 `POST /:call_id/context {context_id,status,text?,attachments?}`: Workspace/caller, `no-store`; IDs increase; `pending/complete/failed/cancelled`. Quiet text/one-shot VFS `{path,name,mime}`; native IDs match; start ≥ pending ACK end; wait ≤150 s. Cancel/fail/new gesture drop unqueued work/settle; stale turns fail closed.
-PTT: hidden shortcut turns. Press clears caption/captures mic/mutes remote; release mutes mic/restores remote, no caption gate. WebAudio ≤120 s; send in order after connection/ACK/Main's ≥300 ms. Short tap: no input; valid release retains input. Cancel/failure/new context/account drops unsent input. Listening from press, never Connecting; capture before overlay. Service owns VAD/barge-in; output consumed while held: caption-only, no replay/invented commit/VAD. Warm 90 s; pending retains; cap 10 min. Late → `ready`/click chat. One lease/account; no delegation poll.
+PTT shortcut: press clears caption/captures mic/mutes remote; release mutes mic/restores remote, no caption gate. WebAudio ≤120 s; send in order after connection/ACK/Main ≥300 ms. Short tap sends nothing; valid release retains input. Cancel/failure/new context/account drops unsent input. Listen from press, not Connecting; capture before overlay. Service owns VAD/barge-in; held output is caption-only, no replay/invented commit/VAD. Warm 90 s; pending retains; cap 10 min. Late → `ready`/click chat. One lease/account; no delegation poll.
 Admission: voice enabled, tenant Codex AccountPool, no API key. ChatGPT `codex/realtime/calls?intent=quicksilver&architecture=avas`, `gpt-live-1-codex`; control `wss://api.openai.com/v1/live/<rtc_id>`. Approved Codex Desktop headers. One 401 renew/retry; plan limits refuse. Never read native Codex logins/expose credentials.
 Context ≤500 UTF-8 bytes/chunk; finals omit `channel`, others commentary. Notes/screen stay quiet; captions merge/turn without final repeats.
-Serial poll 500 ms/caller: ≤200 events/512 KiB queue, explicit gaps. No reads/60 s ends call; ended events expire/60 s even if read. Manual: ≤200 post-hangup turns, no durable transcript; exit closes media/call.
-PTT HTTP ≤30 s/request; teardown aborts offer/poll/context; DELETE has its own budget/original account. Control includes readiness; upload starts after capture/admission.
+Serial poll 500 ms/caller: ≤200 events/512 KiB, explicit gaps. No reads/60 s ends call; ended events expire/60 s even if read. Manual keeps ≤200 post-hangup turns locally; exit closes media/call.
+PTT HTTP ≤30 s/request. Teardown aborts offer/poll/context; DELETE has its own budget/original account. Control includes readiness; upload follows capture/admission.
+
+`GET /:call_id/trace`: full-session caller; wrong scope/invalid/missing: 404 `call_not_found`, restricted: 403; `no-store`. Pages: default 100/max 500, `before`/`has_more`/`next_before`. Admin `/dash/agents/:agent_id/voice_calls/:call_id/trace` includes archived Agents. Router Session retention; replies name the responder Session, not the ACK. Cap: 2,000 records/4 MiB, one truncation marker.
 
 ### Limits, drain and billing
 
@@ -138,16 +139,15 @@ Comma mirrors them at `/v1/comma/workspaces/:workspace_id/integrations/voice` fo
 
 ## WebSocket voice API
 
-`GET /v1/agent-groups/{group_id}/voice` returns readiness, `busy`, formats, limits and `sessions_url`. `GET .../voice/sessions` upgrades to one session with subprotocol `comma.voice.v1`.
-Both need `Authorization: Bearer salix_vk_...` of the path Group, never a URL key. Before the upgrade: 401 for a bad key, 400 without the subprotocol, 503 while draining.
-Text frames are JSON objects, at most 16 KB, named by `type`. Both sides ignore unknown fields and types. Breaking changes ship as `comma.voice.v2`.
+`GET /v1/agent-groups/{group_id}/voice` returns readiness, `busy`, formats, limits and `sessions_url`; `GET .../voice/sessions` upgrades with subprotocol `comma.voice.v1`.
+Both require the path Group's `Authorization: Bearer salix_vk_...`, never a URL key. Before upgrade: bad key 401, missing subprotocol 400, draining 503.
+Text frames are JSON objects named by `type`, ≤16 KB. Both sides ignore unknown fields/types; breaking changes use `comma.voice.v2`.
 
-The first client frame is `session.start {audio_format, client, display_name?}`, within 10 s.
-Formats are `pcmu_8k` or `pcm16_24k` (little-endian mono); `client` is `name/version`.
-Salix answers `session.started {call_id, audio_format, max_duration_s}`. Both send binary audio, at most 16 KB.
-Salix sends `output.clear` to drop playback, `output.mark {name}`; client answers `output.played {name}` after playback.
-`transcript {role, text, final}` uses `caller` or `agent`. The client hangs up with `session.end`.
-Salix ends with `session.ended {reason, duration_s}` or `error {code, message}`, then closes with integer `code`.
+First frame within 10 s: `session.start {audio_format, client, display_name?}`. Formats: `pcmu_8k` or `pcm16_24k` (little-endian mono); `client` is `name/version`.
+Salix responds `session.started {call_id, audio_format, max_duration_s}`; both send binary audio ≤16 KB.
+Salix sends `output.clear` to drop playback and `output.mark {name}`; client answers `output.played {name}` after playback.
+`transcript {role, text, final}` has role `caller` or `agent`. Client hangs up with `session.end`.
+Salix sends `session.ended {reason, duration_s}` or `error {code, message}`, then closes with integer `code`.
 
 | Close | Cause |
 | --- | --- |
@@ -159,19 +159,16 @@ Salix ends with `session.ended {reason, duration_s}` or `error {code, message}`,
 | 4410 | Client playback more than 2 s behind |
 | 4503 | Draining, disabled, not configured, node full, or GPT-Live unavailable |
 
-Salix writes agent audio at most 500 ms ahead of playback. Clients send paced silence while muted. v1 excludes browsers: they cannot set the header.
-[`comma-voice`](../systems/voice/comma-voice/README.md) is the reference client and E2E driver.
+Salix writes agent audio ≤500 ms ahead of playback; muted clients send paced silence. v1 excludes browsers: they cannot set the header.
+[`comma-voice`](../systems/voice/comma-voice/README.md): reference client and E2E driver.
 
 ## Voice agent API keys
 
-A voice agent key is the `voice` kind of the Agent Group API Key record (`Salix.Control.GroupApiKeys`). It keeps hash-only storage, one-time plaintext, status, expiry, creator and principal rules.
-
-Inbound `salix_gk_` keys open Router post-message/Loop events; voice `salix_vk_` keys open readiness/sessions only.
-Comma, Salix dashboard and tenant APIs mint both kinds. Each kind allows 20 keys per Group.
-
-The prefix selects the kind before hash lookup; stored kind must match. Router tools mint only inbound keys, preventing prompt-injected billable credentials.
+Voice keys are the `voice` kind of `Salix.Control.GroupApiKeys`, with hash-only storage, one-time plaintext, status, expiry, creator and principal rules.
+Inbound `salix_gk_` keys open Router post-message/Loop events; voice `salix_vk_` keys open readiness/sessions only. Comma, Salix dashboard and tenant APIs mint both; each kind allows 20 per Group.
+Prefix selects kind before hash lookup; stored kind must match. Router tools mint only inbound keys, preventing prompt-injected billable credentials.
 Rows default to `inbound`. Routes: Salix `/v1/runtime/agent-groups/:group_id/voice/api-keys`, Comma `/v1/comma/workspaces/:workspace_id/voice-api-keys`.
-Disable, delete and Group deletion reach live calls via `:pg`: a spoken notice, then close 4401. A timer (reset on change) ends calls at key expiry. Sessions recheck it at start; no polling. Session start updates `last_used_at`.
+Disable, delete and Group deletion reach live calls via `:pg`: spoken notice, then close 4401. A timer reset on change ends calls at key expiry. Sessions recheck it and update `last_used_at` at start; no polling.
 
 ## Voice settings
 
@@ -181,11 +178,10 @@ Defaults: `enabled` false, `gpt_live_model` `gpt-live-1`, `max_call_seconds` 180
 
 ## Voice profile
 
-Before GPT-Live starts, `SalixVoice.Profile` asks Jev (`decide`) one `choice` question per template field: `language`, `reply_length`, `formality`, `small_talk`, `expertise`, `units`, `clock`. Each has `unknown`.
-An answer counts at its field threshold, a 70% to 80% winning probability, not calibrated. Fixed sentences for counted answers extend the instructions and set the greeting language. No user or Jev text reaches GPT-Live. Nothing is stored.
-
-`SalixAgent.RouterDecision` sends the newest 12 user and assistant texts of the Router session, 1,500 bytes each, within 12 KiB. `decide` is public egress. By owner decision, message IFC labels and the Group IFC policy do not filter this text. Without text, it sends nothing.
-The profile runs when `decide` is configured and meters as `voice_profile`. After 2.5 s or a failure, the model starts with the base instructions.
+Before GPT-Live, `SalixVoice.Profile` asks Jev (`decide`) one `choice` per template field: `language`, `reply_length`, `formality`, `small_talk`, `expertise`, `units`, `clock`; each has `unknown`.
+Answers count at their field threshold: 70–80% winning probability, not calibrated. Fixed sentences for counted answers extend instructions and set greeting language. No user or Jev text reaches GPT-Live; nothing is stored.
+`SalixAgent.RouterDecision` sends the latest 12 Router-session user/assistant texts, ≤1,500 bytes each/12 KiB total. `decide` is public egress. Owner decision: message IFC labels and Group IFC policy do not filter this text. No text: no request.
+Profile runs when `decide` is configured and meters as `voice_profile`. After 2.5 s or failure, the model starts with base instructions.
 
 ## Voice verification
 

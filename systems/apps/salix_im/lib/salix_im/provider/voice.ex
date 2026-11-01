@@ -39,6 +39,15 @@ defmodule SalixIM.Provider.Voice do
         "text" => text
       }
 
+      request =
+        case SalixIM.Provider.current_tool_context()["session_id"] do
+          session_id when is_binary(session_id) and session_id != "" ->
+            Map.put(request, "session_id", session_id)
+
+          _ ->
+            request
+        end
+
       call_id
       |> dispatch(op, request)
       |> preserve_late_reply(call_id, op, request, params)

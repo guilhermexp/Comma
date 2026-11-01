@@ -51,6 +51,24 @@ defmodule CommaWeb.VoiceCalls do
 
   def hang_up(workspace, user, id), do: Electron.hang_up(id, scope(workspace, user))
 
+  @doc "Reads a trace only for its recorded Comma caller and Workspace scope."
+  def trace(workspace, user, call_id, params) do
+    with {:ok, trace} <-
+           SalixVoice.CallTraceRecords.read_trace(workspace["router_agent_id"], call_id,
+             limit: params["limit"],
+             before: params["before"]
+           ),
+         true <- trace["tenant_id"] == workspace["salix_tenant_id"],
+         true <- trace["group_id"] == workspace["default_group_id"],
+         %{"kind" => "comma_user", "value" => caller} <- trace["caller"],
+         true <- caller == user["id"] do
+      {:ok, Map.drop(trace, ~w(tenant_id group_id caller))}
+    else
+      {:error, :invalid_input} = error -> error
+      _ -> {:error, :call_not_found}
+    end
+  end
+
   @doc "Dispatches scoped push-to-talk context transitions to the live call."
   def context(workspace, user, id, params) when is_map(params) do
     context_id = Map.get(params, "context_id", Map.get(params, :context_id))

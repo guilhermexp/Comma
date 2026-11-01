@@ -29,4 +29,22 @@ defmodule SalixWeb.Dashboard.SessionTraceController do
         conn |> put_status(400) |> json(%{"error" => "trace_unavailable"})
     end
   end
+
+  def voice_call_trace(conn, %{"id" => agent_id, "call_id" => call_id} = params) do
+    tenant = Auth.current_tenant(get_session(conn))
+    conn = put_resp_header(conn, "cache-control", "no-store")
+
+    with {:ok, _agent} <- Control.get_including_archived(agent_id, tenant),
+         {:ok, trace} <-
+           SalixVoice.CallTraceRecords.read_trace(agent_id, call_id,
+             limit: params["limit"],
+             before: params["before"]
+           ),
+         true <- trace["tenant_id"] == tenant do
+      json(conn, Map.drop(trace, ~w(tenant_id group_id caller)))
+    else
+      {:error, :invalid_input} -> conn |> put_status(400) |> json(%{"error" => "invalid_input"})
+      _ -> conn |> put_status(404) |> json(%{"error" => "call_not_found"})
+    end
+  end
 end

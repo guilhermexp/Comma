@@ -56,6 +56,7 @@ defmodule CommaWeb.Router do
   plug(CommaWeb.LegacyPaths)
   plug(:match)
   plug(:auth_response_policy)
+  plug(:voice_trace_response_policy)
   plug(:oauth_idp_telemetry)
   plug(SystemsObservability.HTTPPlug, endpoint: :comma_product_api)
   plug(CommaWeb.CORS)
@@ -75,6 +76,18 @@ defmodule CommaWeb.Router do
   defp oauth_idp_telemetry(conn, _opts) do
     CommaWeb.OauthIdpEndpoints.register_telemetry(conn)
   end
+
+  defp voice_trace_response_policy(
+         %{
+           method: "GET",
+           path_info: ["v1", "comma", "workspaces", _, "voice", "calls", _, "trace"]
+         } = conn,
+         _opts
+       ) do
+    register_before_send(conn, &put_resp_header(&1, "cache-control", "no-store"))
+  end
+
+  defp voice_trace_response_policy(conn, _opts), do: conn
 
   defp auth_response_policy(conn, _opts) do
     cond do
@@ -2211,6 +2224,12 @@ defmodule CommaWeb.Router do
   get "/v1/comma/workspaces/:workspace_id/voice/calls/:call_id/events" do
     with_voice_call(conn, workspace_id, 200, fn workspace, user ->
       CommaWeb.VoiceCalls.events(workspace, user, call_id, conn.query_params["after"] || "0")
+    end)
+  end
+
+  get "/v1/comma/workspaces/:workspace_id/voice/calls/:call_id/trace" do
+    with_voice_trace(conn, workspace_id, fn workspace, user ->
+      CommaWeb.VoiceCalls.trace(workspace, user, call_id, conn.query_params)
     end)
   end
 
@@ -4761,6 +4780,24 @@ defmodule CommaWeb.Router do
 
         {:error, reason} ->
           comma_error(conn, reason)
+      end
+    end)
+  end
+
+  defp with_voice_trace(conn, workspace_id, operation) do
+    with_user(conn, fn user, session ->
+      case full_workspace_session(session) do
+        {:error, reason} ->
+          send_error(conn, 403, reason)
+
+        :ok ->
+          with {:ok, workspace} <- Comma.Workspaces.authorize(user, session, workspace_id),
+               {:ok, workspace} <- Comma.Salix.Client.impl().resolve_workspace_scope(workspace),
+               {:ok, result} <- operation.(workspace, user) do
+            send_json(conn, 200, result)
+          else
+            _ -> send_json(conn, 404, %{error: :call_not_found})
+          end
       end
     end)
   end

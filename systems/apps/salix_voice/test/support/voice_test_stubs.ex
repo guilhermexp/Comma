@@ -41,17 +41,46 @@ defmodule SalixVoice.TestStubs do
   defmodule GroupDirectory do
     @moduledoc false
     def get_group(group_id) do
-      {:ok,
-       %{
-         "group_id" => group_id,
-         "billing_owner" => %{
-           "billing_account_id" => "ba_voice",
-           "surface" => "comma",
-           "product_owner_type" => "workspace",
-           "product_owner_id" => "ws_1"
-         }
-       }}
+      if pid = Application.get_env(:salix_voice, :test_group_lookup_observer),
+        do: send(pid, {:group_lookup, group_id, self()})
+
+      case Application.get_env(:salix_voice, :test_group_lookup, :ok) do
+        {:sleep, ms} ->
+          Process.sleep(ms)
+          {:error, :unavailable}
+
+        {:error, reason} ->
+          {:error, reason}
+
+        :ok ->
+          tenant_id =
+            if SalixStore.Ids.valid_group_id?(group_id),
+              do: SalixStore.Ids.tenant_id_from_group!(group_id),
+              else: "ten_1"
+
+          {:ok,
+           %{
+             "group_id" => group_id,
+             "tenant_id" => tenant_id,
+             "router_agent_id" =>
+               Application.get_env(:salix_voice, :test_router_agent_id, "agt_voice_test_router"),
+             "billing_owner" => %{
+               "billing_account_id" => "ba_voice",
+               "surface" => "comma",
+               "product_owner_type" => "workspace",
+               "product_owner_id" => "ws_1"
+             }
+           }}
+      end
     end
+  end
+
+  defmodule FailingArchive do
+    @moduledoc false
+    @behaviour SalixAgent.EventArchive
+    def active?, do: true
+    def record(_fact), do: raise("archive unavailable")
+    def reserve(_fact), do: raise("archive unavailable")
   end
 
   defmodule Metering do

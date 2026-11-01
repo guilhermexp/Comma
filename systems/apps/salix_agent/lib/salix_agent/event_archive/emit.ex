@@ -341,6 +341,43 @@ defmodule SalixAgent.EventArchive.Emit do
     safe(fn -> record(:egress, payload, from_context(context, session_id), reservation) end)
   end
 
+  @doc "Archive a voice boundary with the call's explicit identity."
+  def voice_delivery(identity, payload),
+    do: voice_record(:delivery, identity, payload, nil)
+
+  def voice_tool_call(identity, payload),
+    do: voice_record(:tool_call, identity, payload, nil)
+
+  def voice_tool_result(identity, payload),
+    do: voice_record(:tool_result, identity, payload, nil)
+
+  def voice_egress(identity, payload, reservation \\ nil),
+    do: voice_record(:egress, identity, payload, reservation)
+
+  def reserve_voice_egress(identity) do
+    if EventArchive.enabled?() do
+      opts = voice_identity(identity)
+
+      EventArchive.reserve(%{
+        boundary: :egress,
+        tenant_id: opts[:tenant_id],
+        agent_id: opts[:agent_id],
+        session_id: opts[:session_id]
+      })
+    end
+  rescue
+    _ -> nil
+  catch
+    _, _ -> nil
+  end
+
+  defp voice_record(boundary, identity, payload, reservation) do
+    safe(fn -> record(boundary, payload, voice_identity(identity), reservation) end)
+  end
+
+  defp voice_identity(%{tenant_id: tenant, agent_id: agent, session_id: session}),
+    do: [tenant_id: tenant, agent_id: agent, session_id: session]
+
   @doc """
   Boundary 6, external-runtime arm — what an off-node loop asserted back to us.
 
@@ -670,13 +707,6 @@ defmodule SalixAgent.EventArchive.Emit do
   defp sanitize(value) when is_atom(value), do: to_string(value)
   defp sanitize(value), do: inspect(value)
 
-  # Exception messages can carry the offending VALUE (Protocol.UndefinedError
-  # appends "Got value: ..."), which is agent content. Logs are unencrypted, so
-  # only the exception type and a short prefix are recorded.
-  defp brief(exception) do
-    exception.__struct__
-    |> inspect()
-    |> Kernel.<>(": ")
-    |> Kernel.<>(exception |> Exception.message() |> String.slice(0, 120))
-  end
+  # Exception messages can contain the observed payload.
+  defp brief(exception), do: inspect(exception.__struct__)
 end

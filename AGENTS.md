@@ -157,6 +157,11 @@ directory and protocol handler. Existing credentials from a different backend
 cannot be reused; do not automatically clear a developer's profile to switch
 backends. Treat staging interactions as real shared-environment operations.
 
+On macOS, ad hoc signing pins TCC grants (Input Monitoring, Screen Recording,
+Microphone) to one cdhash, so each re-seal of the dev bundle drops them. Set
+`COMMA_MACOS_DEV_SIGN_IDENTITY` to a keychain signing identity to keep them
+across rebuilds; the dev bundle and native helpers read the same variable.
+
 Use `make dev-electron` when working on the local backend or when deterministic
 local fixtures are needed. Package an `.app` only when explicitly requested or
 when the task requires packaged behavior, such as signing, keychain identity,

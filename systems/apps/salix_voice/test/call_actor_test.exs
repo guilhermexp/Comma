@@ -26,6 +26,9 @@ defmodule SalixVoice.CallActorTest do
       group_directory_mod: TestStubs.GroupDirectory,
       metering_mod: TestStubs.Metering,
       profile_decider_mod: TestStubs.ProfileDecider,
+      test_group_lookup: :ok,
+      test_group_lookup_observer: self(),
+      test_router_agent_id: "agt_voice_test_router",
       test_profile_decision: {:error, "not_configured"},
       fake_model_seconds: 42,
       timers: [
@@ -76,6 +79,64 @@ defmodule SalixVoice.CallActorTest do
       overrides
     )
     |> SalixVoice.admit()
+  end
+
+  test "admission without metering resolves the Router before starting a Signal call" do
+    Application.put_env(:salix_voice, :metering_mod, nil)
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    router = SalixStore.Ids.new_agent_id(group)
+    Application.put_env(:salix_voice, :test_router_agent_id, router)
+
+    assert {:ok, %{call_id: call_id}} =
+             admit(%{tenant_id: tenant, group_id: group, carrier: :signal, key_id: nil})
+
+    assert_receive {:group_lookup, ^group, _}
+    assert_receive {:profile_decide, ^group, _, _}
+    assert {:ok, call, _} = SalixVoice.attach(call_id, self())
+    assert_receive {:fake_model, model, {:started, _}}
+    emit(model, call, {:started, "signal-session"})
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+    assert {:ok, trace} = SalixVoice.CallTraceRecords.read_trace(router, call_id)
+
+    assert %{
+             "type" => "call_started",
+             "tenant_id" => ^tenant,
+             "group_id" => ^group,
+             "router_agent_id" => ^router,
+             "carrier" => "signal"
+           } = hd(trace["events"])
+  end
+
+  test "an unavailable Router lookup does not prevent admission and respects its deadline" do
+    Application.put_env(:salix_voice, :metering_mod, nil)
+    Application.put_env(:salix_voice, :test_group_lookup, {:sleep, 2_000})
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+
+    started = System.monotonic_time(:millisecond)
+    assert {:ok, %{call_id: call_id}} = admit(%{tenant_id: tenant, group_id: group})
+    elapsed = System.monotonic_time(:millisecond) - started
+
+    assert_receive {:group_lookup, ^group, _}
+    assert_receive {:profile_decide, ^group, _, _}
+    assert elapsed >= 450 and elapsed < 1_200
+    assert is_pid(SalixVoice.whereis(call_id))
+  end
+
+  test "metering admission reuses its Group lookup for observation" do
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    router = SalixStore.Ids.new_agent_id(group)
+    Application.put_env(:salix_voice, :test_router_agent_id, router)
+    Application.put_env(:salix_voice, :test_profile_decision, {:sleep, 1_000, {:error, "error"}})
+
+    assert {:ok, %{call_id: call_id}} = admit(%{tenant_id: tenant, group_id: group})
+    assert_receive {:group_lookup, ^group, _}
+    assert_receive {:profile_decide, ^group, _, _}
+    refute_receive {:group_lookup, ^group, _}, 100
+    assert is_pid(SalixVoice.whereis(call_id))
   end
 
   test "insufficient credits refuses admission before a call or model is started" do
@@ -470,6 +531,589 @@ defmodule SalixVoice.CallActorTest do
     assert_receive {:voice_call, :transcript, :caller, "Hello", true}
     Fake.emit(model, {:output_transcript, "Hi there.", true})
     assert_receive {:voice_call, :transcript, :agent, "Hi there.", true}
+  end
+
+  test "a completed call persists its final speech and end without partial captions" do
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    router = SalixStore.Ids.new_agent_id(group)
+    Application.put_env(:salix_voice, :test_router_agent_id, router)
+    {call, info, model} = live_call(%{tenant_id: tenant, group_id: group})
+    emit(model, call, {:input_transcript, "partial", false, 100})
+    emit(model, call, {:input_transcript, "Final caller speech", true, 100})
+    emit(model, call, {:output_transcript, "Final agent speech", true})
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+
+    assert {:ok, cache} = SalixVoice.CallTraceRecords.load(router, info.call_id)
+
+    assert {:ok, events, false, nil} =
+             SalixVoice.CallTraceRecords.tail(router, info.call_id, cache)
+
+    assert Enum.map(events, & &1["type"]) == [
+             "call_started",
+             "attached",
+             "model_started",
+             "caller_turn",
+             "agent_turn",
+             "call_ended"
+           ]
+
+    assert Enum.map(events, & &1["t_ms"]) == Enum.sort(Enum.map(events, & &1["t_ms"]))
+    refute inspect(events) =~ "partial"
+    assert inspect(events) =~ "Final caller speech"
+    assert inspect(events) =~ "Final agent speech"
+  end
+
+  test "push-to-talk trace retains complete context, delegation and responding Router session" do
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    router = SalixStore.Ids.new_agent_id(group)
+    session = SalixStore.Ids.new_session_id()
+    Application.put_env(:salix_voice, :test_router_agent_id, router)
+    previous_workspace = Application.fetch_env(:salix_im, :agent_workspace_mod)
+    Application.put_env(:salix_im, :agent_workspace_mod, Salix.Bindings.IMAgentWorkspace)
+
+    on_exit(fn ->
+      case previous_workspace do
+        {:ok, value} -> Application.put_env(:salix_im, :agent_workspace_mod, value)
+        :error -> Application.delete_env(:salix_im, :agent_workspace_mod)
+      end
+    end)
+
+    path = "/uploads/ABCDEFGHIJKLMNOPQRSTUV-screen.png"
+    pixels = String.duplicate("x", 123)
+    assert {:ok, event} = SalixAgent.AgentWorkspace.prepare_write(router, path, pixels)
+
+    assert {:ok, _} =
+             SalixAgent.AgentWorkspace.seed_operation(router, "trace-fixture", %{}, [event])
+
+    assert {:ok, %{call_id: id}} =
+             admit(%{tenant_id: tenant, group_id: group, mode: :push_to_talk})
+
+    assert {:ok, call, info} = SalixVoice.attach(id, self())
+    assert_receive {:fake_model, model, {:started, _}}
+    emit(model, call, {:started, "live-session"})
+    assert {:ok, _} = GenServer.call(call, {:context, %{context_id: 1, status: :pending}})
+
+    attachment = %{"name" => "screen.png", "path" => path, "mime" => "image/png"}
+    expected_attachment = Map.put(attachment, "bytes", byte_size(pixels))
+
+    assert {:ok, _} =
+             GenServer.call(
+               call,
+               {:context,
+                %{
+                  context_id: 1,
+                  status: :complete,
+                  text: "Editor with a file",
+                  attachments: [attachment]
+                }}
+             )
+
+    emit_native_turn(model, 1, "turn-1")
+    emit(model, call, {:input_transcript, "partial speech", false, 10})
+    emit(model, call, {:input_transcript, "Inspect this file", true, 100})
+    emit(model, call, {:delegation, "dlg-1", 100, "Inspect this file", "turn-1"})
+
+    assert_receive {:ingress, ^group, _, %{"event_type" => "voice.delegation"}, _, _}, 1_000
+    wait_for_delegation_ack(call, "dlg-1", 200)
+
+    assert {:ok, _} =
+             provider(call, :note, info, %{
+               "agent_id" => router,
+               "session_id" => session,
+               "delegation_id" => "dlg-1",
+               "text" => "Checking"
+             })
+
+    emit(model, call, {:output_transcript, "I am checking.", true})
+
+    assert {:ok, _} =
+             provider(call, :say, info, %{
+               "agent_id" => router,
+               "session_id" => session,
+               "delegation_id" => "dlg-1",
+               "text" => "All done"
+             })
+
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+
+    assert {:ok, cache} = SalixVoice.CallTraceRecords.load(router, id)
+    assert {:ok, events, false, nil} = SalixVoice.CallTraceRecords.tail(router, id, cache)
+    types = Enum.map(events, & &1["type"])
+
+    assert types ==
+             ~w(call_started attached model_started ptt_context ptt_context caller_turn delegation_requested delegation_sent delegation_acked router_reply agent_turn router_reply delegation_finished call_ended)
+
+    assert Enum.map(events, & &1["t_ms"]) == Enum.sort(Enum.map(events, & &1["t_ms"]))
+
+    assert Enum.any?(
+             events,
+             &(&1["type"] == "ptt_context" and &1["text"] == "Editor with a file" and
+                 &1["attachments"] == [expected_attachment])
+           )
+
+    assert Enum.any?(
+             events,
+             &(&1["type"] == "delegation_requested" and &1["request"] == "Inspect this file" and
+                 &1["attachments"] == [expected_attachment])
+           )
+
+    assert Enum.any?(
+             events,
+             &(&1["type"] == "router_reply" and &1["session_id"] == session and
+                 &1["agent_id"] == router)
+           )
+
+    refute inspect(events) =~ "partial speech"
+    refute inspect(events) =~ pixels
+  end
+
+  defp wait_for_delegation_ack(_call, _id, 0), do: flunk("delegation was not acknowledged")
+
+  defp wait_for_delegation_ack(call, id, attempts) do
+    if :sys.get_state(call).delegations[id].accepted do
+      :ok
+    else
+      Process.sleep(5)
+      wait_for_delegation_ack(call, id, attempts - 1)
+    end
+  end
+
+  test "Routers outside the call tenant or Group are not used for observation" do
+    Application.put_env(:salix_voice, :metering_mod, nil)
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    other_group = SalixStore.Ids.new_group_id(tenant)
+    other_tenant = SalixStore.Ids.new_tenant_id()
+    other_tenant_group = SalixStore.Ids.new_group_id(other_tenant)
+
+    other_routers = [
+      SalixStore.Ids.new_agent_id(other_group),
+      SalixStore.Ids.new_agent_id(other_tenant_group)
+    ]
+
+    handler = "voice-trace-unavailable-#{System.unique_integer([:positive])}"
+
+    :ok =
+      :telemetry.attach(
+        handler,
+        [:salix, :voice, :trace, :unavailable],
+        fn event, measurements, metadata, pid ->
+          send(pid, {event, measurements, metadata})
+        end,
+        self()
+      )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+
+    for other_router <- other_routers do
+      Application.put_env(:salix_voice, :test_router_agent_id, other_router)
+      assert {:ok, %{call_id: id}} = admit(%{tenant_id: tenant, group_id: group})
+
+      assert_receive {[:salix, :voice, :trace, :unavailable], %{count: 1},
+                      %{reason: "router_unavailable"}}
+
+      assert_receive {:profile_decide, ^group, _, _}
+      call = SalixVoice.whereis(id)
+      assert is_pid(call)
+      SalixVoice.abandon(id, :normal)
+      ref = Process.monitor(call)
+      assert_receive {:DOWN, ^ref, :process, ^call, _}, 2_000
+      assert {:ok, cache} = SalixVoice.CallTraceRecords.load(other_router, id)
+      assert {:ok, [], false, nil} = SalixVoice.CallTraceRecords.tail(other_router, id, cache)
+    end
+  end
+
+  test "a storage outage is retried once and does not block voice responses" do
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    router = SalixStore.Ids.new_agent_id(group)
+    Application.put_env(:salix_voice, :test_router_agent_id, router)
+    {call, info, _model} = live_call(%{tenant_id: tenant, group_id: group})
+    prefix = Keys.agent_voice_call_segments_prefix(router, info.call_id)
+    reporter = Module.concat(__MODULE__, TraceMetrics)
+
+    start_supervised!(
+      {TelemetryMetricsPrometheus.Core,
+       name: reporter, metrics: Salix.Telemetry.metrics(), start_async: false}
+    )
+
+    handler = "voice-trace-dropped-#{System.unique_integer([:positive])}"
+
+    :ok =
+      :telemetry.attach(
+        handler,
+        [:salix, :voice, :trace, :dropped],
+        fn event, measurements, metadata, pid ->
+          send(pid, {event, measurements, metadata})
+        end,
+        self()
+      )
+
+    on_exit(fn ->
+      S3.Fake.clear_blackhole()
+      :telemetry.detach(handler)
+    end)
+
+    :ok = S3.Fake.blackhole({:fail, 503, :list, {:prefix, prefix}})
+    send(call, :voice_trace_flush)
+
+    assert {:ok, %{"delivered" => true}} =
+             provider(call, :note, info, %{"text" => "Still responsive"})
+
+    assert_receive {[:salix, :voice, :trace, :dropped], %{count: count}, %{reason: "storage"}},
+                   3_000
+
+    assert count > 0
+    scrape = TelemetryMetricsPrometheus.Core.scrape(reporter)
+    assert scrape =~ ~s(salix_voice_trace_dropped_records_total{reason="storage"} #{count})
+    refute scrape =~ info.call_id
+    assert Process.alive?(call)
+    :ok = S3.Fake.clear_blackhole()
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+  end
+
+  test "a missing attachment size discards only the affected trace record" do
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    router = SalixStore.Ids.new_agent_id(group)
+    Application.put_env(:salix_voice, :test_router_agent_id, router)
+    handler = "voice-trace-missing-#{System.unique_integer([:positive])}"
+
+    :ok =
+      :telemetry.attach(
+        handler,
+        [:salix, :voice, :trace, :dropped],
+        fn event, measurements, metadata, pid ->
+          send(pid, {event, measurements, metadata})
+        end,
+        self()
+      )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+
+    assert {:ok, %{call_id: id}} =
+             admit(%{tenant_id: tenant, group_id: group, mode: :push_to_talk})
+
+    assert {:ok, call, _} = SalixVoice.attach(id, self())
+    assert_receive {:fake_model, model, {:started, _}}
+    emit(model, call, {:started, "model-session"})
+    assert {:ok, _} = GenServer.call(call, {:context, %{context_id: 1, status: :pending}})
+
+    attachment = %{
+      "name" => "missing.png",
+      "path" => "/uploads/missing.png",
+      "mime" => "image/png"
+    }
+
+    assert {:ok, _} =
+             GenServer.call(
+               call,
+               {:context,
+                %{context_id: 1, status: :complete, text: "screen", attachments: [attachment]}}
+             )
+
+    ref = Process.monitor(call)
+    send(call, {:voice_carrier, :hangup, :normal})
+    assert_receive {:DOWN, ^ref, :process, ^call, :normal}, 4_000
+    assert_receive {[:salix, :voice, :trace, :dropped], %{count: 1}, %{reason: "storage"}}
+    assert {:ok, trace} = SalixVoice.CallTraceRecords.read_trace(router, id)
+    assert trace["ended"]
+
+    assert Enum.any?(
+             trace["events"],
+             &(&1["type"] == "ptt_context" and &1["status"] == "pending")
+           )
+
+    refute Enum.any?(
+             trace["events"],
+             &(&1["type"] == "ptt_context" and &1["status"] == "complete")
+           )
+  end
+
+  test "attachment metadata recovered on retry returns to its original trace order" do
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    router = SalixStore.Ids.new_agent_id(group)
+    Application.put_env(:salix_voice, :test_router_agent_id, router)
+    previous = Application.fetch_env(:salix_im, :agent_workspace_mod)
+    Application.put_env(:salix_im, :agent_workspace_mod, Salix.Bindings.IMAgentWorkspace)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:salix_im, :agent_workspace_mod, value)
+        :error -> Application.delete_env(:salix_im, :agent_workspace_mod)
+      end
+    end)
+
+    assert {:ok, %{call_id: id}} =
+             admit(%{tenant_id: tenant, group_id: group, mode: :push_to_talk})
+
+    assert {:ok, call, _} = SalixVoice.attach(id, self())
+    assert_receive {:fake_model, model, {:started, _}}
+    emit(model, call, {:started, "model-session"})
+    assert {:ok, _} = GenServer.call(call, {:context, %{context_id: 1, status: :pending}})
+    attachment = %{"name" => "later.png", "path" => "/uploads/later.png", "mime" => "image/png"}
+
+    assert {:ok, _} =
+             GenServer.call(
+               call,
+               {:context,
+                %{context_id: 1, status: :complete, text: "screen", attachments: [attachment]}}
+             )
+
+    send(call, :voice_trace_flush)
+    wait_for_trace_retry(call, 200)
+
+    assert {:ok, event} =
+             SalixAgent.AgentWorkspace.prepare_write(router, attachment["path"], "pixels")
+
+    assert {:ok, _} =
+             SalixAgent.AgentWorkspace.seed_operation(router, "trace-retry", %{}, [event])
+
+    ref = Process.monitor(call)
+    send(call, {:voice_carrier, :hangup, :normal})
+    assert_receive {:DOWN, ^ref, :process, ^call, :normal}, 4_000
+    assert {:ok, trace} = SalixVoice.CallTraceRecords.read_trace(router, id)
+    types = Enum.map(trace["events"], & &1["type"])
+    assert types == ~w(call_started attached model_started ptt_context ptt_context call_ended)
+
+    assert Enum.any?(
+             trace["events"],
+             &(&1["type"] == "ptt_context" and &1["status"] == "complete" and
+                 hd(&1["attachments"])["bytes"] == 6)
+           )
+  end
+
+  defp wait_for_trace_retry(_call, 0), do: flunk("trace did not schedule its retry")
+
+  defp wait_for_trace_retry(call, attempts) do
+    if :sys.get_state(call).trace.retry do
+      :ok
+    else
+      Process.sleep(5)
+      wait_for_trace_retry(call, attempts - 1)
+    end
+  end
+
+  test "status output never exposes call content after the model starts" do
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    router = SalixStore.Ids.new_agent_id(group)
+    Application.put_env(:salix_voice, :test_router_agent_id, router)
+    {call, _info, model} = live_call(%{tenant_id: tenant, group_id: group})
+    emit(model, call, {:input_transcript, "private status transcript", true, 10})
+    refute inspect(:sys.get_status(call), limit: :infinity) =~ "private status transcript"
+  end
+
+  test "archive failures cannot change the call, Router reply or readable trace" do
+    previous = Application.fetch_env(:salix_agent, :event_archive_mod)
+    Application.put_env(:salix_agent, :event_archive_mod, TestStubs.FailingArchive)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:salix_agent, :event_archive_mod, value)
+        :error -> Application.delete_env(:salix_agent, :event_archive_mod)
+      end
+    end)
+
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    router = SalixStore.Ids.new_agent_id(group)
+    Application.put_env(:salix_voice, :test_router_agent_id, router)
+    {call, info, model} = live_call(%{tenant_id: tenant, group_id: group})
+    emit(model, call, {:input_transcript, "private caller input", true, 100})
+    emit(model, call, {:delegation, "dlg-archive-failure", 100})
+    assert_receive {:ingress, ^group, _, %{"event_type" => "voice.delegation"}, _, _}, 1_000
+    assert {:ok, %{"delivered" => true}} = provider(call, :say, info, %{"text" => "The answer"})
+    emit(model, call, {:output_transcript, "Spoken answer", true})
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+    assert {:ok, trace} = SalixVoice.CallTraceRecords.read_trace(router, info.call_id)
+    assert trace["ended"]
+
+    assert Enum.any?(
+             trace["events"],
+             &(&1["type"] == "agent_turn" and &1["text"] == "Spoken answer")
+           )
+  end
+
+  test "a stalled trace write cannot extend forced shutdown" do
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    router = SalixStore.Ids.new_agent_id(group)
+    Application.put_env(:salix_voice, :test_router_agent_id, router)
+    {call, info, _model} = live_call(%{tenant_id: tenant, group_id: group})
+    prefix = Keys.agent_voice_call_segments_prefix(router, info.call_id)
+    :ok = S3.Fake.set_fault({:pause, :put, {:prefix, prefix}})
+    on_exit(fn -> if S3.Fake.paused?(), do: S3.Fake.release_pause() end)
+    send(call, :voice_trace_flush)
+    wait_for_trace_pause(200)
+
+    assert {:ok, %{"delivered" => true}} =
+             provider(call, :note, info, %{"text" => "Still responsive"})
+
+    ref = Process.monitor(call)
+    started = System.monotonic_time(:millisecond)
+    send(call, {:voice_drain_now, started + 200})
+    assert_receive {:DOWN, ^ref, :process, ^call, _}, 800
+    assert System.monotonic_time(:millisecond) - started < 800
+  end
+
+  defp wait_for_trace_pause(0), do: flunk("trace write did not reach storage")
+
+  defp wait_for_trace_pause(attempts) do
+    if S3.Fake.paused?() do
+      :ok
+    else
+      Process.sleep(5)
+      wait_for_trace_pause(attempts - 1)
+    end
+  end
+
+  test "a long call writes one truncation marker and never exceeds its record cap" do
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    router = SalixStore.Ids.new_agent_id(group)
+    Application.put_env(:salix_voice, :test_router_agent_id, router)
+    {call, info, model} = live_call(%{tenant_id: tenant, group_id: group})
+
+    for n <- 1..2_050, do: Fake.emit(model, {:input_transcript, "turn #{n}", true, n})
+    _ = :sys.get_state(model)
+    _ = :sys.get_state(call)
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+
+    assert {:ok, cache} = SalixVoice.CallTraceRecords.load(router, info.call_id)
+
+    events =
+      Stream.unfold(nil, fn
+        :done ->
+          nil
+
+        before ->
+          {:ok, page, more, next} =
+            SalixVoice.CallTraceRecords.tail(router, info.call_id, cache, 500, before)
+
+          {page, if(more, do: next, else: :done)}
+      end)
+      |> Enum.flat_map(& &1)
+
+    assert length(events) == 2_000
+    assert Enum.count(events, &(&1["type"] == "trace_truncated")) == 1
+    assert Enum.max_by(events, & &1["id"])["type"] == "trace_truncated"
+  end
+
+  test "context timeout links the failed delegation and keeps model errors private" do
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    router = SalixStore.Ids.new_agent_id(group)
+    Application.put_env(:salix_voice, :test_router_agent_id, router)
+    put_timer(:context_timeout_ms, 100)
+
+    assert {:ok, %{call_id: id}} =
+             admit(%{tenant_id: tenant, group_id: group, mode: :push_to_talk})
+
+    assert {:ok, call, _} = SalixVoice.attach(id, self())
+    assert_receive {:fake_model, model, {:started, _}}
+    emit(model, call, {:started, "live-session"})
+    assert {:ok, _} = GenServer.call(call, {:context, %{context_id: 42, status: :pending}})
+    emit_native_turn(model, 42, "turn-timeout")
+    emit(model, call, {:delegation, "dlg-timeout", 10, "Inspect private screen", "turn-timeout"})
+    emit(model, call, {:user_turn_started, "turn-later", 2})
+    assert_receive {:voice_call, :context_failed, 42}, 1_000
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        emit(model, call, {:error, {:invalid_command, "private model contents"}})
+      end)
+
+    refute log =~ "private model contents"
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+    assert {:ok, cache} = SalixVoice.CallTraceRecords.load(router, id)
+    assert {:ok, events, false, nil} = SalixVoice.CallTraceRecords.tail(router, id, cache)
+
+    assert Enum.any?(
+             events,
+             &(&1["type"] == "ptt_context" and &1["context_id"] == 42 and &1["status"] == "failed" and
+                 &1["reason"] == "timeout")
+           )
+
+    assert Enum.any?(
+             events,
+             &(&1["type"] == "delegation_requested" and &1["delegation_id"] == "dlg-timeout" and
+                 &1["context_id"] == 42 and &1["native_turn_id"] == "turn-timeout")
+           )
+
+    assert Enum.any?(
+             events,
+             &(&1["type"] == "delegation_finished" and &1["delegation_id"] == "dlg-timeout" and
+                 &1["result"] == "failed")
+           )
+
+    assert Enum.any?(events, &(&1["type"] == "error" and &1["class"] == "model"))
+    refute inspect(events) =~ "private model contents"
+  end
+
+  test "both delegation progress stages are retained in a manual trace" do
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    router = SalixStore.Ids.new_agent_id(group)
+    Application.put_env(:salix_voice, :test_router_agent_id, router)
+    put_timer(:progress_thinking_ms, 20)
+    put_timer(:progress_apology_ms, 40)
+    {call, info, model} = live_call(%{tenant_id: tenant, group_id: group})
+    emit(model, call, {:delegation, "dlg-progress", 100})
+    assert_receive {:fake_model, ^model, {:append, :thinking, "dlg-progress", _}}, 1_000
+    assert_receive {:fake_model, ^model, {:append, :commentary, "dlg-progress", _}}, 1_000
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+    assert {:ok, cache} = SalixVoice.CallTraceRecords.load(router, info.call_id)
+
+    assert {:ok, events, false, nil} =
+             SalixVoice.CallTraceRecords.tail(router, info.call_id, cache)
+
+    assert Enum.filter(events, &(&1["type"] == "progress")) |> Enum.map(& &1["stage"]) == [
+             "thinking",
+             "apology"
+           ]
+  end
+
+  test "the trace byte budget ends with one marker without storing oversized content" do
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    router = SalixStore.Ids.new_agent_id(group)
+    Application.put_env(:salix_voice, :test_router_agent_id, router)
+    {call, info, model} = live_call(%{tenant_id: tenant, group_id: group})
+    text = String.duplicate("x", 300_000)
+    for n <- 1..16, do: Fake.emit(model, {:input_transcript, text, true, n})
+    _ = :sys.get_state(model)
+    _ = :sys.get_state(call)
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+
+    prefix = Keys.agent_voice_call_segments_prefix(router, info.call_id)
+    assert {:ok, objects} = S3.list_all(prefix)
+
+    bytes =
+      Enum.reduce(objects, 0, fn %{key: key}, total ->
+        {:ok, %{body: body}} = S3.get(key)
+        total + byte_size(body)
+      end)
+
+    assert bytes <= 4 * 1024 * 1024
+    assert {:ok, cache} = SalixVoice.CallTraceRecords.load(router, info.call_id)
+
+    assert {:ok, events, false, nil} =
+             SalixVoice.CallTraceRecords.tail(router, info.call_id, cache)
+
+    assert Enum.count(events, &(&1["type"] == "trace_truncated")) == 1
+    assert List.last(events)["type"] == "trace_truncated"
   end
 
   test "a delegation becomes Router provider input with the caller's words up to its offset" do
@@ -1060,6 +1704,9 @@ defmodule SalixVoice.CallActorTest do
     {:ok, _} =
       CasRecord.update(Keys.ctl_group(group), &Map.put(&1, "router_agent_id", router["agent_id"]))
 
+    if opts[:trace],
+      do: Application.put_env(:salix_voice, :test_router_agent_id, router["agent_id"])
+
     {:ok, connect} = SalixIM.VoiceConnects.ensure_voice_im_connect(tenant, group)
     {:ok, conversation} = SalixIM.RouterConversationInput.ensure(group)
 
@@ -1097,7 +1744,13 @@ defmodule SalixVoice.CallActorTest do
     }
   end
 
-  defp execute_late_voice_tool(fixture, ended_msg, delegation_id, text \\ "Done") do
+  defp execute_late_voice_tool(
+         fixture,
+         ended_msg,
+         delegation_id,
+         text \\ "Done",
+         session_id \\ nil
+       ) do
     {:ok, binding} =
       SalixIM.ConversationSource.binding(fixture.router["agent_id"], %{
         group_id: fixture.group,
@@ -1120,6 +1773,8 @@ defmodule SalixVoice.CallActorTest do
       trusted_origin: entry.payload.trusted_origin,
       trusted_origins: [entry.payload.trusted_origin]
     }
+
+    tool_ctx = if session_id, do: Map.put(tool_ctx, :session_id, session_id), else: tool_ctx
 
     entries = SalixAgent.Tools.ImRouter.dynamic_disclosure_entries(tool_ctx)
     tool_ctx = Map.put(tool_ctx, :tool_disclosure, %{"tools" => entries})
@@ -1154,6 +1809,116 @@ defmodule SalixVoice.CallActorTest do
       )
 
     Enum.find(messages, &(get_in(&1, ["metadata", "event_type"]) == "voice.delegation_handoff"))
+  end
+
+  @tag :ptt_causal_regressions
+  test "a Router session switch after enqueue attributes the response to the consuming session" do
+    fixture = setup_causal_ptt_fixture(%{settle_ms: 10, trace: true})
+    call = fixture.call
+    model = fixture.model
+    group = fixture.group
+    old_session = fixture.router["router_session_id"]
+
+    assert {:ok, _} = GenServer.call(call, {:context, %{context_id: 1, status: :pending}})
+
+    assert {:ok, _} =
+             GenServer.call(
+               call,
+               {:context,
+                %{context_id: 1, status: :complete, text: "Screen context", attachments: []}}
+             )
+
+    emit_native_turn(model, 1, "turn-switch")
+    emit(model, call, {:delegation, "dlg-switch", 100, "Inspect the screen", "turn-switch"})
+    assert_receive {:ingress, ^group, _, %{"event_type" => "voice.delegation"}, _, _}, 1_000
+    wait_for_delegation_ack(call, "dlg-switch", 200)
+
+    {:ok, messages} =
+      SalixIM.Conversations.list_group_conversation_messages(
+        group,
+        fixture.conversation["conversation_id"],
+        limit: 10
+      )
+
+    message = Enum.find(messages, &(get_in(&1, ["metadata", "event_type"]) == "voice.delegation"))
+    assert message
+
+    assert {:ok, %{"router_session_id" => new_session}} =
+             SalixAgent.AgentActor.switch_router_session(
+               fixture.router["agent_id"],
+               fixture.tenant,
+               old_session
+             )
+
+    refute old_session == new_session
+    result = execute_late_voice_tool(fixture, message, "dlg-switch", "The answer", new_session)
+    refute result.error
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+
+    assert {:ok, trace} =
+             SalixVoice.CallTraceRecords.read_trace(fixture.router["agent_id"], fixture.call_id)
+
+    reply = Enum.find(trace["events"], &(&1["type"] == "router_reply"))
+    assert reply["session_id"] == new_session
+    assert reply["agent_id"] == fixture.router["agent_id"]
+    assert reply["delegation_id"] == "dlg-switch"
+  end
+
+  test "voice provider records only the trusted tool-context session on a live call" do
+    fixture = setup_causal_ptt_fixture(%{settle_ms: 10, trace: true})
+    call = fixture.call
+    model = fixture.model
+    group = fixture.group
+    router = fixture.router["agent_id"]
+    trusted = SalixStore.Ids.new_session_id()
+    forged = SalixStore.Ids.new_session_id()
+
+    assert {:ok, _} = GenServer.call(call, {:context, %{context_id: 1, status: :pending}})
+
+    assert {:ok, _} =
+             GenServer.call(
+               call,
+               {:context, %{context_id: 1, status: :complete, text: "Screen", attachments: []}}
+             )
+
+    emit_native_turn(model, 1, "turn-provider")
+    emit(model, call, {:delegation, "dlg-provider", 100, "Inspect", "turn-provider"})
+    assert_receive {:ingress, ^group, _, %{"event_type" => "voice.delegation"}, _, _}, 1_000
+    wait_for_delegation_ack(call, "dlg-provider", 200)
+
+    params = %{
+      "call_id" => fixture.call_id,
+      "delegation_id" => "dlg-provider",
+      "text" => "Trusted response",
+      "session_id" => forged
+    }
+
+    assert {:ok, %{"delivered" => true}} =
+             SalixIM.Provider.call_api(router, "voice", "voice.note", %{
+               "connect_id" => fixture.connect["connect_id"],
+               "params" => params,
+               "tool_context" => %{"session_id" => trusted}
+             })
+
+    assert {:ok, %{"delivered" => true}} =
+             SalixIM.Provider.call_api(router, "voice", "voice.note", %{
+               "connect_id" => fixture.connect["connect_id"],
+               "params" => %{params | "text" => "No trusted session"},
+               "tool_context" => %{}
+             })
+
+    send(call, {:voice_carrier, :hangup, :normal})
+    await_end(call, :caller_hangup)
+    assert {:ok, trace} = SalixVoice.CallTraceRecords.read_trace(router, fixture.call_id)
+    replies = Enum.filter(trace["events"], &(&1["type"] == "router_reply"))
+
+    assert [
+             %{"text" => "Trusted response", "session_id" => ^trusted},
+             %{"text" => "No trusted session", "session_id" => nil}
+           ] = replies
+
+    refute Enum.any?(replies, &(&1["session_id"] == forged))
   end
 
   @tag :ptt_causal_regressions

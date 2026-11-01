@@ -10,6 +10,8 @@ defmodule SalixVoice.Telemetry do
       delegation to its first `voice.say`, with `outcome`
     * `[:salix, :voice, :profile, :stop]`: `%{duration: native}` from call
       start until the caller profile is decided or given up, with `outcome`
+    * `[:salix, :voice, :trace, :dropped]`: `%{count: records}` with `reason`
+    * `[:salix, :voice, :trace, :unavailable]`: `%{count: 1}` with `reason`
   """
 
   @transports ~w(twilio websocket electron)
@@ -45,6 +47,22 @@ defmodule SalixVoice.Telemetry do
     :telemetry.execute([:salix, :voice, :profile, :stop], %{duration: max(duration, 0)}, %{
       outcome: outcome
     })
+  rescue
+    _ -> :ok
+  end
+
+  @doc "Count an observation unavailable at admission without call identifiers."
+  def trace_unavailable(reason) do
+    reason = if reason == "router_unavailable", do: reason, else: "other"
+    :telemetry.execute([:salix, :voice, :trace, :unavailable], %{count: 1}, %{reason: reason})
+  rescue
+    _ -> :ok
+  end
+
+  @doc "Count a detected trace batch discarded by storage or shutdown."
+  def trace_dropped(count, reason) when is_integer(count) and count > 0 do
+    reason = if reason in ["storage", "shutdown"], do: reason, else: "other"
+    :telemetry.execute([:salix, :voice, :trace, :dropped], %{count: count}, %{reason: reason})
   rescue
     _ -> :ok
   end

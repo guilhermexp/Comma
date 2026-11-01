@@ -120,6 +120,15 @@ Test archival through the owning seam and inspect captured or stored events.
 Cover dispatch identity, settlement, and archive failure isolation.
 Do not infer archival coverage from source strings or AST call placement.
 
+## Voice observations
+
+Keep `CallActor` as the sole owner of `CallTrace` and its `CallTraceRecords`
+writer. Emit encrypted voice boundaries through `EventArchive.Emit.voice_*`
+with explicit tenant, Router Agent and call identity. Do not assume one archive
+sequence per call: delivery uses the Router inbox stream; other voice boundaries
+use the call Session stream. Attribute Router replies to the trusted tool-context
+Session, not the enqueue ACK. See [voice contracts](../docs/messaging-voice.md).
+
 ## Platform telemetry
 
 Telemetry is the archive's opposite: aggregate facts with no content. Neither
@@ -156,3 +165,12 @@ Tests should protect real behavior and collection boundaries: event-to-scrape,
 bounded hostile input, context propagation, or failure isolation. Do not add
 tests that merely restate a metric struct, mock, manifest string, or third-party
 descriptor.
+
+## Storage test isolation
+
+The full `salix_store` suite includes cases that switch from `S3.Fake` to
+`S3.AWS`. `MIX_ENV=test` alone does not isolate those cases. Before running the
+suite, configure a dedicated loopback S3 endpoint, test bucket and synthetic
+credentials in `:salix_store`. Verify the resolved endpoint before execution.
+Do not inherit the developer's storage configuration or use the local development
+MinIO on port 19000 as a test service. Preserve its data and credentials.
