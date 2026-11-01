@@ -60,7 +60,7 @@ Mudança de geração de conta encerra a chamada, invalida o turno e suas contin
 - **Traço no print** (revisado): os pontos do traço são convertidos para pixels e desenhados sobre o bitmap BGRA (`toBitmap()` → polilinha com espessura de ~6 px no tamanho do print, cor do companheiro → `createFromBitmap`) antes de codificar o print do monitor e o recorte. Sem dependência nova.
 - **Coordenadas**: ponto e caixa do traço convertidos de pontos do Electron para pixels do print enviado (escala do monitor × redução), para o agente citar o mesmo sistema da imagem.
 
-A permissão é verificada com `systemPreferences.getMediaAccessStatus("screen")`. `not-determined` deixa o `desktopCapturer` disparar o pedido do macOS; `denied`/`restricted` seguem sem print (spec). O texto `electron_macos_screen_capture_usage` muda nos três idiomas para cobrir áudio e print.
+A permissão é verificada com `systemPreferences.getMediaAccessStatus("screen")`; o pedido em nome do Comma segue D11. Com “Enviar print” ligado, captura negada/restrita ou indisponível falha o contexto explicitamente, sem completar silenciosamente como texto puro (D17). Desligar “Enviar print” permite um novo gesto só com voz e contexto textual, sem captura ou pedido de permissão. O texto `electron_macos_screen_capture_usage` cobre áudio e print nos três idiomas.
 
 Alternativas: o daemon do Computer Use só captura o monitor principal, só quando o agente pede e sob outra identidade TCC; ScreenCaptureKit num helper novo seria mais código nativo sem ganho para um print único.
 
