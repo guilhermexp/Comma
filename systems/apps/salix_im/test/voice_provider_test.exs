@@ -53,6 +53,177 @@ defmodule SalixIM.VoiceProviderTest do
     {group_id, router["agent_id"]}
   end
 
+  defp late_ptt_source(ctx, mode \\ "push_to_talk") do
+    {:ok, connect} = ProviderConnects.ensure_voice_im_connect(ctx.tenant, ctx.group_id)
+    {:ok, group} = CasRecord.get(Keys.ctl_group(ctx.group_id))
+    {:ok, router} = CasRecord.get(Keys.ctl_agent(ctx.router_id))
+    {:ok, conversation} = SalixIM.RouterConversationInput.ensure(ctx.group_id)
+    call_id = "vc_" <> Ids.new_connect_id()
+    delegation_id = "dlg_late"
+    caller_id = "u_ptt_caller"
+    source_id = "im_provider:voice:#{connect["connect_id"]}:#{call_id}:#{delegation_id}"
+
+    metadata = %{
+      "provider" => "voice",
+      "voice_mode" => mode,
+      "connect_id" => connect["connect_id"],
+      "chat_id" => call_id,
+      "chat_type" => "private",
+      "message_id" => delegation_id,
+      "event_type" => "voice.delegation",
+      "event_id" => delegation_id,
+      "from_user_id" => caller_id,
+      "source_actor_type" => "user"
+    }
+
+    {:ok, payload} =
+      AgentDeliveryPayload.provider_router_delivery(group, router, "Check the build.", metadata,
+        source_message_id: source_id,
+        trusted_source_text: "Check the build."
+      )
+
+    {:ok, %{"message_id" => message_id}} =
+      SalixIM.RouterConversationInput.append_provider_input(
+        ctx.group_id,
+        source_id,
+        %{
+          content: payload["content"],
+          session_id: get_in(payload, ["participant_payload", "session_id"]),
+          trusted_origin: payload["trusted_origin"],
+          role: "user"
+        },
+        Map.put(metadata, "source_message_id", source_id)
+      )
+
+    {:ok, message} =
+      SalixIM.Conversations.get_group_conversation_message(
+        ctx.group_id,
+        conversation["conversation_id"],
+        message_id
+      )
+
+    {:ok, binding} =
+      SalixIM.ConversationSource.binding(ctx.router_id, %{
+        group_id: ctx.group_id,
+        conversation_id: conversation["conversation_id"],
+        participant_id: conversation["router_participant_id"]
+      })
+
+    {:ok, entry} = SalixIM.ConversationSource.entry(binding, message)
+
+    %{
+      connect: connect,
+      call_id: call_id,
+      delegation_id: delegation_id,
+      caller_id: caller_id,
+      conversation: conversation,
+      context: %{
+        "source_message_id" => entry.source_message_id,
+        "source_message_ids" => [entry.source_message_id],
+        "trusted_origin" => entry.payload.trusted_origin
+      }
+    }
+  end
+
+  defp ended_ptt_source(ctx, source, pending_ids) do
+    source_id = "im_provider:voice:#{source.connect["connect_id"]}:#{source.call_id}:end"
+
+    metadata = %{
+      "provider" => "voice",
+      "voice_mode" => "push_to_talk",
+      "voice_pending_delegation_ids" => pending_ids,
+      "connect_id" => source.connect["connect_id"],
+      "chat_id" => source.call_id,
+      "chat_type" => "private",
+      "event_type" => "voice.delegation_handoff",
+      "event_id" => source.call_id,
+      "from_user_id" => source.caller_id,
+      "source_actor_type" => "user"
+    }
+
+    assert {:ok, :queued} =
+             ProviderConnects.enqueue_group_router_im_provider_message(
+               ctx.group_id,
+               "Shortcut speech turn ended with accepted requests still pending.",
+               metadata,
+               source_id,
+               session_name: "Voice call"
+             )
+
+    {:ok, messages} =
+      SalixIM.Conversations.list_group_conversation_messages(
+        ctx.group_id,
+        source.conversation["conversation_id"],
+        limit: 2
+      )
+
+    ended =
+      Enum.find(messages, &(get_in(&1, ["metadata", "event_type"]) == "voice.delegation_handoff"))
+
+    {:ok, binding} =
+      SalixIM.ConversationSource.binding(ctx.router_id, %{
+        group_id: ctx.group_id,
+        conversation_id: source.conversation["conversation_id"],
+        participant_id: source.conversation["router_participant_id"]
+      })
+
+    {:ok, entry} = SalixIM.ConversationSource.entry(binding, ended)
+
+    Map.merge(source, %{
+      context: %{
+        "source_message_id" => entry.source_message_id,
+        "trusted_origin" => entry.payload.trusted_origin
+      },
+      activation_sources: [source.context["source_message_id"], entry.source_message_id],
+      activation_origins: [source.context["trusted_origin"], entry.payload.trusted_origin]
+    })
+  end
+
+  defp use_real_voice_tools do
+    previous = Application.get_env(:salix_agent, :im_provider_mod)
+    Application.put_env(:salix_agent, :im_provider_mod, Provider)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:salix_agent, :im_provider_mod, previous),
+        else: Application.delete_env(:salix_agent, :im_provider_mod)
+    end)
+  end
+
+  defp execute_voice_tool(ctx, source, params) do
+    tool_ctx = %{
+      agent_id: ctx.router_id,
+      group_id: ctx.group_id,
+      tenant_id: ctx.tenant,
+      role: "router",
+      runtime_kind: :internal,
+      llm_tool_envelope: true,
+      visible_reply_phase: :clean,
+      source_message_id: source.context["source_message_id"],
+      source_message_ids: source.activation_sources,
+      trusted_origin: source.context["trusted_origin"],
+      trusted_origins: source.activation_origins
+    }
+
+    entries = SalixAgent.Tools.ImRouter.dynamic_disclosure_entries(tool_ctx)
+    tool_ctx = Map.put(tool_ctx, :tool_disclosure, %{"tools" => entries})
+    params = Map.put(params, "connect_id", source.connect["connect_id"])
+
+    [result] =
+      SalixAgent.Tools.execute(
+        [
+          %{
+            id: "late-voice-result",
+            name: "call",
+            args: %{"tool" => "im_api.voice.say", "params" => params}
+          }
+        ],
+        tool_ctx
+      )
+
+    result
+  end
+
   # A stand-in CallActor: joins the call's group and answers provider calls.
   defp fake_call(call_id, reply) do
     test = self()
@@ -175,6 +346,211 @@ defmodule SalixIM.VoiceProviderTest do
                })
 
       refute_receive {:call_received, _}
+    end
+
+    test "a PTT answer after hangup reaches the original chat without waking other agents", ctx do
+      source = late_ptt_source(ctx)
+      pid = fake_call(source.call_id, {:ok, %{"delivered" => true}})
+      ref = Process.monitor(pid)
+      Process.unlink(pid)
+      Process.exit(pid, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+      group_id = ctx.group_id
+      conversation_id = source.conversation["conversation_id"]
+
+      assert {:ok, _} =
+               SalixIM.ConversationServer.subscribe_group_conversation(
+                 group_id,
+                 conversation_id,
+                 self()
+               )
+
+      assert {:ok,
+              %{
+                "sent" => true,
+                "delivered" => false,
+                "message_id" => message_id,
+                "call_id" => call_id
+              }} =
+               Provider.call_api(ctx.router_id, "voice", "voice.say", %{
+                 "connect_id" => source.connect["connect_id"],
+                 "params" => %{"text" => "The build passed."},
+                 "tool_context" => source.context
+               })
+
+      assert call_id == source.call_id
+
+      assert {:ok, message} =
+               SalixIM.Conversations.get_group_conversation_message(
+                 ctx.group_id,
+                 source.conversation["conversation_id"],
+                 message_id
+               )
+
+      assert message["actor_type"] == "agent"
+      assert message["agent_id"] == ctx.router_id
+      assert message["content"] == [%{"type" => "text", "text" => "The build passed."}]
+      assert message["delivery_filter"] == %{"participant_ids" => []}
+
+      assert_receive {:conversation_message_created, ^group_id, ^conversation_id, ^message_id,
+                      _seq}
+
+      assert message["metadata"] == %{
+               "event_type" => "voice.reply",
+               "voice_mode" => "push_to_talk",
+               "voice_call_id" => source.call_id,
+               "voice_delegation_id" => source.delegation_id,
+               "voice_caller_user_id" => source.caller_id
+             }
+
+      assert SalixIM.Provider.Voice.call_pid(source.call_id) == :none
+    end
+
+    test "a real ended source retains the sole pending answer through Tools and ImRouter", ctx do
+      use_real_voice_tools()
+      source = late_ptt_source(ctx)
+      original = source
+
+      source = ended_ptt_source(ctx, source, [source.delegation_id])
+      group_id = ctx.group_id
+      conversation_id = source.conversation["conversation_id"]
+
+      assert {:ok, _} =
+               SalixIM.ConversationServer.subscribe_group_conversation(
+                 group_id,
+                 conversation_id,
+                 self()
+               )
+
+      assert {:ok, %{"message_id" => first_message_id}} =
+               Provider.call_api(ctx.router_id, "voice", "voice.say", %{
+                 "connect_id" => original.connect["connect_id"],
+                 "params" => %{"text" => "The accepted work is finished."},
+                 "tool_context" => original.context
+               })
+
+      for id <- ["unaccepted", ""] do
+        failed =
+          execute_voice_tool(ctx, source, %{"text" => "Must not be saved.", "delegation_id" => id})
+
+        assert failed.error
+      end
+
+      result = execute_voice_tool(ctx, source, %{"text" => "The accepted work is finished."})
+      refute result.error
+
+      conflict =
+        execute_voice_tool(ctx, source, %{"text" => "A conflicting final answer."})
+
+      assert conflict.error
+
+      assert {:ok, messages} =
+               SalixIM.Conversations.list_group_conversation_messages(group_id, conversation_id,
+                 limit: 10
+               )
+
+      [message] = Enum.filter(messages, &(&1["actor_type"] == "agent"))
+      assert message["message_id"] == first_message_id
+
+      assert message["content"] == [
+               %{"type" => "text", "text" => "The accepted work is finished."}
+             ]
+
+      assert message["agent_id"] == ctx.router_id
+      assert message["metadata"]["voice_delegation_id"] == source.delegation_id
+      assert message["metadata"]["voice_caller_user_id"] == source.caller_id
+      message_id = message["message_id"]
+
+      assert_receive {:conversation_message_created, ^group_id, ^conversation_id, ^message_id,
+                      _seq}
+    end
+
+    test "an ended source with multiple pending requests requires an exact delegation", ctx do
+      use_real_voice_tools()
+      source = late_ptt_source(ctx)
+      source = ended_ptt_source(ctx, source, [source.delegation_id, "dlg_other_pending"])
+      ambiguous = execute_voice_tool(ctx, source, %{"text" => "An ambiguous answer."})
+      assert ambiguous.error
+
+      result =
+        execute_voice_tool(ctx, source, %{
+          "text" => "Answer for the original request.",
+          "delegation_id" => source.delegation_id
+        })
+
+      refute result.error
+
+      assert {:ok, messages} =
+               SalixIM.Conversations.list_group_conversation_messages(
+                 ctx.group_id,
+                 source.conversation["conversation_id"],
+                 limit: 10
+               )
+
+      message = Enum.find(messages, &(&1["actor_type"] == "agent"))
+
+      assert message["content"] == [
+               %{"type" => "text", "text" => "Answer for the original request."}
+             ]
+
+      assert message["metadata"]["voice_call_id"] == source.call_id
+      assert message["metadata"]["voice_delegation_id"] == source.delegation_id
+    end
+
+    test "late text requires the original PTT input, caller, connect and delegation", ctx do
+      source = late_ptt_source(ctx)
+      origin = source.context["trusted_origin"]
+
+      attempts = [
+        {%{}, %{}},
+        {update_in(source.context, ["trusted_origin"], &Map.delete(&1, "source_message_id")),
+         %{}},
+        {put_in(source.context, ["trusted_origin", "agent_group_id"], "another-group"), %{}},
+        {put_in(
+           source.context,
+           ["trusted_origin", "principal_ref", "subject_id"],
+           "another-user"
+         ), %{}},
+        {put_in(source.context, ["trusted_origin", "provider_context", "connect_id"], "other"),
+         %{}},
+        {source.context, %{"call_id" => "vc_another"}},
+        {source.context, %{"delegation_id" => "dlg_another"}}
+      ]
+
+      assert origin["principal_ref"]["namespace"] == "comma_user"
+
+      for {context, overrides} <- attempts do
+        assert {:error, _} =
+                 Provider.call_api(ctx.router_id, "voice", "voice.say", %{
+                   "connect_id" => source.connect["connect_id"],
+                   "params" =>
+                     Map.merge(
+                       %{"text" => "Private result", "call_id" => source.call_id},
+                       overrides
+                     ),
+                   "tool_context" => context
+                 })
+      end
+
+      assert {:ok, messages} =
+               SalixIM.Conversations.list_group_conversation_messages(
+                 ctx.group_id,
+                 source.conversation["conversation_id"],
+                 limit: 20
+               )
+
+      refute Enum.any?(messages, &(&1["actor_type"] == "agent"))
+    end
+
+    test "an ended manual call keeps its terminal voice outcome", ctx do
+      source = late_ptt_source(ctx, nil)
+
+      assert {:error, %{"error_class" => "voice_call_ended"}} =
+               Provider.call_api(ctx.router_id, "voice", "voice.say", %{
+                 "connect_id" => source.connect["connect_id"],
+                 "params" => %{"text" => "Manual call answer", "voice_mode" => "push_to_talk"},
+                 "tool_context" => source.context
+               })
     end
 
     @tag :ended_voice

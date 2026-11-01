@@ -1,9 +1,14 @@
-import { defaultSideChatShortcut } from "@comma/native-bridge";
+import {
+  defaultOpenCommaShortcut,
+  defaultPushToTalkShortcut,
+  defaultSideChatShortcut,
+} from "@comma/native-bridge";
 import { chordKeybinding, sequenceKeybinding } from "@comma/ui";
 import { describe, expect, it } from "vitest";
 import {
   appBindingConflictsWithSideChatShortcut,
   findAppShortcutConflictForSideChat,
+  findGlobalShortcutConflict,
 } from "../sideChatShortcutConflict";
 import { createDefaultAppShortcutBindings } from "../appShortcutRegistry";
 
@@ -43,5 +48,73 @@ describe("sideChatShortcutConflict", () => {
         },
       })
     ).toBe("toggle-left-sidebar");
+  });
+
+  it("names the global shortcut a Talk to agent chord collides with", () => {
+    const globals = {
+      "open-comma": defaultOpenCommaShortcut,
+      "side-chat": defaultSideChatShortcut,
+    };
+
+    expect(
+      findGlobalShortcutConflict(defaultPushToTalkShortcut, globals)
+    ).toBeUndefined();
+    expect(findGlobalShortcutConflict(defaultSideChatShortcut, globals)).toBe(
+      "side-chat"
+    );
+    expect(
+      findGlobalShortcutConflict(
+        // Same chord with the modifiers listed in another order.
+        {
+          key: "comma",
+          modifiers: { shift: false, meta: false, control: false, alt: true },
+        },
+        globals
+      )
+    ).toBe("open-comma");
+    // A cleared shortcut never conflicts, and a cleared owner holds no chord.
+    expect(findGlobalShortcutConflict(null, globals)).toBeUndefined();
+    expect(
+      findGlobalShortcutConflict(defaultSideChatShortcut, { "side-chat": null })
+    ).toBeUndefined();
+  });
+
+  it("treats a modifier-only Talk to agent chord as distinct from chords with a key", () => {
+    const controlOption = defaultPushToTalkShortcut;
+    const controlOptionZ = { key: "z" as const, modifiers: controlOption.modifiers };
+    // ⌃⌥Z still reaches its owner: the ⌃⌥ turn is cancelled by the Z.
+    expect(
+      findGlobalShortcutConflict(controlOption, { "side-chat": controlOptionZ })
+    ).toBeUndefined();
+    expect(
+      findGlobalShortcutConflict(controlOptionZ, { "push-to-talk": controlOption })
+    ).toBeUndefined();
+    // The same modifiers alone are the same chord, whatever the listing order.
+    expect(
+      findGlobalShortcutConflict(
+        {
+          key: null,
+          modifiers: { shift: false, meta: false, control: true, alt: true },
+        },
+        { "push-to-talk": controlOption }
+      )
+    ).toBe("push-to-talk");
+    expect(
+      appBindingConflictsWithSideChatShortcut(
+        chordKeybinding("KeyZ", { alt: true, control: true }),
+        controlOption
+      )
+    ).toBe(false);
+  });
+
+  it("keeps the default Talk to agent chord free of every default app shortcut", () => {
+    for (const platform of ["macos", "windows"] as const) {
+      expect(
+        findAppShortcutConflictForSideChat(
+          createDefaultAppShortcutBindings(platform),
+          defaultPushToTalkShortcut
+        )
+      ).toBeUndefined();
+    }
   });
 });

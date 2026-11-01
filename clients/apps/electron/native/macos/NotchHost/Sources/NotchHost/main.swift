@@ -67,6 +67,12 @@ final class NotchHost {
     /// Main's AirDrop projection; while present it replaces the task scene.
     private var currentAirDrop: CommaNotchAirDropPresentation?
     private var autoOpenedAirDropRequestID: String?
+    /// Main's push-to-talk turn; while present it comes ahead of AirDrop.
+    private var currentVoice: CommaNotchVoiceTurn?
+    /// Counts each new turn and each error, the moments the Notch announces.
+    private var voiceSequence = 0
+    /// The Notch opened itself to offer an error's action.
+    private var voiceOpenedForError = false
     private var listTitle = "Conversation activity"
     private var listSubtitle = "Open a conversation to inspect its latest state."
     private var openChatLabel = "Open chat"
@@ -96,6 +102,8 @@ final class NotchHost {
                 hasActivity = false
                 currentTasks = []
                 currentAirDrop = nil
+                currentVoice = nil
+                voiceOpenedForError = false
                 controller.update(scene: .hidden)
             case "open":
                 controller.open()
@@ -134,7 +142,7 @@ final class NotchHost {
         // Only the Task activity takes the reader's width; AirDrop sizes to
         // its own sentence. A showing Notch follows the shell's own curve, so
         // its content and outline resize as one.
-        guard currentAirDrop == nil, !currentTasks.isEmpty else { return }
+        guard currentVoice == nil, currentAirDrop == nil, !currentTasks.isEmpty else { return }
         withAnimation(Self.configuration.animation) {
             controller.update(scene: makeScene())
         }
@@ -157,9 +165,10 @@ final class NotchHost {
         )
         // Arrives the way new activity does, so it reads as the real thing.
         // An open Notch folds back first: the preview is its compact width.
-        // AirDrop is drawn ahead of any preview, so an open offer stays open.
+        // AirDrop and a voice turn are drawn ahead of any preview, so an open
+        // offer or error stays open.
         notificationSequence += 1
-        if currentAirDrop == nil {
+        if currentAirDrop == nil, currentVoice == nil {
             controller.close()
         }
         controller.update(scene: makeScene())
@@ -196,7 +205,7 @@ final class NotchHost {
                 return left.updatedAt > right.updatedAt
             }
             hasActivity = !currentTasks.isEmpty
-        } else if payload?.airDrop == nil {
+        } else if payload?.airDrop == nil, payload?.voice == nil {
             hasActivity = payload?.hasActivity ?? defaultActivity
         }
         if payload?.notify == true {
@@ -208,7 +217,23 @@ final class NotchHost {
             currentAirDrop = airDrop.transfer.map(CommaNotchAirDropPresentation.init)
         }
 
+        let previousVoice = currentVoice
+        if let voice = payload?.voice {
+            currentVoice = voice.turn
+            if let turn = voice.turn,
+               previousVoice == nil || (turn.state == .error && previousVoice?.state != .error)
+            {
+                voiceSequence += 1
+            }
+        }
+
         controller.update(scene: makeScene())
+
+        if payload?.voice != nil {
+            applyVoiceOpening(previous: previousVoice)
+        }
+        // The turn keeps the Notch; AirDrop opens once it is given back.
+        guard currentVoice == nil else { return }
 
         // A new offer opens itself so its decision is one click away. Once it
         // is answered, expires, or the transfer ends, the Notch folds back.
@@ -227,7 +252,60 @@ final class NotchHost {
         }
     }
 
+    /// An error with a way out opens the Notch so its button is one click
+    /// away; the Notch folds back when the error is replaced or cleared.
+    private func applyVoiceOpening(previous: CommaNotchVoiceTurn?) {
+        let turn = currentVoice
+        if let turn, turn.state == .error, turn.action != nil, turn != previous {
+            voiceOpenedForError = true
+            controller.open()
+        } else if voiceOpenedForError, turn?.state != .error {
+            voiceOpenedForError = false
+            controller.close()
+        }
+    }
+
+    private func voiceScene(_ turn: CommaNotchVoiceTurn) -> NotchScene {
+        let leadingWidth = NotchVoiceMetrics.compactLeadingWidth(for: turn.message)
+        let trailingWidth = NotchVoiceMetrics.compactTrailingWidth
+        return NotchScene(
+            hasActivity: true,
+            notificationToken: "voice:\(voiceSequence)",
+            compactSideWidth: leadingWidth,
+            compactLeadingWidth: leadingWidth,
+            compactTrailingWidth: trailingWidth,
+            collapsesVirtualCompactNotchWidth: true,
+            compactLeadingSlot: NotchScene.erased {
+                CommaNotchVoiceLeadingSlotView(turn: turn, availableWidth: leadingWidth)
+            },
+            compactTrailingSlot: NotchScene.erased {
+                CommaNotchVoiceTrailingSlotView(turn: turn, availableWidth: trailingWidth)
+            },
+            expandedLeadingSlot: NotchScene.erased { Color.clear },
+            expandedTrailingSlot: NotchScene.erased { Color.clear },
+            expandedContent: NotchScene.erased {
+                CommaNotchVoiceExpandedView(
+                    turn: turn,
+                    onAction: { [weak self] actionID in
+                        guard let self else { return }
+                        self.voiceOpenedForError = false
+                        self.controller.close()
+                        self.emit(
+                            type: "action",
+                            payload: .init(action: "voice:action", value: actionID)
+                        )
+                    }
+                )
+            },
+            expandedSizing: .fixed(CommaNotchVoiceExpandedView.expandedSurfaceSize())
+        )
+    }
+
     private func makeScene() -> NotchScene {
+        if let turn = currentVoice {
+            return voiceScene(turn)
+        }
+
         if let airDrop = currentAirDrop {
             let leadingWidth = CommaNotchAirDropLeadingSlotView.width(
                 for: airDrop.transfer.title,

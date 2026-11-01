@@ -17,6 +17,8 @@ export function useCommaAppPreferences() {
     showInMenuBar: available,
     showInNotch: available && bridge.os === "macos",
     sideChat: available,
+    // Talk to agent uses the macOS Side Chat helper's hold-to-talk hotkey.
+    pushToTalk: available && bridge.os === "macos",
   };
   const showInSystemTray = available && bridge.os !== "macos";
   const [preferences, setPreferences] = useState<AppPreferences | null>(null);
@@ -111,6 +113,20 @@ export function useCommaAppPreferences() {
     return bridge.appPreferences.openLoginItemsSettings();
   }, [available, bridge]);
 
+  // macOS: asks for Input Monitoring and opens its pane; the helper rechecks
+  // and Main publishes the readback through the preferences state.
+  const openInputMonitoringSettings = useCallback(async () => {
+    if (!available) return { opened: false as const };
+    return bridge.appPreferences.openInputMonitoringSettings();
+  }, [available, bridge]);
+
+  // macOS: asks for Screen Recording through the helper, so the pane lists
+  // Comma, and opens it. Main reads the status back on the next state read.
+  const openScreenRecordingSettings = useCallback(async () => {
+    if (!available) return { opened: false as const };
+    return bridge.appPreferences.openScreenRecordingSettings();
+  }, [available, bridge]);
+
   // macOS prompts while it has not asked about Comma yet. Main publishes the
   // answer through the state event the preferences follow, and resolves with it.
   const requestNotificationAuthorization = useCallback(
@@ -120,8 +136,10 @@ export function useCommaAppPreferences() {
 
   return {
     availability,
+    openInputMonitoringSettings,
     openLoginItemsSettings,
     openNotificationSettings,
+    openScreenRecordingSettings,
     pending,
     preferences,
     requestNotificationAuthorization,

@@ -75,8 +75,10 @@ the `RpcDeliver` property that an acknowledgement implies a durable append,
 with per-envelope deduplication by server GUID. The mapping is by abstraction:
 the store is a Postgres row with a transactional epoch check, not an S3
 conditional write. No retained transition, fault bound or progress claim
-changes. Voice calls hold no durable state except an idempotent billing charge
-keyed by carrier call ID.
+changes. Voice calls retain an idempotent billing charge keyed by carrier call
+ID and a bounded, best-effort trace under the Router Agent. The trace has one
+CallActor writer and does not resume the call after owner loss. It adds no
+ownership, durable input acceptance or progress claim to these models.
 
 ## Lease-aware agent routing
 

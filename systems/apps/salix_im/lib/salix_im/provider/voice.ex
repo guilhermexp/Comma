@@ -9,11 +9,12 @@ defmodule SalixIM.Provider.Voice do
   depend on `salix_voice`: the scope is only an atom here, and a node that
   does not run the voice application answers `voice_call_ended`.
 
-  The CallActor checks that the request's Group and connect equal its own. A
-  missing or dead call process is `voice_call_ended`; the tool never retries.
+  The CallActor checks the request's Group and connect. After it ends, only
+  PTT answers with an original canonical input may be recorded in chat.
   """
 
   alias SalixIM.Provider.Util
+  alias SalixIM.{ConversationServer, RouterConversationInput}
 
   @pg_scope SalixVoice.PG
   @call_timeout_ms 5_000
@@ -38,7 +39,18 @@ defmodule SalixIM.Provider.Voice do
         "text" => text
       }
 
-      dispatch(call_id, op, request)
+      request =
+        case SalixIM.Provider.current_tool_context()["session_id"] do
+          session_id when is_binary(session_id) and session_id != "" ->
+            Map.put(request, "session_id", session_id)
+
+          _ ->
+            request
+        end
+
+      call_id
+      |> dispatch(op, request)
+      |> preserve_late_reply(call_id, op, request, params)
     end
   end
 
@@ -134,6 +146,130 @@ defmodule SalixIM.Provider.Voice do
 
       :none ->
         call_ended()
+    end
+  end
+
+  defp preserve_late_reply(
+         {:error, %{"error_class" => "voice_call_ended"}} = ended,
+         call_id,
+         :say,
+         request,
+         params
+       ) do
+    case late_source(call_id, request, params) do
+      {:ok, conversation, caller_id, delegation_id} ->
+        attrs = %{
+          "kind" => "message",
+          "actor_type" => "agent",
+          "agent_id" => request["agent_id"],
+          "client_request_id" => "voice_ptt_reply:#{call_id}:#{delegation_id}",
+          "content" => [%{"type" => "text", "text" => request["text"]}],
+          "delivery_filter" => %{"participant_ids" => []},
+          "metadata" => %{
+            "event_type" => "voice.reply",
+            "voice_mode" => "push_to_talk",
+            "voice_call_id" => call_id,
+            "voice_delegation_id" => delegation_id,
+            "voice_caller_user_id" => caller_id
+          }
+        }
+
+        case ConversationServer.append_group_conversation_agent_message(
+               request["group_id"],
+               conversation["conversation_id"],
+               request["agent_id"],
+               attrs
+             ) do
+          {:ok, result} ->
+            {:ok,
+             %{
+               "sent" => true,
+               "delivered" => false,
+               "call_id" => call_id,
+               "conversation_id" => conversation["conversation_id"],
+               "message_id" => result["message_id"],
+               "delivery_status" => result["delivery_status"] || "recorded"
+             }}
+
+          {:error, reason} ->
+            {:error, Util.control_error(reason)}
+        end
+
+      {:error, :ambiguous_delegation} ->
+        {:error, "delegation_id is required when more than one caller request is pending"}
+
+      :error ->
+        ended
+    end
+  end
+
+  defp preserve_late_reply(result, _call_id, _op, _request, _params), do: result
+
+  # Runtime provenance comes from the persisted input, never tool parameters.
+  # The owner authorizes the Router append and its delivery targets.
+  defp late_source(call_id, request, params) do
+    context = SalixIM.Provider.current_tool_context()
+    group_id = request["group_id"]
+    connect_id = request["connect_id"]
+
+    with %{
+           "provider" => "voice",
+           "agent_group_id" => ^group_id,
+           "source_actor_type" => "user",
+           "source_message_id" => source_id,
+           "principal_ref" => %{
+             "namespace" => "comma_user",
+             "tenant_id" => tenant_id,
+             "subject_id" => caller_id
+           },
+           "provider_context" =>
+             %{
+               "voice_mode" => "push_to_talk",
+               "connect_id" => ^connect_id,
+               "chat_id" => ^call_id,
+               "from_user_id" => caller_id
+             } = voice_context
+         } <- context["trusted_origin"],
+         true <- is_binary(source_id) and source_id != "",
+         true <- tenant_id == SalixStore.Ids.tenant_id_from_group!(group_id),
+         {:ok, conversation} <- RouterConversationInput.ensure(group_id),
+         true <- conversation["router_agent_id"] == request["agent_id"],
+         {:ok, delegation_id} <- late_delegation(voice_context, params) do
+      {:ok, conversation, caller_id, delegation_id}
+    else
+      {:error, :ambiguous_delegation} = error -> error
+      _ -> :error
+    end
+  end
+
+  defp late_delegation(context, params) do
+    candidates =
+      case context do
+        %{"event_type" => "voice.delegation", "message_id" => id} ->
+          [id]
+
+        %{"event_type" => "voice.delegation_handoff", "voice_pending_delegation_ids" => ids}
+        when is_list(ids) ->
+          ids
+
+        _ ->
+          []
+      end
+
+    case Map.fetch(params, "delegation_id") do
+      :error ->
+        case candidates do
+          [id] when is_binary(id) and id != "" -> {:ok, id}
+          [_, _ | _] -> {:error, :ambiguous_delegation}
+          _ -> :error
+        end
+
+      {:ok, id} when is_binary(id) ->
+        id = String.trim(id)
+        if id != "" and id in candidates, do: {:ok, id}, else: :error
+
+      _ ->
+        :error
     end
   end
 

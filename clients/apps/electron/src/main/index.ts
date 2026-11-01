@@ -30,6 +30,7 @@ import {
   Tray,
   WebContentsView,
   clipboard as electronClipboard,
+  desktopCapturer,
   dialog,
   ipcMain,
   globalShortcut,
@@ -52,6 +53,7 @@ import {
   notchHostEvent,
   onboardingHandoffEvent,
   onboardingWindowChangedEvent,
+  pushToTalkOverlayStateChangedEvent,
   sideChatDebugSettingsChangedEvent,
   sideChatPresentationChangedEvent,
   surfacesWindowFullScreenChangedEvent,
@@ -86,6 +88,15 @@ import {
 import { configureManagedWindow } from "./managed-window";
 import { bindRecorderClientVisibility } from "./recorder-client-visibility";
 import { MeetingRecorderWindow } from "./meeting-recorder-window";
+import {
+  createElectronPushToTalkOverlayWindowFactory,
+  PushToTalkOverlayWindow,
+} from "./push-to-talk/overlay-window";
+import { PushToTalkVoiceWindow } from "./push-to-talk/voice-window";
+import { createNativePushToTalkHotkey } from "./push-to-talk/native-hotkey";
+import { NotchPushToTalkStatus } from "./push-to-talk/notch-status";
+import { PushToTalkScreen } from "./push-to-talk/screen-capture";
+import type { PushToTalkTurnState } from "./push-to-talk/types";
 import { initializeElectronMainI18n } from "./main-locale";
 import { readStoredLocalePreference } from "./app-preferences";
 import { NativeEventBus, WebContentsRegistry, createSenderPolicy } from "./modules/ipc";
@@ -210,7 +221,7 @@ if (process.env.NODE_ENV === "test" && !app.commandLine.hasSwitch("lang")) {
   app.commandLine.appendSwitch("lang", "en-US");
 }
 
-const notch = new NotchService();
+const notch = new NotchService({ onOpenMainAppRoute: requestOpenMainAppRoute });
 const opaqueWindowBackgrounds = new OpaqueWindowBackgroundController(
   nativeTheme.shouldUseDarkColors
 );
@@ -1461,6 +1472,106 @@ function registerNativeEventSources(eventBus: NativeEventBus) {
   });
 }
 
+// Comma's Screen Recording for the Talk to agent screenshot. macOS 15+ says
+// `denied` before Comma ever asked; the helper's request lists Comma (D11).
+const pushToTalkScreenRecording = {
+  status: () => systemPreferences.getMediaAccessStatus("screen"),
+  request: () => sideChat.requestPushToTalkScreenRecording(),
+};
+
+// Talk to agent cursor companion (macOS). Nothing is created until a turn shows it.
+const pushToTalkOverlay = new PushToTalkOverlayWindow({
+  createWindow: (bounds) => {
+    if (closingMainServices || !appContext)
+      return Promise.reject(new Error("Talk to agent overlay is unavailable."));
+    return createElectronPushToTalkOverlayWindowFactory({
+      logger: log,
+      preloadPath: join(__dirname, "preload.js"),
+      registry: appContext.webContentsRegistry,
+      secure: (window) =>
+        installWindowSecurity({
+          allowedNavigationOrigins: allowedRendererOrigins(forgeRendererURL()),
+          logger: log,
+          webContents: window.webContents,
+        }),
+      surfaces: appContext.surfaces,
+      url: withHashRoute(
+        e2eHooks.rendererUrl ?? appRendererUrl(),
+        "/push-to-talk-overlay"
+      ),
+    })(bounds);
+  },
+  cursorPoint: () => screen.getCursorScreenPoint(),
+  displayNearestPoint: (point) => screen.getDisplayNearestPoint(point),
+  displays: () => screen.getAllDisplays(),
+  logger: log,
+  openExternal: (url) => shell.openExternal(url),
+  publish: (state) =>
+    appContext?.nativeEventBus.emit(pushToTalkOverlayStateChangedEvent, state),
+  requestScreenRecording: () => pushToTalkScreenRecording.request(),
+});
+
+// Hidden WebRTC window; created on the first push-to-talk press.
+let pushToTalkVoiceWindow: PushToTalkVoiceWindow | undefined;
+function ensurePushToTalkVoiceWindow() {
+  if (closingMainServices || !appContext)
+    throw new Error("Talk to agent voice is unavailable.");
+  pushToTalkVoiceWindow ??= new PushToTalkVoiceWindow({
+    logger: log,
+    preloadPath: join(__dirname, "preload.js"),
+    registry: appContext.webContentsRegistry,
+    secure: (window) =>
+      installWindowSecurity({
+        allowedNavigationOrigins: allowedRendererOrigins(forgeRendererURL()),
+        logger: log,
+        webContents: window.webContents,
+      }),
+    surfaces: appContext.surfaces,
+    url: withHashRoute(e2eHooks.rendererUrl ?? appRendererUrl(), "/push-to-talk-voice"),
+  });
+  return pushToTalkVoiceWindow;
+}
+
+// The turn's scene in the Comma Notch. Its error actions run through the
+// companion's handler, so both places open the same panes.
+const pushToTalkStatus = new NotchPushToTalkStatus({
+  notch,
+  locale: () => electronMainLocale,
+  onAction: (action) => {
+    void pushToTalkOverlay
+      .runAction(action)
+      .catch((error: unknown) =>
+        log.warn(`push-to-talk notch action failed: ${String(error)}`)
+      );
+  },
+});
+
+function createPushToTalkDeps() {
+  return {
+    hotkey: createNativePushToTalkHotkey(sideChat),
+    companion: pushToTalkOverlay,
+    status: {
+      visible: () => pushToTalkStatus.visible(),
+      set: (state: PushToTalkTurnState | null) => pushToTalkStatus.set(state),
+      setLevel: (level: number) => pushToTalkStatus.setLevel(level),
+    },
+    screen: new PushToTalkScreen({
+      getCursorScreenPoint: () => screen.getCursorScreenPoint(),
+      getDisplayNearestPoint: (point) => screen.getDisplayNearestPoint(point),
+      getSources: (options) => desktopCapturer.getSources(options),
+      mediaAccessStatus: () => systemPreferences.getMediaAccessStatus("screen"),
+      createFromBitmap: (bitmap, size) => nativeImage.createFromBitmap(bitmap, size),
+    }),
+    screenRecording: pushToTalkScreenRecording,
+    voiceWindow: {
+      open: async () => ensurePushToTalkVoiceWindow().open(),
+      close: () => pushToTalkVoiceWindow?.close(),
+    },
+    powerMonitor,
+    openSideChat: () => safelyControlSideChat(() => sideChat.open()),
+  };
+}
+
 function ensureMeetingRecorderWindow() {
   if (closingMainServices || !appContext)
     throw new Error("Recorder window is unavailable.");
@@ -1753,6 +1864,9 @@ async function createElectronMainContext() {
     },
     productName: releaseConfig.productName,
     onboardingWindow: onboardingWindowFor(operatingSystem(), onboardingWindow),
+    ...(process.platform === "darwin"
+      ? { pushToTalkOverlay, pushToTalk: createPushToTalkDeps() }
+      : {}),
     onSessionStateChanged: (state) => {
       // Signed out (or another account) before the onboarding: sign-in needs
       // the main window.
@@ -1922,6 +2036,7 @@ function startElectronApp() {
           ? {
               allowedOrigins: allowedRendererOrigins(devServerUrl),
               getMainWebContents: () => primaryWindow?.webContents,
+              getVoiceWebContents: () => pushToTalkVoiceWindow?.webContents(),
               requestSystemAccess: () =>
                 systemPreferences.askForMediaAccess("microphone"),
             }
@@ -1980,6 +2095,9 @@ function startElectronApp() {
         );
         await ensureSideChatWindow();
         if (e2eHooks.openSideChat) safelyControlSideChat(() => sideChat.open());
+        // After the helper has the Side Chat binding, so registering the
+        // hold-to-talk chord never launches a helper before it.
+        appContext.pushToTalk?.start();
       }
       registerLegacyIpc({
         senderPolicy: createSenderPolicy({
@@ -2152,6 +2270,7 @@ async function closeMainServices() {
   }
   resetStatusTrayInteractions();
   meetingRecorderWindow?.close();
+  pushToTalkVoiceWindow?.close();
   meetingRecorderWindow = undefined;
   sideChatBrowserWindowGeneration += 1;
   sideChatTestBrowserWindowGeneration += 1;

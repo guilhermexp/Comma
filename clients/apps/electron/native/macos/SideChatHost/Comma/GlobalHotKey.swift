@@ -4,6 +4,7 @@ import Foundation
 final class GlobalHotKey {
     private let id: UInt32
     private let onPressed: () -> Void
+    private let onReleased: (() -> Void)?
     private var eventHandlerRef: EventHandlerRef?
     private var hotKeyRef: EventHotKeyRef?
 
@@ -13,21 +14,33 @@ final class GlobalHotKey {
         id: UInt32,
         keyCode: UInt32,
         modifiers: UInt32,
-        onPressed: @escaping () -> Void
+        onPressed: @escaping () -> Void,
+        onReleased: (() -> Void)? = nil
     ) {
         self.id = id
         self.onPressed = onPressed
+        self.onReleased = onReleased
 
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
+        // Release is only observed by hold-to-talk callers; a press-only
+        // hotkey keeps listening to the pressed event alone.
+        var eventTypes = [
+            EventTypeSpec(
+                eventClass: OSType(kEventClassKeyboard),
+                eventKind: UInt32(kEventHotKeyPressed)
+            ),
+        ]
+        if onReleased != nil {
+            eventTypes.append(EventTypeSpec(
+                eventClass: OSType(kEventClassKeyboard),
+                eventKind: UInt32(kEventHotKeyReleased)
+            ))
+        }
 
         let installStatus = InstallEventHandler(
             GetApplicationEventTarget(),
             hotKeyEventHandler,
-            1,
-            &eventType,
+            eventTypes.count,
+            &eventTypes,
             Unmanaged.passUnretained(self).toOpaque(),
             &eventHandlerRef
         )
@@ -72,6 +85,15 @@ final class GlobalHotKey {
         )
 
         guard status == noErr, eventHotKeyID.signature == fourCharacterCode("OSCP"), eventHotKeyID.id == id else {
+            // Let the other hotkey's handler on this application target run.
+            return OSStatus(eventNotHandledErr)
+        }
+
+        if GetEventKind(event) == UInt32(kEventHotKeyReleased) {
+            guard let onReleased else { return noErr }
+            DispatchQueue.main.async {
+                onReleased()
+            }
             return noErr
         }
 

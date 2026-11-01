@@ -262,6 +262,7 @@ export function VoiceCallControl({
           if (result.truncated) setTruncated(true);
           for (const event of result.events) {
             if ("type" in event) {
+              if (event.type !== "delegation") continue;
               setPendingDelegations((previous) => {
                 const next = new Set(previous);
                 if (event.status === "pending") next.add(event.id);

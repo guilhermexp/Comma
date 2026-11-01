@@ -112,12 +112,17 @@ export function prepareDevElectronBundle(): DevElectronBundle {
   const entitlements = createHash("sha256")
     .update(readFileSync(devEntitlementsPath))
     .digest("hex");
+  // TCC pins ad hoc code to one cdhash, so every re-seal drops the grants
+  // (Input Monitoring, Screen Recording, Microphone). A keychain identity
+  // keeps the designated requirement stable; same knob as build-native.ts.
+  const signIdentity = process.env.COMMA_MACOS_DEV_SIGN_IDENTITY ?? "-";
   const stamp = JSON.stringify({
     bundleId,
     displayName,
     electronVersion,
     entitlements,
     notificationSound,
+    signIdentity,
     sourceApp,
     usageDescriptions,
   });
@@ -165,13 +170,13 @@ export function prepareDevElectronBundle(): DevElectronBundle {
 
   // Editing Info.plist breaks the prebuilt seal, and an unsealed bundle no
   // longer launches; re-seal the whole tree ad hoc, as the Side Chat host is.
-  run("codesign", ["--force", "--deep", "--sign", "-", appPath]);
+  run("codesign", ["--force", "--deep", "--sign", signIdentity, appPath]);
   // Then the outer bundle alone with Comma's entitlements: --deep would hand
   // them to every Electron helper too.
   run("codesign", [
     "--force",
     "--sign",
-    "-",
+    signIdentity,
     "--entitlements",
     devEntitlementsPath,
     appPath,

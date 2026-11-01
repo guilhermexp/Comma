@@ -77,6 +77,8 @@ export interface ChatPanelImageProps {
 
 export interface ChatPanelFileProps {
   className?: string;
+  /** Human label; fileName retains the extension used for type and file actions. */
+  displayName?: string;
   fileName: string;
   fileSize?: number | string;
   mimeType?: string;
@@ -150,7 +152,7 @@ const resolveFileType = ({
   if (typeLabel?.trim()) return typeLabel.trim().toUpperCase();
 
   const normalizedMimeType = mimeType?.split(";")[0]?.trim().toLowerCase();
-  if (normalizedMimeType) {
+  if (normalizedMimeType && normalizedMimeType !== "application/octet-stream") {
     const knownType = mimeTypeLabels[normalizedMimeType];
     if (knownType) return knownType;
 
@@ -428,6 +430,7 @@ export const ChatPanelImage = ({
 
 export const ChatPanelFile = ({
   className,
+  displayName,
   fileName,
   fileSize,
   mimeType,
@@ -437,6 +440,7 @@ export const ChatPanelFile = ({
   typeLabel,
 }: ChatPanelFileProps) => {
   const messages = useCommaMessages();
+  const label = displayName ?? fileName;
   const resolvedType =
     resolveFileType({ fileName, mimeType, typeLabel }) ??
     messages.ui_file_type_fallback();
@@ -445,7 +449,7 @@ export const ChatPanelFile = ({
     <article className={cx("chat-panel-file", className)} data-testid={testId}>
       {onPreview ? (
         <button
-          aria-label={messages.ui_file_preview({ fileName })}
+          aria-label={messages.ui_file_preview({ fileName: label })}
           className="chat-panel-file-preview-trigger"
           onClick={onPreview}
           type="button"
@@ -455,8 +459,8 @@ export const ChatPanelFile = ({
         <FileTextIcon className="size-3xl" />
       </span>
       <div className="chat-panel-file-details">
-        <p className="chat-panel-file-name" title={fileName}>
-          {fileName}
+        <p className="chat-panel-file-name" title={label}>
+          {label}
         </p>
         <p className="chat-panel-file-meta">
           {fileSize === undefined

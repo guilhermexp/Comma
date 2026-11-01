@@ -54,6 +54,144 @@ describe("AppPreferencesService", () => {
     });
     await reopened.close();
   });
+  it("defaults Talk to agent to off and persists each of its settings", async () => {
+    const filePath = await temporaryPreferencesPath();
+    const {
+      pushToTalkEnabled: _enabled,
+      pushToTalkShortcut: _shortcut,
+      pushToTalkSendScreen: _screen,
+      ...legacy
+    } = defaultCommaClientSettings;
+    const service = await AppPreferencesService.open({
+      filePath,
+      platform: createPlatform(),
+    });
+    await service.update({ clientSettings: legacy });
+    expect(service.state().clientSettings).toMatchObject({
+      pushToTalkEnabled: false,
+      pushToTalkSendScreen: true,
+      pushToTalkShortcut: {
+        key: null,
+        modifiers: { alt: true, control: true, meta: false, shift: false },
+      },
+    });
+    const commandK = {
+      key: "k",
+      modifiers: { alt: false, control: false, meta: true, shift: true },
+    } as const;
+    await service.update({ clientSettings: { pushToTalkEnabled: true } });
+    await service.update({
+      clientSettings: {
+        pushToTalkSendScreen: false,
+        pushToTalkShortcut: commandK,
+      },
+    });
+    await service.close();
+    const reopened = await AppPreferencesService.open({
+      filePath,
+      platform: createPlatform(),
+    });
+    expect(reopened.state().clientSettings).toMatchObject({
+      pushToTalkEnabled: true,
+      pushToTalkSendScreen: false,
+      pushToTalkShortcut: commandK,
+    });
+    await reopened.update({ clientSettings: { pushToTalkShortcut: null } });
+    expect(reopened.state().clientSettings).toMatchObject({
+      pushToTalkEnabled: true,
+      pushToTalkShortcut: null,
+    });
+    await reopened.close();
+  });
+  it("preserves all other preferences when loading the retired voice-response setting", async () => {
+    const filePath = await temporaryPreferencesPath();
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        ...defaultAppPreferences,
+        showInDock: false,
+        clientSettings: {
+          ...defaultCommaClientSettings,
+          localePreference: "en",
+          pushToTalkEnabled: true,
+          pushToTalkSendScreen: false,
+          pushToTalkSpeakReplies: false,
+        },
+      })
+    );
+    const service = await AppPreferencesService.open({
+      filePath,
+      platform: createPlatform(),
+    });
+    expect(service.state()).toMatchObject({
+      showInDock: false,
+      clientSettings: {
+        localePreference: "en",
+        pushToTalkEnabled: true,
+        pushToTalkSendScreen: false,
+      },
+    });
+    await service.close();
+    const reopened = await AppPreferencesService.open({
+      filePath,
+      platform: createPlatform(),
+    });
+    expect(reopened.state()).toMatchObject({
+      showInDock: false,
+      clientSettings: {
+        localePreference: "en",
+        pushToTalkEnabled: true,
+        pushToTalkSendScreen: false,
+      },
+    });
+    await reopened.close();
+  });
+  it("publishes the Input Monitoring readback of the Talk to agent chord without persisting it", async () => {
+    const filePath = await temporaryPreferencesPath();
+    const onStateChanged = vi.fn();
+    const service = await AppPreferencesService.open({
+      filePath,
+      onStateChanged,
+      platform: createPlatform(),
+    });
+    const revision = service.state().revision;
+
+    expect(service.setPushToTalkInputMonitoringStatus("denied")).toMatchObject({
+      pushToTalkInputMonitoringStatus: "denied",
+      revision: revision + 1,
+    });
+    expect(onStateChanged).toHaveBeenCalledOnce();
+    // The same answer again is not a change.
+    service.setPushToTalkInputMonitoringStatus("denied");
+    expect(onStateChanged).toHaveBeenCalledOnce();
+    service.setPushToTalkInputMonitoringStatus("granted");
+    expect(service.state().pushToTalkInputMonitoringStatus).toBe("granted");
+    await service.update({ showInDock: false });
+    await service.close();
+    expect(await readFile(filePath, "utf8")).not.toContain("InputMonitoring");
+  });
+  it("publishes the Screen Recording readback of Talk to agent without persisting it", async () => {
+    const filePath = await temporaryPreferencesPath();
+    const onStateChanged = vi.fn();
+    const service = await AppPreferencesService.open({
+      filePath,
+      onStateChanged,
+      platform: createPlatform(),
+    });
+
+    expect(service.setPushToTalkScreenRecordingStatus("denied")).toMatchObject({
+      pushToTalkScreenRecordingStatus: "denied",
+    });
+    expect(onStateChanged).toHaveBeenCalledOnce();
+    service.setPushToTalkScreenRecordingStatus("denied");
+    expect(onStateChanged).toHaveBeenCalledOnce();
+    service.setPushToTalkScreenRecordingStatus("granted");
+    expect(service.state().pushToTalkScreenRecordingStatus).toBe("granted");
+    await service.update({ showInDock: false });
+    await service.close();
+    expect(await readFile(filePath, "utf8")).not.toContain("ScreenRecording");
+  });
+
   it("moves an Open Comma shortcut still at the old Option-Space default to Option-Comma, once", async () => {
     const optionSpace = {
       key: "space",

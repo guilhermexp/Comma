@@ -36,7 +36,11 @@ defmodule SalixVoice.Model.Codex do
 
   @impl true
   def handle_cast({:append, kind, id, text}, state) do
-    text = if kind == :thinking, do: "Quiet context, do not speak: " <> text, else: text
+    text =
+      if kind == :thinking or match?({:context, _}, kind),
+        do: "Quiet context, do not speak: " <> text,
+        else: text
+
     Enum.each(chunks(text), &WebSockex.cast(state.socket, {:append, kind, id, &1}))
     {:noreply, state}
   end
@@ -218,7 +222,16 @@ defmodule SalixVoice.Model.Codex.Sideband do
     WebSockex.start_link(
       url,
       __MODULE__,
-      %{owner: opts.owner, ref: opts.ref, captions: %{}, last_role: nil, closed: false},
+      %{
+        owner: opts.owner,
+        ref: opts.ref,
+        captions: %{},
+        last_role: nil,
+        closed: false,
+        context_appends: 0,
+        context_acks: 0,
+        pending_context: nil
+      },
       [extra_headers: headers, socket_connect_timeout: 15_000, socket_recv_timeout: 30_000] ++ tls
     )
   end
@@ -234,6 +247,23 @@ defmodule SalixVoice.Model.Codex.Sideband do
     # Quiet notes remain context. They explicitly tell GPT-Live not to speak.
     event = if id, do: Map.put(event, "delegation_item_id", id), else: event
     event = if kind == :final, do: Map.delete(event, "channel"), else: event
+    # Native context ACKs are ordered on this socket. Track the ordinal of
+    # only the newest pending gesture, not a queue of discarded contexts.
+    state =
+      if is_nil(id) do
+        state = %{state | context_appends: state.context_appends + 1}
+
+        case kind do
+          {:context, context_id} ->
+            %{state | pending_context: {state.context_appends, context_id}}
+
+          _ ->
+            state
+        end
+      else
+        state
+      end
+
     {:reply, {:text, Jason.encode!(event)}, state}
   end
 
@@ -275,6 +305,43 @@ defmodule SalixVoice.Model.Codex.Sideband do
            false
          )
 
+  defp receive_event(%{"type" => "session.context.appended"} = event, state) do
+    acknowledged = state.context_acks + 1
+    state = %{state | context_acks: acknowledged}
+
+    case state.pending_context do
+      {^acknowledged, context_id} ->
+        boundary =
+          case event do
+            %{"start_ms" => start_ms, "end_ms" => end_ms}
+            when is_integer(start_ms) and is_integer(end_ms) and start_ms >= 0 and
+                   end_ms >= start_ms ->
+              end_ms
+
+            _ ->
+              nil
+          end
+
+        notify(state, {:context_started, context_id, boundary})
+        {:ok, %{state | pending_context: nil}}
+
+      _ ->
+        {:ok, state}
+    end
+  end
+
+  defp receive_event(
+         %{
+           "type" => "turn.created",
+           "turn" => %{"role" => "user", "id" => id, "start_ms" => start_ms}
+         },
+         state
+       )
+       when is_binary(id) and byte_size(id) > 0 and is_integer(start_ms) and start_ms >= 0 do
+    notify(state, {:user_turn_started, id, start_ms})
+    {:ok, state}
+  end
+
   defp receive_event(
          %{"type" => "turn.done", "turn" => %{"role" => role, "transcript" => text}},
          state
@@ -283,20 +350,30 @@ defmodule SalixVoice.Model.Codex.Sideband do
        do: caption(state, if(role == "user", do: :caller, else: :agent), text, true)
 
   defp receive_event(
-         %{"type" => "delegation.created", "item" => %{"target" => "client", "id" => id} = item},
+         %{"type" => "delegation.created", "item" => %{"target" => "client", "id" => id} = item} =
+           event,
          state
        )
        when is_binary(id) do
     request =
-      (item["content"] || [])
-      |> Enum.flat_map(fn
-        %{"type" => "input_text", "text" => text} when is_binary(text) -> [text]
-        _ -> []
-      end)
-      |> Enum.join("\n")
-      |> String.slice(0, 16_000)
+      case item["content"] do
+        content when is_list(content) ->
+          content
+          |> Enum.flat_map(fn
+            %{"type" => "input_text", "text" => text} when is_binary(text) -> [text]
+            _ -> []
+          end)
+          |> Enum.join("\n")
+          |> String.slice(0, 16_000)
 
-    notify(state, {:delegation, id, nil, request})
+        _ ->
+          nil
+      end
+
+    request =
+      if is_binary(request) and String.trim(request) == "", do: nil, else: request
+
+    notify(state, {:delegation, id, event["offset_ms"], request, item["user_bidi_turn_id"]})
     {:ok, state}
   end
 

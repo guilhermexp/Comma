@@ -10,7 +10,11 @@ defmodule SalixVoice.Model do
     * `{:input_transcript, text, final?, offset_ms | nil}`: caller text
     * `{:output_transcript, text, final?}`: agent text
     * `{:delegation, delegation_id, offset_ms}`
-    * `{:delegation, delegation_id, nil, request}`: client delegation text
+    * `{:context_started, context_id, native_boundary_ms | nil}`: native context append ACK
+    * `{:user_turn_started, native_turn_id, start_ms}`: native user turn identity and timestamp
+    * `{:delegation, delegation_id, offset_ms, request | nil, native_turn_id | nil}`:
+      client handoff transcript and its native user turn; nil means absent or unreadable
+      content. PTT rejects it; manual calls retain their caller transcript ledger fallback.
     * `{:signaled, sdp_answer}`: renderer media negotiation
     * `{:caption, role, turn, text, final?}`: deduplicated renderer captions
     * `{:fatal_error, code}`: safe admission or provider failure
@@ -44,7 +48,7 @@ defmodule SalixVoice.Model do
   @callback send_audio(pid(), binary()) :: :ok
   @callback append(
               pid(),
-              :commentary | :thinking | :instructions | :final,
+              :commentary | :thinking | :instructions | :final | {:context, pos_integer()},
               delegation_id :: String.t() | nil,
               text :: String.t()
             ) :: :ok

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NotchService } from "../notch";
+import { openOrCreateMainWindow } from "../open-main-window";
 
 const replacementFixturePath = fileURLToPath(
   new URL("../../../test/fixtures/notch-host-replacement.cjs", import.meta.url)
@@ -170,6 +171,123 @@ describe("NotchService host boundary", () => {
   }, 10_000);
 });
 
+describe("Notch task conversation opening", () => {
+  const task = {
+    conversationId: "conversation/1",
+    groupId: "group 1",
+    id: "task-1",
+    status: "in_progress" as const,
+    title: "Ship the Notch",
+    subtitle: "In progress",
+    updatedAt: 1_787_563_200,
+    workspaceId: "workspace-1",
+  };
+
+  it.each(["open", "hidden", "minimized", "closed"] as const)(
+    "opens the retained task conversation with the main window %s and no renderer listener",
+    async (state) => {
+      let visible = state === "open";
+      let minimized = state === "minimized";
+      let focused = false;
+      let route: string | undefined;
+      const window = {
+        focus: () => {
+          focused = true;
+        },
+        isDestroyed: () => state === "closed",
+        isMinimized: () => minimized,
+        restore: () => {
+          minimized = false;
+        },
+        show: () => {
+          visible = true;
+        },
+        showInactive: () => {
+          visible = true;
+        },
+      };
+      const host = new FakeNotchHost();
+      const service = new NotchService({
+        isSupportedPlatform: () => true,
+        pathExists: () => true,
+        resolveHostPath: () => "/comma/NotchHost",
+        spawnHost: () => host as unknown as ChildProcessWithoutNullStreams,
+        onOpenMainAppRoute: (nextRoute: string) => {
+          void openOrCreateMainWindow({
+            createWindow: async () => {
+              visible = true;
+              focused = true;
+            },
+            window,
+          }).then(() => {
+            route = nextRoute;
+          });
+        },
+      });
+      try {
+        const update = service.update({ tasks: [task] });
+        const configure = await host.nextRequest();
+        host.respond({ id: configure.id, type: "ack" });
+        const request = await host.nextRequest();
+        host.respond({ id: request.id, type: "ack" });
+        await update;
+
+        host.respond({
+          type: "action",
+          payload: { action: "task:open", value: task.id },
+        });
+        await vi.waitFor(() => {
+          expect({ focused, minimized, route, visible }).toEqual({
+            focused: true,
+            minimized: false,
+            route: "/inbox/workspace-1/group%201/conversation%2F1",
+            visible: true,
+          });
+        });
+      } finally {
+        service.dispose();
+      }
+    }
+  );
+
+  it("ignores an unknown task and a task removed from the retained scene", async () => {
+    const routes: string[] = [];
+    const host = new FakeNotchHost();
+    const service = new NotchService({
+      isSupportedPlatform: () => true,
+      pathExists: () => true,
+      resolveHostPath: () => "/comma/NotchHost",
+      spawnHost: () => host as unknown as ChildProcessWithoutNullStreams,
+      onOpenMainAppRoute: (route: string) => {
+        routes.push(route);
+      },
+    });
+    try {
+      const update = service.update({ tasks: [task] });
+      const configure = await host.nextRequest();
+      host.respond({ id: configure.id, type: "ack" });
+      const request = await host.nextRequest();
+      host.respond({ id: request.id, type: "ack" });
+      await update;
+      host.respond({
+        type: "action",
+        payload: { action: "task:open", value: "unknown" },
+      });
+      const clear = service.update({ tasks: [] });
+      const clearRequest = await host.nextRequest();
+      host.respond({ id: clearRequest.id, type: "ack" });
+      await clear;
+      host.respond({
+        type: "action",
+        payload: { action: "task:open", value: task.id },
+      });
+      expect(routes).toEqual([]);
+    } finally {
+      service.dispose();
+    }
+  });
+});
+
 describe("NotchService presentation settings", () => {
   const task = {
     conversationId: "conversation-1",
@@ -317,6 +435,81 @@ describe("NotchService presentation settings", () => {
     } finally {
       service.dispose();
     }
+  });
+});
+
+describe("NotchService voice scene", () => {
+  function createService(supported = true) {
+    const hosts: FakeNotchHost[] = [];
+    const service = new NotchService({
+      isSupportedPlatform: () => supported,
+      pathExists: () => true,
+      resolveHostPath: () => "/comma/NotchHost",
+      spawnHost: () => {
+        const host = new FakeNotchHost();
+        hosts.push(host);
+        return host as unknown as ChildProcessWithoutNullStreams;
+      },
+    });
+    return { hosts, service };
+  }
+
+  it("writes the voice turn alone and gives the Notch back with an empty projection", async () => {
+    const { hosts, service } = createService();
+    try {
+      const listening = service.setVoice({
+        level: 0.3,
+        message: "Listening",
+        state: "listening",
+      });
+      const host = hosts[0]!;
+      await expect(host.nextRequest()).resolves.toMatchObject({ method: "configure" });
+      const request = await host.nextRequest();
+      // Level updates arrive ~20 times a second, so each write is the turn alone.
+      expect(request).toEqual({
+        id: request.id,
+        method: "update",
+        payload: {
+          voice: { turn: { level: 0.3, message: "Listening", state: "listening" } },
+        },
+      });
+      host.respond({ id: request.id, payload: { running: true }, type: "ack" });
+      await listening;
+
+      const cleared = service.setVoice(null);
+      const clear = await host.nextRequest();
+      expect(clear).toMatchObject({ method: "update", payload: { voice: {} } });
+      host.respond({ id: clear.id, payload: { running: true }, type: "ack" });
+      await cleared;
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("does not bring an ended turn back when the Notch is turned on again", async () => {
+    const { hosts, service } = createService();
+    try {
+      service.setPresentation({ sideWidth: 156, visible: false });
+      expect(service.visible()).toBe(false);
+      await service.setVoice({ message: "Thinking", state: "thinking" });
+      await service.setVoice(null);
+      expect(hosts).toHaveLength(0);
+
+      service.setPresentation({ sideWidth: 156, visible: true });
+      expect(service.visible()).toBe(true);
+      const host = hosts[0]!;
+      await expect(host.nextRequest()).resolves.toMatchObject({ method: "configure" });
+      const restore = await host.nextRequest();
+      expect(restore).toMatchObject({ method: "update", payload: { voice: {} } });
+      host.respond({ id: restore.id, payload: { running: true }, type: "ack" });
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("is not visible where NotchKit cannot run", () => {
+    const { service } = createService(false);
+    expect(service.visible()).toBe(false);
   });
 });
 

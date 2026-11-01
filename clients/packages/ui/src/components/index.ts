@@ -164,6 +164,14 @@ export type {
   MeetingRecorderPhase,
   MeetingRecorderProps,
 } from "./meeting-recorder";
+export { PushToTalkCompanion } from "./push-to-talk";
+export type {
+  PushToTalkCompanionAction,
+  PushToTalkCompanionProps,
+  PushToTalkCompanionState,
+  PushToTalkErrorCode,
+  PushToTalkPoint,
+} from "./push-to-talk";
 export {
   AiInput,
   AiInputMenuPanel,
@@ -337,6 +345,7 @@ export type {
   AppKeyCode,
   AppKeyModifiers,
   AppKeyStroke,
+  SettingsShortcutChordValue,
   SettingsShortcutKey,
   SettingsShortcutKeycapsProps,
   SettingsShortcutProps,

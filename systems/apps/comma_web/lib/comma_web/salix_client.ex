@@ -1078,6 +1078,22 @@ defmodule CommaWeb.SalixClient do
   end
 
   @impl true
+  def get_group_conversation_message(workspace, conversation_id, message_id)
+      when is_map(workspace) do
+    observe_salix(:salix_boundary, fn ->
+      if SalixStore.Ids.valid_message_id?(message_id) do
+        SalixIM.Conversations.get_group_conversation_message(
+          workspace["default_group_id"],
+          conversation_id,
+          message_id
+        )
+      else
+        {:error, :not_found}
+      end
+    end)
+  end
+
+  @impl true
   def get_group_conversation_messages(workspace, conversation_id) when is_map(workspace) do
     observe_salix(:salix_boundary, fn ->
       SalixIM.Conversations.list_group_conversation_messages(

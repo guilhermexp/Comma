@@ -338,6 +338,56 @@ defmodule SalixWeb.Dashboard.AgentSessionLiveTest do
     refute html =~ "Search failed"
   end
 
+  test "admin can read a voice trace after the agent is archived", %{group: group, template: tmpl} do
+    {:ok, agent} =
+      SalixAgent.Control.create(
+        %{
+          "name" => "Voice history",
+          "group_id" => group["group_id"],
+          "template_id" => tmpl["template_id"]
+        },
+        tenant_id()
+      )
+
+    agent_id = agent["agent_id"]
+    call_id = SalixVoice.new_call_id()
+    id = SalixStore.ULID.generate()
+
+    record = %{
+      "id" => id,
+      "type" => "call_started",
+      "at" => "2026-01-01T00:00:00Z",
+      "t_ms" => 0,
+      "tenant_id" => tenant_id(),
+      "group_id" => group["group_id"],
+      "mode" => "conversation",
+      "carrier" => "websocket",
+      "caller" => %{"kind" => "api_key", "value" => "key"}
+    }
+
+    assert {:ok, cache} = SalixVoice.CallTraceRecords.load(agent_id, call_id)
+    assert {:ok, _, _} = SalixVoice.CallTraceRecords.append(agent_id, call_id, cache, [record])
+    assert {:ok, _} = SalixAgent.Control.delete(agent_id, tenant_id())
+    path = "/dash/agents/#{agent_id}/voice_calls/#{call_id}/trace"
+    anonymous = get(build_conn(), path)
+    assert anonymous.status in [302, 303]
+    assert Plug.Conn.get_resp_header(anonymous, "cache-control") == ["no-store"]
+    conn = authed_conn() |> Plug.Conn.put_req_header("accept", "application/json") |> get(path)
+    assert json_response(conn, 200)["events"] == [record]
+    assert Plug.Conn.get_resp_header(conn, "cache-control") == ["no-store"]
+
+    {:ok, other} = Salix.Control.Tenants.create(%{"name" => "Other tenant"})
+
+    other_conn =
+      build_conn()
+      |> Plug.Test.init_test_session(%{
+        "admin_authed" => true,
+        "current_tenant" => other["tenant_id"]
+      })
+
+    assert get(other_conn, path).status == 404
+  end
+
   test "archived agents are hidden on the index unless the toggle is on", %{
     group: group,
     template: tmpl

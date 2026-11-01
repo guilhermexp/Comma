@@ -21,6 +21,8 @@ defmodule SalixVoice do
   alias SalixVoice.{CallActor, Settings, StreamToken}
 
   @pg SalixVoice.PG
+  # Match the bounded 500 ms downstream lookup used by other admission paths.
+  @router_lookup_timeout_ms 500
 
   @type admit_error :: :disabled | :busy | :node_full | :draining | :not_configured | map()
 
@@ -33,7 +35,8 @@ defmodule SalixVoice do
   (`:pcmu_8k | :pcm16_24k`). Optional: `key_id`, `key_name`, `principal`
   (the voice key's principal string: the caller acts with the key creator's
   authority), `key_expires_at` (`DateTime` or unix ms: the call ends as
-  revoked then), `display_name`.
+  revoked then), `display_name`, `mode` (`:push_to_talk`, Electron only: see
+  `SalixVoice.CallActor`).
 
   A Twilio admission also returns the stream token for `<Stream url>`.
   """
@@ -46,11 +49,13 @@ defmodule SalixVoice do
          {:ok, attrs} <- configure_call(settings, attrs),
          :ok <- node_capacity(settings),
          :ok <- group_free(attrs.group_id),
-         :ok <- authorize(Map.put(attrs, :sku, settings["gpt_live_model"])) do
+         {:ok, group} <- authorize_with_group(Map.put(attrs, :sku, settings["gpt_live_model"])) do
       call_id = new_call_id()
       carrier_call_id = attrs[:carrier_call_id] || call_id
 
       with {:ok, token} <- stream_token(attrs.carrier, call_id, carrier_call_id, attrs) do
+        router_agent_id = router_for_observation(attrs, group)
+
         args =
           attrs
           |> Map.take([
@@ -65,10 +70,12 @@ defmodule SalixVoice do
             :key_name,
             :principal,
             :display_name,
-            :model_input
+            :model_input,
+            :mode
           ])
           |> Map.merge(%{
             call_id: call_id,
+            router_agent_id: router_agent_id,
             carrier_call_id: carrier_call_id,
             settings: settings,
             started_at_ms: System.system_time(:millisecond)
@@ -84,9 +91,16 @@ defmodule SalixVoice do
 
   @doc false
   def authorize(attrs) do
+    case authorize_with_group(attrs) do
+      {:ok, _group} -> :ok
+      error -> error
+    end
+  end
+
+  defp authorize_with_group(attrs) do
     case Application.get_env(:salix_voice, :metering_mod) do
       nil ->
-        :ok
+        {:ok, nil}
 
       mod ->
         directory =
@@ -94,7 +108,7 @@ defmodule SalixVoice do
 
         with {:ok, group} <- directory.get_group(attrs.group_id),
              :ok <- mod.authorize(Map.put(attrs, :owner_snapshot, group["billing_owner"])) do
-          :ok
+          {:ok, group}
         else
           {:error, {:billing_unavailable, decision}} ->
             {:error, SalixAgent.BillingAvailability.error(decision)}
@@ -104,6 +118,59 @@ defmodule SalixVoice do
         end
     end
   end
+
+  defp router_for_observation(attrs, group) do
+    case valid_router(attrs, group) do
+      {:ok, router} ->
+        router
+
+      :error ->
+        case lookup_router(attrs) do
+          {:ok, router} ->
+            router
+
+          :error ->
+            SalixVoice.Telemetry.trace_unavailable("router_unavailable")
+            nil
+        end
+    end
+  end
+
+  defp lookup_router(attrs) do
+    directory = Application.get_env(:salix_voice, :group_directory_mod, SalixIM.GroupDirectory)
+
+    task =
+      Task.Supervisor.async_nolink(SalixVoice.TaskSupervisor, fn ->
+        try do
+          directory.get_group(attrs.group_id)
+        catch
+          _, _ -> {:error, :unavailable}
+        end
+      end)
+
+    case Task.yield(task, @router_lookup_timeout_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {:ok, group}} -> valid_router(attrs, group)
+      _ -> :error
+    end
+  catch
+    _, _ -> :error
+  end
+
+  defp valid_router(
+         %{tenant_id: tenant_id, group_id: group_id},
+         %{
+           "tenant_id" => tenant_id,
+           "group_id" => group_id,
+           "router_agent_id" => router
+         }
+       ) do
+    if SalixStore.Ids.valid_group_id_for_tenant?(group_id, tenant_id) and
+         SalixStore.Ids.valid_agent_id_for_group?(router, group_id),
+       do: {:ok, router},
+       else: :error
+  end
+
+  defp valid_router(_attrs, _group), do: :error
 
   @doc """
   Attach the carrier socket `socket` to a call named by its call ID (WebSocket)

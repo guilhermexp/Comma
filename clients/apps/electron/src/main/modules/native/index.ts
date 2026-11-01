@@ -109,6 +109,8 @@ import type { AudioCaptureProvider } from "../audio-capture";
 import type { MeetingPresenceProvider } from "../meeting-presence";
 import type { CalendarProvider } from "../calendar";
 import type { MeetingRecorderProvider } from "../meeting-recorder";
+import type { PushToTalkOverlayProvider } from "../../push-to-talk/overlay-window";
+import type { PushToTalkVoiceProvider } from "../../push-to-talk/live-voice";
 import type { AirDropReceptionProvider } from "../airdrop/reception";
 import { getCurrentNativeCallerContext, NativeCallerBindingError } from "../ipc";
 import { FileStore, LOCAL_DATA_SCHEMA_VERSION } from "../local-data";
@@ -140,6 +142,9 @@ export interface AppPreferencesProvider {
   openNotificationSettings(input: void): Promise<{ opened: boolean }>;
   /** macOS: opens Login Items, where the user allows the sleep guard daemon. */
   openLoginItemsSettings(input: void): Promise<{ opened: boolean }>;
+  /** macOS: asks for Input Monitoring and opens its Privacy pane. */
+  openInputMonitoringSettings(input: void): Promise<{ opened: boolean }>;
+  openScreenRecordingSettings(input: void): Promise<{ opened: boolean }>;
   /**
    * Asks the OS to let Comma notify (macOS prompts while it has not asked the
    * user yet) and resolves with the status the answer leaves behind.
@@ -805,6 +810,8 @@ export function registerNativeBridgeHandlers({
   sitePermissionMenu = unavailableSitePermissionMenu,
   onboardingWindow = unavailableOnboardingWindow,
   meetingRecorder,
+  pushToTalk,
+  pushToTalkVoice,
   chat,
   clipboard,
   files,
@@ -845,6 +852,8 @@ export function registerNativeBridgeHandlers({
   sitePermissionMenu?: SitePermissionMenuProvider;
   onboardingWindow?: OnboardingWindowProvider;
   meetingRecorder: MeetingRecorderProvider;
+  pushToTalk: PushToTalkOverlayProvider;
+  pushToTalkVoice: PushToTalkVoiceProvider;
   chat: NativeChatProvider;
   clipboard: ClipboardProvider;
   files: FilesProvider;
@@ -892,6 +901,8 @@ export function registerNativeBridgeHandlers({
       sitePermissionMenu,
       onboardingWindow,
       meetingRecorder,
+      pushToTalk,
+      pushToTalkVoice,
       chat,
       clipboard,
       files,

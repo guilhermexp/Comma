@@ -40,6 +40,8 @@ import type { AudioCaptureProvider } from "../modules/audio-capture/index";
 import type { MeetingPresenceProvider } from "../modules/meeting-presence/index";
 import type { CalendarProvider } from "../modules/calendar/index";
 import type { MeetingRecorderProvider } from "../modules/meeting-recorder/index";
+import type { PushToTalkOverlayProvider } from "../push-to-talk/overlay-window";
+import type { PushToTalkVoiceProvider } from "../push-to-talk/live-voice";
 import type { AirDropReceptionProvider } from "../modules/airdrop/reception";
 import type { DriveCatalogService } from "../modules/synchronicity/catalog";
 import type { SynchronicityProvider } from "../modules/synchronicity/index";
@@ -95,6 +97,8 @@ export type NativeCapabilityProviderMap = {
   meetingPresence: MeetingPresenceProvider;
   calendar: CalendarProvider;
   meetingRecorder: MeetingRecorderProvider;
+  pushToTalk: PushToTalkOverlayProvider;
+  pushToTalkVoice: PushToTalkVoiceProvider;
   airDrop: AirDropReceptionProvider;
   driveCatalog: DriveCatalogService;
   synchronicity: SynchronicityProvider;
@@ -119,6 +123,8 @@ export type NativeCapabilityHandlerTypeMap = {
   "appPreferences.state": AppPreferencesProvider["state"];
   "appPreferences.initializeClientSettings": AppPreferencesProvider["initializeClientSettings"];
   "appPreferences.openLoginItemsSettings": AppPreferencesProvider["openLoginItemsSettings"];
+  "appPreferences.openInputMonitoringSettings": AppPreferencesProvider["openInputMonitoringSettings"];
+  "appPreferences.openScreenRecordingSettings": AppPreferencesProvider["openScreenRecordingSettings"];
   "appPreferences.openNotificationSettings": AppPreferencesProvider["openNotificationSettings"];
   "appPreferences.requestNotificationAuthorization": AppPreferencesProvider["requestNotificationAuthorization"];
   "appPreferences.update": AppPreferencesProvider["update"];
@@ -279,6 +285,13 @@ export type NativeCapabilityHandlerTypeMap = {
   "meetingRecorder.setInteractive": MeetingRecorderProvider["setInteractive"];
   "meetingRecorder.layoutWindow": MeetingRecorderProvider["layoutWindow"];
   "meetingRecorder.dragWindow": MeetingRecorderProvider["dragWindow"];
+  "pushToTalk.overlayState": PushToTalkOverlayProvider["overlayState"];
+  "pushToTalk.setStroke": PushToTalkOverlayProvider["setStroke"];
+  "pushToTalk.setInteractive": PushToTalkOverlayProvider["setInteractive"];
+  "pushToTalk.overlayAction": PushToTalkOverlayProvider["overlayAction"];
+  "pushToTalkVoice.session": PushToTalkVoiceProvider["voiceSession"];
+  "pushToTalkVoice.offer": PushToTalkVoiceProvider["voiceOffer"];
+  "pushToTalkVoice.report": PushToTalkVoiceProvider["voiceReport"];
   "airDrop.state": AirDropReceptionProvider["state"];
   "airDrop.act": AirDropReceptionProvider["act"];
   "airDrop.preview": AirDropReceptionProvider["preview"];
@@ -353,6 +366,10 @@ export function registerGeneratedNativeMainBindings({
       providers.appPreferences.initializeClientSettings(input),
     "appPreferences.openLoginItemsSettings": async (input) =>
       providers.appPreferences.openLoginItemsSettings(input),
+    "appPreferences.openInputMonitoringSettings": async (input) =>
+      providers.appPreferences.openInputMonitoringSettings(input),
+    "appPreferences.openScreenRecordingSettings": async (input) =>
+      providers.appPreferences.openScreenRecordingSettings(input),
     "appPreferences.openNotificationSettings": async (input) =>
       providers.appPreferences.openNotificationSettings(input),
     "appPreferences.requestNotificationAuthorization": async (input) =>
@@ -569,6 +586,19 @@ export function registerGeneratedNativeMainBindings({
       providers.meetingRecorder.layoutWindow(input),
     "meetingRecorder.dragWindow": async (input) =>
       providers.meetingRecorder.dragWindow(input),
+    "pushToTalk.overlayState": async (input) =>
+      providers.pushToTalk.overlayState(input),
+    "pushToTalk.setStroke": async (input) => providers.pushToTalk.setStroke(input),
+    "pushToTalk.setInteractive": async (input) =>
+      providers.pushToTalk.setInteractive(input),
+    "pushToTalk.overlayAction": async (input) =>
+      providers.pushToTalk.overlayAction(input),
+    "pushToTalkVoice.session": async (input) =>
+      providers.pushToTalkVoice.voiceSession(input),
+    "pushToTalkVoice.offer": async (input) =>
+      providers.pushToTalkVoice.voiceOffer(input),
+    "pushToTalkVoice.report": async (input) =>
+      providers.pushToTalkVoice.voiceReport(input),
     "airDrop.state": async (input) => providers.airDrop.state(input),
     "airDrop.act": async (input) => providers.airDrop.act(input),
     "airDrop.preview": async (input) => providers.airDrop.preview(input),

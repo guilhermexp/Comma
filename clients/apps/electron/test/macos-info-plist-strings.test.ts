@@ -73,3 +73,17 @@ it("leaves other platforms' packages untouched", async () => {
   const resources = await runHook("linux");
   expect(existsSync(resources)).toBe(false);
 });
+
+it("tells macOS users Screen Recording covers both meeting audio and the screenshot sent to the agent", () => {
+  const prompts = {
+    en: [/audio/i, /screenshot/i, /agent/i],
+    "pt-BR": [/áudio/i, /print/i, /agente/i],
+    "zh-CN": [/音频/, /截图/, /Agent/],
+  } as const;
+  for (const [locale, patterns] of Object.entries(prompts)) {
+    const text = macosUsageDescriptions(
+      locale as keyof typeof prompts
+    ).NSScreenCaptureUsageDescription;
+    for (const pattern of patterns) expect(text).toMatch(pattern);
+  }
+});

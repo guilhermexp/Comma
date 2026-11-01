@@ -7,6 +7,8 @@ import {
   browserSidebarOpenInputSchema,
   browserSidebarStateSchema,
   browserSidebarUpdateInputSchema,
+  commaClientSettingsPatchSchema,
+  defaultCommaClientSettings,
   defineNativeCapability,
   generatedNativeCapabilityContracts,
   generatedNativeCapabilityIndex,
@@ -16,8 +18,6 @@ import {
   generatedNativeEventManifest,
   generatedNativePreloadEventBindings,
   generatedNativePreloadBindings,
-  generatedNativeStateBindings,
-  generatedNativeStateIndex,
   generatedNativeStateManifest,
   generatedNativeWebFallbacks,
   getNativeBridge,
@@ -83,6 +83,9 @@ const TEST_SESSION_PRODUCT_LEASE = {
   sessionId: "session-1",
 } as const;
 
+const parsesPushToTalkShortcut = (pushToTalkShortcut: unknown) =>
+  commaClientSettingsPatchSchema.safeParse({ pushToTalkShortcut }).success;
+
 describe("app preference schemas", () => {
   it("keeps omitted patch fields absent and rejects an empty patch", () => {
     expect(appPreferencesPatchSchema.parse({ notificationSound: false })).toEqual({
@@ -109,6 +112,62 @@ describe("app preference schemas", () => {
       notifyRouterMessages: true,
       systemNotifications: true,
     });
+  });
+
+  it("defaults Talk to agent to the Control-Option chord and accepts modifier-only chords", () => {
+    const controlOption = {
+      key: null,
+      modifiers: { alt: true, control: true, meta: false, shift: false },
+    };
+    expect(defaultCommaClientSettings.pushToTalkShortcut).toEqual(controlOption);
+    expect(parsesPushToTalkShortcut(controlOption)).toBe(true);
+    expect(
+      parsesPushToTalkShortcut({
+        key: null,
+        modifiers: { alt: false, control: false, meta: true, shift: true },
+      })
+    ).toBe(true);
+    // A single modifier alone fires on every ordinary use of that key.
+    expect(
+      parsesPushToTalkShortcut({
+        key: null,
+        modifiers: { alt: true, control: false, meta: false, shift: false },
+      })
+    ).toBe(false);
+    expect(
+      parsesPushToTalkShortcut({
+        key: "k",
+        modifiers: { alt: false, control: false, meta: true, shift: false },
+      })
+    ).toBe(true);
+    expect(
+      parsesPushToTalkShortcut({
+        key: "k",
+        modifiers: { alt: false, control: false, meta: false, shift: false },
+      })
+    ).toBe(false);
+    expect(parsesPushToTalkShortcut(null)).toBe(true);
+    // Side Chat and Open Comma still need a regular key.
+    expect(
+      commaClientSettingsPatchSchema.safeParse({ sideChatShortcut: controlOption })
+        .success
+    ).toBe(false);
+  });
+
+  it("keeps the Input Monitoring readback out of patches", () => {
+    expect(
+      appPreferencesSchema.parse({
+        launchAtLogin: false,
+        pushToTalkInputMonitoringStatus: "denied",
+        showInDock: true,
+        showInMenuBar: true,
+      }).pushToTalkInputMonitoringStatus
+    ).toBe("denied");
+    expect(
+      appPreferencesPatchSchema.safeParse({
+        pushToTalkInputMonitoringStatus: "granted",
+      }).success
+    ).toBe(false);
   });
 
   it("keeps the OS notification readback out of patches", () => {
@@ -713,6 +772,8 @@ describe("native bridge contracts", () => {
       "meetingPresence.state.changed",
       "calendar.state.changed",
       "meetingRecorder.state.changed",
+      "pushToTalk.overlayState.changed",
+      "pushToTalkVoice.session.changed",
       "surfaces.windowResizeSettled",
       "airDrop.state.changed",
       "driveCatalog.state.changed",
@@ -887,6 +948,18 @@ describe("native bridge contracts", () => {
         target: { type: "all" },
       },
       {
+        channel: "comma:push-to-talk:overlay-state-changed",
+        id: "pushToTalk.overlayState.changed",
+        permission: "push-to-talk.overlay",
+        target: { type: "all" },
+      },
+      {
+        channel: "comma:push-to-talk-voice:session-changed",
+        id: "pushToTalkVoice.session.changed",
+        permission: "push-to-talk.voice",
+        target: { type: "all" },
+      },
+      {
         channel: "comma:surfaces:window-resize-settled",
         id: "surfaces.windowResizeSettled",
         permission: "surfaces.state.read",
@@ -993,496 +1066,6 @@ describe("native bridge contracts", () => {
         diarization: "ready",
       }).success
     ).toBe(false);
-  });
-
-  it("publishes state leaves with generated get and subscribe bindings", () => {
-    expect(nativeStateRegistry.map((state) => state.id)).toEqual([
-      "localBackend.state",
-      "localTranscription.state",
-      "meetingTranscription.state",
-      "sitePermissionMenu.state",
-      "appPreferences.state",
-      "connectorRuntime.state",
-      "surfaces.state",
-      "surfaces.windowFullScreen",
-      "onboarding.window",
-      "session.state",
-      "sessionHistory.state",
-      "productInbox.state",
-      "chat.state",
-      "chat.drafts",
-      "sideChat.presentation",
-      "sideChat.debugSettings",
-      "computeNode.state",
-      "audioCapture.state",
-      "meetingPresence.state",
-      "calendar.state",
-      "meetingRecorder.state",
-      "airDrop.state",
-      "driveCatalog.state",
-    ]);
-    expect(generatedNativeStateManifest).toEqual([
-      {
-        bridge: { method: "state", namespace: "localBackend" },
-        get: {
-          channel: "comma:local-backend:state",
-          id: "localBackend.state",
-          permission: "local-backend.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reports whether this Mac's local backend is starting, ready, or failed; it runs before any Session exists.",
-        },
-        id: "localBackend.state",
-        subscribe: {
-          channel: "comma:local-backend:state-changed",
-          id: "localBackend.state.changed",
-          permission: "local-backend.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "localTranscription" },
-        get: {
-          channel: "comma:local-transcription:state",
-          id: "localTranscription.state",
-          permission: "local-transcription.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reports whether this Mac's speech models are installed; no account data is involved.",
-        },
-        id: "localTranscription.state",
-        subscribe: {
-          channel: "comma:local-transcription:state-changed",
-          id: "localTranscription.state.changed",
-          permission: "local-transcription.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "meetingTranscription" },
-        get: {
-          channel: "comma:meeting-transcription:state",
-          id: "meetingTranscription.state",
-          permission: "meeting-transcription.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reports which engine transcribes this Mac's meeting recordings and whether it is ready; it carries no key and no account data.",
-        },
-        id: "meetingTranscription.state",
-        subscribe: {
-          channel: "comma:meeting-transcription:state-changed",
-          id: "meetingTranscription.state.changed",
-          permission: "meeting-transcription.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "sitePermissionMenu" },
-        get: {
-          channel: "comma:site-permission-menu:state",
-          id: "sitePermissionMenu.state",
-          permission: "site-permission-menu.control",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reads the Main-owned website menu only from its current dedicated renderer.",
-        },
-        id: "sitePermissionMenu.state",
-        subscribe: {
-          channel: "comma:site-permission-menu:changed",
-          id: "sitePermissionMenu.changed",
-          permission: "site-permission-menu.control",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "appPreferences" },
-        get: {
-          channel: "comma:app-preferences:state",
-          id: "appPreferences.state",
-          permission: "app-preferences.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reads local desktop application preferences without Session state or authenticated transport.",
-        },
-        id: "appPreferences.state",
-        subscribe: {
-          channel: "comma:app-preferences:changed",
-          id: "appPreferences.state.changed",
-          permission: "app-preferences.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "connectorRuntime" },
-        get: {
-          channel: "comma:connector-runtime:state",
-          id: "connectorRuntime.state",
-          permission: "connector-runtime.scope.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reads Main's bounded replay-last projection of locally supervised workspace Connector scopes.",
-        },
-        id: "connectorRuntime.state",
-        subscribe: {
-          channel: "comma:connector-runtime:state-changed",
-          id: "connectorRuntime.state.changed",
-          permission: "connector-runtime.scope.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "surfaces" },
-        get: {
-          channel: "comma:surfaces:state",
-          id: "surfaces.state",
-          permission: "surfaces.state.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reads local window, view, panel, and Notch topology without Session state.",
-        },
-        id: "surfaces.state",
-        subscribe: {
-          channel: "comma:surfaces:changed",
-          id: "surfaces.changed",
-          permission: "surfaces.state.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "windowFullScreen", namespace: "surfaces" },
-        get: {
-          channel: "comma:surfaces:window-full-screen",
-          id: "surfaces.windowFullScreen",
-          permission: "surfaces.state.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reads the calling local window's full-screen state without Session state.",
-        },
-        id: "surfaces.windowFullScreen",
-        subscribe: {
-          channel: "comma:surfaces:window-full-screen-changed",
-          id: "surfaces.windowFullScreen.changed",
-          permission: "surfaces.state.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "window", namespace: "onboarding" },
-        get: {
-          channel: "comma:onboarding:window",
-          id: "onboarding.window",
-          permission: "onboarding.window.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reads whether the local onboarding window is open, without Session state or authenticated transport.",
-        },
-        id: "onboarding.window",
-        subscribe: {
-          channel: "comma:onboarding:window-changed",
-          id: "onboarding.window.changed",
-          permission: "onboarding.window.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "session" },
-        get: {
-          channel: "comma:session:state",
-          id: "session.state",
-          permission: "session.state.read",
-          sessionAdmission: "lifecycle",
-          sessionAdmissionRationale: undefined,
-        },
-        id: "session.state",
-        subscribe: {
-          channel: "comma:session:state-changed",
-          id: "session.state.changed",
-          permission: "session.state.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "sessionHistory" },
-        id: "sessionHistory.state",
-        get: {
-          channel: "comma:session-history:state",
-          id: "sessionHistory.state",
-          permission: "session-history.read",
-          sessionAdmission: "required",
-        },
-        subscribe: {
-          channel: "comma:session-history:state-changed",
-          id: "sessionHistory.state.changed",
-          permission: "session-history.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "productInbox" },
-        get: {
-          channel: "comma:product-inbox:state",
-          id: "productInbox.state",
-          permission: "product-inbox.state.read",
-          sessionAdmission: "required",
-          sessionAdmissionRationale: undefined,
-        },
-        id: "productInbox.state",
-        subscribe: {
-          channel: "comma:product-inbox:state-changed",
-          id: "productInbox.state.changed",
-          permission: "product-inbox.state.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "chat" },
-        get: {
-          channel: "comma:chat:state",
-          id: "chat.state",
-          permission: "chat.state.read",
-          sessionAdmission: "required",
-          sessionAdmissionRationale: undefined,
-        },
-        id: "chat.state",
-        subscribe: {
-          channel: "comma:chat:state-changed",
-          id: "chat.state.changed",
-          permission: "chat.state.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "drafts", namespace: "chat" },
-        get: {
-          channel: "comma:chat:drafts",
-          id: "chat.drafts",
-          permission: "chat.state.read",
-          sessionAdmission: "required",
-          sessionAdmissionRationale: undefined,
-        },
-        id: "chat.drafts",
-        subscribe: {
-          channel: "comma:chat:drafts-changed",
-          id: "chat.drafts.changed",
-          permission: "chat.state.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "presentation", namespace: "sideChat" },
-        get: {
-          channel: "comma:side-chat:presentation",
-          id: "sideChat.presentation",
-          permission: "side-chat.state.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reads local Side Chat presentation geometry without Session state or authenticated transport.",
-        },
-        id: "sideChat.presentation",
-        subscribe: {
-          channel: "comma:side-chat:presentation-changed",
-          id: "sideChat.presentation.changed",
-          permission: "side-chat.state.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "debugSettings", namespace: "sideChat" },
-        get: {
-          channel: "comma:side-chat:debug-settings",
-          id: "sideChat.debugSettings",
-          permission: "side-chat.debug-settings.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reads local Side Chat debug settings without Session state or authenticated transport.",
-        },
-        id: "sideChat.debugSettings",
-        subscribe: {
-          channel: "comma:side-chat:debug-settings-changed",
-          id: "sideChat.debugSettings.changed",
-          permission: "side-chat.debug-settings.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "computeNode" },
-        get: {
-          channel: "comma:compute-node:state",
-          id: "computeNode.state",
-          permission: "compute-node.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reads Main-owned local compute node lifecycle state without exposing its credential.",
-        },
-        id: "computeNode.state",
-        subscribe: {
-          channel: "comma:compute-node:state-changed",
-          id: "computeNode.state.changed",
-          permission: "compute-node.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "audioCapture" },
-        get: {
-          channel: "comma:audio-capture:state",
-          id: "audioCapture.state",
-          permission: "audio-capture.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reads Main-owned local capture lifecycle state; no captured audio crosses the bridge.",
-        },
-        id: "audioCapture.state",
-        subscribe: {
-          channel: "comma:audio-capture:state-changed",
-          id: "audioCapture.state.changed",
-          permission: "audio-capture.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "meetingPresence" },
-        get: {
-          channel: "comma:meeting-presence:state",
-          id: "meetingPresence.state",
-          permission: "meeting-presence.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reads which local apps currently hold the microphone; no Session state or captured audio involved.",
-        },
-        id: "meetingPresence.state",
-        subscribe: {
-          channel: "comma:meeting-presence:state-changed",
-          id: "meetingPresence.state.changed",
-          permission: "meeting-presence.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "calendar" },
-        get: {
-          channel: "comma:calendar:state",
-          id: "calendar.state",
-          permission: "calendar.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reports the Mac Calendar permission and a change counter; no event data or Session state.",
-        },
-        id: "calendar.state",
-        subscribe: {
-          channel: "comma:calendar:state-changed",
-          id: "calendar.state.changed",
-          permission: "calendar.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "meetingRecorder" },
-        get: {
-          channel: "comma:meeting-recorder:state",
-          id: "meetingRecorder.state",
-          permission: "meeting-recorder.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Controls only Main's current meeting presentation; Main admits capture and file operations against its current Session authority.",
-        },
-        id: "meetingRecorder.state",
-        subscribe: {
-          channel: "comma:meeting-recorder:state-changed",
-          id: "meetingRecorder.state.changed",
-          permission: "meeting-recorder.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "airDrop" },
-        get: {
-          channel: "comma:airdrop:state",
-          id: "airDrop.state",
-          permission: "airdrop.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reads only Main's local AirDrop consent presentation; Main admits chat attachment intake against its current Session authority.",
-        },
-        id: "airDrop.state",
-        subscribe: {
-          channel: "comma:airdrop:state-changed",
-          id: "airDrop.state.changed",
-          permission: "airdrop.read",
-          target: { type: "all" },
-        },
-      },
-      {
-        bridge: { method: "state", namespace: "driveCatalog" },
-        get: {
-          channel: "comma:drive-catalog:state",
-          id: "driveCatalog.state",
-          permission: "synchronicity.read",
-          sessionAdmission: "local_only",
-          sessionAdmissionRationale:
-            "Reads the local Drive metadata query owner's refresh state.",
-        },
-        id: "driveCatalog.state",
-        subscribe: {
-          channel: "comma:drive-catalog:changed",
-          id: "driveCatalog.state.changed",
-          permission: "synchronicity.read",
-          target: { type: "all" },
-        },
-      },
-    ]);
-    expect(generatedNativeStateBindings.surfaces.state).toEqual({
-      get: expect.objectContaining({ channel: "comma:surfaces:state" }),
-      subscribe: expect.objectContaining({ channel: "comma:surfaces:changed" }),
-    });
-    expect(generatedNativeStateBindings.session.state).toEqual({
-      get: expect.objectContaining({ channel: "comma:session:state" }),
-      subscribe: expect.objectContaining({ channel: "comma:session:state-changed" }),
-    });
-    expect(generatedNativeStateBindings.productInbox.state).toEqual({
-      get: expect.objectContaining({ channel: "comma:product-inbox:state" }),
-      subscribe: expect.objectContaining({
-        channel: "comma:product-inbox:state-changed",
-      }),
-    });
-    expect(generatedNativeStateBindings.sideChat.presentation).toEqual({
-      get: expect.objectContaining({ channel: "comma:side-chat:presentation" }),
-      subscribe: expect.objectContaining({
-        channel: "comma:side-chat:presentation-changed",
-        target: { type: "all" },
-      }),
-    });
-    expect(generatedNativeStateBindings.sideChat.debugSettings).toEqual({
-      get: expect.objectContaining({ channel: "comma:side-chat:debug-settings" }),
-      subscribe: expect.objectContaining({
-        channel: "comma:side-chat:debug-settings-changed",
-        target: { type: "all" },
-      }),
-    });
-    expect(generatedNativeStateIndex["session.state"]).toEqual({
-      artifacts: {
-        get: "generatedNativeStateBindings.session.state.get",
-        leaf: "sessionStateLeaf",
-        mock: "sessionStateLeaf.mock",
-        subscribe: "generatedNativeStateBindings.session.state.subscribe",
-        webFallback: "sessionStateLeaf.webFallback",
-      },
-      bridge: { method: "state", namespace: "session" },
-      get: {
-        channel: "comma:session:state",
-        id: "session.state",
-        permission: "session.state.read",
-        sessionAdmission: "lifecycle",
-        sessionAdmissionRationale: undefined,
-      },
-      id: "session.state",
-      subscribe: {
-        channel: "comma:session:state-changed",
-        id: "session.state.changed",
-        permission: "session.state.read",
-        target: { type: "all" },
-      },
-    });
   });
 
   it("keeps Side Chat debug updates bounded and preserves the content position", () => {

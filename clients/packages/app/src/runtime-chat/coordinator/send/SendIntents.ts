@@ -78,8 +78,7 @@ export class SendIntents {
   }
 
   // Sends outside the renderer's draft lease, for Main-owned surfaces such as
-  // a notification reply. The send-intent fence guards renderer draft
-  // ownership, which a detached send never touches.
+  // a notification reply. A detached send never touches draft ownership.
   async sendDetached(target: ChatTarget, text: string): Promise<void> {
     const boundary = this.#entries.openBoundary();
     boundary.assertCurrent();

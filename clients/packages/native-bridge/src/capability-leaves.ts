@@ -504,6 +504,31 @@ export const notchAirDropTransferSchema = z.object({
 
 export type NotchAirDropTransfer = z.infer<typeof notchAirDropTransferSchema>;
 
+export const notchVoiceStateSchema = z.enum([
+  "listening",
+  "thinking",
+  "speaking",
+  "busy",
+  "error",
+]);
+export type NotchVoiceState = z.infer<typeof notchVoiceStateSchema>;
+
+// Main projects the push-to-talk turn into the Notch ahead of AirDrop and
+// tasks while it lasts. Main localizes the copy.
+export const notchVoiceTurnSchema = z.object({
+  /** An error's way out; NotchHost returns `id` as the `voice:action` value. */
+  action: z
+    .object({ id: z.string().min(1).max(64), label: z.string().max(64) })
+    .optional(),
+  /** Microphone level while listening, already throttled by Main. */
+  level: z.number().min(0).max(1).optional(),
+  /** The state's text, or the error's sentence. */
+  message: z.string().max(256),
+  state: notchVoiceStateSchema,
+});
+
+export type NotchVoiceTurn = z.infer<typeof notchVoiceTurnSchema>;
+
 export const notchScenePayloadSchema = z.object({
   title: z.string().optional(),
   subtitle: z.string().optional(),
@@ -563,11 +588,13 @@ export function defaultAirDropName({
   return head ? `${head.trimEnd()}${airDropNameSuffix}` : "Comma";
 }
 
-// What Main writes to NotchHost: the renderer scene plus Main-owned AirDrop
-// and layout, which no renderer `notch.update` can carry.
+// What Main writes to NotchHost: the renderer scene plus Main-owned AirDrop,
+// voice turn, and layout, which no renderer `notch.update` can carry.
 export const notchHostScenePayloadSchema = notchScenePayloadSchema.extend({
   /** Present only when Main changes the AirDrop projection; no transfer clears it. */
   airDrop: z.object({ transfer: notchAirDropTransferSchema.optional() }).optional(),
+  /** Present only when Main changes the voice turn; no turn gives the Notch back. */
+  voice: z.object({ turn: notchVoiceTurnSchema.optional() }).optional(),
   /** Main's `configure` command: the reader's Notch width preference. */
   compactSideWidth: notchSideWidthSchema.optional(),
 });
@@ -873,6 +900,8 @@ export const nativePeerPortChannel = "comma:peers:port";
 export type NativeRendererWindowRole =
   | "site-permission-menu"
   | "meeting-recorder-window"
+  | "push-to-talk-overlay"
+  | "push-to-talk-voice"
   | "dev-workbench"
   | "main-window"
   | "onboarding-window"
@@ -1126,60 +1155,68 @@ export type CommaClientSideChatAppearance = z.output<
   typeof commaClientSideChatAppearanceSchema
 >;
 
+const shortcutKeySchema = z.enum([
+  "space",
+  "comma",
+  "a",
+  "b",
+  "c",
+  "d",
+  "e",
+  "f",
+  "g",
+  "h",
+  "i",
+  "j",
+  "k",
+  "l",
+  "m",
+  "n",
+  "o",
+  "p",
+  "q",
+  "r",
+  "s",
+  "t",
+  "u",
+  "v",
+  "w",
+  "x",
+  "y",
+  "z",
+  "0",
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+]);
+const shortcutModifiersSchema = z.object({
+  alt: z.boolean(),
+  control: z.boolean(),
+  meta: z.boolean(),
+  shift: z.boolean(),
+});
+const modifierCount = ({
+  alt,
+  control,
+  meta,
+  shift,
+}: z.infer<typeof shortcutModifiersSchema>) =>
+  [alt, control, meta, shift].filter(Boolean).length;
+
 export const sideChatShortcutSchema = z.object({
   // Keys identify KeyboardEvent.code positions (KeyA/Digit1/Space/Comma),
   // not layout-dependent KeyboardEvent.key characters.
-  key: z.enum([
-    "space",
-    "comma",
-    "a",
-    "b",
-    "c",
-    "d",
-    "e",
-    "f",
-    "g",
-    "h",
-    "i",
-    "j",
-    "k",
-    "l",
-    "m",
-    "n",
-    "o",
-    "p",
-    "q",
-    "r",
-    "s",
-    "t",
-    "u",
-    "v",
-    "w",
-    "x",
-    "y",
-    "z",
-    "0",
-    "1",
-    "2",
-    "3",
-    "4",
-    "5",
-    "6",
-    "7",
-    "8",
-    "9",
-  ]),
-  modifiers: z
-    .object({
-      alt: z.boolean(),
-      control: z.boolean(),
-      meta: z.boolean(),
-      shift: z.boolean(),
-    })
-    .refine(
-      ({ alt, control, meta, shift }) => alt || control || meta || shift,
-      "A global shortcut requires at least one modifier."
-    ),
+  key: shortcutKeySchema,
+  modifiers: shortcutModifiersSchema.refine(
+    (modifiers) => modifierCount(modifiers) > 0,
+    "A global shortcut requires at least one modifier."
+  ),
 });
 
 export type SideChatShortcut = z.infer<typeof sideChatShortcutSchema>;
@@ -1201,6 +1238,29 @@ export const defaultOpenCommaShortcut: SideChatShortcut = {
   modifiers: { alt: true, control: false, meta: false, shift: false },
 };
 
+/**
+ * Hold-to-talk chord: a regular key with at least one modifier, or `key: null`
+ * for a modifier-only chord of at least two modifiers (held alone, like ⌃⌥).
+ */
+export const pushToTalkShortcutSchema = z
+  .object({
+    key: shortcutKeySchema.nullable(),
+    modifiers: shortcutModifiersSchema,
+  })
+  .refine(
+    ({ key, modifiers }) => modifierCount(modifiers) >= (key === null ? 2 : 1),
+    "A modifier-only chord needs at least two modifiers; a key needs at least one."
+  );
+export type PushToTalkShortcut = z.infer<typeof pushToTalkShortcutSchema>;
+export const pushToTalkShortcutBindingSchema = pushToTalkShortcutSchema.nullable();
+export type PushToTalkShortcutBinding = z.infer<typeof pushToTalkShortcutBindingSchema>;
+
+/** Hold-to-talk default: Control-Option held alone. */
+export const defaultPushToTalkShortcut: PushToTalkShortcut = {
+  key: null,
+  modifiers: { alt: true, control: true, meta: false, shift: false },
+};
+
 export const commaClientSettingsSchema = z
   .object({
     appShortcutOverrides: commaClientAppShortcutOverridesSchema,
@@ -1213,6 +1273,13 @@ export const commaClientSettingsSchema = z
     sideChatAppearance: commaClientSideChatAppearanceSchema,
     sideChatShortcut: sideChatShortcutBindingSchema,
     openCommaShortcut: sideChatShortcutBindingSchema.default(defaultOpenCommaShortcut),
+    // Talk to agent (macOS): hold a global shortcut to ask the workspace agent
+    // about the screen. Off by default; it also requires Side Chat.
+    pushToTalkEnabled: z.boolean().default(false),
+    pushToTalkShortcut: pushToTalkShortcutBindingSchema.default(
+      defaultPushToTalkShortcut
+    ),
+    pushToTalkSendScreen: z.boolean().default(true),
     // Icon-rail item ids in the reader's order. Stored loosely: an id the
     // running build no longer knows is dropped on read and one it newly ships
     // is appended, so a rail change never invalidates the whole settings file.
@@ -1241,6 +1308,9 @@ export const commaClientSettingsPatchSchema = z
     sideChatAppearance: commaClientSideChatAppearanceSchema.optional(),
     sideChatShortcut: sideChatShortcutBindingSchema.optional(),
     openCommaShortcut: sideChatShortcutBindingSchema.optional(),
+    pushToTalkEnabled: z.boolean().optional(),
+    pushToTalkShortcut: pushToTalkShortcutBindingSchema.optional(),
+    pushToTalkSendScreen: z.boolean().optional(),
     sidebarNavOrder: z.array(z.string()).optional(),
     onboardingCompletedUserIds: z.array(z.string()).optional(),
   })
@@ -1287,6 +1357,19 @@ const mutableAppPreferencesSchema = z
   .strict();
 export const appPreferencesSchema = mutableAppPreferencesSchema.extend({
   openCommaShortcutStatus: z.enum(["registered", "unset", "unavailable"]).optional(),
+  /**
+   * macOS readback of the Input Monitoring permission a modifier-only Talk to
+   * agent chord depends on; `not-needed` for a chord with a key or none.
+   */
+  pushToTalkInputMonitoringStatus: z
+    .enum(["granted", "denied", "not-needed"])
+    .optional(),
+  /**
+   * macOS readback of the Screen Recording permission the Talk to agent
+   * screenshot depends on. `denied` also covers never asked: macOS 15+ reports
+   * both the same way.
+   */
+  pushToTalkScreenRecordingStatus: z.enum(["granted", "denied"]).optional(),
   launchAtLoginStatus: appLaunchAtLoginStatusSchema.optional(),
   // Defaults keep preference files written before notifications, AirDrop,
   // the Notch and the Side Chat settings shipped parseable; patches derive from the default-free
@@ -1739,6 +1822,8 @@ export const nativeRendererIdentitySchema = z.object({
   role: z.enum([
     "site-permission-menu",
     "meeting-recorder-window",
+    "push-to-talk-overlay",
+    "push-to-talk-voice",
     "dev-workbench",
     "main-window",
     "onboarding-window",
@@ -1989,6 +2074,56 @@ export const appPreferencesOpenLoginItemsSettingsCapability = defineNativeCapabi
     "Opens the operating-system Login Items pane. No Session state is involved.",
   webFallback: { opened: false },
 });
+
+// macOS: asks for Input Monitoring (the system prompt shows only the first time)
+// and opens its Privacy pane, which a modifier-only Talk to agent chord needs.
+// The side chat helper rechecks every 2 s; Main publishes the readback through
+// the preferences state.
+export const appPreferencesOpenInputMonitoringSettingsCapability =
+  defineNativeCapability({
+    bridge: { method: "openInputMonitoringSettings", namespace: "appPreferences" },
+    channel: "comma:app-preferences:open-input-monitoring-settings",
+    handler: {
+      exportName: "AppPreferencesProvider",
+      member: "openInputMonitoringSettings",
+      module: "../../../apps/electron/src/main/modules/native/index",
+      provider: "appPreferences",
+    },
+    id: "appPreferences.openInputMonitoringSettings",
+    input: z.void(),
+    mock: { opened: false },
+    output: appPreferencesOpenSettingsResultSchema,
+    permission: "app-preferences.settings",
+    sessionAdmission: "local_only",
+    sessionAdmissionRationale:
+      "Opens the operating-system Input Monitoring pane. No Session state is involved.",
+    webFallback: { opened: false },
+  });
+
+// macOS: asks for Screen Recording through the side chat helper, so macOS
+// lists Comma (the prompt shows only the first time), and opens its Privacy
+// pane, which the Talk to agent screenshot needs. Main publishes the readback
+// through the preferences state.
+export const appPreferencesOpenScreenRecordingSettingsCapability =
+  defineNativeCapability({
+    bridge: { method: "openScreenRecordingSettings", namespace: "appPreferences" },
+    channel: "comma:app-preferences:open-screen-recording-settings",
+    handler: {
+      exportName: "AppPreferencesProvider",
+      member: "openScreenRecordingSettings",
+      module: "../../../apps/electron/src/main/modules/native/index",
+      provider: "appPreferences",
+    },
+    id: "appPreferences.openScreenRecordingSettings",
+    input: z.void(),
+    mock: { opened: false },
+    output: appPreferencesOpenSettingsResultSchema,
+    permission: "app-preferences.settings",
+    sessionAdmission: "local_only",
+    sessionAdmissionRationale:
+      "Opens the operating-system Screen Recording pane. No Session state is involved.",
+    webFallback: { opened: false },
+  });
 
 // Asks the OS to let Comma notify: macOS shows its prompt while it has not asked
 // the user about Comma yet, and answers a decided status from its record. Main
@@ -7542,6 +7677,306 @@ export const meetingRecorderStateLeaf = defineNativeState({
   id: "meetingRecorder.state",
   subscribe: meetingRecorderStateChangedEvent,
 });
+
+// Talk to agent (macOS): Main owns the transparent overlay that draws the
+// cursor companion, its caption balloon and, while the shortcut is held, the
+// freehand stroke. Main follows the cursor and publishes its position; the
+// renderer draws and reports the stroke. Voice media and call authority stay
+// in their respective owners.
+export const pushToTalkErrorCodeSchema = z.enum([
+  "microphone_denied",
+  "screen_denied",
+  "busy",
+  "plan_limit",
+  "context_failed",
+  "call_failed",
+]);
+/**
+ * The stroke's blue, also the cursor companion's. The capture draws the stroke
+ * into the screenshot with this colour, so what the user sees is what is sent.
+ */
+export const pushToTalkStrokeColor = "#2F80FF";
+export const pushToTalkCompanionStateSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("listening") }).strict(),
+  z.object({ kind: z.literal("thinking") }).strict(),
+  z.object({ kind: z.literal("speaking") }).strict(),
+  z.object({ kind: z.literal("ready") }).strict(),
+  z
+    .object({
+      code: pushToTalkErrorCodeSchema,
+      kind: z.literal("error"),
+    })
+    .strict(),
+]);
+export type PushToTalkCompanionState = z.infer<typeof pushToTalkCompanionStateSchema>;
+export const pushToTalkOverlayPointSchema = z
+  .object({ x: z.number().finite(), y: z.number().finite() })
+  .strict();
+export type PushToTalkOverlayPoint = z.infer<typeof pushToTalkOverlayPointSchema>;
+/** Longest caption Main publishes; a longer reply is cut with an ellipsis. */
+export const pushToTalkCaptionMaxLength = 4_000;
+/** Most points of one stroke; the renderer drops points closer than a few px. */
+export const pushToTalkStrokeMaxPoints = 2_048;
+export const pushToTalkOverlayStateSchema = z
+  .object({
+    /** The caption balloon's text; `null` shows no balloon. */
+    caption: z.string().max(pushToTalkCaptionMaxLength).nullable(),
+    /** `null` while the overlay is hidden. */
+    companion: pushToTalkCompanionStateSchema.nullable(),
+    /** The pointer, in the overlay window's DIP space; Main follows it. */
+    cursor: pushToTalkOverlayPointSchema,
+    /** Whether drawing is enabled on the current display and surface. */
+    drawingEnabled: z.boolean(),
+    /** The companion and the stroke are fading out before the window hides. */
+    hiding: z.boolean(),
+    /** Microphone level while listening. */
+    level: z.number().min(0).max(1),
+    revision: z.number().int().nonnegative(),
+    /**
+     * Increments when a turn is shown or the overlay moves to another display;
+     * fences stroke reports drawn on an older surface.
+     */
+    surface: z.number().int().nonnegative(),
+  })
+  .strict();
+export type PushToTalkOverlayState = z.infer<typeof pushToTalkOverlayStateSchema>;
+export const hiddenPushToTalkOverlayState: PushToTalkOverlayState = {
+  caption: null,
+  companion: null,
+  cursor: { x: 0, y: 0 },
+  drawingEnabled: false,
+  hiding: false,
+  level: 0,
+  revision: 0,
+  surface: 0,
+};
+export const pushToTalkOverlayStateCapability = defineNativeCapability({
+  bridge: { method: "overlayState", namespace: "pushToTalk" },
+  channel: "comma:push-to-talk:overlay-state",
+  handler: {
+    exportName: "PushToTalkOverlayProvider",
+    member: "overlayState",
+    module: "../../../apps/electron/src/main/push-to-talk/overlay-window",
+    provider: "pushToTalk",
+  },
+  id: "pushToTalk.overlayState",
+  input: z.void(),
+  output: pushToTalkOverlayStateSchema,
+  mock: hiddenPushToTalkOverlayState,
+  webFallback: hiddenPushToTalkOverlayState,
+  permission: "push-to-talk.overlay",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Controls only Main's local Talk to agent overlay; Main admits the turn itself against its current Session.",
+});
+export const pushToTalkOverlayStateChangedEvent = defineNativeEvent({
+  channel: "comma:push-to-talk:overlay-state-changed",
+  id: "pushToTalk.overlayState.changed",
+  mock: hiddenPushToTalkOverlayState,
+  payload: pushToTalkOverlayStateSchema,
+  permission: pushToTalkOverlayStateCapability.permission,
+  target: { type: "all" },
+});
+export const pushToTalkOverlayStateLeaf = defineNativeState({
+  bridge: { method: "overlayState", namespace: "pushToTalk" },
+  get: pushToTalkOverlayStateCapability,
+  id: "pushToTalk.overlayState",
+  subscribe: pushToTalkOverlayStateChangedEvent,
+});
+export const pushToTalkSetStrokeCapability = defineNativeCapability({
+  bridge: { method: "setStroke", namespace: "pushToTalk" },
+  channel: "comma:push-to-talk:set-stroke",
+  handler: {
+    exportName: "PushToTalkOverlayProvider",
+    member: "setStroke",
+    module: "../../../apps/electron/src/main/push-to-talk/overlay-window",
+    provider: "pushToTalk",
+  },
+  id: "pushToTalk.setStroke",
+  input: z
+    .object({
+      /** In drawing order, in the overlay window's DIP space; `null` clears it. */
+      points: z
+        .array(pushToTalkOverlayPointSchema)
+        .max(pushToTalkStrokeMaxPoints)
+        .nullable(),
+      surface: z.number().int().nonnegative(),
+    })
+    .strict(),
+  output: z.void(),
+  mock: undefined,
+  webFallback: undefined,
+  permission: "push-to-talk.overlay",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Controls only Main's local Talk to agent overlay; Main admits the turn itself against its current Session.",
+});
+export const pushToTalkSetInteractiveCapability = defineNativeCapability({
+  bridge: { method: "setInteractive", namespace: "pushToTalk" },
+  channel: "comma:push-to-talk:set-interactive",
+  handler: {
+    exportName: "PushToTalkOverlayProvider",
+    member: "setInteractive",
+    module: "../../../apps/electron/src/main/push-to-talk/overlay-window",
+    provider: "pushToTalk",
+  },
+  id: "pushToTalk.setInteractive",
+  input: z.object({ interactive: z.boolean() }).strict(),
+  output: z.void(),
+  mock: undefined,
+  webFallback: undefined,
+  permission: "push-to-talk.overlay",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Controls only Main's local Talk to agent overlay; Main admits the turn itself against its current Session.",
+});
+export const pushToTalkOverlayActionSchema = z.enum([
+  /** The user clicked the caption balloon. */
+  "caption-click",
+  "open-microphone-settings",
+  "open-screen-recording-settings",
+]);
+export type PushToTalkOverlayAction = z.infer<typeof pushToTalkOverlayActionSchema>;
+export const pushToTalkOverlayActionCapability = defineNativeCapability({
+  bridge: { method: "overlayAction", namespace: "pushToTalk" },
+  channel: "comma:push-to-talk:overlay-action",
+  handler: {
+    exportName: "PushToTalkOverlayProvider",
+    member: "overlayAction",
+    module: "../../../apps/electron/src/main/push-to-talk/overlay-window",
+    provider: "pushToTalk",
+  },
+  id: "pushToTalk.overlayAction",
+  input: z.object({ action: pushToTalkOverlayActionSchema }).strict(),
+  output: z.void(),
+  mock: undefined,
+  webFallback: undefined,
+  permission: "push-to-talk.overlay",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "Controls only Main's local Talk to agent overlay; Main admits the turn itself against its current Session.",
+});
+// Main owns the live call and its Session authority. The hidden voice window
+// owns microphone/WebRTC media and follows Main's replay-last mute state.
+export const pushToTalkVoiceSessionSchema = z
+  .object({
+    /** A new generation creates a new peer; mute updates keep it. */
+    generation: z.number().int().nonnegative(),
+    /** Monotonic within a generation, including mute changes. */
+    revision: z.number().int().nonnegative(),
+    listening: z.boolean(),
+    /** Current gesture context; null revokes buffered input. */
+    contextId: z.number().int().positive().nullable(),
+    /** Main has accepted the minimum hold duration for this gesture. */
+    qualified: z.boolean(),
+    /** Sending input requires the ACK of this context, independently of capture. */
+    admitted: z.boolean(),
+    active: z.boolean(),
+  })
+  .strict();
+export type PushToTalkVoiceSession = z.infer<typeof pushToTalkVoiceSessionSchema>;
+export const idlePushToTalkVoiceSession: PushToTalkVoiceSession = {
+  active: false,
+  generation: 0,
+  revision: 0,
+  listening: false,
+  contextId: null,
+  qualified: false,
+  admitted: false,
+};
+export const pushToTalkVoiceReportSchema = z.union([
+  z.enum(["connected", "audible", "silent", "microphone_denied", "failed"]),
+  z.object({ kind: z.literal("level"), level: z.number().min(0).max(1) }).strict(),
+  z
+    .object({
+      kind: z.literal("media_delayed"),
+      contextId: z.number().int().positive(),
+    })
+    .strict(),
+]);
+export type PushToTalkVoiceReport = z.infer<typeof pushToTalkVoiceReportSchema>;
+export const pushToTalkVoiceSessionCapability = defineNativeCapability({
+  bridge: { method: "session", namespace: "pushToTalkVoice" },
+  channel: "comma:push-to-talk-voice:session",
+  handler: {
+    exportName: "PushToTalkVoiceProvider",
+    member: "voiceSession",
+    module: "../../../apps/electron/src/main/push-to-talk/live-voice",
+    provider: "pushToTalkVoice",
+  },
+  id: "pushToTalkVoice.session",
+  input: z.void(),
+  output: pushToTalkVoiceSessionSchema,
+  mock: idlePushToTalkVoiceSession,
+  webFallback: idlePushToTalkVoiceSession,
+  permission: "push-to-talk.voice",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "The window relays only WebRTC media signals; Main owns the live call inside its Session admission.",
+});
+export const pushToTalkVoiceSessionChangedEvent = defineNativeEvent({
+  channel: "comma:push-to-talk-voice:session-changed",
+  id: "pushToTalkVoice.session.changed",
+  mock: idlePushToTalkVoiceSession,
+  payload: pushToTalkVoiceSessionSchema,
+  permission: pushToTalkVoiceSessionCapability.permission,
+  target: { type: "all" },
+});
+export const pushToTalkVoiceSessionLeaf = defineNativeState({
+  bridge: { method: "session", namespace: "pushToTalkVoice" },
+  get: pushToTalkVoiceSessionCapability,
+  id: "pushToTalkVoice.session",
+  subscribe: pushToTalkVoiceSessionChangedEvent,
+});
+export const pushToTalkVoiceOfferCapability = defineNativeCapability({
+  bridge: { method: "offer", namespace: "pushToTalkVoice" },
+  channel: "comma:push-to-talk-voice:offer",
+  handler: {
+    exportName: "PushToTalkVoiceProvider",
+    member: "voiceOffer",
+    module: "../../../apps/electron/src/main/push-to-talk/live-voice",
+    provider: "pushToTalkVoice",
+  },
+  id: "pushToTalkVoice.offer",
+  input: z
+    .object({
+      generation: z.number().int().nonnegative(),
+      sdp: z.string().min(1).max(131_072),
+    })
+    .strict(),
+  /** `null`: Main no longer wants this peer, or the call could not start. */
+  output: z.object({ sdp: z.string() }).strict().nullable(),
+  mock: null,
+  webFallback: null,
+  permission: "push-to-talk.voice",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "The window relays only WebRTC media signals; Main owns the live call inside its Session admission.",
+});
+export const pushToTalkVoiceReportCapability = defineNativeCapability({
+  bridge: { method: "report", namespace: "pushToTalkVoice" },
+  channel: "comma:push-to-talk-voice:report",
+  handler: {
+    exportName: "PushToTalkVoiceProvider",
+    member: "voiceReport",
+    module: "../../../apps/electron/src/main/push-to-talk/live-voice",
+    provider: "pushToTalkVoice",
+  },
+  id: "pushToTalkVoice.report",
+  input: z
+    .object({
+      event: pushToTalkVoiceReportSchema,
+      generation: z.number().int().nonnegative(),
+    })
+    .strict(),
+  output: z.void(),
+  mock: undefined,
+  webFallback: undefined,
+  permission: "push-to-talk.voice",
+  sessionAdmission: "local_only",
+  sessionAdmissionRationale:
+    "The window relays only WebRTC media signals; Main owns the live call inside its Session admission.",
+});
 // -- airDrop ----------------------------------------------------------------
 //
 // Main owns AirDrop consent and reception. The toast of the window that owns
@@ -9321,6 +9756,8 @@ export const nativeCapabilityRegistry = [
   appPreferencesCapability,
   appPreferencesInitializeClientSettingsCapability,
   appPreferencesOpenLoginItemsSettingsCapability,
+  appPreferencesOpenInputMonitoringSettingsCapability,
+  appPreferencesOpenScreenRecordingSettingsCapability,
   appPreferencesOpenNotificationSettingsCapability,
   appPreferencesRequestNotificationAuthorizationCapability,
   appPreferencesUpdateCapability,
@@ -9481,6 +9918,13 @@ export const nativeCapabilityRegistry = [
   meetingRecorderSetInteractiveCapability,
   meetingRecorderLayoutWindowCapability,
   meetingRecorderDragWindowCapability,
+  pushToTalkOverlayStateCapability,
+  pushToTalkSetStrokeCapability,
+  pushToTalkSetInteractiveCapability,
+  pushToTalkOverlayActionCapability,
+  pushToTalkVoiceSessionCapability,
+  pushToTalkVoiceOfferCapability,
+  pushToTalkVoiceReportCapability,
   airDropStateCapability,
   airDropActCapability,
   airDropPreviewCapability,
@@ -9538,6 +9982,8 @@ export const nativeEventRegistry = [
   meetingPresenceStateChangedEvent,
   calendarStateChangedEvent,
   meetingRecorderStateChangedEvent,
+  pushToTalkOverlayStateChangedEvent,
+  pushToTalkVoiceSessionChangedEvent,
   surfacesWindowResizeSettledEvent,
   airDropStateChangedEvent,
   driveCatalogChangedEvent,
@@ -9565,6 +10011,8 @@ export const nativeStateRegistry = [
   meetingPresenceStateLeaf,
   calendarStateLeaf,
   meetingRecorderStateLeaf,
+  pushToTalkOverlayStateLeaf,
+  pushToTalkVoiceSessionLeaf,
   airDropStateLeaf,
   driveCatalogStateLeaf,
 ] as const;

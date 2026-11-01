@@ -117,4 +117,89 @@ describe("Electron security guards", () => {
     await Promise.resolve();
     expect(callback).toHaveBeenCalledWith(false);
   });
+
+  it("grants microphone requests from the voice renderer even when main renderer is closed", async () => {
+    const setPermissionCheckHandler = vi.fn();
+    const setPermissionRequestHandler = vi.fn();
+    const voiceContents = {
+      getURL: vi.fn(() => "http://localhost:5173/push-to-talk-voice"),
+    };
+    const requestSystemAccess = vi.fn(async () => true);
+    installSessionSecurity(
+      { setPermissionCheckHandler, setPermissionRequestHandler },
+      {
+        allowedOrigins: ["http://localhost:5173"],
+        getMainWebContents: () => undefined,
+        getVoiceWebContents: () => voiceContents as never,
+        requestSystemAccess,
+      }
+    );
+    const check = setPermissionCheckHandler.mock.calls[0]![0];
+    const request = setPermissionRequestHandler.mock.calls[0]![0];
+    const details = {
+      isMainFrame: true,
+      requestingUrl: "http://localhost:5173/push-to-talk-voice",
+      mediaTypes: ["audio"],
+    };
+    const callback = vi.fn();
+    request(voiceContents, "media", callback, details);
+    await Promise.resolve();
+    expect(callback).toHaveBeenCalledWith(true);
+    expect(
+      check(voiceContents, "media", "http://localhost:5173", {
+        ...details,
+        mediaType: "audio",
+      })
+    ).toBe(true);
+
+    // Denies video
+    callback.mockClear();
+    request(voiceContents, "media", callback, {
+      ...details,
+      mediaTypes: ["video"],
+    });
+    expect(callback).toHaveBeenCalledWith(false);
+
+    // Denies subframe
+    callback.mockClear();
+    request(voiceContents, "media", callback, {
+      ...details,
+      isMainFrame: false,
+    });
+    expect(callback).toHaveBeenCalledWith(false);
+
+    // Denies foreign requesting URL
+    callback.mockClear();
+    request(voiceContents, "media", callback, {
+      ...details,
+      requestingUrl: "https://evil.example",
+    });
+    expect(callback).toHaveBeenCalledWith(false);
+
+    // Denies unknown target webContents (neither main nor voice)
+    callback.mockClear();
+    const unknownContents = {
+      getURL: () => "http://localhost:5173/push-to-talk-voice",
+    };
+    request(unknownContents, "media", callback, details);
+    expect(callback).toHaveBeenCalledWith(false);
+    expect(
+      check(unknownContents, "media", "http://localhost:5173", {
+        ...details,
+        mediaType: "audio",
+      })
+    ).toBe(false);
+
+    // Denies non-media permissions
+    callback.mockClear();
+    request(voiceContents, "geolocation", callback, details);
+    expect(callback).toHaveBeenCalledWith(false);
+
+    // Rechecks after OS consent and denies if origin changed
+    callback.mockClear();
+    request(voiceContents, "media", callback, details);
+    voiceContents.getURL.mockReturnValue("https://evil.example");
+    await Promise.resolve();
+    expect(callback).toHaveBeenCalledWith(false);
+  });
 });

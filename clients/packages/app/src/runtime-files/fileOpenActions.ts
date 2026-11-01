@@ -135,6 +135,12 @@ export function createResolvedFileOpenInAction({
   };
 
   return {
+    openDefault: (signal) =>
+      run(
+        async ({ downloadRef }) =>
+          (await bridge.files.openDownload({ downloadRef })).status === "opened",
+        signal
+      ),
     listApplications: async (signal) => {
       if (signal?.aborted) throw abortError();
       const result = await bridge.files.listOpenApplications({

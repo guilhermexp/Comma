@@ -442,6 +442,8 @@ export function decorateElectronE2eAppPreferencesProvider(
     },
     initializeClientSettings: (input) => provider.initializeClientSettings(input),
     openLoginItemsSettings: (input) => provider.openLoginItemsSettings(input),
+    openInputMonitoringSettings: (input) => provider.openInputMonitoringSettings(input),
+    openScreenRecordingSettings: (input) => provider.openScreenRecordingSettings(input),
     openNotificationSettings: (input) => provider.openNotificationSettings(input),
     requestNotificationAuthorization: (input) =>
       provider.requestNotificationAuthorization(input),

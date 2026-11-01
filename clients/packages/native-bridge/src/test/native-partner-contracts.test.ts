@@ -26,6 +26,7 @@ import {
   chatSendCapability,
   chatSetDraftCapability,
   nativePartnerProtocolRegistry,
+  notchHostScenePayloadSchema,
   notchScenePayloadSchema,
   sideChatSetInteractiveProgressCapability,
 } from "../capability-leaves";
@@ -286,6 +287,35 @@ describe("native partner protocol generation", () => {
     expect(JSON.stringify(schema.$defs.CommaNotchScenePayload)).not.toContain(
       '"additionalProperties":false'
     );
+  });
+
+  it("carries Main's voice turn to NotchHost only, with a bounded level", () => {
+    const turn = {
+      action: { id: "open-microphone-settings", label: "Open System Settings" },
+      level: 0.4,
+      message: "Comma needs Microphone access",
+      state: "error",
+    } as const;
+
+    expect(notchHostScenePayloadSchema.parse({ voice: { turn } })).toEqual({
+      voice: { turn },
+    });
+    // An empty projection is how Main gives the Notch back to its scene.
+    expect(notchHostScenePayloadSchema.parse({ voice: {} })).toEqual({ voice: {} });
+    expect(
+      notchHostScenePayloadSchema.safeParse({
+        voice: { turn: { ...turn, level: 1.2 } },
+      }).success
+    ).toBe(false);
+    expect(
+      notchHostScenePayloadSchema.safeParse({
+        voice: { turn: { ...turn, state: "recording" } },
+      }).success
+    ).toBe(false);
+    // A renderer's notch.update cannot draw a voice turn.
+    expect(notchScenePayloadSchema.parse({ title: "Comma", voice: { turn } })).toEqual({
+      title: "Comma",
+    });
   });
 
   it("rejects frames outside the canonical string, nullability, and integer bounds", () => {

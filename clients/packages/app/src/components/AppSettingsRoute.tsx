@@ -18,6 +18,8 @@ import { supportedLocales, type CommaLocale } from "@comma/i18n";
 import {
   getNativeBridge,
   notchSideWidthRange,
+  type CommaClientSettingsPatch,
+  type PushToTalkShortcut,
   type SideChatShortcut,
 } from "@comma/native-bridge";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -81,10 +83,13 @@ import {
   type AppShortcutId,
 } from "./shortcuts/appShortcutRegistry";
 import { useCommaAppShortcuts } from "./shortcuts/commaAppShortcuts";
+import { talkToAgentSettingsSection } from "./talkToAgentSettings";
 import {
   appBindingConflictsWithSideChatShortcut,
   findAppShortcutConflictForSideChat,
+  findGlobalShortcutConflict,
   sameGlobalShortcut,
+  type GlobalShortcutId,
 } from "./shortcuts/sideChatShortcutConflict";
 import { readActiveWorkspaceId } from "./activeWorkspace";
 import { useUsageBillingCategory } from "./billing/useUsageBillingCategory";
@@ -417,10 +422,52 @@ export function AppSettingsRoute({
     "conflict" | "registration"
   >();
   const [openCommaShortcutPending, setOpenCommaShortcutPending] = useState(false);
+  // Talk to agent holds its chord only while it is on.
+  const pushToTalkShortcut =
+    electronRuntime && clientSettings.settings.pushToTalkEnabled
+      ? clientSettings.settings.pushToTalkShortcut
+      : null;
+  const [pushToTalkShortcutConflict, setPushToTalkShortcutConflict] = useState<
+    GlobalShortcutId | "app"
+  >();
+  const checkPushToTalkConflict = (shortcut: PushToTalkShortcut | null) =>
+    findGlobalShortcutConflict(shortcut, {
+      "open-comma": clientSettings.settings.openCommaShortcut,
+      "side-chat": sideChatShortcut,
+    }) ??
+    (findAppShortcutConflictForSideChat(appShortcutBindings, shortcut)
+      ? "app"
+      : undefined);
+  const setPushToTalkShortcut = (shortcut: PushToTalkShortcut | null) => {
+    const conflict = checkPushToTalkConflict(shortcut);
+    setPushToTalkShortcutConflict(conflict);
+    if (conflict) return;
+    void clientSettings.update({ pushToTalkShortcut: shortcut });
+  };
+  const updatePushToTalkSettings = (patch: CommaClientSettingsPatch) => {
+    if (patch.pushToTalkEnabled) {
+      const conflict = checkPushToTalkConflict(
+        clientSettings.settings.pushToTalkShortcut
+      );
+      setPushToTalkShortcutConflict(conflict);
+      if (conflict) return;
+    }
+    void clientSettings.update(patch);
+  };
+  const pushToTalkConflictMessage = (conflict: GlobalShortcutId | "app") =>
+    conflict === "app"
+      ? m.settings_shortcut_conflict()
+      : m.settings_talk_to_agent_shortcut_conflict({
+          shortcut:
+            conflict === "open-comma"
+              ? m.settings_open_comma()
+              : m.settings_open_side_chat(),
+        });
   const setOpenCommaShortcut = async (shortcut: SideChatShortcut | null) => {
     if (
       findAppShortcutConflictForSideChat(appShortcutBindings, shortcut) ||
-      sameGlobalShortcut(shortcut, sideChatShortcut)
+      sameGlobalShortcut(shortcut, sideChatShortcut) ||
+      sameGlobalShortcut(shortcut, pushToTalkShortcut)
     ) {
       setOpenCommaShortcutError("conflict");
       return;
@@ -523,13 +570,35 @@ export function AppSettingsRoute({
     preferences: appPreferences,
     showInSystemTray,
     update: updateAppPreferences,
+    openInputMonitoringSettings,
     openLoginItemsSettings,
     openNotificationSettings,
+    openScreenRecordingSettings,
   } = useCommaAppPreferences();
   const airDropName = useAirDropNameSetting({
     pending: appPreferencesPending,
     preferences: appPreferences,
     update: updateAppPreferences,
+  });
+  const talkToAgentSection = talkToAgentSettingsSection({
+    ...(appPreferences?.pushToTalkInputMonitoringStatus
+      ? { inputMonitoring: appPreferences.pushToTalkInputMonitoringStatus }
+      : {}),
+    ...(appPreferences?.pushToTalkScreenRecordingStatus
+      ? { screenRecording: appPreferences.pushToTalkScreenRecordingStatus }
+      : {}),
+    m,
+    onOpenInputMonitoringSettings: () => void openInputMonitoringSettings(),
+    onOpenScreenRecordingSettings: () => void openScreenRecordingSettings(),
+    onShortcutChange: setPushToTalkShortcut,
+    onUpdate: updatePushToTalkSettings,
+    pending: clientSettingsPending,
+    preferencesLoaded: Boolean(appPreferences),
+    settings: clientSettings.settings,
+    ...(pushToTalkShortcutConflict
+      ? { shortcutError: pushToTalkConflictMessage(pushToTalkShortcutConflict) }
+      : {}),
+    sideChatOff: appPreferences?.sideChatEnabled === false,
   });
   // A released width shows at once and stays until Main answers; a refused
   // write then glides back to the width Main kept.
@@ -1904,6 +1973,10 @@ export function AppSettingsRoute({
                             appBindingConflictsWithSideChatShortcut(
                               binding,
                               clientSettings.settings.openCommaShortcut
+                            ) ||
+                            appBindingConflictsWithSideChatShortcut(
+                              binding,
+                              pushToTalkShortcut
                             ));
                         const conflict =
                           conflictFor(definition.id, binding) ??
@@ -1997,7 +2070,8 @@ export function AppSettingsRoute({
                                 sameGlobalShortcut(
                                   shortcut,
                                   clientSettings.settings.openCommaShortcut
-                                )
+                                ) ||
+                                sameGlobalShortcut(shortcut, pushToTalkShortcut)
                               ) {
                                 setSideChatShortcutConflict(true);
                                 return;
@@ -2012,6 +2086,9 @@ export function AppSettingsRoute({
                     : []),
                 ],
               },
+              ...(electronRuntime && appPreferencesAvailability.pushToTalk
+                ? [talkToAgentSection]
+                : []),
             ],
           },
           usageBillingCategory,

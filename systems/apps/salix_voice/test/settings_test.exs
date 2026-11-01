@@ -98,6 +98,54 @@ defmodule SalixVoice.SettingsTest do
              Settings.get()
   end
 
+  test "desktop default fills only an absent enabled field and preserves stored settings" do
+    assert {:ok, _} =
+             Settings.update(%{"max_call_seconds" => 600, "openai_api_key" => "test-secret"})
+
+    assert {:ok, %{"enabled" => true, "openai_api_key_configured" => true} = view} =
+             Settings.enable_by_default()
+
+    refute Map.has_key?(view, "openai_api_key")
+
+    assert {:ok,
+            %{"enabled" => true, "max_call_seconds" => 600, "openai_api_key" => "test-secret"}} =
+             Settings.get()
+
+    assert {:ok, before} = S3.get(Keys.ctl_system_voice())
+    assert {:ok, _} = Settings.enable_by_default()
+    assert {:ok, ^before} = S3.get(Keys.ctl_system_voice())
+  end
+
+  test "an explicit disable wins a race with desktop default initialization" do
+    :ok = SalixStore.S3.Fake.set_fault({:pause, :get, Keys.ctl_system_voice()})
+    first = Task.async(fn -> Settings.enable_by_default() end)
+    wait_until(&SalixStore.S3.Fake.paused?/0)
+    assert {:ok, _} = Settings.update(%{"enabled" => false})
+    :ok = SalixStore.S3.Fake.release_pause()
+    assert {:ok, %{"enabled" => false}} = Task.await(first)
+    assert {:ok, %{"enabled" => false}} = Settings.get()
+  end
+
+  test "desktop initialization preserves an unreadable settings object" do
+    assert {:ok, _} = S3.put(Keys.ctl_system_voice(), "invalid json")
+    assert {:error, :voice_settings_invalid} = Settings.enable_by_default()
+    assert {:ok, %{body: "invalid json"}} = S3.get(Keys.ctl_system_voice())
+  end
+
+  test "desktop initialization settles a lost write response by reading the stored value" do
+    :ok = SalixStore.S3.Fake.set_fault({:ambiguous_after, :put, Keys.ctl_system_voice()})
+    assert {:ok, %{"enabled" => true}} = Settings.enable_by_default()
+    assert {:ok, %{"enabled" => true}} = Settings.get()
+  end
+
+  test "desktop initialization returns a bounded error when writes remain ambiguous" do
+    :ok = SalixStore.S3.Fake.blackhole({:ambiguous_before, :put, Keys.ctl_system_voice()})
+    on_exit(fn -> SalixStore.S3.Fake.clear_blackhole() end)
+    initializer = Task.async(fn -> Settings.enable_by_default() end)
+    assert {:error, {:ambiguous, :injected}} = Task.await(initializer, 1_000)
+    assert {:error, :not_found} = S3.get(Keys.ctl_system_voice())
+  end
+
   defp wait_until(fun, attempts \\ 100) do
     cond do
       fun.() -> :ok

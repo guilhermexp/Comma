@@ -1,10 +1,35 @@
 defmodule Comma.ConversationAttachmentsTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Comma.ConversationAttachments
 
   @max_download_bytes 10_000_000
   @max_file_name_bytes 1_024
+
+  defmodule ClientWithoutMessageLookup do
+  end
+
+  test "returns a bounded unavailable result when the Salix client lacks the lookup" do
+    previous = Application.get_env(:comma_core, :salix_client)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:comma_core, :salix_client, previous),
+        else: Application.delete_env(:comma_core, :salix_client)
+    end)
+
+    for client <- [Comma.Salix.Runtime, ClientWithoutMessageLookup] do
+      Application.put_env(:comma_core, :salix_client, client)
+
+      assert {:error, :salix_client_not_configured} =
+               ConversationAttachments.fetch(
+                 %{"default_group_id" => "group"},
+                 "conversation",
+                 "message",
+                 0
+               )
+    end
+  end
 
   test "advertises the same inclusive byte range the endpoint and native leaf accept" do
     assert ConversationAttachments.downloadable?(block(0))
@@ -32,6 +57,20 @@ defmodule Comma.ConversationAttachmentsTest do
                "file_name" => "report.pdf",
                "type" => "file"
              })
+    end
+  end
+
+  test "uses the workspace basename rather than the human title for download metadata" do
+    for {location, expected_name} <- [
+          {%{"type" => "file", "path" => "/artifacts/x.csv"}, "x.csv"},
+          {%{
+             "type" => "image",
+             "file_ref" => %{"environment_id" => "vfs", "path" => "/artifacts/image.png"}
+           }, "image.png"}
+        ] do
+      attachment = block(1) |> Map.delete("file_name") |> Map.merge(location)
+      attachment = Map.put(attachment, "title", "Comparison of two shifts")
+      assert ConversationAttachments.describe(attachment)["file_name"] == expected_name
     end
   end
 

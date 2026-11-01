@@ -5,6 +5,8 @@ import {
   CommaAppearanceProvider,
   MeetingRecorderWindowApp,
   OnboardingWindowApp,
+  PushToTalkOverlayApp,
+  PushToTalkVoiceApp,
   SitePermissionMenuApp,
   BrowserInspectionComposer,
   CommaClientSettingsI18nProvider,
@@ -50,6 +52,14 @@ if (isMeetingRecorderWindow) {
   document.documentElement.dataset.commaWindowRole = "meeting-recorder";
   document.body.dataset.commaWindowRole = "meeting-recorder";
 }
+const isPushToTalkOverlay = rendererRole === "push-to-talk-overlay";
+if (isPushToTalkOverlay) {
+  // Transparent from the first paint: the overlay covers a whole display.
+  document.documentElement.dataset.commaWindowRole = "push-to-talk-overlay";
+  document.body.dataset.commaWindowRole = "push-to-talk-overlay";
+}
+// The hidden voice window draws nothing; it only holds the reply's WebRTC peer.
+const isPushToTalkVoice = rendererRole === "push-to-talk-voice";
 const isSideChatWindow = rendererRole === "side-chat-window";
 const isSideChatTestWindow = rendererRole === "side-chat-test-window";
 if (isSideChatWindow || isSideChatTestWindow) {
@@ -84,6 +94,8 @@ const RendererApp = isBrowserInspectionComposer
 setToastsEnabled(
   !isSitePermissionMenu &&
     !isMeetingRecorderWindow &&
+    !isPushToTalkOverlay &&
+    !isPushToTalkVoice &&
     !isBrowserInspectionComposer &&
     !isSideChatWindow &&
     !isSideChatTestWindow
@@ -104,7 +116,13 @@ async function renderComma() {
     defaultCommaClientSettings;
   const locale = resolveLocalePreference(initialClientSettings.localePreference);
   initializeCommaI18n([locale]);
-  if (isMeetingRecorderWindow || isSitePermissionMenu) {
+  if (isPushToTalkVoice) {
+    // No StrictMode: its dev-only remount would open a second peer for the
+    // same generation, and Main answers only one offer per generation.
+    createRoot(root!).render(<PushToTalkVoiceApp />);
+    return;
+  }
+  if (isMeetingRecorderWindow || isSitePermissionMenu || isPushToTalkOverlay) {
     createRoot(root!).render(
       <StrictMode>
         <CommaElectronClientSettingsProvider initialPreferences={initialPreferences}>
@@ -113,6 +131,10 @@ async function renderComma() {
               {isSitePermissionMenu ? (
                 <CommaAppearanceProvider syncNativeAppearance={false}>
                   <SitePermissionMenuApp />
+                </CommaAppearanceProvider>
+              ) : isPushToTalkOverlay ? (
+                <CommaAppearanceProvider syncNativeAppearance={false}>
+                  <PushToTalkOverlayApp />
                 </CommaAppearanceProvider>
               ) : (
                 <MeetingRecorderWindowApp />

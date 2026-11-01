@@ -43,10 +43,14 @@ defmodule SalixVoice.Speech do
     div(ascii + 3, 4) + other
   end
 
-  defp fits?(text), do: String.length(text) <= @max_chars and estimate_tokens(text) <= @max_tokens
+  defp fits?(text) do
+    String.length(text) <= @max_chars and estimate_tokens(text) <= @max_tokens
+  end
 
   defp split_long(sentence) do
-    if fits?(sentence), do: [sentence], else: split_words(String.split(sentence, ~r/\s+/u), [])
+    if fits?(sentence),
+      do: [sentence],
+      else: split_words(String.split(sentence, ~r/\s+/u), [])
   end
 
   defp split_words([], acc), do: Enum.reverse(acc)
@@ -67,18 +71,19 @@ defmodule SalixVoice.Speech do
 
   # Take graphemes while the running character and token counts fit.
   defp hard_split(word) do
-    {head, tail} = take_fitting(String.graphemes(word), [], 0, 0, 0)
+    {head, tail} = take_fitting(String.graphemes(word), [], {0, 0, 0})
     {Enum.join(head), Enum.join(tail)}
   end
 
-  defp take_fitting([grapheme | rest] = all, acc, chars, ascii, other) do
+  defp take_fitting([grapheme | rest] = all, acc, {chars, ascii, other}) do
     {ascii, other} =
       if byte_size(grapheme) == 1, do: {ascii + 1, other}, else: {ascii, other + 1}
 
-    if acc != [] and (chars + 1 > @max_chars or div(ascii + 3, 4) + other > @max_tokens),
-      do: {Enum.reverse(acc), all},
-      else: take_fitting(rest, [grapheme | acc], chars + 1, ascii, other)
+    if acc != [] and
+         (chars + 1 > @max_chars or div(ascii + 3, 4) + other > @max_tokens),
+       do: {Enum.reverse(acc), all},
+       else: take_fitting(rest, [grapheme | acc], {chars + 1, ascii, other})
   end
 
-  defp take_fitting([], acc, _chars, _ascii, _other), do: {Enum.reverse(acc), []}
+  defp take_fitting([], acc, _counts), do: {Enum.reverse(acc), []}
 end

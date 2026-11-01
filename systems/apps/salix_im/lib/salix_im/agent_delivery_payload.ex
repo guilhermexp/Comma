@@ -194,7 +194,7 @@ defmodule SalixIM.AgentDeliveryPayload do
         "provider_context" =>
           metadata
           |> Map.take(
-            ~w(connect_id workspace_id channel_id channel_type thread_ts message_ts event_ts user_id event_type event_id app_authored meeting_id summary_request_id meeting_activation_ref chat_id chat_type message_thread_id message_id root_message_id trigger_message_id tenant_key sender_open_id sender_union_id sender_user_id sender_type from_user_id from_username from_is_bot wechat_id api_key_id api_key_name sender_name sender_id)
+            ~w(connect_id workspace_id channel_id channel_type thread_ts message_ts event_ts user_id event_type event_id app_authored meeting_id summary_request_id meeting_activation_ref chat_id chat_type message_thread_id message_id root_message_id trigger_message_id tenant_key sender_open_id sender_union_id sender_user_id sender_type from_user_id from_username from_is_bot wechat_id api_key_id api_key_name sender_name sender_id voice_mode voice_pending_delegation_ids)
           )
           |> stringify()
           |> reject_blank()
@@ -522,6 +522,15 @@ defmodule SalixIM.AgentDeliveryPayload do
 
   defp provider_reply_help_hint("feishu", metadata),
     do: ProviderRouterGuidance.feishu(metadata)
+
+  defp provider_reply_help_hint("voice", %{
+         "event_type" => "voice.delegation_handoff"
+       }),
+       do:
+         "The push-to-talk call has ended; do not redial or claim that the caller can hear you. " <>
+           "For an accepted pending delegation listed in this source, im_api.voice.say records the final text in the Comma conversation without audio. " <>
+           "Use the source call_id and the exact delegation_id; an omitted delegation_id is accepted only when one request is pending. " <>
+           "Do not invent a pending delegation. Other work continues in its existing Comma conversation."
 
   # The call is over: no voice operation can reach the caller any more.
   defp provider_reply_help_hint("voice", %{"event_type" => "voice.call_ended"}),

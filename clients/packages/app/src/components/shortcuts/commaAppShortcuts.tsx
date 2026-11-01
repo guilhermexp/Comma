@@ -4,7 +4,7 @@ import {
   sameAppKeybinding,
   type AppKeybinding,
 } from "@comma/ui";
-import { type SideChatShortcutBinding } from "@comma/native-bridge";
+import { type PushToTalkShortcutBinding } from "@comma/native-bridge";
 import {
   createContext,
   useCallback,
@@ -60,7 +60,7 @@ const findConflict = (
 
 const disableSideChatConflict = (
   bindings: AppShortcutBindings,
-  ...shortcuts: Array<SideChatShortcutBinding | undefined>
+  ...shortcuts: Array<PushToTalkShortcutBinding | undefined>
 ) => {
   let next = bindings;
   for (const shortcut of shortcuts) {
@@ -89,6 +89,11 @@ export function CommaAppShortcutsProvider({
   const openCommaShortcut = isElectronSideChatRuntime()
     ? clientSettings.settings.openCommaShortcut
     : undefined;
+  // Registered only while Talk to agent is on; then it wins over an app chord.
+  const pushToTalkShortcut =
+    isElectronSideChatRuntime() && clientSettings.settings.pushToTalkEnabled
+      ? clientSettings.settings.pushToTalkShortcut
+      : undefined;
   const defaults = useMemo(
     () => createDefaultAppShortcutBindings(platform),
     [platform]
@@ -105,16 +110,22 @@ export function CommaAppShortcutsProvider({
   bindingsRef.current = bindings;
   const effectiveBindings = useMemo(
     () =>
-      disableSideChatConflict(bindings, sideChatShortcut, openCommaShortcut).bindings,
-    [bindings, sideChatShortcut, openCommaShortcut]
+      disableSideChatConflict(
+        bindings,
+        sideChatShortcut,
+        openCommaShortcut,
+        pushToTalkShortcut
+      ).bindings,
+    [bindings, sideChatShortcut, openCommaShortcut, pushToTalkShortcut]
   );
 
   useEffect(() => {
-    if (!sideChatShortcut && !openCommaShortcut) return;
+    if (!sideChatShortcut && !openCommaShortcut && !pushToTalkShortcut) return;
     const reconciled = disableSideChatConflict(
       bindings,
       sideChatShortcut,
-      openCommaShortcut
+      openCommaShortcut,
+      pushToTalkShortcut
     );
     if (!reconciled.changed) return;
     bindingsRef.current = reconciled.bindings;
@@ -124,7 +135,14 @@ export function CommaAppShortcutsProvider({
         defaults
       ),
     });
-  }, [bindings, clientSettings, defaults, sideChatShortcut, openCommaShortcut]);
+  }, [
+    bindings,
+    clientSettings,
+    defaults,
+    sideChatShortcut,
+    openCommaShortcut,
+    pushToTalkShortcut,
+  ]);
 
   const conflictFor = useCallback(
     (id: AppShortcutId, binding: AppKeybinding | null) =>
@@ -137,14 +155,17 @@ export function CommaAppShortcutsProvider({
       const current = disableSideChatConflict(
         bindingsRef.current,
         sideChatShortcut,
-        openCommaShortcut
+        openCommaShortcut,
+        pushToTalkShortcut
       ).bindings;
       if (
         findConflict(current, id, binding) ||
         (sideChatShortcut &&
           appBindingConflictsWithSideChatShortcut(binding, sideChatShortcut)) ||
         (openCommaShortcut &&
-          appBindingConflictsWithSideChatShortcut(binding, openCommaShortcut))
+          appBindingConflictsWithSideChatShortcut(binding, openCommaShortcut)) ||
+        (pushToTalkShortcut &&
+          appBindingConflictsWithSideChatShortcut(binding, pushToTalkShortcut))
       ) {
         return false;
       }
@@ -155,14 +176,15 @@ export function CommaAppShortcutsProvider({
       });
       return true;
     },
-    [clientSettings, defaults, sideChatShortcut, openCommaShortcut]
+    [clientSettings, defaults, sideChatShortcut, openCommaShortcut, pushToTalkShortcut]
   );
 
   const resetAll = useCallback(() => {
     const reconciled = disableSideChatConflict(
       defaults,
       sideChatShortcut,
-      openCommaShortcut
+      openCommaShortcut,
+      pushToTalkShortcut
     );
     bindingsRef.current = reconciled.bindings;
     void clientSettings.update({
@@ -171,7 +193,13 @@ export function CommaAppShortcutsProvider({
         defaults
       ),
     });
-  }, [clientSettings, defaults, sideChatShortcut, openCommaShortcut]);
+  }, [
+    clientSettings,
+    defaults,
+    sideChatShortcut,
+    openCommaShortcut,
+    pushToTalkShortcut,
+  ]);
 
   const isDefault = useMemo(
     () =>

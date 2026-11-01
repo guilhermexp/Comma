@@ -157,6 +157,48 @@ function installWorkspaceList(workspaceIds: readonly string[]) {
   );
 }
 
+const installTalkToAgentMac = (
+  sideChatEnabled: boolean,
+  options: {
+    inputMonitoring?: "granted" | "denied" | "not-needed";
+    openInputMonitoringSettings?: () => Promise<{ opened: boolean }>;
+    screenRecording?: "granted" | "denied";
+    openScreenRecordingSettings?: () => Promise<{ opened: boolean }>;
+  } = {}
+) => {
+  const preferences = appPreferencesSchema.parse({
+    launchAtLogin: false,
+    ...(options.inputMonitoring
+      ? { pushToTalkInputMonitoringStatus: options.inputMonitoring }
+      : {}),
+    ...(options.screenRecording
+      ? { pushToTalkScreenRecordingStatus: options.screenRecording }
+      : {}),
+    showInDock: true,
+    showInMenuBar: true,
+    sideChatEnabled,
+  });
+  installNativeBridgeMock({
+    appPreferences: {
+      state: createNativeStateBridgeMock(() => preferences),
+      update: vi.fn(async () => preferences),
+      ...(options.openInputMonitoringSettings
+        ? { openInputMonitoringSettings: options.openInputMonitoringSettings }
+        : {}),
+      ...(options.openScreenRecordingSettings
+        ? { openScreenRecordingSettings: options.openScreenRecordingSettings }
+        : {}),
+    },
+    os: "macos",
+    platform: "electron",
+    sideChat: { updateShortcut: vi.fn(async (shortcut) => shortcut) },
+  });
+};
+const openTalkToAgentSettings = async () => {
+  await userEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts" }));
+  return within(await screen.findByRole("region", { name: "Talk to agent" }));
+};
+
 describe("AppSettingsRoute", () => {
   beforeEach(() => {
     installWorkspaceList(["wsp_default"]);
@@ -1609,6 +1651,292 @@ describe("AppSettingsRoute", () => {
     expect(readStoredClientSettings().sideChatShortcut).toEqual(
       defaultCommaClientSettings.sideChatShortcut
     );
+  });
+
+  describe("Talk to agent", () => {
+    it("starts off, says where audio and screenshots go, and persists its controls", async () => {
+      installTalkToAgentMac(true);
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+
+      expect(section.getByText(/OpenAI GPT Live.*Router/)).toBeVisible();
+      const enabled = section.getByRole("switch", { name: "Talk to agent" });
+      await waitFor(() => expect(enabled).toBeEnabled());
+      expect(enabled).not.toBeChecked();
+
+      await userEvent.click(enabled);
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkEnabled).toBe(true)
+      );
+      const screenshot = section.getByRole("switch", { name: "Send a screenshot" });
+      expect(screenshot).toBeChecked();
+      await userEvent.click(screenshot);
+      await waitFor(() =>
+        expect(readStoredClientSettings()).toMatchObject({
+          pushToTalkSendScreen: false,
+        })
+      );
+
+      await userEvent.click(
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt" })
+      );
+      await userEvent.keyboard("{Control>}{Shift>}k{/Shift}{/Control}");
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkShortcut).toEqual({
+          key: "k",
+          modifiers: { alt: false, control: true, meta: false, shift: true },
+        })
+      );
+    });
+
+    // Gravar só modificadores nos Ajustes
+    it("records modifiers held alone, such as Control-Option, as the shortcut", async () => {
+      installTalkToAgentMac(true);
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+      const enabled = section.getByRole("switch", { name: "Talk to agent" });
+      await waitFor(() => expect(enabled).toBeEnabled());
+      await userEvent.click(enabled);
+
+      await userEvent.click(
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt" })
+      );
+      await userEvent.keyboard("{Meta>}{Shift>}{/Shift}{/Meta}");
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkShortcut).toEqual({
+          key: null,
+          modifiers: { alt: false, control: false, meta: true, shift: true },
+        })
+      );
+      expect(
+        section.getByRole("button", { name: "Hold to talk: Shift + Cmd" })
+      ).toBeInTheDocument();
+    });
+
+    // Permissão ausente
+    it("says the chord is inactive without Input Monitoring and opens System Settings", async () => {
+      const openInputMonitoringSettings = vi.fn(async () => ({ opened: true }));
+      installTalkToAgentMac(true, {
+        inputMonitoring: "denied",
+        openInputMonitoringSettings,
+      });
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+      const enabled = section.getByRole("switch", { name: "Talk to agent" });
+      await waitFor(() => expect(enabled).toBeEnabled());
+      // Off: no permission row.
+      expect(section.queryByText("Input Monitoring")).not.toBeInTheDocument();
+      await userEvent.click(enabled);
+
+      expect(await section.findByText("Input Monitoring")).toBeVisible();
+      expect(section.getByText("Shortcut inactive")).toBeVisible();
+      await userEvent.click(
+        section.getByRole("button", { name: "Open System Settings" })
+      );
+      expect(openInputMonitoringSettings).toHaveBeenCalledOnce();
+    });
+
+    // Gravação de Tela: macOS lists Comma only after it asked.
+    it("explains failed screenshot requests and the voice-only alternative", async () => {
+      const openScreenRecordingSettings = vi.fn(async () => ({ opened: true }));
+      installTalkToAgentMac(true, {
+        screenRecording: "denied",
+        openScreenRecordingSettings,
+      });
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+      const enabled = section.getByRole("switch", { name: "Talk to agent" });
+      await waitFor(() => expect(enabled).toBeEnabled());
+      // Off: no permission row.
+      expect(section.queryByText("Screen Recording")).not.toBeInTheDocument();
+      await userEvent.click(enabled);
+
+      expect(await section.findByText("Screen Recording")).toBeVisible();
+      expect(section.getByText(/requests fail until.*permission/i)).toBeVisible();
+      expect(
+        section.getByText(/turn off.*send a screenshot.*voice.only/i)
+      ).toBeVisible();
+      await userEvent.click(
+        section.getByRole("button", { name: "Open System Settings" })
+      );
+      expect(openScreenRecordingSettings).toHaveBeenCalledOnce();
+
+      // The screenshot turned off needs no permission.
+      await userEvent.click(section.getByRole("switch", { name: "Send a screenshot" }));
+      await waitFor(() =>
+        expect(section.queryByText("Screen Recording")).not.toBeInTheDocument()
+      );
+    });
+
+    it("shows Screen Recording as allowed without a button once granted", async () => {
+      installTalkToAgentMac(true, { screenRecording: "granted" });
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+      const enabled = section.getByRole("switch", { name: "Talk to agent" });
+      await waitFor(() => expect(enabled).toBeEnabled());
+      await userEvent.click(enabled);
+
+      expect(await section.findByText("Screen Recording")).toBeVisible();
+      expect(section.getByText("Allowed")).toBeVisible();
+      expect(
+        section.queryByRole("button", { name: "Open System Settings" })
+      ).not.toBeInTheDocument();
+    });
+
+    // Tecla comum
+    it("shows no Input Monitoring row for a chord with a key", async () => {
+      installTalkToAgentMac(true, { inputMonitoring: "not-needed" });
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+      const enabled = section.getByRole("switch", { name: "Talk to agent" });
+      await waitFor(() => expect(enabled).toBeEnabled());
+      await userEvent.click(enabled);
+      await userEvent.click(
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt" })
+      );
+      await userEvent.keyboard("{Control>}{Alt>} {/Alt}{/Control}");
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkShortcut).toMatchObject({
+          key: "space",
+        })
+      );
+      expect(section.queryByText("Input Monitoring")).not.toBeInTheDocument();
+    });
+
+    it("is unavailable, with the reason, while Side Chat is off", async () => {
+      installTalkToAgentMac(false);
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+
+      await waitFor(() =>
+        expect(
+          section.getByText("Needs Side Chat. Turn it on in General.")
+        ).toBeVisible()
+      );
+      expect(section.getByRole("switch", { name: "Talk to agent" })).toBeDisabled();
+      expect(
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt" })
+      ).toBeEnabled();
+    });
+
+    it("refuses a chord that Side Chat or Open Comma already uses and names it", async () => {
+      installTalkToAgentMac(true);
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+      const enabled = section.getByRole("switch", { name: "Talk to agent" });
+      await waitFor(() => expect(enabled).toBeEnabled());
+      await userEvent.click(enabled);
+
+      const shortcut = section.getByRole("button", {
+        name: "Hold to talk: Ctrl + Alt",
+      });
+      await waitFor(() => expect(shortcut).toBeEnabled());
+      await userEvent.click(shortcut);
+      await userEvent.keyboard("{Control>}z{/Control}");
+      expect(
+        await section.findByText("Already used by Open Side Chat.")
+      ).toBeInTheDocument();
+
+      await userEvent.click(
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt" })
+      );
+      await userEvent.keyboard("{Alt>}[Comma]{/Alt}");
+      expect(
+        await section.findByText("Already used by Open Comma.")
+      ).toBeInTheDocument();
+      expect(readStoredClientSettings().pushToTalkShortcut).toEqual({
+        key: null,
+        modifiers: { alt: true, control: true, meta: false, shift: false },
+      });
+
+      // The other direction: Side Chat cannot take the Talk to agent chord.
+      await userEvent.click(
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt" })
+      );
+      await userEvent.keyboard("{Control>}{Alt>} {/Alt}{/Control}");
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkShortcut).toEqual({
+          key: "space",
+          modifiers: { alt: true, control: true, meta: false, shift: false },
+        })
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Open Side Chat: Ctrl + Z" })
+      );
+      await userEvent.keyboard("{Control>}{Alt>} {/Alt}{/Control}");
+      expect(
+        screen.getByRole("button", { name: "Open Side Chat: Ctrl + Z" })
+      ).toBeInTheDocument();
+    });
+    it("revalidates conflicts and refuses reenabling when saved shortcut conflicts with another shortcut", async () => {
+      installTalkToAgentMac(true);
+      renderSettings();
+      const section = await openTalkToAgentSettings();
+      const enabled = section.getByRole("switch", { name: "Talk to agent" });
+      await waitFor(() => expect(enabled).toBeEnabled());
+      await userEvent.click(enabled);
+
+      // Change PTT shortcut to Ctrl+Alt+Space
+      await userEvent.click(
+        section.getByRole("button", { name: "Hold to talk: Ctrl + Alt" })
+      );
+      await userEvent.keyboard("{Control>}{Alt>} {/Alt}{/Control}");
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkShortcut).toEqual({
+          key: "space",
+          modifiers: { alt: true, control: true, meta: false, shift: false },
+        })
+      );
+
+      // Turn PTT off
+      await userEvent.click(enabled);
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkEnabled).toBe(false)
+      );
+
+      // Assign Ctrl+Alt+Space to Open Side Chat while PTT is disabled
+      await userEvent.click(
+        screen.getByRole("button", { name: "Open Side Chat: Ctrl + Z" })
+      );
+      await userEvent.keyboard("{Control>}{Alt>} {/Alt}{/Control}");
+      await waitFor(() =>
+        expect(readStoredClientSettings().sideChatShortcut).toEqual({
+          key: "space",
+          modifiers: { alt: true, control: true, meta: false, shift: false },
+        })
+      );
+
+      // Try to reenable PTT: should be refused and show conflict error
+      await userEvent.click(enabled);
+      expect(
+        await section.findByText("Already used by Open Side Chat.")
+      ).toBeInTheDocument();
+      expect(readStoredClientSettings().pushToTalkEnabled).toBe(false);
+
+      // Repair the conflicting shortcut while PTT remains off
+      const pttShortcut = section.getByRole("button", {
+        name: "Hold to talk: Ctrl + Alt + Space",
+      });
+      expect(pttShortcut).toBeEnabled();
+      await userEvent.click(pttShortcut);
+      await userEvent.keyboard("{Control>}{Shift>}k{/Shift}{/Control}");
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkShortcut).toEqual({
+          key: "k",
+          modifiers: { alt: false, control: true, meta: false, shift: true },
+        })
+      );
+      expect(
+        section.queryByText("Already used by Open Side Chat.")
+      ).not.toBeInTheDocument();
+
+      // Now reenabling succeeds
+      await userEvent.click(enabled);
+      await waitFor(() =>
+        expect(readStoredClientSettings().pushToTalkEnabled).toBe(true)
+      );
+      expect(enabled).toBeChecked();
+    });
   });
 
   it("keeps unavailable settings controls disabled", async () => {

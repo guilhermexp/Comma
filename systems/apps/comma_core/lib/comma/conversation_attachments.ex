@@ -21,9 +21,12 @@ defmodule Comma.ConversationAttachments do
   def fetch(group_scope, conversation_id, message_id, index)
       when is_map(group_scope) and is_binary(conversation_id) and is_binary(message_id) and
              is_integer(index) and index >= 0 do
-    with {:ok, messages} <-
-           Comma.Salix.Client.impl().get_group_conversation_messages(group_scope, conversation_id),
-         {:ok, message} <- find_message(messages, conversation_id, message_id) do
+    with {:ok, message} <-
+           Comma.Salix.Client.get_group_conversation_message(
+             group_scope,
+             conversation_id,
+             message_id
+           ) do
       fetch_message(group_scope, message, index)
     end
   end
@@ -74,20 +77,6 @@ defmodule Comma.ConversationAttachments do
   end
 
   def parse_index(_value), do: {:error, :not_found}
-
-  # Comma returns canonical Salix Message resources unchanged, so the client uses
-  # the exact message id it was shown. Authorization of the Conversation read is
-  # performed before this lookup.
-  defp find_message(messages, _conversation_id, message_id) when is_list(messages) do
-    messages
-    |> Enum.find(&(&1["message_id"] == message_id))
-    |> case do
-      nil -> {:error, :not_found}
-      message -> {:ok, message}
-    end
-  end
-
-  defp find_message(_messages, _conversation_id, _message_id), do: {:error, :not_found}
 
   defp attachment_block(%{"content" => content}, index) when is_list(content) do
     case Enum.at(content, index) do
@@ -147,7 +136,14 @@ defmodule Comma.ConversationAttachments do
   # The HTTP download filename uses the sender's name or workspace basename.
   # Canonical Message content separately retains its original path.
   defp file_name(block) do
-    [block["file_name"], block["title"], Path.basename(to_string(block["path"] || ""))]
+    path =
+      case block do
+        %{"path" => path} when is_binary(path) and path != "" -> path
+        %{"file_ref" => %{"environment_id" => "vfs", "path" => path}} when is_binary(path) -> path
+        _other -> ""
+      end
+
+    [block["file_name"], Path.basename(path), block["title"]]
     |> Enum.map(&String.trim(to_string(&1 || "")))
     |> Enum.find("attachment", &(&1 != "" and &1 not in [".", "..", "/"]))
     |> Path.basename()

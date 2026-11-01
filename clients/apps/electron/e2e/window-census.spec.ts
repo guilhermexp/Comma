@@ -39,6 +39,16 @@ const SURFACE_RUNTIME: Record<
     productionPresence: "on-demand",
     route: "/onboarding",
   },
+  // Created on the first Talk to agent turn, macOS only.
+  "push-to-talk-overlay": {
+    productionPresence: "on-demand-darwin",
+    route: "/push-to-talk-overlay",
+  },
+  // Created when a Talk to agent reply is spoken with the GPT Live voice, macOS only.
+  "push-to-talk-voice": {
+    productionPresence: "on-demand-darwin",
+    route: "/push-to-talk-voice",
+  },
   "site-permission-menu": {
     productionPresence: "on-demand",
     route: "/site-permission-menu",

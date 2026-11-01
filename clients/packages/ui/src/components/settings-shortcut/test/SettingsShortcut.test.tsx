@@ -14,6 +14,23 @@ const shortcut = {
   },
 } as const;
 
+const holdControlOption = (recorder: HTMLElement) => {
+  fireEvent.keyDown(recorder, {
+    code: "ControlLeft",
+    ctrlKey: true,
+    key: "Control",
+  });
+  fireEvent.keyDown(recorder, {
+    altKey: true,
+    code: "AltLeft",
+    ctrlKey: true,
+    key: "Alt",
+  });
+  // Released in any order: the chord is every modifier that was held.
+  fireEvent.keyUp(recorder, { code: "ControlLeft", altKey: true, key: "Control" });
+  fireEvent.keyUp(recorder, { code: "AltLeft", key: "Alt" });
+};
+
 describe("SettingsShortcut", () => {
   it("records Option-Space from its physical key code", async () => {
     const onChange = vi.fn();
@@ -45,6 +62,87 @@ describe("SettingsShortcut", () => {
       modifiers: { alt: true, control: false, meta: false, shift: false },
     });
     expect(formatSettingsShortcut(onChange.mock.calls[0]![0])).toBe("Alt + ,");
+  });
+
+  describe("modifier-only chords", () => {
+    it("saves Control-Option once every modifier is released without a key", async () => {
+      const onChange = vi.fn();
+      render(
+        <SettingsShortcut
+          allowModifierOnly
+          ariaLabel="Hold to talk"
+          onChange={onChange}
+          value={null}
+        />
+      );
+      const recorder = screen.getByRole("button", { name: /Hold to talk:/ });
+      await userEvent.click(recorder);
+      holdControlOption(recorder);
+
+      expect(onChange).toHaveBeenCalledExactlyOnceWith({
+        key: null,
+        modifiers: { alt: true, control: true, meta: false, shift: false },
+      });
+      expect(formatSettingsShortcut(onChange.mock.calls[0]![0])).toBe("Ctrl + Alt");
+      expect(recorder).toHaveAttribute("data-state", "idle");
+    });
+
+    it("still records a chord with a key, and ignores one modifier alone", async () => {
+      const onChange = vi.fn();
+      render(
+        <SettingsShortcut
+          allowModifierOnly
+          ariaLabel="Hold to talk"
+          onChange={onChange}
+          value={null}
+        />
+      );
+      const recorder = screen.getByRole("button", { name: /Hold to talk:/ });
+      await userEvent.click(recorder);
+      fireEvent.keyDown(recorder, { code: "AltLeft", altKey: true, key: "Alt" });
+      fireEvent.keyUp(recorder, { code: "AltLeft", key: "Alt" });
+      expect(onChange).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(recorder, {
+        code: "ControlLeft",
+        ctrlKey: true,
+        key: "Control",
+      });
+      fireEvent.keyDown(recorder, { code: "KeyK", ctrlKey: true, key: "k" });
+      fireEvent.keyUp(recorder, { code: "KeyK", ctrlKey: true, key: "k" });
+      fireEvent.keyUp(recorder, { code: "ControlLeft", key: "Control" });
+      expect(onChange).toHaveBeenCalledExactlyOnceWith({
+        key: "k",
+        modifiers: { alt: false, control: true, meta: false, shift: false },
+      });
+    });
+
+    it("never saves modifiers alone where a key is required", async () => {
+      const onChange = vi.fn();
+      render(
+        <SettingsShortcut ariaLabel="Open Comma" onChange={onChange} value={null} />
+      );
+      const recorder = screen.getByRole("button", { name: /Open Comma:/ });
+      await userEvent.click(recorder);
+      holdControlOption(recorder);
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("shows a saved modifier-only chord as its modifier keycaps", () => {
+      render(
+        <SettingsShortcut
+          allowModifierOnly
+          ariaLabel="Hold to talk"
+          value={{
+            key: null,
+            modifiers: { alt: true, control: true, meta: false, shift: false },
+          }}
+        />
+      );
+      expect(
+        screen.getByRole("button", { name: "Hold to talk: Ctrl + Alt" })
+      ).toBeInTheDocument();
+    });
   });
 
   it("formats the default Control-Z shortcut", () => {

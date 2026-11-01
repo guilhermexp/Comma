@@ -288,6 +288,19 @@ defmodule CommaWeb.Auth do
 
   defp normalize_token(_value), do: nil
 
+  defp deny(
+         %Plug.Conn{
+           method: "GET",
+           path_info: ["v1", "comma", "workspaces", _, "voice", "calls", _, "trace"]
+         } = conn
+       ) do
+    conn
+    |> put_resp_header("cache-control", "no-store")
+    |> put_resp_content_type("application/json")
+    |> send_resp(404, Jason.encode!(%{error: "call_not_found"}))
+    |> halt()
+  end
+
   defp deny(conn) do
     conn
     |> put_resp_content_type("application/json")

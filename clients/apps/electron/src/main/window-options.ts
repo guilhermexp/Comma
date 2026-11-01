@@ -7,6 +7,8 @@ export interface RendererWindowIdentityOptions {
   windowRole:
     | "site-permission-menu"
     | "meeting-recorder-window"
+    | "push-to-talk-overlay"
+    | "push-to-talk-voice"
     | "dev-workbench"
     | "main-window"
     | "onboarding-window"
@@ -308,6 +310,86 @@ export function createMeetingRecorderWindowOptions({
       additionalArguments: createRendererWindowIdentityArguments({
         windowId: "meeting-recorder",
         windowRole: "meeting-recorder-window",
+      }),
+    },
+  };
+}
+
+/**
+ * Talk to agent overlay: one display-sized, transparent, non-activating panel
+ * for the state pill and the drag-to-mark area. Its presenter raises it to the
+ * screen-saver level on every Space and only ever shows it inactive.
+ */
+export function createPushToTalkOverlayWindowOptions({
+  bounds,
+  platform = process.platform,
+  preloadPath,
+}: {
+  bounds: { x: number; y: number; width: number; height: number };
+  platform?: NodeJS.Platform;
+  preloadPath: string;
+}): BrowserWindowConstructorOptions {
+  return {
+    ...bounds,
+    ...(platform === "darwin" ? { type: "panel" as const } : {}),
+    alwaysOnTop: true,
+    backgroundColor: "#00000000",
+    enableLargerThanScreen: true,
+    focusable: false,
+    frame: false,
+    fullscreenable: false,
+    hasShadow: false,
+    maximizable: false,
+    minimizable: false,
+    movable: false,
+    resizable: false,
+    roundedCorners: false,
+    show: false,
+    skipTaskbar: true,
+    transparent: true,
+    webPreferences: {
+      backgroundThrottling: false,
+      preload: preloadPath,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+      additionalArguments: createRendererWindowIdentityArguments({
+        windowId: "push-to-talk-overlay",
+        windowRole: "push-to-talk-overlay",
+      }),
+    },
+  };
+}
+
+/**
+ * Talk to agent's GPT Live voice: a hidden renderer that only holds the
+ * WebRTC peer of a read-aloud call. It never shows or takes focus, and plays
+ * the reply without a user gesture.
+ */
+export function createPushToTalkVoiceWindowOptions({
+  preloadPath,
+}: {
+  preloadPath: string;
+}): BrowserWindowConstructorOptions {
+  return {
+    width: 1,
+    height: 1,
+    focusable: false,
+    frame: false,
+    show: false,
+    skipTaskbar: true,
+    webPreferences: {
+      autoplayPolicy: "no-user-gesture-required",
+      backgroundThrottling: false,
+      preload: preloadPath,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+      additionalArguments: createRendererWindowIdentityArguments({
+        windowId: "push-to-talk-voice",
+        windowRole: "push-to-talk-voice",
       }),
     },
   };

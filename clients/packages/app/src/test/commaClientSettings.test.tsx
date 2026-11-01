@@ -13,10 +13,13 @@ import {
   installNativeBridgeMock,
 } from "@comma/test-utils/native-bridge";
 import { act, render, screen, waitFor } from "@comma/test-utils/render";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CommaClientSettingsI18nProvider,
   CommaElectronClientSettingsProvider,
+  CommaWebClientSettingsProvider,
+  commaClientSettingsStorageKey,
+  readWebCommaClientSettings,
   useCommaClientSettings,
   useCommaClientSettingsPending,
 } from "../components/commaClientSettings";
@@ -305,5 +308,71 @@ describe("CommaElectronClientSettingsProvider", () => {
       String(!defaultCommaClientSettings.sessionHistoryEnabled)
     );
     expect(settingsRenders).toBe(settledSettings + 1);
+  });
+});
+
+function PersistedWebSettingsProbe() {
+  const { settings } = useCommaClientSettings();
+  return (
+    <div>
+      <span aria-label="locale">{settings.localePreference}</span>
+      <span aria-label="history">{String(settings.sessionHistoryEnabled)}</span>
+      <span aria-label="ptt-enabled">{String(settings.pushToTalkEnabled)}</span>
+      <span aria-label="ptt-screen">{String(settings.pushToTalkSendScreen)}</span>
+    </div>
+  );
+}
+
+describe("CommaWebClientSettingsProvider", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it("migrates persisted browser settings containing retired pushToTalkSpeakReplies without resetting unrelated preferences", async () => {
+    const oldPersistedSettings = {
+      ...structuredClone(defaultCommaClientSettings),
+      localePreference: "pt-BR",
+      sessionHistoryEnabled: true,
+      pushToTalkEnabled: true,
+      pushToTalkSendScreen: false,
+      pushToTalkSpeakReplies: false,
+    };
+    localStorage.setItem(
+      commaClientSettingsStorageKey,
+      JSON.stringify(oldPersistedSettings)
+    );
+
+    const initial = readWebCommaClientSettings();
+    expect(initial.localePreference).toBe("pt-BR");
+    expect(initial.sessionHistoryEnabled).toBe(true);
+    expect(initial.pushToTalkEnabled).toBe(true);
+    expect(initial.pushToTalkSendScreen).toBe(false);
+    expect(initial).not.toHaveProperty("pushToTalkSpeakReplies");
+
+    render(
+      <CommaWebClientSettingsProvider>
+        <PersistedWebSettingsProbe />
+      </CommaWebClientSettingsProvider>
+    );
+
+    expect(screen.getByLabelText("locale")).toHaveTextContent("pt-BR");
+    expect(screen.getByLabelText("history")).toHaveTextContent("true");
+    expect(screen.getByLabelText("ptt-enabled")).toHaveTextContent("true");
+    expect(screen.getByLabelText("ptt-screen")).toHaveTextContent("false");
+
+    await waitFor(() => {
+      const stored = JSON.parse(
+        localStorage.getItem(commaClientSettingsStorageKey) ?? "{}"
+      );
+      expect(stored).not.toHaveProperty("pushToTalkSpeakReplies");
+      expect(stored.localePreference).toBe("pt-BR");
+      expect(stored.sessionHistoryEnabled).toBe(true);
+      expect(stored.pushToTalkEnabled).toBe(true);
+      expect(stored.pushToTalkSendScreen).toBe(false);
+    });
   });
 });

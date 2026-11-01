@@ -868,6 +868,28 @@ const sideChatSurfaceControlVariants = [
     kind: z.literal("side-chat.stop"),
     ...sideChatCommandEnvelopeShape,
   }),
+  // Hold-to-talk chord, separate from the Side Chat shortcut. A missing
+  // binding unregisters it; a binding without keyCode is a modifier-only chord
+  // the helper observes with a listen-only event tap (Input Monitoring). Main
+  // replays the saved binding after a restart.
+  z.object({
+    binding: sideChatShortcutRegistrationInputSchema.optional(),
+    kind: z.literal("push-to-talk.shortcut"),
+    ...sideChatCommandEnvelopeShape,
+  }),
+  // Asks macOS for Input Monitoring; the helper reports the state with
+  // push-to-talk.permission before its command.result.
+  z.object({
+    kind: z.literal("push-to-talk.request-input-monitoring"),
+    ...sideChatCommandEnvelopeShape,
+  }),
+  // Asks macOS for Screen Recording. TCC attributes the request to Comma (the
+  // responsible process), so Comma joins the Screen Recording list; the
+  // helper answers with command.result only.
+  z.object({
+    kind: z.literal("push-to-talk.request-screen-recording"),
+    ...sideChatCommandEnvelopeShape,
+  }),
   // Off: the helper drops the edge gesture and the global shortcut, closes the
   // surface, and ignores open requests until turned on again.
   z.object({
@@ -903,10 +925,41 @@ export const statusMenuSelectSchema = z.object({
   ...sideChatCommandEnvelopeShape,
 });
 
+/** App that was frontmost when the hold-to-talk chord went down. */
+export const pushToTalkFrontmostAppSchema = z.object({
+  bundleId: z.string().min(1).max(256).optional(),
+  name: z.string().max(256),
+});
+
+export const pushToTalkPressedSchema = z.object({
+  frontmostApp: pushToTalkFrontmostAppSchema.optional(),
+  kind: z.literal("push-to-talk.pressed"),
+  ...sideChatCommandEnvelopeShape,
+});
+
+export const pushToTalkReleasedSchema = z.object({
+  // Another key or an extra modifier joined a modifier-only chord: it was a
+  // different shortcut, and Main drops the turn without an error.
+  cancelled: z.boolean(),
+  kind: z.literal("push-to-talk.released"),
+  ...sideChatCommandEnvelopeShape,
+});
+
+// Input Monitoring for a modifier-only chord. Sent before the command.result
+// of its registration, then on every change (rechecked every 2 s while denied).
+export const pushToTalkPermissionSchema = z.object({
+  inputMonitoring: z.enum(["granted", "denied"]),
+  kind: z.literal("push-to-talk.permission"),
+  ...sideChatCommandEnvelopeShape,
+});
+
 export const sideChatClientFrameSchema = z.discriminatedUnion("kind", [
   ...sideChatCommandVariants,
   sideChatPresentationSchema,
   statusMenuSelectSchema,
+  pushToTalkPressedSchema,
+  pushToTalkReleasedSchema,
+  pushToTalkPermissionSchema,
   sideChatCommandResultSchema,
   sideChatProtocolErrorSchema,
 ]);

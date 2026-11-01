@@ -11,6 +11,7 @@ defmodule Salix.Telemetry do
   @voice_call_reasons ~w(completed caller_hangup agent_hangup busy timeout model_error carrier_error revoked draining other)
   @voice_delegation_outcomes ~w(answered failed abandoned other)
   @voice_profile_outcomes ~w(ok empty timeout not_configured no_evidence egress_denied rate_limited error other)
+  @voice_trace_reasons ~w(storage shutdown router_unavailable other)
   @actor_queue [0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5]
   @outcomes ~w(ok partial ignored error failed timeout in_doubt dropped unavailable unroutable unattributed conflict rejected cancelled cleaned retained scan_error over_budget dispatched already skipped other)
   @component_operations %{
@@ -535,6 +536,18 @@ defmodule Salix.Telemetry do
         tags: [:outcome],
         tag_values: &voice_profile_tags/1,
         reporter_options: [buckets: @llm]
+      ),
+      sum("salix.voice.trace.dropped.records.total",
+        event_name: [:salix, :voice, :trace, :dropped],
+        measurement: :count,
+        tags: [:reason],
+        tag_values: &voice_trace_tags/1,
+        reporter_options: [prometheus_type: :counter]
+      ),
+      counter("salix.voice.trace.unavailable.total",
+        event_name: [:salix, :voice, :trace, :unavailable],
+        tags: [:reason],
+        tag_values: &voice_trace_tags/1
       )
     ]
   end
@@ -551,6 +564,9 @@ defmodule Salix.Telemetry do
 
   defp voice_profile_tags(metadata),
     do: %{outcome: finite(metadata[:outcome], @voice_profile_outcomes)}
+
+  defp voice_trace_tags(metadata),
+    do: %{reason: finite(metadata[:reason], @voice_trace_reasons)}
 
   defp convergence_options do
     [

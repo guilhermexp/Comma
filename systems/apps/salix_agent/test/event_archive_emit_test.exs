@@ -45,6 +45,11 @@ defmodule SalixAgent.EventArchiveEmitTest do
     def record(_fact), do: exit(:boom)
   end
 
+  defmodule ContentErrorArchive do
+    @behaviour SalixAgent.EventArchive
+    def record(%{payload: %{"speech" => content}}), do: raise(content)
+  end
+
   defp use_archive(module) do
     previous = Application.get_env(:salix_agent, :event_archive_mod)
     Application.put_env(:salix_agent, :event_archive_mod, module)
@@ -84,6 +89,20 @@ defmodule SalixAgent.EventArchiveEmitTest do
 
       assert {:error, _} = Emit.llm_response(:complete, {:final, "x"}, [])
       assert {:error, _} = Emit.delivery("agt", %{payload: %{}})
+    end
+
+    test "archive exceptions never put voice content in the log" do
+      use_archive(ContentErrorArchive)
+      secret = "private caller words"
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          Emit.voice_delivery(%{tenant_id: "t", agent_id: "a", session_id: "s"}, %{
+            "speech" => secret
+          })
+        end)
+
+      refute log =~ secret
     end
 
     test "an archive that exits never propagates into the caller" do

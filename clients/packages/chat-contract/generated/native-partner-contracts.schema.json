@@ -543,6 +543,45 @@
         },
         "title": {
           "type": "string"
+        },
+        "voice": {
+          "properties": {
+            "turn": {
+              "properties": {
+                "action": {
+                  "properties": {
+                    "id": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "label": {
+                      "maxLength": 64,
+                      "type": "string"
+                    }
+                  },
+                  "required": ["id", "label"],
+                  "type": "object"
+                },
+                "level": {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "message": {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                "state": {
+                  "enum": ["listening", "thinking", "speaking", "busy", "error"],
+                  "type": "string"
+                }
+              },
+              "required": ["message", "state"],
+              "type": "object"
+            }
+          },
+          "type": "object"
         }
       },
       "type": "object"
@@ -1063,6 +1102,82 @@
             }
           },
           "required": ["id", "kind", "protocolVersion", "requestId"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "frontmostApp": {
+              "properties": {
+                "bundleId": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "name": {
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              },
+              "required": ["name"],
+              "type": "object"
+            },
+            "kind": {
+              "const": "push-to-talk.pressed",
+              "type": "string"
+            },
+            "protocolVersion": {
+              "const": 3,
+              "type": "number"
+            },
+            "requestId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": ["kind", "protocolVersion", "requestId"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cancelled": {
+              "type": "boolean"
+            },
+            "kind": {
+              "const": "push-to-talk.released",
+              "type": "string"
+            },
+            "protocolVersion": {
+              "const": 3,
+              "type": "number"
+            },
+            "requestId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": ["cancelled", "kind", "protocolVersion", "requestId"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "inputMonitoring": {
+              "enum": ["granted", "denied"],
+              "type": "string"
+            },
+            "kind": {
+              "const": "push-to-talk.permission",
+              "type": "string"
+            },
+            "protocolVersion": {
+              "const": 3,
+              "type": "number"
+            },
+            "requestId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": ["inputMonitoring", "kind", "protocolVersion", "requestId"],
           "type": "object"
         },
         {
@@ -1952,6 +2067,76 @@
         },
         {
           "properties": {
+            "binding": {
+              "properties": {
+                "keyCode": {
+                  "maximum": 127,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "modifiers": {
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": ["modifiers"],
+              "type": "object"
+            },
+            "kind": {
+              "const": "push-to-talk.shortcut",
+              "type": "string"
+            },
+            "protocolVersion": {
+              "const": 3,
+              "type": "number"
+            },
+            "requestId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": ["kind", "protocolVersion", "requestId"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "push-to-talk.request-input-monitoring",
+              "type": "string"
+            },
+            "protocolVersion": {
+              "const": 3,
+              "type": "number"
+            },
+            "requestId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": ["kind", "protocolVersion", "requestId"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "push-to-talk.request-screen-recording",
+              "type": "string"
+            },
+            "protocolVersion": {
+              "const": 3,
+              "type": "number"
+            },
+            "requestId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": ["kind", "protocolVersion", "requestId"],
+          "type": "object"
+        },
+        {
+          "properties": {
             "enabled": {
               "type": "boolean"
             },
@@ -2387,6 +2572,76 @@
           "properties": {
             "kind": {
               "const": "side-chat.stop",
+              "type": "string"
+            },
+            "protocolVersion": {
+              "const": 3,
+              "type": "number"
+            },
+            "requestId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": ["kind", "protocolVersion", "requestId"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "binding": {
+              "properties": {
+                "keyCode": {
+                  "maximum": 127,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "modifiers": {
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": ["modifiers"],
+              "type": "object"
+            },
+            "kind": {
+              "const": "push-to-talk.shortcut",
+              "type": "string"
+            },
+            "protocolVersion": {
+              "const": 3,
+              "type": "number"
+            },
+            "requestId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": ["kind", "protocolVersion", "requestId"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "push-to-talk.request-input-monitoring",
+              "type": "string"
+            },
+            "protocolVersion": {
+              "const": 3,
+              "type": "number"
+            },
+            "requestId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": ["kind", "protocolVersion", "requestId"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "push-to-talk.request-screen-recording",
               "type": "string"
             },
             "protocolVersion": {

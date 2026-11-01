@@ -1,43 +1,12 @@
 import { openAsBlob } from "node:fs";
 import { basename } from "node:path";
-import { createParser } from "eventsource-parser";
-import { z } from "zod";
 import type {
   AudioCaptureDriveFile,
   AudioCaptureRecording,
   AudioCaptureTranscribeSavedResult,
 } from "@comma/native-bridge";
 import type { DriveRecordingStore, RecordingDriveTarget } from "./drive-recordings";
-
-const transcriptResult = z.discriminatedUnion("status", [
-  z.object({
-    status: z.literal("ready"),
-    result: z.object({
-      transcript: z.string().max(8_000_000),
-      duration_seconds: z.number().int().nonnegative(),
-      chunks: z
-        .array(
-          z.object({
-            index: z.number().int().nonnegative(),
-            offset_seconds: z.number().nonnegative(),
-            transcript: z.string().max(8_000_000),
-          })
-        )
-        .max(48),
-      // Contract C7 through the backend (add-cloud-meeting-asr, D6): which
-      // provider and model produced it, and why it fell back to this Mac.
-      provider: z.enum(["local", "groq", "openai_compatible"]).optional(),
-      model: z.string().max(200).optional(),
-      fallback: z
-        .object({
-          from: z.enum(["groq", "openai_compatible"]),
-          reason: z.string().max(100),
-        })
-        .optional(),
-    }),
-  }),
-  z.object({ status: z.literal("error"), reason: z.string().max(500) }),
-]);
+import { readTranscriptionStream } from "./transcription-stream";
 
 /** Two hours of AAC at 48 kbps is about 41 MiB (openspec add-local-meeting-asr, D8). */
 export const maxTranscriptionBytes = 64 * 1024 * 1024;
@@ -192,31 +161,7 @@ async function transcribeRecording(session: RecordingASRSession, sourcePath: str
   });
   if (!response.ok || !response.body)
     throw new Error("Transcription is unavailable. The audio remains in Drive.");
-  let result: z.infer<typeof transcriptResult> | undefined;
-  const parser = createParser({
-    maxBufferSize: 16 * 1024 * 1024,
-    onEvent(event) {
-      if (event.event === "transcription")
-        result = transcriptResult.parse(JSON.parse(event.data));
-    },
-    onError(error) {
-      throw error;
-    },
-  });
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      parser.feed(decoder.decode(value, { stream: true }));
-      if (result) break;
-    }
-    parser.feed(decoder.decode());
-  } finally {
-    await reader.cancel().catch(() => undefined);
-    reader.releaseLock();
-  }
+  const result = await readTranscriptionStream(response);
   if (!result)
     throw new Error("Transcription was interrupted. The audio remains in Drive.");
   if (result.status === "error") throw new Error(result.reason);

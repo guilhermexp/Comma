@@ -39,14 +39,9 @@ After failure, the login screen explains the error and offers a manual retry.
 Network errors suggest a connection check. Provider errors suggest a later retry.
 Code exchange is single-use and is never replayed automatically.
 
-The initiating renderer reports terminal infrastructure failures to PostHog as `login_unavailable`, with a bounded `login_error_code`.
-These reports contain no credentials, email, raw exception text, or request bodies. Cancellation, conflicts, and rate limits do not create these issues.
-Reports are best-effort and capped at 20 per renderer lifetime. They do not prove delivery when the client has no network.
-The existing issue-created/reopened destinations in `observability/posthog/client-critical-issues.json` also carry this error kind.
-Alert router maps these issues to `comma_client_login_unavailable`, priority P1, independently of the existing P2 rendering rule.
-One issue occurrence triggers an incident. Duplicate deliveries deduplicate. Repeated failures in an open issue do not generate new incidents.
-Successful login does not automatically resolve an issue or prove recovery for other clients.
-Deploy the router change and the updated desktop client before treating this coverage as live.
+The initiating renderer reports terminal infrastructure failures to PostHog as `login_unavailable` with bounded `login_error_code`, without credentials, email, raw exceptions or bodies. Cancellation, conflicts and rate limits are excluded. Reports are best-effort, capped at 20 per renderer lifetime, and do not prove delivery without network.
+The existing `observability/posthog/client-critical-issues.json` destinations carry this kind. The router maps it to P1 `comma_client_login_unavailable`, independently of the P2 rendering rule. One occurrence triggers an incident; duplicate deliveries deduplicate and later failures in an open issue create no new incident. Login success neither resolves it nor proves recovery for others.
+Deploy both router and updated desktop client before treating coverage as live.
 
 ### Service diagnostics
 
@@ -114,29 +109,16 @@ Check the provider request and settlement logs before attributing the failure.
 
 ## Encrypted Agent event archive
 
-Preserve six observation seams:
-
-1. Inbound input.
-2. Provider request.
-3. Provider response.
-4. Tool dispatch.
-5. Tool result.
-6. Visible reply.
-
-Encrypt in the caller before handing data to the archive path.
-Do not place plaintext in archive mailboxes, logs, or metrics.
-The archive is observational. Its failure cannot fail the Agent's task.
-Bound its queues and retry work.
+The six seams are inbound input, provider request and response, tool dispatch and result, and visible reply.
+Seal in the caller before the archive path; keep plaintext out of archive mailboxes, logs and metrics.
+The archive is observational: failure cannot fail the task. Bound queues and retries.
 Keep runtime seam guards and adapter shape tests when removing redundant tests.
 
-Resident Session dispatch archives the final provider JSON as `request_body`, with its wire `protocol`.
-List-based callers archive their provider-neutral `messages`. Both forms retain explicit dispatch identity and credential-scrubbed options.
-Request bodies remain content-bearing encrypted payloads, never logs or metric labels.
+Resident Sessions archive final provider JSON as `request_body` with wire `protocol`; list callers archive provider-neutral `messages`. Both retain identity and credential-scrubbed options. Bodies are encrypted, never logged or used as metric labels.
 
-A sequence hole can prove bracketed loss when later events arrive.
-Tail loss or process loss can leave no live signal.
-Do not claim complete capture or guaranteed loss detection from a contiguous observed prefix.
-An archive record proves the observed seam, not external receipt or user consumption.
+Voice uses Router tenant and Agent, with call ID as `session_id`. Caller speech and screen context use `delivery` in the Agent stream; delegation, Router response and spoken output use `tool_call`, `tool_result` and `egress` in `session:<call_id>:loop`. GPT Live internals are unobservable. `mix salix.archive.open --session <call_id>` reads both streams in stream/writer/sequence order, not a call-wide sequence.
+
+A sequence hole can prove bracketed loss when later events arrive. Tail or process loss can leave no live signal or count, even with `call_ended` present. A contiguous prefix does not prove complete capture. An archive record proves an observed seam, not external receipt or consumption.
 
 ## Alert ownership
 

@@ -935,14 +935,14 @@ defmodule SalixIM.Provider.Manuals do
         "Answer each delegated request with voice.say. Write short, plain spoken sentences: no Markdown, lists, tables, links or code. Say the answer once; the voice model speaks it.",
         "For work that takes time, send one short voice.note so the voice model can tell the caller you are working, then send the answer with voice.say.",
         "Use voice.hang_up only when the caller asks to end the call or the conversation is complete.",
-        "If an operation returns voice_call_ended, or a voice.call_ended source arrives, the caller is gone. Do not use voice operations for that call. Record anything important in the Comma conversation instead."
+        "After a normal call ends, do not use voice operations; keep important work in the Comma conversation. An ended push-to-talk source may authorize voice.say for its pending delegation IDs: this records text in chat, without audio or a new call. Use an explicit exact delegation_id when several are pending. A voice_call_ended error is terminal for the attempted delivery."
       ],
       "apis" => [
         %{
           "name" => "voice.say",
           "safety" => "write",
           "description" =>
-            "Speak an answer to the caller. Long text is spoken in several parts. Resolves the delegated request.",
+            "Send a delegated answer. While the call is live, the voice model speaks it in several parts if needed. After push-to-talk ends, an authorized pending request receives the text in its existing Comma conversation, without audio.",
           "required_params" => ["text"],
           "parameters" => %{
             "text" => "Required plain spoken text, at most 16000 bytes.",

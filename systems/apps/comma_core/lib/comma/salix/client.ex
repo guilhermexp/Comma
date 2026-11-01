@@ -115,6 +115,12 @@ defmodule Comma.Salix.Client do
               conversation_id :: String.t(),
               opts :: keyword()
             ) :: {:ok, map()} | {:error, term()}
+  @callback get_group_conversation_message(
+              workspace :: map(),
+              conversation_id :: String.t(),
+              message_id :: String.t()
+            ) :: {:ok, map()} | {:error, term()}
+
   @callback get_group_conversation_messages(workspace :: map(), conversation_id :: String.t()) ::
               {:ok, [map()]} | {:error, term()}
   @callback append_group_conversation_message(
@@ -198,6 +204,7 @@ defmodule Comma.Salix.Client do
                       list_group_conversations: 2,
                       search_group_tasks: 3,
                       get_group_conversation: 2,
+                      get_group_conversation_message: 3,
                       list_group_conversation_pins: 1,
                       pin_group_conversation: 2,
                       unpin_group_conversation: 2,
@@ -237,6 +244,10 @@ defmodule Comma.Salix.Client do
   @optional_callbacks drive_binding: 1, put_drive_binding: 2
 
   def impl, do: Application.get_env(:comma_core, :salix_client, Comma.Salix.Runtime)
+
+  def get_group_conversation_message(workspace, conversation_id, message_id) do
+    call_optional(:get_group_conversation_message, [workspace, conversation_id, message_id])
+  end
 
   def conversation_uses_private_model?(workspace, conversation) do
     module = impl()

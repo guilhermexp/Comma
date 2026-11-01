@@ -255,6 +255,36 @@ export class AppPreferencesService {
     return queued;
   }
 
+  /**
+   * Publishes the Input Monitoring readback the side chat helper reports for
+   * a modifier-only Talk to agent chord. Never persisted; a repeat is no change.
+   */
+  setPushToTalkInputMonitoringStatus(
+    status: NonNullable<AppPreferences["pushToTalkInputMonitoringStatus"]>
+  ) {
+    const refreshed = { ...this.#preferences, pushToTalkInputMonitoringStatus: status };
+    if (samePreferenceValues(refreshed, this.#preferences)) return this.state();
+    this.#preferences = withNextRevision(refreshed, this.#preferences);
+    const snapshot = this.state();
+    this.#onStateChanged(snapshot);
+    return snapshot;
+  }
+
+  /**
+   * Publishes the Screen Recording readback of the Talk to agent screenshot.
+   * Never persisted; a repeat is no change.
+   */
+  setPushToTalkScreenRecordingStatus(
+    status: NonNullable<AppPreferences["pushToTalkScreenRecordingStatus"]>
+  ) {
+    const refreshed = { ...this.#preferences, pushToTalkScreenRecordingStatus: status };
+    if (samePreferenceValues(refreshed, this.#preferences)) return this.state();
+    this.#preferences = withNextRevision(refreshed, this.#preferences);
+    const snapshot = this.state();
+    this.#onStateChanged(snapshot);
+    return snapshot;
+  }
+
   #applySystemNotificationsStatus(status: SystemNotificationsStatus) {
     const refreshed = withSystemNotificationsStatusReadback(this.#preferences, status);
     if (samePreferenceValues(refreshed, this.#preferences)) return this.state();
@@ -483,8 +513,13 @@ async function readStoredPreferences(filePath: string) {
   }
   const { defaultsRevision, ...rest } =
     typeof stored === "object" && stored !== null
-      ? (stored as { defaultsRevision?: unknown })
+      ? (stored as { defaultsRevision?: unknown; clientSettings?: unknown })
       : {};
+  // Drop the retired PTT setting before strict parsing. Otherwise an older
+  // preferences file would reset unrelated settings to their defaults.
+  if (typeof rest.clientSettings === "object" && rest.clientSettings !== null) {
+    delete (rest.clientSettings as Record<string, unknown>).pushToTalkSpeakReplies;
+  }
   try {
     return {
       defaultsRevision: typeof defaultsRevision === "number" ? defaultsRevision : 0,
@@ -532,6 +567,8 @@ function samePreferenceValues(left: AppPreferences, right: AppPreferences) {
   return (
     sameClientSettings(left.clientSettings, right.clientSettings) &&
     left.openCommaShortcutStatus === right.openCommaShortcutStatus &&
+    left.pushToTalkInputMonitoringStatus === right.pushToTalkInputMonitoringStatus &&
+    left.pushToTalkScreenRecordingStatus === right.pushToTalkScreenRecordingStatus &&
     left.airDropName === right.airDropName &&
     left.keepAwakeWhenLidClosed === right.keepAwakeWhenLidClosed &&
     left.keepAwakeWhenLidClosedStatus === right.keepAwakeWhenLidClosedStatus &&
