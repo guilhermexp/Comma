@@ -86,6 +86,32 @@ defmodule SalixVoice.Settings do
   def update(attrs) when is_map(attrs), do: update(attrs, @cas_attempts)
   def update(_attrs), do: {:error, {:bad_request, "voice settings must be a JSON object"}}
 
+  @doc "Enable voice when no enabled field is stored. Preserve explicit settings on CAS retries."
+  @spec enable_by_default() :: {:ok, map()} | {:error, term()}
+  def enable_by_default, do: enable_by_default(@cas_attempts)
+
+  defp enable_by_default(attempts, failure \\ :conflict) do
+    with {:ok, stored, etag} <- read() do
+      cond do
+        Map.has_key?(stored, "enabled") ->
+          {:ok, redact(Map.merge(@defaults, stored))}
+
+        attempts == 0 ->
+          {:error, failure}
+
+        true ->
+          next = Map.put(stored, "enabled", true)
+
+          case write(next, etag) do
+            {:ok, _} -> {:ok, redact(Map.merge(@defaults, next))}
+            {:error, :precondition_failed} -> enable_by_default(attempts - 1)
+            {:error, {:ambiguous, _} = reason} -> enable_by_default(attempts - 1, reason)
+            {:error, _} = error -> error
+          end
+      end
+    end
+  end
+
   defp update(_attrs, 0), do: {:error, :conflict}
 
   defp update(attrs, attempts) do
@@ -98,19 +124,20 @@ defmodule SalixVoice.Settings do
         |> Enum.reject(fn {_key, value} -> is_nil(value) end)
         |> Map.new()
 
-      body = Jason.encode!(next)
-
-      put_result =
-        if etag,
-          do: S3.put(Keys.ctl_system_voice(), body, if_match: etag),
-          else: S3.put(Keys.ctl_system_voice(), body, if_none_match: "*")
-
-      case put_result do
+      case write(next, etag) do
         {:ok, _} -> {:ok, redact(Map.merge(@defaults, next))}
         {:error, :precondition_failed} -> update(attrs, attempts - 1)
         {:error, _} = error -> error
       end
     end
+  end
+
+  defp write(settings, etag) do
+    body = Jason.encode!(settings)
+
+    if etag,
+      do: S3.put(Keys.ctl_system_voice(), body, if_match: etag),
+      else: S3.put(Keys.ctl_system_voice(), body, if_none_match: "*")
   end
 
   defp read do

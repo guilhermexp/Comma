@@ -175,9 +175,9 @@ Disable, delete and Group deletion reach live calls via `:pg`: a spoken notice, 
 
 ## Voice settings
 
-Platform settings are one JSON object at `ctl/system/voice.json`, managed at `/dash/voice` or admin `GET`/`PUT /v1/admin/voice/settings`, not env vars or `config.json`.
-Writes use compare-and-swap. `openai_api_key` and `twilio_auth_token` are write-only: reads show `<field>_configured`, blank keeps, `clear_secrets` removes.
-Defaults: `enabled` false, `gpt_live_model` `gpt-live-1`, `max_call_seconds` 1800, `max_calls_per_node` 50, `pin_max_failures` 5, `pin_lockout_seconds` 900. Other fields: GPT-Live URL (`wss`, or `ws` for loopback only) and voice, Twilio SIDs, `twilio_numbers` (platform lines), `public_base_url` (signed and published URLs).
+Platform JSON `ctl/system/voice.json`: `/dash/voice` or admin `GET`/`PUT /v1/admin/voice/settings`, no env/config.json. CAS writes.
+Write-only `openai_api_key`/`twilio_auth_token`: reads show `<field>_configured`; blank keeps; `clear_secrets` removes.
+`enabled`: false; desktop-local boot saves true if absent, even on upgrades. Explicit false and cloud/selfhost defaults remain. `gpt_live_model` `gpt-live-1`, `max_call_seconds` 1800, `max_calls_per_node` 50, `pin_max_failures` 5, `pin_lockout_seconds` 900. Also: GPT-Live URL (`wss`, loopback `ws`), voice, Twilio SIDs/`twilio_numbers` (platform lines), `public_base_url` (signed/published URLs).
 
 ## Voice profile
 

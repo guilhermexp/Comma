@@ -86,6 +86,79 @@ defmodule Comma.LocalInstallTest do
     end
   end
 
+  describe "desktop voice boot defaults" do
+    setup %{cfg: cfg} do
+      prefix = "desktop_voice_#{System.unique_integer([:positive])}"
+
+      # A real boot runs migrations on multiple connections. Isolate its
+      # databases and VM so it cannot change the suite's schema or app state.
+      for {repo, index} <- Enum.with_index([Comma.Repo, BillingCore.Repo, SalixStore.Repo]) do
+        config = Keyword.put(repo.config(), :database, "#{prefix}_#{index}")
+        :ok = Ecto.Adapters.Postgres.storage_up(config)
+        on_exit(fn -> :ok = Ecto.Adapters.Postgres.storage_down(config) end)
+      end
+
+      %{boot_prefix: prefix, endpoint: cfg.endpoint}
+    end
+
+    test "boot enables missing voice settings and keeps enabling an existing install", context do
+      assert [fresh, existing] = voice_boot("missing", context)
+
+      for result <- [fresh, existing] do
+        assert result == %{
+                 "enabled" => true,
+                 "readiness" => "not_configured",
+                 "admit" => "not_configured"
+               }
+      end
+    end
+
+    test "boot preserves an explicit disable", context do
+      assert [%{"enabled" => false, "readiness" => "disabled", "admit" => "disabled"}] =
+               voice_boot("disabled", context)
+    end
+
+    test "local boot without desktop mode retains disabled defaults", context do
+      assert [
+               %{
+                 "enabled" => false,
+                 "readiness" => "disabled",
+                 "admit" => "disabled",
+                 "stored" => false
+               }
+             ] =
+               voice_boot("non_desktop", context)
+    end
+  end
+
+  defp voice_boot(mode, context) do
+    {output, status} =
+      System.cmd(
+        "mix",
+        [
+          "run",
+          "--no-start",
+          "--no-compile",
+          "apps/comma_core/test/support/local_install_voice_boot.exs",
+          mode
+        ],
+        cd: Path.expand("../../../..", __DIR__),
+        env: [
+          {"MIX_ENV", "test"},
+          {"COMMA_SUBSYSTEMS", "salix,comma_product"},
+          {"COMMA_ENVIRONMENT", "local"},
+          {"COMMA_DESKTOP_LOCAL", "1"},
+          {"VOICE_TEST_DB_PREFIX", context.boot_prefix},
+          {"VOICE_TEST_STORAGE_ENDPOINT", context.endpoint}
+        ],
+        stderr_to_stdout: true
+      )
+
+    assert status == 0, output
+    [_, result] = Regex.run(~r/^VOICE_BOOT_RESULT=(.+)$/m, output)
+    Jason.decode!(result)
+  end
+
   describe "local meeting ASR template" do
     setup do
       previous_backend = Application.get_env(:salix_store, :s3_backend)
