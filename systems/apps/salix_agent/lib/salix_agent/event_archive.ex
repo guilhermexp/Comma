@@ -192,13 +192,6 @@ defmodule SalixAgent.EventArchive do
     def record(_fact), do: :ok
   end
 
-  # Exception messages can carry the offending VALUE (Protocol.UndefinedError
-  # appends "Got value: ..."), which is agent content. Logs are unencrypted, so
-  # only the exception type and a short prefix are recorded.
-  defp brief(exception) do
-    exception.__struct__
-    |> inspect()
-    |> Kernel.<>(": ")
-    |> Kernel.<>(exception |> Exception.message() |> String.slice(0, 120))
-  end
+  # Exception messages can contain the observed payload.
+  defp brief(exception), do: inspect(exception.__struct__)
 end

@@ -592,6 +592,13 @@ export class GptLiveVoice implements PushToTalkLiveCall, PushToTalkVoiceProvider
         mode: "push_to_talk",
         signal: offerController.signal,
       });
+      if (/^vc_[0-9A-HJKMNP-TV-Z]{26}$/.test(answer.call_id)) {
+        try {
+          this.#options.log?.(`voice call opened call_id=${answer.call_id}`);
+        } catch {
+          // Logging cannot change call admission.
+        }
+      }
       stopOfferBudget();
       if (call.offerController === offerController) {
         delete call.offerController;

@@ -20,9 +20,12 @@ const electronMocks = vi.hoisted(() => ({
   fetch: vi.fn(),
   handle: vi.fn(),
   registerSchemesAsPrivileged: vi.fn(),
+  info: vi.fn(),
 }));
 
-vi.mock("electron-log/main", () => ({ default: { warn: vi.fn() } }));
+vi.mock("electron-log/main", () => ({
+  default: { warn: vi.fn(), info: electronMocks.info },
+}));
 
 vi.mock("electron", () => ({
   net: {
@@ -39,6 +42,7 @@ describe("Electron app protocol", () => {
     electronMocks.fetch.mockReset();
     electronMocks.handle.mockReset();
     electronMocks.registerSchemesAsPrivileged.mockReset();
+    electronMocks.info.mockReset();
   });
 
   afterEach(() => {
@@ -502,6 +506,27 @@ describe("Electron app protocol", () => {
     expect(init.headers.get("proxy-authorization")).toBeNull();
     expect(init.headers.get("x-comma-client-surface")).toBeNull();
     expect(init.headers.get(sessionPresenceExpectationHeader)).toBeNull();
+  });
+  it("logs the manual voice call ID without changing the renderer response", async () => {
+    const { authority } = fakeCredentialAuthority();
+    const callId = "vc_01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const answer = { call_id: callId, sdp: "private-media-negotiation" };
+    electronMocks.fetch.mockResolvedValue(Response.json(answer));
+    const response = await proxyCommaApiRequest(
+      new Request(commaApiRequest(), { method: "POST", body: "{}" }),
+      new URL("assets://./v1/comma/workspaces/wsp_1/voice/calls"),
+      authority,
+      electronMocks.fetch
+    );
+    await expect(response.json()).resolves.toEqual(answer);
+    await vi.waitFor(() =>
+      expect(electronMocks.info).toHaveBeenCalledWith(
+        `voice call opened call_id=${callId}`
+      )
+    );
+    expect(electronMocks.info.mock.calls).toEqual([
+      [`voice call opened call_id=${callId}`],
+    ]);
   });
 
   it("keeps Agent VMM install descriptors on the Main-only transport", async () => {

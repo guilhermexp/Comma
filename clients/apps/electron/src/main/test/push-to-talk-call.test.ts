@@ -50,6 +50,7 @@ function setup(resolveTarget: () => Promise<typeof target> = async () => target)
     endVoiceCall: vi.fn(async () => ({ ending: true })),
   };
   const events: PushToTalkCallEvent[] = [];
+  const log = vi.fn();
   const voice = new GptLiveVoice({
     api: () => api,
     resolveTarget,
@@ -60,6 +61,7 @@ function setup(resolveTarget: () => Promise<typeof target> = async () => target)
       publish: () => undefined,
     },
     clock,
+    log,
   });
   voice.onEvent((event) => events.push(event));
   const open = async () => {
@@ -68,7 +70,7 @@ function setup(resolveTarget: () => Promise<typeof target> = async () => target)
     await voice.voiceOffer({ generation, sdp: "offer" });
     return generation;
   };
-  return { api, clock, batches, events, voice, open };
+  return { api, clock, batches, events, voice, open, log };
 }
 
 const servers: Server[] = [];
@@ -108,6 +110,16 @@ async function createVoiceHttpServer(
 }
 
 describe("push-to-talk live session transport", () => {
+  it("logs only the opened call ID in Main", async () => {
+    const { api, open, log, voice } = setup();
+    const callId = "vc_01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    api.startVoiceCall.mockResolvedValueOnce({ call_id: callId, sdp: "answer" });
+    await open();
+    expect(log).toHaveBeenCalledWith(`voice call opened call_id=${callId}`);
+    expect(log.mock.calls).toEqual([[`voice call opened call_id=${callId}`]]);
+    voice.close();
+  });
+
   it("reports microphone denial and local levels while cold target resolution is still pending", async () => {
     const targetGate = Promise.withResolvers<typeof target>();
     const { voice, events, api } = setup(() => targetGate.promise);

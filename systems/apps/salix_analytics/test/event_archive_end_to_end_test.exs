@@ -161,6 +161,269 @@ defmodule SalixAnalytics.EventArchiveEndToEndTest do
     assert boundaries == ["llm_request", "llm_response", "tool_call", "tool_result", "egress"]
   end
 
+  test "voice boundaries seal under both existing streams and open with the call identity", %{
+    identity: identity
+  } do
+    old = Application.get_env(:salix_agent, :event_archive_mod)
+    Application.put_env(:salix_agent, :event_archive_mod, EventArchive)
+
+    on_exit(fn ->
+      if old,
+        do: Application.put_env(:salix_agent, :event_archive_mod, old),
+        else: Application.delete_env(:salix_agent, :event_archive_mod)
+    end)
+
+    voice = %{
+      tenant_id: "tenant_voice",
+      agent_id: "agent_router",
+      session_id: "vc_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+
+    secret = "private voice fixture"
+    assert :ok = SalixAgent.EventArchive.Emit.voice_delivery(voice, %{"speech" => secret})
+    assert :ok = SalixAgent.EventArchive.Emit.voice_tool_call(voice, %{"request" => secret})
+    assert :ok = SalixAgent.EventArchive.Emit.voice_tool_result(voice, %{"reply" => secret})
+    assert :ok = SalixAgent.EventArchive.Emit.voice_egress(voice, %{"speech" => secret})
+    Worker.flush()
+    rows = Enum.filter(CapturingWriter.rows(), &(&1["session_id"] == voice.session_id))
+    assert length(rows) == 4
+
+    assert Enum.map(rows, & &1["stream"]) == [
+             "agent:agent_router:inbox",
+             "session:#{voice.session_id}:loop",
+             "session:#{voice.session_id}:loop",
+             "session:#{voice.session_id}:loop"
+           ]
+
+    refute Jason.encode!(rows) =~ secret
+    assert Enum.all?(rows, &(&1["session_id"] == voice.session_id))
+    {:ok, parsed} = Age.parse_identity(identity)
+
+    opened =
+      Enum.map(rows, fn row ->
+        assert {:ok, _, payload, :verified} = Item.open(row, parsed)
+        payload
+      end)
+
+    assert opened == [
+             %{"speech" => secret},
+             %{"request" => secret},
+             %{"reply" => secret},
+             %{"speech" => secret}
+           ]
+
+    session_report =
+      rows |> Enum.reject(&(&1["boundary"] == "delivery")) |> Completeness.analyze()
+
+    assert session_report.missing_total == 0
+  end
+
+  test "voice emission produces no archive rows when the archive is disabled" do
+    previous = Application.fetch_env(:salix_agent, :event_archive_mod)
+    Application.put_env(:salix_agent, :event_archive_mod, EventArchive)
+    Application.put_env(:salix_analytics, :event_archive, enabled: false, recipients: [])
+    Recipients.reset()
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:salix_agent, :event_archive_mod, value)
+        :error -> Application.delete_env(:salix_agent, :event_archive_mod)
+      end
+    end)
+
+    call_id = "vc_disabled_#{System.unique_integer([:positive])}"
+    voice = %{tenant_id: "tenant_disabled", agent_id: "agent_disabled", session_id: call_id}
+    payload = %{"text" => "private disabled archive fixture"}
+    assert :ok = SalixAgent.EventArchive.Emit.voice_delivery(voice, payload)
+    assert :ok = SalixAgent.EventArchive.Emit.voice_tool_call(voice, payload)
+    assert :ok = SalixAgent.EventArchive.Emit.voice_tool_result(voice, payload)
+    assert :ok = SalixAgent.EventArchive.Emit.voice_egress(voice, payload)
+    Worker.flush()
+    refute Enum.any?(CapturingWriter.rows(), &(&1["session_id"] == call_id))
+  end
+
+  test "a live call writes its trace and seals the real voice boundaries", %{identity: identity} do
+    old_archive = Application.fetch_env(:salix_agent, :event_archive_mod)
+    Application.put_env(:salix_agent, :event_archive_mod, EventArchive)
+    tenant = SalixStore.Ids.new_tenant_id()
+    group = SalixStore.Ids.new_group_id(tenant)
+    router = SalixStore.Ids.new_agent_id(group)
+    session = SalixStore.Ids.new_session_id()
+    settings_key = SalixStore.Keys.ctl_system_voice()
+    old_settings = SalixStore.S3.get(settings_key)
+
+    env = [
+      model_mod: SalixVoice.Model.Fake,
+      fake_model_observer: self(),
+      test_pid: self(),
+      test_admission: :ok,
+      ingress_mod: SalixVoice.TestStubs.Ingress,
+      group_directory_mod: SalixVoice.TestStubs.GroupDirectory,
+      metering_mod: SalixVoice.TestStubs.Metering,
+      profile_decider_mod: SalixVoice.TestStubs.ProfileDecider,
+      test_profile_decision: {:error, "not_configured"},
+      test_router_agent_id: router,
+      timers: [delegation_settle_ms: 10, model_close_wait_ms: 300]
+    ]
+
+    previous = Enum.map(env, fn {key, _} -> {key, Application.fetch_env(:salix_voice, key)} end)
+    Enum.each(env, fn {key, value} -> Application.put_env(:salix_voice, key, value) end)
+
+    on_exit(fn ->
+      case old_settings do
+        {:ok, %{body: body}} -> SalixStore.S3.put(settings_key, body)
+        {:error, :not_found} -> SalixStore.S3.delete(settings_key)
+      end
+
+      SalixVoice.TestCalls.stop_all()
+
+      Enum.each(previous, fn
+        {key, {:ok, value}} -> Application.put_env(:salix_voice, key, value)
+        {key, :error} -> Application.delete_env(:salix_voice, key)
+      end)
+
+      case old_archive do
+        {:ok, value} -> Application.put_env(:salix_agent, :event_archive_mod, value)
+        :error -> Application.delete_env(:salix_agent, :event_archive_mod)
+      end
+    end)
+
+    {:ok, _} = SalixVoice.Settings.update(%{"enabled" => true, "openai_api_key" => "sk-test"})
+
+    attrs = %{
+      carrier: :websocket,
+      tenant_id: tenant,
+      group_id: group,
+      connect_id: "voice-test-connect",
+      caller: %{"kind" => "api_key", "value" => "test-caller"},
+      carrier_call_id: nil,
+      audio_format: :pcmu_8k
+    }
+
+    assert {:ok, %{call_id: call_id}} = SalixVoice.admit(attrs)
+    assert {:ok, call, info} = SalixVoice.attach(call_id, self())
+    assert_receive {:fake_model, model, {:started, _}}, 2_000
+    SalixVoice.Model.Fake.emit(model, {:started, "model-test"})
+    assert_receive {:ingress, ^group, _, %{"event_type" => "voice.call_started"}, _, _}, 2_000
+    secret = "sensitive caller request"
+    SalixVoice.Model.Fake.emit(model, {:input_transcript, secret, true, 100})
+    SalixVoice.Model.Fake.emit(model, {:delegation, "dlg-archive", 100})
+    assert_receive {:ingress, ^group, _, %{"event_type" => "voice.delegation"}, _, _}, 2_000
+
+    assert {:ok, _} =
+             GenServer.call(
+               call,
+               {:voice_provider, :say,
+                %{
+                  "group_id" => group,
+                  "connect_id" => info.connect_id,
+                  "agent_id" => router,
+                  "session_id" => session,
+                  "delegation_id" => "dlg-archive",
+                  "text" => "The Router answered"
+                }}
+             )
+
+    SalixVoice.Model.Fake.emit(model, {:caption, :agent, 1, "interrupted fragment", false})
+    SalixVoice.Model.Fake.emit(model, {:caption, :agent, 2, "spoken response", true})
+    _ = :sys.get_state(model)
+    _ = :sys.get_state(call)
+    ref = Process.monitor(call)
+    send(call, {:voice_carrier, :hangup, :normal})
+    assert_receive {:DOWN, ^ref, :process, ^call, :normal}, 3_000
+
+    assert {:ok, trace} = SalixVoice.CallTraceRecords.read_trace(router, call_id)
+    assert trace["ended"]
+
+    assert Enum.any?(
+             trace["events"],
+             &(&1["type"] == "router_reply" and &1["session_id"] == session)
+           )
+
+    Worker.flush()
+    rows = Enum.filter(CapturingWriter.rows(), &(&1["session_id"] == call_id))
+
+    assert Enum.all?(
+             rows,
+             &(&1["tenant_id"] == tenant and &1["agent_id"] == router and
+                 &1["session_id"] == call_id)
+           )
+
+    refute Jason.encode!(rows) =~ secret
+
+    assert Enum.any?(
+             rows,
+             &(&1["stream"] == "agent:#{router}:inbox" and &1["boundary"] == "delivery")
+           )
+
+    for boundary <- ~w(tool_call tool_result egress),
+        do:
+          assert(
+            Enum.any?(
+              rows,
+              &(&1["stream"] == "session:#{call_id}:loop" and &1["boundary"] == boundary)
+            )
+          )
+
+    session_rows = Enum.filter(rows, &(&1["stream"] == "session:#{call_id}:loop"))
+    assert Completeness.analyze(session_rows).missing_total == 1
+
+    {:ok, parsed} = Age.parse_identity(identity)
+
+    opened =
+      Enum.map(rows, fn row ->
+        assert {:ok, _, payload, :verified} = Item.open(row, parsed)
+        payload
+      end)
+
+    assert Enum.any?(opened, &(Map.get(&1, "text") == secret))
+    assert Enum.any?(opened, &(Map.get(&1, "request") == secret))
+
+    assert {:ok, %{call_id: ptt_id}} = SalixVoice.admit(Map.put(attrs, :mode, :push_to_talk))
+    assert {:ok, ptt, _} = SalixVoice.attach(ptt_id, self())
+    assert_receive {:fake_model, ptt_model, {:started, _}}, 2_000
+    SalixVoice.Model.Fake.emit(ptt_model, {:started, "ptt-model"})
+    _ = :sys.get_state(ptt_model)
+    _ = :sys.get_state(ptt)
+    assert {:ok, _} = GenServer.call(ptt, {:context, %{context_id: 42, status: :pending}})
+
+    for event <- [
+          {:context_started, 42, 0},
+          {:user_turn_started, "turn-A", 1},
+          {:delegation, "dlg-delayed", 10, "Inspect the screen", "turn-A"},
+          {:user_turn_started, "turn-B", 2}
+        ] do
+      SalixVoice.Model.Fake.emit(ptt_model, event)
+    end
+
+    _ = :sys.get_state(ptt_model)
+    _ = :sys.get_state(ptt)
+
+    assert {:ok, _} =
+             GenServer.call(
+               ptt,
+               {:context, %{context_id: 42, status: :complete, text: "Screen", attachments: []}}
+             )
+
+    assert_receive {:ingress, ^group, _, %{"event_type" => "voice.delegation"}, _, _}, 2_000
+    ptt_ref = Process.monitor(ptt)
+    send(ptt, {:voice_carrier, :hangup, :normal})
+    assert_receive {:DOWN, ^ptt_ref, :process, ^ptt, :normal}, 3_000
+
+    Worker.flush()
+
+    tool_call =
+      CapturingWriter.rows()
+      |> Enum.find(&(&1["session_id"] == ptt_id and &1["boundary"] == "tool_call"))
+
+    assert tool_call
+    assert {:ok, _, payload, :verified} = Item.open(tool_call, parsed)
+    assert payload["native_turn_id"] == "turn-A"
+    assert {:ok, ptt_trace} = SalixVoice.CallTraceRecords.read_trace(router, ptt_id)
+    requested = Enum.find(ptt_trace["events"], &(&1["type"] == "delegation_requested"))
+    assert requested["native_turn_id"] == "turn-A"
+  end
+
   describe "completeness reporting" do
     test "reports a gap with its size and position" do
       rows = for seq <- [1, 2, 5, 6], do: header_row("session:s:loop", seq)

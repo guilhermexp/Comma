@@ -72,6 +72,17 @@ defmodule SalixStore.Keys do
       agent_external_runtime_session_segments_prefix(agent_id, session_id) <>
         "#{first_record_ulid}.jsonl"
 
+  def agent_voice_call_segments_prefix(agent_id, "vc_" <> ulid = call_id) do
+    if SalixStore.ULID.valid?(ulid) do
+      "agents/#{agent_id}/voice_calls/#{Base.encode16(call_id, case: :lower)}/segments/"
+    else
+      raise ArgumentError, "invalid voice call id"
+    end
+  end
+
+  def agent_voice_call_segments_prefix(_agent_id, _call_id),
+    do: raise(ArgumentError, "invalid voice call id")
+
   def agent_external_runtime_session_status(agent_id, session_id),
     do: agent_external_runtime_session_prefix(agent_id, session_id) <> "status.json"
 

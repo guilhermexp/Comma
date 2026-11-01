@@ -243,6 +243,28 @@ export async function proxyCommaApiRequest(
     return unauthorizedResponse();
   }
 
+  if (
+    request.method === "POST" &&
+    /^\/v1\/comma\/workspaces\/[^/]+\/voice\/calls$/.test(url.pathname) &&
+    response.ok
+  ) {
+    void response
+      .clone()
+      .json()
+      .then((answer: unknown) => {
+        if (
+          answer &&
+          typeof answer === "object" &&
+          "call_id" in answer &&
+          typeof answer.call_id === "string" &&
+          /^vc_[0-9A-HJKMNP-TV-Z]{26}$/.test(answer.call_id)
+        ) {
+          log.info(`voice call opened call_id=${answer.call_id}`);
+        }
+      })
+      .catch(() => {});
+  }
+
   return rebuildRendererResponse(response, lease, authority);
 }
 

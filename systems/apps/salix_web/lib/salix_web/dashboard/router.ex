@@ -35,6 +35,29 @@ defmodule SalixWeb.Dashboard.Router do
     plug(:fetch_admin)
   end
 
+  pipeline :voice_trace_browser do
+    plug(:no_store_voice_trace)
+    plug(:accepts, ["html", "json"])
+    plug(:fetch_session)
+    plug(:fetch_live_flash)
+    plug(:put_root_layout, html: {SalixWeb.Dashboard.Layouts, :root})
+    plug(:protect_from_forgery)
+    plug(:put_secure_browser_headers)
+    plug(:fetch_admin)
+  end
+
+  defp no_store_voice_trace(conn, _opts),
+    do:
+      Plug.Conn.register_before_send(
+        conn,
+        &Plug.Conn.put_resp_header(&1, "cache-control", "no-store")
+      )
+
+  scope "/dash", SalixWeb.Dashboard do
+    pipe_through([:voice_trace_browser, :require_admin])
+    get("/agents/:id/voice_calls/:call_id/trace", SessionTraceController, :voice_call_trace)
+  end
+
   # Public auth actions (admin-token login form + session create/logout).
   scope "/dash", SalixWeb.Dashboard do
     pipe_through(:browser)

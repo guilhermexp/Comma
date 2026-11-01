@@ -32,15 +32,15 @@ defmodule SalixVoice.CallActor do
   When two calls of one Group race, the one with the later
   `{started_at_ms, call_id}` ends with reason `:busy`.
 
-  The actor keeps no durable state. Messages to and from other processes are
-  listed in `SalixVoice`.
+  The call owns its bounded, best-effort durable trace. Messages to and from
+  other processes are listed in `SalixVoice`.
   """
 
   use GenServer, restart: :temporary
 
   require Logger
 
-  alias SalixVoice.{Profile, Speech, Transcript}
+  alias SalixVoice.{CallTrace, Profile, Speech, Transcript}
 
   @pg SalixVoice.PG
   # The only voice settings a call keeps: what the model session needs. The
@@ -113,6 +113,7 @@ defmodule SalixVoice.CallActor do
 
     timers = Map.merge(@default_timers, Map.new(Application.get_env(:salix_voice, :timers, [])))
     settings = args.settings
+    started_mono = now()
     mode = if args[:mode] == :push_to_talk, do: :push_to_talk, else: :conversation
 
     max_call_ms =
@@ -153,7 +154,7 @@ defmodule SalixVoice.CallActor do
       timers: timers,
       max_call_ms: max_call_ms,
       started_at_ms: args.started_at_ms,
-      started_mono: now(),
+      started_mono: started_mono,
       socket: nil,
       socket_ref: nil,
       attached_mono: nil,
@@ -178,6 +179,8 @@ defmodule SalixVoice.CallActor do
       prebuffer_bytes: 0,
       ledger: Transcript.new(),
       delegations: %{},
+      egress_reservation: nil,
+      trace: CallTrace.new(args[:router_agent_id], args.call_id, started_mono),
       closing: nil,
       phase: :live,
       end_reason: nil,
@@ -186,6 +189,17 @@ defmodule SalixVoice.CallActor do
       timer_refs: %{},
       group_monitor: nil
     }
+
+    state =
+      trace_record(state, "call_started", %{
+        "tenant_id" => state.tenant_id,
+        "group_id" => state.group_id,
+        "router_agent_id" => args[:router_agent_id],
+        "caller" => state.caller,
+        "mode" => to_string(state.mode),
+        "carrier" => to_string(state.carrier),
+        "transport" => to_string(state.audio_format)
+      })
 
     :ok = :pg.join(@pg, {:call, state.call_id}, self())
     :ok = :pg.join(@pg, :calls, self())
@@ -334,6 +348,7 @@ defmodule SalixVoice.CallActor do
         state =
           %{state | socket: socket, socket_ref: Process.monitor(socket), attached_mono: now()}
           |> cancel(:attach)
+          |> trace_record("attached", %{})
           |> maybe_greet()
 
         {:reply, {:ok, self(), call_info(state)}, state}
@@ -381,6 +396,7 @@ defmodule SalixVoice.CallActor do
   defp provider_op(:say, request, state) do
     with {:ok, text} <- required_text(request["text"]),
          {:ok, delegation_id} <- resolve_delegation(state, request["delegation_id"]) do
+      state = router_reply(state, :say, request, text, delegation_id)
       chunks = Speech.chunks(text)
       kind = if state.carrier == :electron and delegation_id, do: :final, else: :commentary
       Enum.each(chunks, &append(state, kind, delegation_id, &1))
@@ -394,6 +410,7 @@ defmodule SalixVoice.CallActor do
   defp provider_op(:note, request, state) do
     with {:ok, text} <- required_text(request["text"]),
          {:ok, delegation_id} <- resolve_delegation(state, request["delegation_id"]) do
+      state = router_reply(state, :note, request, text, delegation_id)
       chunks = Speech.chunks(text)
       Enum.each(chunks, &append(state, :thinking, delegation_id, &1))
       {:ok, %{"delivered" => true, "chunks" => length(chunks)}, state}
@@ -403,6 +420,8 @@ defmodule SalixVoice.CallActor do
   defp provider_op(:hang_up, request, state) do
     with {:ok, text} <- optional_text(request["text"]),
          {:ok, delegation_id} <- resolve_delegation(state, request["delegation_id"]) do
+      state = router_reply(state, :hang_up, request, text, delegation_id)
+
       case text do
         nil ->
           {:ok, %{"ending" => true}, state, {:continue, {:end, :agent_hangup}}}
@@ -491,10 +510,8 @@ defmodule SalixVoice.CallActor do
 
   # The call goes on without it: the voice model already greeted the caller,
   # and each request still reaches the Router as a delegation.
-  def handle_info({:call_started_enqueued, result}, state) do
-    Logger.warning(
-      "voice call start ingress failed call=#{state.call_id} reason=#{inspect(result)}"
-    )
+  def handle_info({:call_started_enqueued, _result}, state) do
+    Logger.warning("voice call start ingress failed call=#{state.call_id} reason=error")
 
     {:noreply, state}
   end
@@ -590,6 +607,25 @@ defmodule SalixVoice.CallActor do
     state |> timer(event) |> noreply()
   end
 
+  def handle_info(:voice_trace_flush, state) do
+    %{state | trace: CallTrace.on_timer(state.trace)} |> maybe_finish_ending() |> noreply()
+  end
+
+  def handle_info({ref, result}, %{trace: %{task: {%Task{ref: ref}, _, _}}} = state) do
+    %{state | trace: CallTrace.result(state.trace, ref, result)}
+    |> maybe_finish_ending()
+    |> noreply()
+  end
+
+  def handle_info(
+        {:DOWN, ref, :process, _pid, _reason},
+        %{trace: %{task: {%Task{ref: ref}, _, _}}} = state
+      ) do
+    %{state | trace: CallTrace.down(state.trace, ref)}
+    |> maybe_finish_ending()
+    |> noreply()
+  end
+
   def handle_info({ref, result}, %{profile_task: {%Task{ref: ref}, _started}} = state) do
     Process.demonitor(ref, [:flush])
     state |> profile_done(result) |> noreply()
@@ -607,7 +643,7 @@ defmodule SalixVoice.CallActor do
     state |> end_call(reason) |> noreply()
   end
 
-  def handle_info({:EXIT, pid, reason}, %{model_pid: pid} = state) do
+  def handle_info({:EXIT, pid, _reason}, %{model_pid: pid} = state) do
     state = %{state | model_closed?: true, model_pid: nil} |> mark_model_closed()
 
     cond do
@@ -615,8 +651,12 @@ defmodule SalixVoice.CallActor do
         state |> maybe_finish_ending() |> noreply()
 
       true ->
-        Logger.warning("voice model exited call=#{state.call_id} reason=#{inspect(reason)}")
-        state |> end_call(:model_error) |> noreply()
+        Logger.warning("voice model exited call=#{state.call_id} reason=error")
+
+        state
+        |> trace_record("error", %{"class" => "model", "code" => "exited"})
+        |> end_call(:model_error)
+        |> noreply()
     end
   end
 
@@ -660,6 +700,7 @@ defmodule SalixVoice.CallActor do
       when status == :pending or (status == :complete and is_nil(boundary)) ->
         updated_context = %{context | status: :failed, attachments: []}
         state = %{state | ptt_context: updated_context}
+        state = context_trace(state, id, :failed, nil, [], "timeout")
 
         state =
           fail_waiting_delegations(
@@ -696,6 +737,10 @@ defmodule SalixVoice.CallActor do
 
   defp model_event(state, {:started, _session_id}) do
     to_socket(state, {:voice_call, :started})
+
+    state =
+      if state.model_started_mono, do: state, else: trace_record(state, "model_started", %{})
+
     state = %{state | model_started_mono: state.model_started_mono || now()}
     state = state |> cancel(:model_start) |> maybe_greet()
 
@@ -710,7 +755,10 @@ defmodule SalixVoice.CallActor do
 
   defp model_event(state, {:fatal_error, code}) do
     to_socket(state, {:voice_call, :error, code})
-    end_call(state, :model_error)
+
+    state
+    |> trace_record("error", %{"class" => "model", "code" => safe_error_code(code)})
+    |> end_call(:model_error)
   end
 
   defp model_event(state, {:caption, role, turn, text, final?}) do
@@ -723,7 +771,14 @@ defmodule SalixVoice.CallActor do
         true -> Transcript.add_agent(state.ledger, text)
       end
 
-    %{state | ledger: ledger}
+    state = %{state | ledger: ledger}
+
+    cond do
+      not final? and role == :agent -> reserve_egress(state, turn)
+      not final? -> state
+      role == :caller -> caller_turn(state, text, turn, nil)
+      true -> agent_turn(state, text, turn)
+    end
   end
 
   # A read-aloud call has nothing to delegate to.
@@ -763,6 +818,11 @@ defmodule SalixVoice.CallActor do
     state = model_event(state, {:delegation, id, offset_ms})
 
     if Map.has_key?(state.delegations, id) do
+      state =
+        update_in(state.delegations[id], fn delegation ->
+          %{delegation | native_turn_id: delegation.native_turn_id || native_turn_id}
+        end)
+
       cond do
         is_nil(request) and state.mode == :push_to_talk ->
           fail_delegation(
@@ -794,14 +854,25 @@ defmodule SalixVoice.CallActor do
   defp model_event(state, {:input_transcript, text, final?, offset_ms}) when is_binary(text) do
     to_socket(state, {:voice_call, :transcript, :caller, text, final?})
 
-    if final?,
-      do: %{state | ledger: Transcript.add_caller(state.ledger, text, offset_ms)},
-      else: state
+    if final? do
+      state
+      |> Map.put(:ledger, Transcript.add_caller(state.ledger, text, offset_ms))
+      |> caller_turn(text, get_in(state, [:ptt_turn, :id]), offset_ms)
+    else
+      state
+    end
   end
 
   defp model_event(state, {:output_transcript, text, final?}) when is_binary(text) do
     to_socket(state, {:voice_call, :transcript, :agent, text, final?})
-    if final?, do: %{state | ledger: Transcript.add_agent(state.ledger, text)}, else: state
+
+    if final? do
+      state
+      |> Map.put(:ledger, Transcript.add_agent(state.ledger, text))
+      |> agent_turn(text, nil)
+    else
+      state
+    end
   end
 
   defp model_event(state, {:delegation, id, offset_ms}) when is_binary(id) do
@@ -814,6 +885,7 @@ defmodule SalixVoice.CallActor do
         created_mono: now(),
         request: nil,
         context_id: nil,
+        native_turn_id: nil,
         native_start_ms: nil,
         status: :pending,
         enqueued: false,
@@ -857,8 +929,10 @@ defmodule SalixVoice.CallActor do
   end
 
   defp model_event(state, {:error, error}) do
+    state = trace_record(state, "error", %{"class" => "model", "code" => safe_error_code(error)})
+
     if state.model_started_mono do
-      Logger.warning("voice model command error call=#{state.call_id} error=#{inspect(error)}")
+      Logger.warning("voice model command error call=#{state.call_id} reason=error")
       state
     else
       end_call(state, :model_error)
@@ -965,11 +1039,26 @@ defmodule SalixVoice.CallActor do
   defp enqueue_delegation(state, id, caller_text, last_agent, attachments, context_text) do
     parent = self()
     router_attachments = Enum.map(attachments, &router_attachment/1)
+    content = delegation_content(state, id, caller_text, last_agent, context_text)
+    delegation = Map.fetch!(state.delegations, id)
+
+    fields = %{
+      "delegation_id" => id,
+      "request" => caller_text,
+      "content" => content,
+      "context_id" => delegation.context_id,
+      "context_text" => context_text,
+      "native_turn_id" => delegation.native_turn_id,
+      "attachments" => attachment_metadata(attachments)
+    }
+
+    state =
+      state |> archive_voice(:tool_call, fields) |> trace_record("delegation_requested", fields)
 
     task_pid =
       enqueue_router_input(
         state,
-        delegation_content(state, id, caller_text, last_agent, context_text),
+        content,
         delegation_metadata(state, id),
         source_message_id(state, id),
         [trusted_source_text: caller_text, attachments: router_attachments],
@@ -978,6 +1067,14 @@ defmodule SalixVoice.CallActor do
 
     case task_pid do
       pid when is_pid(pid) ->
+        state =
+          trace_record(state, "delegation_sent", %{
+            "delegation_id" => id,
+            "source_message_id" => source_message_id(state, id),
+            "attachment_count" => length(attachments),
+            "text_bytes" => byte_size(content)
+          })
+
         case state.delegations do
           %{^id => delegation} ->
             updated = %{delegation | task_pid: pid}
@@ -1065,7 +1162,7 @@ defmodule SalixVoice.CallActor do
 
             _ ->
               Logger.warning(
-                "voice delegation handoff ingress failed call=#{call_id} reason=#{inspect(result)}"
+                "voice delegation handoff ingress failed call=#{call_id} reason=error"
               )
           end
 
@@ -1098,9 +1195,7 @@ defmodule SalixVoice.CallActor do
             :ok
 
           _ ->
-            Logger.warning(
-              "voice call end ingress failed call=#{call_id} reason=#{inspect(result)}"
-            )
+            Logger.warning("voice call end ingress failed call=#{call_id} reason=error")
         end
 
         send(owner, {:call_ended_enqueued, result})
@@ -1315,6 +1410,13 @@ defmodule SalixVoice.CallActor do
 
   defp delegation_enqueued(state, id, {:ok, _}) do
     state =
+      trace_record(state, "delegation_acked", %{
+        "delegation_id" => id,
+        "source_message_id" => source_message_id(state, id),
+        "status" => "queued"
+      })
+
+    state =
       case state.delegations do
         %{^id => delegation} ->
           updated = %{delegation | accepted: true, task_pid: nil}
@@ -1327,10 +1429,15 @@ defmodule SalixVoice.CallActor do
     if state.phase == :ending, do: maybe_finish_ending(state), else: state
   end
 
-  defp delegation_enqueued(state, id, result) do
-    Logger.warning(
-      "voice delegation ingress failed call=#{state.call_id} reason=#{inspect(result)}"
-    )
+  defp delegation_enqueued(state, id, _result) do
+    Logger.warning("voice delegation ingress failed call=#{state.call_id} reason=error")
+
+    state =
+      trace_record(state, "delegation_acked", %{
+        "delegation_id" => id,
+        "source_message_id" => source_message_id(state, id),
+        "status" => "error"
+      })
 
     state =
       case state.delegations do
@@ -1381,7 +1488,7 @@ defmodule SalixVoice.CallActor do
         wait_for_ending(state)
 
       true ->
-        finalize(state)
+        finish_trace(state)
     end
   end
 
@@ -1537,6 +1644,7 @@ defmodule SalixVoice.CallActor do
         )
 
         next_state = %{state | highest_context_id: id, ptt_context: context}
+        next_state = context_trace(next_state, id, :pending, nil, [])
         {:ok, %{accepted: true}, next_state}
     end
   end
@@ -1562,6 +1670,7 @@ defmodule SalixVoice.CallActor do
         }
 
         state = %{state | ptt_context: updated_context}
+        state = context_trace(state, id, :complete, text, attachments)
         state = flush_waiting_delegations(state, id)
         {:ok, %{accepted: true}, state}
 
@@ -1588,6 +1697,7 @@ defmodule SalixVoice.CallActor do
             }
 
             state = %{state | ptt_context: updated_context}
+            state = context_trace(state, id, status, nil, [], to_string(status))
 
             state =
               fail_waiting_delegations(
@@ -1625,6 +1735,7 @@ defmodule SalixVoice.CallActor do
         to_socket(state, {:voice_call, :context_failed, id})
         tombstone = %{id: id, status: status, text: nil, attachments: []}
         next_state = %{state | highest_context_id: id, ptt_context: tombstone}
+        next_state = context_trace(next_state, id, status, nil, [], to_string(status))
         {:ok, %{accepted: true}, next_state}
     end
   end
@@ -1691,7 +1802,20 @@ defmodule SalixVoice.CallActor do
 
   defp fail_delegation(state, id, reason_message) do
     case state.delegations do
-      %{^id => %{status: :pending}} when state.phase == :live ->
+      %{^id => %{status: :pending} = delegation} when state.phase == :live ->
+        state =
+          if delegation.enqueued do
+            state
+          else
+            trace_record(state, "delegation_requested", %{
+              "delegation_id" => id,
+              "request" => delegation.request,
+              "context_id" => delegation.context_id,
+              "native_turn_id" => delegation.native_turn_id,
+              "attachments" => []
+            })
+          end
+
         append(
           state,
           if(state.mode == :push_to_talk, do: :final, else: :instructions),
@@ -1729,7 +1853,7 @@ defmodule SalixVoice.CallActor do
           :apology -> append(state, :commentary, id, @apology)
         end
 
-        state
+        trace_record(state, "progress", %{"delegation_id" => id, "stage" => to_string(stage)})
 
       _ ->
         state
@@ -1759,6 +1883,14 @@ defmodule SalixVoice.CallActor do
     Enum.each(delegation.timers, &Process.cancel_timer/1)
 
     SalixVoice.Telemetry.delegation_stop(now() - delegation.created_mono, outcome)
+
+    state =
+      trace_record(state, "delegation_finished", %{
+        "delegation_id" => id,
+        "result" => outcome,
+        "duration_ms" =>
+          max(System.convert_time_unit(now() - delegation.created_mono, :native, :millisecond), 0)
+      })
 
     %{
       state
@@ -1827,6 +1959,8 @@ defmodule SalixVoice.CallActor do
       )
     end
 
+    state = begin_trace_finish(state)
+    state = await_final_trace(state, deadline)
     finalize(state)
   end
 
@@ -1953,17 +2087,30 @@ defmodule SalixVoice.CallActor do
     div(ms + 999, 1000)
   end
 
-  # Crash reports and `:sys.get_status/1` never show the model key, even
-  # before the model has started.
+  # Crash reports and `:sys.get_status/1` must not expose credentials or
+  # conversation content retained by the call or its trace buffer.
   @impl GenServer
   def format_status(status) do
     Map.update(status, :state, nil, fn
-      %{model_settings: %{} = settings} = state ->
-        %{state | model_settings: Map.replace(settings, "openai_api_key", :redacted)}
+      %{model_settings: settings} = state ->
+        settings =
+          if is_map(settings),
+            do: Map.replace(settings, "openai_api_key", :redacted),
+            else: settings
+
+        state
+        |> Map.put(:model_settings, settings)
+        |> Map.put(:model_input, :redacted)
+        |> Map.put(:trace, :redacted)
+        |> Map.put(:ledger, :redacted)
+        |> Map.put(:ptt_context, :redacted)
+        |> Map.put(:delegations, :redacted)
 
       state ->
         state
     end)
+    |> Map.update(:message, :redacted, fn _ -> :redacted end)
+    |> Map.update(:reason, :redacted, fn _ -> :redacted end)
   end
 
   @impl GenServer
@@ -1978,6 +2125,171 @@ defmodule SalixVoice.CallActor do
 
   defp noreply(%{phase: :finalized} = state), do: {:stop, :normal, state}
   defp noreply(state), do: {:noreply, state}
+
+  defp trace_record(state, type, fields),
+    do: %{state | trace: CallTrace.record(state.trace, type, fields)}
+
+  defp archive_identity(%{trace: nil}), do: nil
+
+  defp archive_identity(state) do
+    %{tenant_id: state.tenant_id, agent_id: state.trace.agent_id, session_id: state.call_id}
+  end
+
+  defp archive_voice(state, boundary, payload) do
+    if identity = archive_identity(state) do
+      case boundary do
+        :delivery -> SalixAgent.EventArchive.Emit.voice_delivery(identity, payload)
+        :tool_call -> SalixAgent.EventArchive.Emit.voice_tool_call(identity, payload)
+        :tool_result -> SalixAgent.EventArchive.Emit.voice_tool_result(identity, payload)
+      end
+    end
+
+    state
+  end
+
+  defp caller_turn(state, text, turn, offset_ms) do
+    fields = %{"text" => text, "turn" => turn, "offset_ms" => offset_ms}
+
+    state
+    |> archive_voice(:delivery, Map.put(fields, "kind", "caller_turn"))
+    |> trace_record("caller_turn", fields)
+  end
+
+  defp reserve_egress(%{egress_reservation: {turn, _}} = state, turn), do: state
+
+  defp reserve_egress(state, turn) do
+    reservation =
+      if identity = archive_identity(state),
+        do: SalixAgent.EventArchive.Emit.reserve_voice_egress(identity)
+
+    %{state | egress_reservation: {turn, reservation}}
+  end
+
+  defp agent_turn(state, text, turn) do
+    state = reserve_egress(state, turn)
+    {_turn, reservation} = state.egress_reservation
+    fields = %{"text" => text, "turn" => turn}
+
+    if identity = archive_identity(state),
+      do: SalixAgent.EventArchive.Emit.voice_egress(identity, fields, reservation)
+
+    %{state | egress_reservation: nil} |> trace_record("agent_turn", fields)
+  end
+
+  defp router_reply(state, op, request, text, delegation_id) do
+    fields = %{
+      "operation" => to_string(op),
+      "text" => text,
+      "delegation_id" => delegation_id,
+      "agent_id" => request["agent_id"],
+      "session_id" => request["session_id"]
+    }
+
+    state |> archive_voice(:tool_result, fields) |> trace_record("router_reply", fields)
+  end
+
+  defp attachment_metadata(attachments) do
+    Enum.map(attachments, fn attachment ->
+      %{
+        "name" => attachment["name"] || attachment[:name],
+        "path" => attachment["path"] || attachment[:path],
+        "mime" => attachment["mime"] || attachment[:mime],
+        "bytes" =>
+          attachment["bytes"] || attachment[:bytes] || attachment["size"] || attachment[:size]
+      }
+    end)
+  end
+
+  defp context_trace(state, context_id, status, text, attachments, reason \\ nil) do
+    fields = %{
+      "context_id" => context_id,
+      "status" => to_string(status),
+      "text" => text,
+      "attachments" => attachment_metadata(attachments),
+      "reason" => reason
+    }
+
+    state
+    |> archive_voice(:delivery, Map.put(fields, "kind", "ptt_context"))
+    |> trace_record("ptt_context", fields)
+  end
+
+  defp safe_error_code(code)
+       when code in [
+              :plan_limit,
+              :sign_in_required,
+              :invalid_answer,
+              :subscription_access_unavailable
+            ],
+       do: Atom.to_string(code)
+
+  defp safe_error_code(_), do: "other"
+
+  defp begin_trace_finish(state) do
+    fields = %{
+      "reason" => to_string(state.end_reason),
+      "duration_ms" =>
+        max(
+          System.convert_time_unit(state.ended_mono - state.started_mono, :native, :millisecond),
+          0
+        ),
+      "usage" => state.model_usage
+    }
+
+    %{state | trace: CallTrace.finish(state.trace, fields)}
+  end
+
+  defp finish_trace(state) do
+    state = begin_trace_finish(state)
+
+    cond do
+      CallTrace.finished?(state.trace) ->
+        finalize(state)
+
+      ending_remaining_ms(state) <= 0 ->
+        %{state | trace: CallTrace.discard(state.trace)} |> finalize()
+
+      true ->
+        wait_for_ending(state)
+    end
+  end
+
+  defp await_final_trace(state, deadline) do
+    remaining =
+      min(ending_remaining_ms(state), max(deadline - System.monotonic_time(:millisecond), 0))
+
+    cond do
+      CallTrace.finished?(state.trace) ->
+        state
+
+      remaining <= 0 ->
+        %{state | trace: CallTrace.discard(state.trace)}
+
+      state.trace.task != nil ->
+        {task, _, _} = state.trace.task
+
+        case Task.yield(task, remaining) do
+          {:ok, result} ->
+            %{state | trace: CallTrace.result(state.trace, task.ref, result)}
+            |> await_final_trace(deadline)
+
+          {:exit, _} ->
+            %{state | trace: CallTrace.down(state.trace, task.ref)}
+            |> await_final_trace(deadline)
+
+          nil ->
+            %{state | trace: CallTrace.discard(state.trace)}
+        end
+
+      true ->
+        receive do
+          :voice_trace_flush ->
+            %{state | trace: CallTrace.on_timer(state.trace)} |> await_final_trace(deadline)
+        after
+          remaining -> %{state | trace: CallTrace.discard(state.trace)}
+        end
+    end
+  end
 
   defp append(%{model_pid: pid} = state, kind, delegation_id, text) when is_pid(pid) do
     state.model_mod.append(pid, kind, delegation_id, text)
