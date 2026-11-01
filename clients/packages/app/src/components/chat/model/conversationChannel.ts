@@ -2766,8 +2766,8 @@ function downloadableAttachmentFileName(
 
   const candidate = [
     stringValue(block.file_name),
+    attachmentBasename(vfsPathValue(block) ?? ""),
     stringValue(block.title),
-    attachmentBasename(stringValue(block.path) ?? ""),
   ]
     .map((value) => value?.trim())
     .find((value) => value && ![".", "..", "/"].includes(value));

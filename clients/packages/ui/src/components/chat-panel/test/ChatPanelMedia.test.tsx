@@ -76,6 +76,18 @@ afterEach(() => {
 });
 
 describe("ChatPanel generated media", () => {
+  it("uses the filename type for a titled file with a generic transport MIME", () => {
+    render(
+      <ChatPanelFile
+        fileName="results.csv"
+        displayName="Comparison of two shifts"
+        mimeType="application/octet-stream"
+      />
+    );
+    expect(screen.getByText("Comparison of two shifts")).toBeVisible();
+    expect(screen.getByText("CSV")).toBeVisible();
+  });
+
   it.each(["audio", "video"] as const)(
     "pauses and resumes %s playback while its progress control is dragged",
     async (kind) => {

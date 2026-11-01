@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@comma/test-utils/render";
+import { act, fireEvent, render, screen, waitFor } from "@comma/test-utils/render";
 import { installNativeBridgeMock } from "@comma/test-utils/native-bridge";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CommaApiClient } from "../api";
@@ -50,6 +50,46 @@ afterEach(() => {
 });
 
 describe("selected file preview ownership", () => {
+  it("opens an unsupported attachment in the default app and offers a named download", async () => {
+    const saveDownload = vi.fn(
+      async (_request: { fileName: string; content: Uint8Array }) => ({
+        status: "saved" as const,
+        fileName: "sources.zip",
+        downloadRef: `dnl1_${"a".repeat(43)}`,
+      })
+    );
+    const openDownload = vi.fn(async () => ({ status: "opened" as const }));
+    installNativeBridgeMock({
+      platform: "electron",
+      os: "macos",
+      files: { saveDownload, openDownload },
+    });
+    const blob = new Blob(["archive bytes"], { type: "application/zip" });
+    render(
+      panel(
+        apiWith(async () => blob),
+        {
+          ...file,
+          fileName: "sources.zip",
+          mimeType: "application/zip",
+        }
+      )
+    );
+    const open = await screen.findByRole("button", { name: "Open in default app" });
+    fireEvent.click(open);
+    await waitFor(() =>
+      expect(openDownload).toHaveBeenCalledWith({
+        downloadRef: `dnl1_${"a".repeat(43)}`,
+      })
+    );
+    expect(saveDownload.mock.calls[0]![0].fileName).toBe("sources.zip");
+    expect(Array.from(saveDownload.mock.calls[0]![0].content)).toEqual(
+      Array.from(new TextEncoder().encode("archive bytes"))
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
+    await waitFor(() => expect(saveDownload).toHaveBeenCalledTimes(2));
+  });
+
   it("centers the shared Greeting shimmer until the selected document is readable", async () => {
     const read = deferred<Blob>();
     const decoded = deferred<string>();

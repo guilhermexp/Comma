@@ -123,6 +123,10 @@ defmodule Comma.Salix.Runtime do
     do: {:error, :salix_client_not_configured}
 
   @impl true
+  def get_group_conversation_message(_workspace, _conversation_id, _message_id),
+    do: {:error, :salix_client_not_configured}
+
+  @impl true
   def get_group_conversation_messages(_workspace, _conversation_id),
     do: {:error, :salix_client_not_configured}
 

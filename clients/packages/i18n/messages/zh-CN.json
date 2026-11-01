@@ -1576,6 +1576,7 @@
   "settings_shared_tasks": "已分享任务",
   "settings_archived_empty": "没有已归档的任务",
   "ui_file_download": "下载",
+  "file_preview_open_default": "使用默认应用打开",
   "ui_file_open_in": "打开方式",
   "ui_file_open": "打开",
   "ui_file_open_with": "使用 {application} 打开",
